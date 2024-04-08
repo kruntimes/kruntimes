@@ -12,7 +12,7 @@ require (
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/pflag v1.0.5
 	go.uber.org/zap v1.24.0
-	golang.org/x/sys v0.10.0
+	golang.org/x/sys v0.19.0
 	google.golang.org/grpc v1.54.0
 	google.golang.org/protobuf v1.31.0
 	k8s.io/apimachinery v0.26.3
