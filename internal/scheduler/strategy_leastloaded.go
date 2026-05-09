@@ -1,0 +1,63 @@
+package scheduler
+
+import (
+	"context"
+	"fmt"
+	"sort"
+
+	"github.com/airconduct/kruntime/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// LeastLoaded selects the pod with the fewest Running tasks.
+type LeastLoaded struct{}
+
+func (s *LeastLoaded) Name() string { return "least-loaded" }
+
+func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []corev1.Pod, task *v1alpha1.Task) (*corev1.Pod, error) {
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no candidate pods")
+	}
+
+	type podLoad struct {
+		pod  *corev1.Pod
+		load int
+	}
+
+	pods := make([]podLoad, 0, len(candidates))
+	for i := range candidates {
+		pod := &candidates[i]
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+
+		var tasks v1alpha1.TaskList
+		if err := c.List(ctx, &tasks,
+			client.InNamespace(pod.Namespace),
+		); err != nil {
+			continue
+		}
+
+		count := 0
+		for _, t := range tasks.Items {
+			if t.Status.AssignedPod == pod.Name && t.Status.Phase == v1alpha1.TaskRunning {
+				count++
+			}
+		}
+		pods = append(pods, podLoad{pod: pod, load: count})
+	}
+
+	if len(pods) == 0 {
+		return nil, fmt.Errorf("no available pods")
+	}
+
+	sort.Slice(pods, func(i, j int) bool {
+		if pods[i].load != pods[j].load {
+			return pods[i].load < pods[j].load
+		}
+		return pods[i].pod.Name < pods[j].pod.Name
+	})
+
+	return pods[0].pod, nil
+}

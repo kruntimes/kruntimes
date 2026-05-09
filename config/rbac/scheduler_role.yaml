@@ -1,0 +1,44 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kruntime-scheduler
+rules:
+  - apiGroups:
+      - kruntime.airconduct.com
+    resources:
+      - tasks
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - kruntime.airconduct.com
+    resources:
+      - tasks/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+      - get
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch

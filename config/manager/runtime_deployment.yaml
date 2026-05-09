@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runtime-golang-1-26
+  namespace: default
+  labels:
+    runtime: golang-1.26
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      runtime: golang-1.26
+  template:
+    metadata:
+      labels:
+        runtime: golang-1.26
+    spec:
+      serviceAccountName: kruntime-agent
+      containers:
+        - name: agent
+          image: kruntime-agent:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: WORKSPACE_DIR
+              value: /workspace
+            - name: AGENT_WORKERS
+              value: "2"
+          ports:
+            - containerPort: 9090
+              name: metrics
+              protocol: TCP
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+      volumes:
+        - name: workspace
+          emptyDir:
+            sizeLimit: 10Gi

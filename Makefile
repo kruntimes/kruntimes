@@ -1,0 +1,124 @@
+# Image URL to use all building/pushing image targets
+IMG_SCHEDULER ?= kruntime-scheduler:latest
+IMG_AGENT ?= kruntime-agent:latest
+
+# ENVTEST_K8S_VERSION refers to the version of k8s to use for envtest
+ENVTEST_K8S_VERSION = 1.32
+
+# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
+ifeq (,$(shell go env GOBIN))
+GOBIN=$(shell go env GOPATH)/bin
+else
+GOBIN=$(shell go env GOBIN)
+endif
+
+# CONTAINER_TOOL defines the container tool to be used
+CONTAINER_TOOL ?= docker
+
+.PHONY: all
+all: generate manifests build
+
+##@ General
+
+.PHONY: help
+help: ## Display this help.
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+
+##@ Development
+
+.PHONY: generate
+generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./api/..."
+
+.PHONY: manifests
+manifests: controller-gen ## Generate CRD manifests.
+	$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=config/crd/bases
+
+.PHONY: fmt
+fmt: ## Run go fmt against code.
+	go fmt ./...
+
+.PHONY: vet
+vet: ## Run go vet against code.
+	go vet ./...
+
+.PHONY: test
+test: generate manifests fmt vet ## Run unit tests.
+	go test $$(go list ./... | grep -v /test/integration) -coverprofile cover.out
+
+.PHONY: test-integration
+test-integration: generate manifests ## Run integration tests (requires envtest).
+	KUBEBUILDER_ASSETS="$(shell $(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(PROJECT_DIR)/testbin -p path)" \
+	go test ./test/integration/... -v -count=1
+
+##@ Build
+
+.PHONY: build
+build: generate ## Build all binaries.
+	go build -o bin/scheduler ./cmd/scheduler
+	go build -o bin/agent ./cmd/agent
+	go build -o bin/task-cli ./cmd/task-cli
+
+.PHONY: build-scheduler
+build-scheduler: generate ## Build scheduler binary.
+	go build -o bin/scheduler ./cmd/scheduler
+
+.PHONY: build-agent
+build-agent: generate ## Build agent binary.
+	go build -o bin/agent ./cmd/agent
+
+.PHONY: build-cli
+build-cli: generate ## Build task-cli binary.
+	go build -o bin/task-cli ./cmd/task-cli
+
+.PHONY: run-scheduler
+run-scheduler: generate manifests ## Run scheduler locally (requires kubeconfig).
+	go run ./cmd/scheduler --kubeconfig=$(HOME)/.kube/config
+
+.PHONY: run-agent
+run-agent: generate manifests ## Run agent locally (requires kubeconfig).
+	go run ./cmd/agent --kubeconfig=$(HOME)/.kube/config
+
+##@ Docker
+
+.PHONY: docker-build
+docker-build: docker-build-scheduler docker-build-agent ## Build all Docker images.
+
+.PHONY: docker-build-scheduler
+docker-build-scheduler: ## Build scheduler Docker image.
+	$(CONTAINER_TOOL) build -t $(IMG_SCHEDULER) -f Dockerfile.scheduler .
+
+.PHONY: docker-build-agent
+docker-build-agent: ## Build agent Docker image.
+	$(CONTAINER_TOOL) build -t $(IMG_AGENT) -f Dockerfile.agent .
+
+.PHONY: docker-push
+docker-push: ## Push Docker images.
+	$(CONTAINER_TOOL) push $(IMG_SCHEDULER)
+	$(CONTAINER_TOOL) push $(IMG_AGENT)
+
+##@ Deployment
+
+.PHONY: deploy
+deploy: manifests ## Deploy CRDs and controller to K8s cluster.
+	kubectl apply -k config/crd
+	kubectl apply -k config/rbac
+	kubectl apply -k config/manager
+
+.PHONY: undeploy
+undeploy: ## Remove all kruntime resources from K8s cluster.
+	kubectl delete -k config/manager --ignore-not-found
+	kubectl delete -k config/rbac --ignore-not-found
+	kubectl delete -k config/crd --ignore-not-found
+
+##@ Tools
+
+CONTROLLER_GEN = $(GOBIN)/controller-gen
+.PHONY: controller-gen
+controller-gen: ## Download controller-gen locally if not already installed.
+	@test -x $(CONTROLLER_GEN) || go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.17.3
+
+SETUP_ENVTEST = $(GOBIN)/setup-envtest
+.PHONY: setup-envtest
+setup-envtest: ## Download setup-envtest locally if not already installed.
+	@test -x $(SETUP_ENVTEST) || go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest

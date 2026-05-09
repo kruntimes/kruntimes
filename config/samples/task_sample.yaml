@@ -1,0 +1,15 @@
+apiVersion: kruntime.airconduct.com/v1alpha1
+kind: Task
+metadata:
+  name: sample-unit-test
+  namespace: default
+spec:
+  runtime: golang-1.26
+  commands:
+    - "cd /workspace/repo && go test ./..."
+  env:
+    - name: GOFLAGS
+      value: "-count=1"
+  timeout: 10m
+  repoURL: https://github.com/example/repo.git
+  commitSHA: main
