@@ -5,6 +5,9 @@ IMG_AGENT ?= kruntime-agent:latest
 # ENVTEST_K8S_VERSION refers to the version of k8s to use for envtest
 ENVTEST_K8S_VERSION = 1.32
 
+# NAMESPACE for helm deploy
+NAMESPACE ?= default
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -14,6 +17,9 @@ endif
 
 # CONTAINER_TOOL defines the container tool to be used
 CONTAINER_TOOL ?= docker
+
+# HELM binary
+HELM ?= helm
 
 .PHONY: all
 all: generate manifests build
@@ -31,8 +37,8 @@ generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./api/..."
 
 .PHONY: manifests
-manifests: controller-gen ## Generate CRD manifests.
-	$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=config/crd/bases
+manifests: controller-gen ## Generate CRD manifests into Helm chart.
+	$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=charts/kruntime/crds
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -97,19 +103,21 @@ docker-push: ## Push Docker images.
 	$(CONTAINER_TOOL) push $(IMG_SCHEDULER)
 	$(CONTAINER_TOOL) push $(IMG_AGENT)
 
+##@ Helm
+
+.PHONY: template
+template: manifests ## Render Helm chart to stdout for validation.
+	$(HELM) template kruntime ./charts/kruntime --namespace $(NAMESPACE)
+
 ##@ Deployment
 
 .PHONY: deploy
-deploy: manifests ## Deploy CRDs and controller to K8s cluster.
-	kubectl apply -k config/crd
-	kubectl apply -k config/rbac
-	kubectl apply -k config/manager
+deploy: manifests ## Deploy kruntime via Helm.
+	$(HELM) upgrade --install kruntime ./charts/kruntime --namespace $(NAMESPACE) --create-namespace
 
 .PHONY: undeploy
 undeploy: ## Remove all kruntime resources from K8s cluster.
-	kubectl delete -k config/manager --ignore-not-found
-	kubectl delete -k config/rbac --ignore-not-found
-	kubectl delete -k config/crd --ignore-not-found
+	$(HELM) uninstall kruntime --namespace $(NAMESPACE) --ignore-not-found
 
 ##@ Tools
 

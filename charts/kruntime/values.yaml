@@ -1,0 +1,38 @@
+# Namespace to deploy into (used by helm install --namespace)
+namespace: default
+
+scheduler:
+  image: kruntime-scheduler:latest
+  imagePullPolicy: IfNotPresent
+  replicas: 2
+  leaderElect: true
+  metricsBindAddress: ":8080"
+  probeBindAddress: ":8081"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+agent:
+  image: kruntime-agent:latest
+  imagePullPolicy: IfNotPresent
+  workers: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+# Runtime pod configurations. Each entry creates a separate Deployment.
+# The runtime name is used as the "runtime" label for Task scheduling.
+runtimes:
+  - name: golang-1.26
+    replicas: 2
+
+workspace:
+  sizeLimit: 10Gi

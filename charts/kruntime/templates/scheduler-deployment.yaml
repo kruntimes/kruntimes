@@ -2,11 +2,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kruntime-scheduler
-  namespace: default
+  namespace: {{ .Release.Namespace }}
   labels:
-    app: kruntime-scheduler
+    {{- include "kruntime.scheduler.labels" . | nindent 4 }}
 spec:
-  replicas: 2
+  replicas: {{ .Values.scheduler.replicas }}
   selector:
     matchLabels:
       app: kruntime-scheduler
@@ -18,12 +18,12 @@ spec:
       serviceAccountName: kruntime-scheduler
       containers:
         - name: scheduler
-          image: kruntime-scheduler:latest
-          imagePullPolicy: IfNotPresent
+          image: {{ .Values.scheduler.image }}
+          imagePullPolicy: {{ .Values.scheduler.imagePullPolicy }}
           args:
-            - --leader-elect=true
-            - --metrics-bind-address=:8080
-            - --health-probe-bind-address=:8081
+            - --leader-elect={{ .Values.scheduler.leaderElect }}
+            - --metrics-bind-address={{ .Values.scheduler.metricsBindAddress }}
+            - --health-probe-bind-address={{ .Values.scheduler.probeBindAddress }}
           ports:
             - containerPort: 8080
               name: metrics
@@ -44,9 +44,4 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 500m
-              memory: 256Mi
+            {{- toYaml .Values.scheduler.resources | nindent 12 }}

@@ -1,25 +1,27 @@
+{{- range .Values.runtimes }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: runtime-golang-1-26
-  namespace: default
+  name: runtime-{{ .name }}
+  namespace: {{ $.Release.Namespace }}
   labels:
-    runtime: golang-1.26
+    runtime: {{ .name }}
+    {{- include "kruntime.agent.labels" $ | nindent 4 }}
 spec:
-  replicas: 2
+  replicas: {{ .replicas }}
   selector:
     matchLabels:
-      runtime: golang-1.26
+      runtime: {{ .name }}
   template:
     metadata:
       labels:
-        runtime: golang-1.26
+        runtime: {{ .name }}
     spec:
       serviceAccountName: kruntime-agent
       containers:
         - name: agent
-          image: kruntime-agent:latest
-          imagePullPolicy: IfNotPresent
+          image: {{ $.Values.agent.image }}
+          imagePullPolicy: {{ $.Values.agent.imagePullPolicy }}
           env:
             - name: HOSTNAME
               valueFrom:
@@ -28,7 +30,7 @@ spec:
             - name: WORKSPACE_DIR
               value: /workspace
             - name: AGENT_WORKERS
-              value: "2"
+              value: {{ $.Values.agent.workers | quote }}
           ports:
             - containerPort: 9090
               name: metrics
@@ -41,13 +43,10 @@ spec:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
           resources:
-            requests:
-              cpu: 500m
-              memory: 512Mi
-            limits:
-              cpu: "2"
-              memory: 2Gi
+            {{- toYaml $.Values.agent.resources | nindent 12 }}
       volumes:
         - name: workspace
           emptyDir:
-            sizeLimit: 10Gi
+            sizeLimit: {{ $.Values.workspace.sizeLimit }}
+---
+{{- end }}

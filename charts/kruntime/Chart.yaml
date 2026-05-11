@@ -1,0 +1,12 @@
+apiVersion: v2
+name: kruntime
+description: Two-layer scheduling system for CI/CD task warm-up on Kubernetes
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - cicd
+  - scheduling
+  - task-runner
+maintainers:
+  - name: kruntime authors
