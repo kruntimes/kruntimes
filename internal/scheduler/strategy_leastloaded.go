@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/airconduct/kruntime/api/v1alpha1"
 )
 
 // LeastLoaded selects the pod with the fewest Running tasks.

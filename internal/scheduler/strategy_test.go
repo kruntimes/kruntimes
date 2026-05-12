@@ -4,11 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/airconduct/kruntime/api/v1alpha1"
 )
 
 func TestLeastLoaded_Select(t *testing.T) {
@@ -17,12 +18,12 @@ func TestLeastLoaded_Select(t *testing.T) {
 	_ = v1alpha1.AddToScheme(scheme)
 
 	tests := []struct {
-		name       string
-		pods       []corev1.Pod
-		tasks      []v1alpha1.Task
-		task       *v1alpha1.Task
-		wantPod    string
-		wantErr    bool
+		name    string
+		pods    []corev1.Pod
+		tasks   []v1alpha1.Task
+		task    *v1alpha1.Task
+		wantPod string
+		wantErr bool
 	}{
 		{
 			name:    "no candidate pods",
@@ -62,9 +63,9 @@ func TestLeastLoaded_Select(t *testing.T) {
 			pods: []corev1.Pod{
 				{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:       "pod-a",
-						Namespace:  "default",
-						Finalizers: []string{"test"},
+						Name:              "pod-a",
+						Namespace:         "default",
+						Finalizers:        []string{"test"},
 						DeletionTimestamp: &metav1.Time{Time: metav1.Now().Time},
 					},
 				},

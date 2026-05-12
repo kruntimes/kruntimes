@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -15,6 +14,8 @@ import (
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/airconduct/kruntime/api/v1alpha1"
 )
 
 var (

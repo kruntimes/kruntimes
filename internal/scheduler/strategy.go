@@ -3,9 +3,10 @@ package scheduler
 import (
 	"context"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/airconduct/kruntime/api/v1alpha1"
 )
 
 // Strategy picks the best pod from a list of candidates for a given task.

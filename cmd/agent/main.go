@@ -8,12 +8,13 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/airconduct/kruntime/internal/agent"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/airconduct/kruntime/internal/agent"
 )
 
 func main() {

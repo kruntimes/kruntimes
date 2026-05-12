@@ -10,8 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/airconduct/kruntime/api/v1alpha1"
 )
 
 const maxOutputBytes = 64 * 1024

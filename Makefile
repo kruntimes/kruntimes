@@ -53,8 +53,8 @@ test: generate manifests fmt vet ## Run unit tests.
 	go test $$(go list ./... | grep -v /test/integration) -coverprofile cover.out
 
 .PHONY: test-integration
-test-integration: generate manifests ## Run integration tests (requires envtest).
-	KUBEBUILDER_ASSETS="$(shell $(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(PROJECT_DIR)/testbin -p path)" \
+test-integration: generate manifests setup-envtest ## Run integration tests (requires envtest).
+	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" \
 	go test ./test/integration/... -v -count=1
 
 ##@ Build
