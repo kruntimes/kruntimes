@@ -71,7 +71,11 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, fmt.Errorf("get task: %w", err)
 	}
 
-	if task.Status.Phase != v1alpha1.TaskPending {
+	// Treat empty phase (CRD default not yet applied) as Pending.
+	if task.Status.Phase != "" && task.Status.Phase != v1alpha1.TaskPending {
+		return ctrl.Result{}, nil
+	}
+	if task.Spec.Runtime == "" {
 		return ctrl.Result{}, nil
 	}
 
@@ -89,7 +93,6 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods, &client.ListOptions{
-		Namespace:     req.Namespace,
 		LabelSelector: sel,
 	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list runtime pods: %w", err)
@@ -154,11 +157,11 @@ func pendingTaskPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			t, ok := e.Object.(*v1alpha1.Task)
-			return ok && t.Status.Phase == v1alpha1.TaskPending
+			return ok && (t.Status.Phase == "" || t.Status.Phase == v1alpha1.TaskPending)
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			t, ok := e.ObjectNew.(*v1alpha1.Task)
-			return ok && t.Status.Phase == v1alpha1.TaskPending
+			return ok && (t.Status.Phase == "" || t.Status.Phase == v1alpha1.TaskPending)
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			return false

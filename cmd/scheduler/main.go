@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"net/http"
 	"os"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -46,6 +47,8 @@ func main() {
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "kruntime-scheduler.airconduct.com",
 	})
+	mgr.AddHealthzCheck("healthz", func(_ *http.Request) error { return nil })
+	mgr.AddReadyzCheck("readyz", func(_ *http.Request) error { return nil })
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)

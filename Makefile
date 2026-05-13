@@ -57,6 +57,29 @@ test-integration: generate manifests setup-envtest ## Run integration tests (req
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" \
 	go test ./test/integration/... -v -count=1
 
+##@ E2E
+
+KIND_CLUSTER_NAME ?= kruntime-e2e
+
+.PHONY: e2e-setup
+e2e-setup: docker-build manifests ## Create kind cluster, load images, and deploy chart.
+	kind create cluster --name $(KIND_CLUSTER_NAME) --wait 120s
+	kind load docker-image $(IMG_SCHEDULER) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image $(IMG_AGENT) --name $(KIND_CLUSTER_NAME)
+	$(HELM) upgrade --install kruntime ./charts/kruntime \
+		--namespace $(NAMESPACE) --create-namespace --wait --timeout 120s
+
+.PHONY: e2e-test
+e2e-test: ## Run E2E tests against the kind cluster.
+	go test ./test/e2e/... -v -count=1 -tags=e2e
+
+.PHONY: e2e
+e2e: e2e-setup e2e-test ## Full E2E: setup cluster, deploy, run tests.
+
+.PHONY: e2e-cleanup
+e2e-cleanup: ## Delete the kind cluster.
+	kind delete cluster --name $(KIND_CLUSTER_NAME)
+
 ##@ Build
 
 .PHONY: build

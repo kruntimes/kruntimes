@@ -9,11 +9,14 @@ import (
 	"syscall"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/airconduct/kruntime/api/v1alpha1"
 	"github.com/airconduct/kruntime/internal/agent"
 )
 
@@ -35,11 +38,15 @@ func main() {
 
 	klog.Infof("Starting kruntime agent, hostname=%s", hostname)
 
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+
 	restConfig := ctrl.GetConfigOrDie()
 	restConfig.QPS = 50
 	restConfig.Burst = 100
 
-	c, err := client.New(restConfig, client.Options{Scheme: scheme.Scheme})
+	c, err := client.New(restConfig, client.Options{Scheme: scheme})
 	if err != nil {
 		klog.Fatalf("Failed to create client: %v", err)
 	}
