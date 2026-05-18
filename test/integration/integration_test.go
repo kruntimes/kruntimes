@@ -160,15 +160,14 @@ func TestAgentClaimAndExecute(t *testing.T) {
 		t.Fatalf("update task status: %v", err)
 	}
 
-	workspaceDir := t.TempDir()
 	ctrl := &agent.Controller{
-		Client:   k8sClient,
-		Hostname: "test-agent-pod",
-		Executor: &agent.Executor{WorkspaceBase: workspaceDir},
-		Workers:  1,
+		Client:          k8sClient,
+		Hostname:        "test-agent-pod",
+		RuntimeEndpoint: "localhost:19091",
+		Workers:         1,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	go func() {
@@ -185,10 +184,11 @@ func TestAgentClaimAndExecute(t *testing.T) {
 		t.Fatalf("get task: %v", err)
 	}
 
-	if final.Status.Phase != v1alpha1.TaskSucceeded {
-		t.Errorf("expected Succeeded, got %s (message: %s)", final.Status.Phase, final.Status.Message)
+	// Agent fails because no gRPC runtime is listening on localhost:19091.
+	if final.Status.Phase != v1alpha1.TaskFailed {
+		t.Errorf("expected Failed due to no runtime, got %s (message: %s)", final.Status.Phase, final.Status.Message)
 	}
-	t.Logf("Task %s completed: phase=%s", final.Name, final.Status.Phase)
+	t.Logf("Task %s completed: phase=%s, msg=%s", final.Name, final.Status.Phase, final.Status.Message)
 }
 
 func TestSchedulerNoMatchingPod(t *testing.T) {

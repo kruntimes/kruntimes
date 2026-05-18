@@ -22,11 +22,13 @@ import (
 
 func main() {
 	var (
-		metricsAddr string
-		workers     int
+		metricsAddr     string
+		runtimeEndpoint string
+		workers         int
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":9090", "The address the metrics endpoint binds to.")
+	flag.StringVar(&runtimeEndpoint, "runtime-endpoint", "localhost:9091", "gRPC endpoint of the runtime server.")
 	flag.IntVar(&workers, "workers", 2, "Number of concurrent task execution workers.")
 	klog.InitFlags(nil)
 	flag.Parse()
@@ -36,7 +38,7 @@ func main() {
 		hostname, _ = os.Hostname()
 	}
 
-	klog.Infof("Starting kruntime agent, hostname=%s", hostname)
+	klog.Infof("Starting kruntime agent, hostname=%s, runtime=%s", hostname, runtimeEndpoint)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -52,10 +54,10 @@ func main() {
 	}
 
 	ctrl := &agent.Controller{
-		Client:   c,
-		Hostname: hostname,
-		Executor: &agent.Executor{},
-		Workers:  workers,
+		Client:          c,
+		Hostname:        hostname,
+		RuntimeEndpoint: runtimeEndpoint,
+		Workers:         workers,
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

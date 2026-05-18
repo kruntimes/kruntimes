@@ -1,0 +1,3 @@
+FROM ubuntu:latest
+COPY bin/bash-runtime /bash-runtime
+ENTRYPOINT ["/bash-runtime"]

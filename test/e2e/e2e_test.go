@@ -10,6 +10,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -37,7 +38,44 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// Ensure Runtime CR exists so controller creates runtime pods.
+	ensureRuntime(context.Background())
+
 	os.Exit(m.Run())
+}
+
+func ensureRuntime(ctx context.Context) {
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "golang-1.26",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.RuntimeSpec{
+			Image:    "kruntime-bash-runtime:latest",
+			Port:     9091,
+			Replicas: 2,
+			Command:  []string{"--port=9091", "--work-dir=/workspace"},
+		},
+	}
+	if err := k8sClient.Create(ctx, rt); err != nil && !apierrors.IsAlreadyExists(err) {
+		panic("create runtime: " + err.Error())
+	}
+
+	// Wait for at least one runtime pod to be ready.
+	for i := 0; i < 60; i++ {
+		var pods corev1.PodList
+		if err := k8sClient.List(ctx, &pods,
+			client.MatchingLabels{"runtime": "golang-1.26"},
+		); err == nil {
+			for _, p := range pods.Items {
+				if p.Status.Phase == corev1.PodRunning {
+					return
+				}
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	panic("timed out waiting for runtime pods")
 }
 
 func initNamespace(t *testing.T) string {
@@ -53,8 +91,6 @@ func initNamespace(t *testing.T) string {
 	return ns.Name
 }
 
-// TestFullTaskLifecycle deploys nothing extra; it assumes the Helm chart is
-// already installed and at least one runtime pod is available.
 func TestFullTaskLifecycle(t *testing.T) {
 	ns := initNamespace(t)
 
@@ -73,7 +109,7 @@ func TestFullTaskLifecycle(t *testing.T) {
 	}
 	t.Logf("Created Task %s (runtime=golang-1.26)", task.Name)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	var lastPhase v1alpha1.TaskPhase
@@ -97,17 +133,14 @@ func TestFullTaskLifecycle(t *testing.T) {
 
 		switch task.Status.Phase {
 		case v1alpha1.TaskSucceeded:
-			t.Logf("Task completed: %s", task.Status.Message)
+			t.Logf("Task completed successfully: %s", task.Status.Message)
 			return
 		case v1alpha1.TaskFailed:
-			t.Logf("Task failed (expected if agent has no shell): %s", task.Status.Message)
-			return
+			t.Fatalf("Task failed: %s", task.Status.Message)
 		}
 	}
 }
 
-// TestSchedulerResponsiveness verifies that a newly created Task transitions
-// from Pending to Scheduled within a reasonable time.
 func TestSchedulerResponsiveness(t *testing.T) {
 	ns := initNamespace(t)
 

@@ -1,8 +1,5 @@
-FROM golang:1.26-alpine AS builder
-WORKDIR /src
-COPY . .
-RUN CGO_ENABLED=0 go build -o /agent ./cmd/agent
-
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=builder /agent /agent
+FROM ubuntu:latest
+RUN useradd -u 65532 nonroot
+COPY bin/agent /agent
+USER 65532
 ENTRYPOINT ["/agent"]

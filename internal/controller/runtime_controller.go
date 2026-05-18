@@ -1,0 +1,204 @@
+package controller
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
+	"github.com/airconduct/kruntime/api/v1alpha1"
+)
+
+const (
+	runtimeLabel      = "runtime"
+	agentDefaultImage = "kruntime-agent:latest"
+	workspaceVolume   = "workspace"
+	workspacePath     = "/workspace"
+)
+
+// RuntimeReconciler watches Runtime CRs and creates Deployments with agent sidecar.
+type RuntimeReconciler struct {
+	client.Client
+	Log    logr.Logger
+	Scheme *runtime.Scheme
+
+	DefaultAgentImage string
+}
+
+// +kubebuilder:rbac:groups=kruntime.airconduct.com,resources=runtimes,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=kruntime.airconduct.com,resources=runtimes/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+
+func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := r.Log.WithValues("runtime", req.NamespacedName)
+
+	var rt v1alpha1.Runtime
+	if err := r.Get(ctx, req.NamespacedName, &rt); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("get runtime: %w", err)
+	}
+
+	deploy := r.buildDeployment(&rt)
+
+	var existing appsv1.Deployment
+	err := r.Get(ctx, types.NamespacedName{Name: deploy.Name, Namespace: deploy.Namespace}, &existing)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("get deployment: %w", err)
+		}
+		if err := controllerutil.SetControllerReference(&rt, deploy, r.Scheme); err != nil {
+			return ctrl.Result{}, fmt.Errorf("set owner ref: %w", err)
+		}
+		if err := r.Create(ctx, deploy); err != nil {
+			return ctrl.Result{}, fmt.Errorf("create deployment: %w", err)
+		}
+		log.Info("Created Deployment", "deployment", deploy.Name)
+		return ctrl.Result{}, nil
+	}
+
+	updated := existing.DeepCopy()
+	updated.Spec = deploy.Spec
+	if err := r.Update(ctx, updated); err != nil {
+		return ctrl.Result{}, fmt.Errorf("update deployment: %w", err)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deployment {
+	name := rt.Name
+	ns := rt.Namespace
+	runtimeLabelVal := name
+	replicas := rt.Spec.Replicas
+	if replicas == 0 {
+		replicas = 1
+	}
+	port := rt.Spec.Port
+	if port == 0 {
+		port = 9091
+	}
+	agentImage := rt.Spec.AgentImage
+	if agentImage == "" {
+		agentImage = agentDefaultImage
+	}
+	if r.DefaultAgentImage != "" {
+		agentImage = r.DefaultAgentImage
+	}
+
+	labels := map[string]string{
+		runtimeLabel: runtimeLabelVal,
+		"app":        "kruntime-" + name,
+	}
+
+	runtimeContainer := corev1.Container{
+		Name:            "runtime",
+		Image:           rt.Spec.Image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Args:            rt.Spec.Command,
+		Env:     rt.Spec.Env,
+		Resources: corev1.ResourceRequirements{
+			Requests: rt.Spec.Resources.Requests,
+			Limits:   rt.Spec.Resources.Limits,
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: workspaceVolume, MountPath: workspacePath},
+		},
+	}
+	if runtimeContainer.Resources.Requests == nil {
+		runtimeContainer.Resources.Requests = corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("250m"),
+			corev1.ResourceMemory: resource.MustParse("256Mi"),
+		}
+	}
+	if runtimeContainer.Resources.Limits == nil {
+		runtimeContainer.Resources.Limits = corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("2"),
+			corev1.ResourceMemory: resource.MustParse("2Gi"),
+		}
+	}
+
+	agentContainer := corev1.Container{
+		Name:            "agent",
+		Image:           agentImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Args: []string{
+			fmt.Sprintf("--runtime-endpoint=localhost:%d", port),
+		},
+		Env: []corev1.EnvVar{
+			{
+				Name: "HOSTNAME",
+				ValueFrom: &corev1.EnvVarSource{
+					FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+				},
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: workspaceVolume, MountPath: workspacePath},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			ReadOnlyRootFilesystem:   ptr(true),
+			RunAsNonRoot:             ptr(true),
+			AllowPrivilegeEscalation: ptr(false),
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("500m"),
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+		},
+	}
+
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-" + name,
+			Namespace: ns,
+			Labels:    labels,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{
+					ServiceAccountName: "kruntime-agent",
+					Containers:         []corev1.Container{runtimeContainer, agentContainer},
+					Volumes: []corev1.Volume{
+						{
+							Name: workspaceVolume,
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// SetupWithManager registers the reconciler with the controller manager.
+func (r *RuntimeReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&v1alpha1.Runtime{}).
+		Owns(&appsv1.Deployment{}).
+		Complete(r)
+}
+
+func ptr[T any](v T) *T { return &v }
