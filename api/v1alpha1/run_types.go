@@ -5,21 +5,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// TaskPhase is the lifecycle phase of a Task.
+// RunPhase is the lifecycle phase of a Run.
 // +kubebuilder:validation:Enum=Pending;Scheduled;Running;Succeeded;Failed
-type TaskPhase string
+type RunPhase string
 
 const (
-	TaskPending   TaskPhase = "Pending"
-	TaskScheduled TaskPhase = "Scheduled"
-	TaskRunning   TaskPhase = "Running"
-	TaskSucceeded TaskPhase = "Succeeded"
-	TaskFailed    TaskPhase = "Failed"
+	RunPending   RunPhase = "Pending"
+	RunScheduled RunPhase = "Scheduled"
+	RunRunning   RunPhase = "Running"
+	RunSucceeded RunPhase = "Succeeded"
+	RunFailed    RunPhase = "Failed"
 )
 
 // +kubebuilder:object:generate=true
-// TaskSpec defines the desired state of Task.
-type TaskSpec struct {
+// RunSpec defines the desired state of Run.
+type RunSpec struct {
 	// Runtime is the execution environment type (e.g., "golang-1.22-test").
 	// It maps to the "runtime" label on Runtime Pods.
 	// +kubebuilder:validation:Required
@@ -33,7 +33,7 @@ type TaskSpec struct {
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
-	// Timeout is the maximum duration the task is allowed to run.
+	// Timeout is the maximum duration the run is allowed to run.
 	// If not set, the agent applies a default timeout.
 	// +optional
 	Timeout *metav1.Duration `json:"timeout,omitempty"`
@@ -48,11 +48,11 @@ type TaskSpec struct {
 }
 
 // +kubebuilder:object:generate=true
-// TaskStatus defines the observed state of Task.
-type TaskStatus struct {
+// RunStatus defines the observed state of Run.
+type RunStatus struct {
 	// Phase is the current lifecycle phase of the task.
 	// +kubebuilder:default=Pending
-	Phase TaskPhase `json:"phase"`
+	Phase RunPhase `json:"phase"`
 
 	// AssignedPod is the name of the Runtime Pod assigned by the scheduler.
 	// +optional
@@ -62,11 +62,11 @@ type TaskStatus struct {
 	// +optional
 	Message string `json:"message,omitempty"`
 
-	// StartTime is when the task began executing.
+	// StartTime is when the run began executing.
 	// +optional
 	StartTime *metav1.Time `json:"startTime,omitempty"`
 
-	// CompletionTime is when the task finished (success or failure).
+	// CompletionTime is when the run finished (success or failure).
 	// +optional
 	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
 }
@@ -77,26 +77,26 @@ type TaskStatus struct {
 // +kubebuilder:printcolumn:name="Assigned Pod",type="string",JSONPath=".status.assignedPod"
 // +kubebuilder:printcolumn:name="Runtime",type="string",JSONPath=".spec.runtime"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
-// +kubebuilder:resource:path=tasks,scope=Namespaced,shortName="tk"
+// +kubebuilder:resource:path=runs,scope=Namespaced,shortName=rn
 
-// Task is the Schema for the tasks API.
-type Task struct {
+// Run is the Schema for the runs API.
+type Run struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   TaskSpec   `json:"spec,omitempty"`
-	Status TaskStatus `json:"status,omitempty"`
+	Spec   RunSpec   `json:"spec,omitempty"`
+	Status RunStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// TaskList contains a list of Task.
-type TaskList struct {
+// RunList contains a list of Run.
+type RunList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Task `json:"items"`
+	Items           []Run `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&Task{}, &TaskList{})
+	SchemeBuilder.Register(&Run{}, &RunList{})
 }

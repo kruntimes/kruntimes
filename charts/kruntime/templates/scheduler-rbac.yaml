@@ -8,7 +8,7 @@ rules:
   - apiGroups:
       - kruntime.airconduct.com
     resources:
-      - tasks
+      - runs
     verbs:
       - get
       - list
@@ -16,7 +16,7 @@ rules:
   - apiGroups:
       - kruntime.airconduct.com
     resources:
-      - tasks/status
+      - runs/status
     verbs:
       - get
       - update

@@ -29,7 +29,7 @@ func main() {
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":9090", "The address the metrics endpoint binds to.")
 	flag.StringVar(&runtimeEndpoint, "runtime-endpoint", "localhost:9091", "gRPC endpoint of the runtime server.")
-	flag.IntVar(&workers, "workers", 2, "Number of concurrent task execution workers.")
+	flag.IntVar(&workers, "workers", 2, "Number of concurrent run execution workers.")
 	klog.InitFlags(nil)
 	flag.Parse()
 

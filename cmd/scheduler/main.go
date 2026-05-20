@@ -54,13 +54,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	reconciler := &scheduler.TaskReconciler{
+	reconciler := &scheduler.RunReconciler{
 		Client:   mgr.GetClient(),
-		Log:      ctrl.Log.WithName("controllers").WithName("Task"),
+		Log:      ctrl.Log.WithName("controllers").WithName("Run"),
 		Strategy: &scheduler.LeastLoaded{},
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Task")
+		setupLog.Error(err, "unable to create controller", "controller", "Run")
 		os.Exit(1)
 	}
 

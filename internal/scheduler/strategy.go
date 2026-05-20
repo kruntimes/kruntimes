@@ -16,5 +16,5 @@ type Strategy interface {
 
 	// Select returns the most suitable pod for the task.
 	// Returns nil and an error if no pod can be selected.
-	Select(ctx context.Context, c client.Client, candidates []corev1.Pod, task *v1alpha1.Task) (*corev1.Pod, error)
+	Select(ctx context.Context, c client.Client, candidates []corev1.Pod, run *v1alpha1.Run) (*corev1.Pod, error)
 }

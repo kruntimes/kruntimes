@@ -85,44 +85,44 @@ func TestSchedulerReconcile(t *testing.T) {
 		t.Fatalf("update pod status: %v", err)
 	}
 
-	// Create pending task (status subresource prevents setting phase on Create)
-	task := &v1alpha1.Task{
+	// Create pending run (status subresource prevents setting phase on Create)
+	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "test-task-",
+			GenerateName: "test-run-",
 			Namespace:    ns.Name,
 		},
-		Spec: v1alpha1.TaskSpec{
+		Spec: v1alpha1.RunSpec{
 			Runtime:  "golang-1.26",
 			Commands: []string{"echo hello"},
 		},
 	}
-	if err := k8sClient.Create(context.Background(), task); err != nil {
+	if err := k8sClient.Create(context.Background(), run); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	task.Status.Phase = v1alpha1.TaskPending
-	if err := k8sClient.Status().Update(context.Background(), task); err != nil {
-		t.Fatalf("set task pending: %v", err)
+	run.Status.Phase = v1alpha1.RunPending
+	if err := k8sClient.Status().Update(context.Background(), run); err != nil {
+		t.Fatalf("set run pending: %v", err)
 	}
 
-	reconciler := &scheduler.TaskReconciler{
+	reconciler := &scheduler.RunReconciler{
 		Client:   k8sClient,
 		Log:      ctrl.Log.WithName("test"),
 		Strategy: &scheduler.LeastLoaded{},
 	}
 
 	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: types.NamespacedName{Name: task.Name, Namespace: task.Namespace},
+		NamespacedName: types.NamespacedName{Name: run.Name, Namespace: run.Namespace},
 	})
 	if err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	var updated v1alpha1.Task
-	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(task), &updated); err != nil {
+	var updated v1alpha1.Run
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &updated); err != nil {
 		t.Fatalf("get task: %v", err)
 	}
 
-	if updated.Status.Phase != v1alpha1.TaskScheduled {
+	if updated.Status.Phase != v1alpha1.RunScheduled {
 		t.Errorf("expected Scheduled, got %s", updated.Status.Phase)
 	}
 	if updated.Status.AssignedPod == "" {
@@ -139,25 +139,25 @@ func TestAgentClaimAndExecute(t *testing.T) {
 	}
 	defer k8sClient.Delete(context.Background(), ns)
 
-	task := &v1alpha1.Task{
+	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "test-task-",
+			GenerateName: "test-run-",
 			Namespace:    ns.Name,
 		},
-		Spec: v1alpha1.TaskSpec{
+		Spec: v1alpha1.RunSpec{
 			Runtime:  "golang-1.26",
 			Commands: []string{"echo hello"},
 		},
 	}
-	if err := k8sClient.Create(context.Background(), task); err != nil {
+	if err := k8sClient.Create(context.Background(), run); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 
 	// Set status to Scheduled + assigned
-	task.Status.Phase = v1alpha1.TaskScheduled
-	task.Status.AssignedPod = "test-agent-pod"
-	if err := k8sClient.Status().Update(context.Background(), task); err != nil {
-		t.Fatalf("update task status: %v", err)
+	run.Status.Phase = v1alpha1.RunScheduled
+	run.Status.AssignedPod = "test-agent-pod"
+	if err := k8sClient.Status().Update(context.Background(), run); err != nil {
+		t.Fatalf("update run status: %v", err)
 	}
 
 	ctrl := &agent.Controller{
@@ -179,13 +179,13 @@ func TestAgentClaimAndExecute(t *testing.T) {
 		t.Fatalf("controller run: %v", err)
 	}
 
-	var final v1alpha1.Task
-	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(task), &final); err != nil {
+	var final v1alpha1.Run
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &final); err != nil {
 		t.Fatalf("get task: %v", err)
 	}
 
 	// Agent fails because no gRPC runtime is listening on localhost:19091.
-	if final.Status.Phase != v1alpha1.TaskFailed {
+	if final.Status.Phase != v1alpha1.RunFailed {
 		t.Errorf("expected Failed due to no runtime, got %s (message: %s)", final.Status.Phase, final.Status.Message)
 	}
 	t.Logf("Task %s completed: phase=%s, msg=%s", final.Name, final.Status.Phase, final.Status.Message)
@@ -199,43 +199,43 @@ func TestSchedulerNoMatchingPod(t *testing.T) {
 	}
 	defer k8sClient.Delete(context.Background(), ns)
 
-	task := &v1alpha1.Task{
+	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "test-task-",
+			GenerateName: "test-run-",
 			Namespace:    ns.Name,
 		},
-		Spec: v1alpha1.TaskSpec{
+		Spec: v1alpha1.RunSpec{
 			Runtime:  "nonexistent-runtime",
 			Commands: []string{"echo hello"},
 		},
 	}
-	if err := k8sClient.Create(context.Background(), task); err != nil {
+	if err := k8sClient.Create(context.Background(), run); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	task.Status.Phase = v1alpha1.TaskPending
-	if err := k8sClient.Status().Update(context.Background(), task); err != nil {
-		t.Fatalf("set task pending: %v", err)
+	run.Status.Phase = v1alpha1.RunPending
+	if err := k8sClient.Status().Update(context.Background(), run); err != nil {
+		t.Fatalf("set run pending: %v", err)
 	}
 
-	reconciler := &scheduler.TaskReconciler{
+	reconciler := &scheduler.RunReconciler{
 		Client:   k8sClient,
 		Log:      ctrl.Log.WithName("test"),
 		Strategy: &scheduler.LeastLoaded{},
 	}
 
 	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: types.NamespacedName{Name: task.Name, Namespace: task.Namespace},
+		NamespacedName: types.NamespacedName{Name: run.Name, Namespace: run.Namespace},
 	})
 	if err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	var updated v1alpha1.Task
-	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(task), &updated); err != nil {
+	var updated v1alpha1.Run
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &updated); err != nil {
 		t.Fatalf("get task: %v", err)
 	}
 
-	if updated.Status.Phase != v1alpha1.TaskFailed {
+	if updated.Status.Phase != v1alpha1.RunFailed {
 		t.Errorf("expected Failed when no matching pod, got %s", updated.Status.Phase)
 	}
 	t.Logf("Task correctly failed: %s", updated.Status.Message)

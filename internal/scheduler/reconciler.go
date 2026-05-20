@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	tasksScheduled = prometheus.NewCounterVec(
+	runsScheduled = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "kruntime_scheduler_sync_total",
 			Help: "Total number of tasks processed by the scheduler.",
@@ -31,7 +31,7 @@ var (
 	syncDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "kruntime_scheduler_sync_duration_seconds",
-			Help:    "Latency of task scheduling.",
+			Help:    "Latency of run scheduling.",
 			Buckets: prometheus.DefBuckets,
 		},
 		[]string{"runtime"},
@@ -46,11 +46,11 @@ var (
 )
 
 func init() {
-	metrics.Registry.MustRegister(tasksScheduled, syncDuration, noPodsTotal)
+	metrics.Registry.MustRegister(runsScheduled, syncDuration, noPodsTotal)
 }
 
-// TaskReconciler watches Pending Tasks and assigns them to Runtime Pods.
-type TaskReconciler struct {
+// RunReconciler watches Pending Tasks and assigns them to Runtime Pods.
+type RunReconciler struct {
 	client.Client
 	Log      logr.Logger
 	Strategy Strategy
@@ -60,11 +60,11 @@ type TaskReconciler struct {
 // +kubebuilder:rbac:groups=kruntime.airconduct.com,resources=tasks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 
-func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := r.Log.WithValues("task", req.NamespacedName)
+func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := r.Log.WithValues("run", req.NamespacedName)
 
-	var task v1alpha1.Task
-	if err := r.Get(ctx, req.NamespacedName, &task); err != nil {
+	var run v1alpha1.Run
+	if err := r.Get(ctx, req.NamespacedName, &run); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
@@ -72,20 +72,20 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	// Treat empty phase (CRD default not yet applied) as Pending.
-	if task.Status.Phase != "" && task.Status.Phase != v1alpha1.TaskPending {
+	if run.Status.Phase != "" && run.Status.Phase != v1alpha1.RunPending {
 		return ctrl.Result{}, nil
 	}
-	if task.Spec.Runtime == "" {
+	if run.Spec.Runtime == "" {
 		return ctrl.Result{}, nil
 	}
 
-	log.Info("Scheduling task", "runtime", task.Spec.Runtime)
+	log.Info("Scheduling task", "runtime", run.Spec.Runtime)
 	start := time.Now()
 	defer func() {
-		syncDuration.WithLabelValues(task.Spec.Runtime).Observe(time.Since(start).Seconds())
+		syncDuration.WithLabelValues(run.Spec.Runtime).Observe(time.Since(start).Seconds())
 	}()
 
-	reqLabel, err := labels.NewRequirement("runtime", selection.Equals, []string{task.Spec.Runtime})
+	reqLabel, err := labels.NewRequirement("runtime", selection.Equals, []string{run.Spec.Runtime})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("build label requirement: %w", err)
 	}
@@ -106,62 +106,62 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	if len(candidates) == 0 {
-		noPodsTotal.WithLabelValues(task.Spec.Runtime).Inc()
-		log.Info("No available runtime pods", "runtime", task.Spec.Runtime)
+		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
+		log.Info("No available runtime pods", "runtime", run.Spec.Runtime)
 
-		task.Status.Phase = v1alpha1.TaskFailed
-		task.Status.Message = fmt.Sprintf("no available runtime pods for runtime %q", task.Spec.Runtime)
-		if err := r.Status().Update(ctx, &task); err != nil {
-			return ctrl.Result{}, fmt.Errorf("update task status: %w", err)
+		run.Status.Phase = v1alpha1.RunFailed
+		run.Status.Message = fmt.Sprintf("no available runtime pods for runtime %q", run.Spec.Runtime)
+		if err := r.Status().Update(ctx, &run); err != nil {
+			return ctrl.Result{}, fmt.Errorf("update run status: %w", err)
 		}
-		tasksScheduled.WithLabelValues(task.Spec.Runtime, "no_pods").Inc()
+		runsScheduled.WithLabelValues(run.Spec.Runtime, "no_pods").Inc()
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	selected, err := r.Strategy.Select(ctx, r.Client, candidates, &task)
+	selected, err := r.Strategy.Select(ctx, r.Client, candidates, &run)
 	if err != nil {
-		noPodsTotal.WithLabelValues(task.Spec.Runtime).Inc()
+		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
 
-		task.Status.Phase = v1alpha1.TaskFailed
-		task.Status.Message = fmt.Sprintf("pod selection failed: %v", err)
-		if err := r.Status().Update(ctx, &task); err != nil {
-			return ctrl.Result{}, fmt.Errorf("update task status: %w", err)
+		run.Status.Phase = v1alpha1.RunFailed
+		run.Status.Message = fmt.Sprintf("pod selection failed: %v", err)
+		if err := r.Status().Update(ctx, &run); err != nil {
+			return ctrl.Result{}, fmt.Errorf("update run status: %w", err)
 		}
-		tasksScheduled.WithLabelValues(task.Spec.Runtime, "selection_error").Inc()
+		runsScheduled.WithLabelValues(run.Spec.Runtime, "selection_error").Inc()
 		return ctrl.Result{}, nil
 	}
 
-	task.Status.AssignedPod = selected.Name
-	task.Status.Phase = v1alpha1.TaskScheduled
-	if err := r.Status().Update(ctx, &task); err != nil {
+	run.Status.AssignedPod = selected.Name
+	run.Status.Phase = v1alpha1.RunScheduled
+	if err := r.Status().Update(ctx, &run); err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{Requeue: true}, nil
 		}
-		return ctrl.Result{}, fmt.Errorf("update task status: %w", err)
+		return ctrl.Result{}, fmt.Errorf("update run status: %w", err)
 	}
 
 	log.Info("Task scheduled", "pod", selected.Name)
-	tasksScheduled.WithLabelValues(task.Spec.Runtime, "scheduled").Inc()
+	runsScheduled.WithLabelValues(run.Spec.Runtime, "scheduled").Inc()
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager registers the reconciler with the controller manager.
-func (r *TaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *RunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.Task{}).
-		WithEventFilter(pendingTaskPredicate()).
+		For(&v1alpha1.Run{}).
+		WithEventFilter(pendingRunPredicate()).
 		Complete(r)
 }
 
-func pendingTaskPredicate() predicate.Predicate {
+func pendingRunPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
-			t, ok := e.Object.(*v1alpha1.Task)
-			return ok && (t.Status.Phase == "" || t.Status.Phase == v1alpha1.TaskPending)
+			t, ok := e.Object.(*v1alpha1.Run)
+			return ok && (t.Status.Phase == "" || t.Status.Phase == v1alpha1.RunPending)
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			t, ok := e.ObjectNew.(*v1alpha1.Task)
-			return ok && (t.Status.Phase == "" || t.Status.Phase == v1alpha1.TaskPending)
+			t, ok := e.ObjectNew.(*v1alpha1.Run)
+			return ok && (t.Status.Phase == "" || t.Status.Phase == v1alpha1.RunPending)
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			return false

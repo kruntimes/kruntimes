@@ -9,30 +9,30 @@ import (
 	"github.com/airconduct/kruntime/api/v1alpha1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/airconduct/kruntime/api/taskruntime/v1"
 )
 
 var (
-	tasksCompleted = promauto.NewCounterVec(
+	runsCompleted = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "kruntime_agent_tasks_total",
-			Help: "Total number of tasks completed by this agent.",
+			Name: "kruntime_agent_runs_total",
+			Help: "Total number of runs completed by this agent.",
 		},
 		[]string{"runtime", "result"},
 	)
-	taskDuration = promauto.NewHistogramVec(
+	runDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "kruntime_agent_task_duration_seconds",
-			Help:    "Task execution duration.",
+			Name:    "kruntime_agent_run_duration_seconds",
+			Help:    "Run execution duration.",
 			Buckets: prometheus.DefBuckets,
 		},
 		[]string{"runtime"},
@@ -40,12 +40,12 @@ var (
 	claimConflicts = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "kruntime_agent_claim_conflicts_total",
-			Help: "Total number of task claim conflicts.",
+			Help: "Total number of run claim conflicts.",
 		},
 	)
 )
 
-// Controller watches for Tasks assigned to this pod and delegates
+// Controller watches for Runs assigned to this pod and delegates
 // execution to the runtime via gRPC.
 type Controller struct {
 	Client          client.Client
@@ -78,89 +78,89 @@ func (c *Controller) Run(ctx context.Context) error {
 	sem := make(chan struct{}, c.Workers)
 
 	wait.UntilWithContext(ctx, func(ctx context.Context) {
-		task, err := c.claimTask(ctx)
+		run, err := c.claimRun(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			klog.V(4).Infof("No task claimed: %v", err)
+			klog.V(4).Infof("No run claimed: %v", err)
 			return
 		}
-		if task == nil {
+		if run == nil {
 			return
 		}
 
 		sem <- struct{}{}
 		c.wg.Add(1)
-		go func(t *v1alpha1.Task) {
+		go func(r *v1alpha1.Run) {
 			defer c.wg.Done()
 			defer func() { <-sem }()
-			c.executeTask(ctx, t)
-		}(task)
+			c.executeRun(ctx, r)
+		}(run)
 	}, 500*time.Millisecond)
 
 	c.wg.Wait()
 	return nil
 }
 
-func (c *Controller) claimTask(ctx context.Context) (*v1alpha1.Task, error) {
-	var tasks v1alpha1.TaskList
-	if err := c.Client.List(ctx, &tasks); err != nil {
-		return nil, fmt.Errorf("list tasks: %w", err)
+func (c *Controller) claimRun(ctx context.Context) (*v1alpha1.Run, error) {
+	var runList v1alpha1.RunList
+	if err := c.Client.List(ctx, &runList); err != nil {
+		return nil, fmt.Errorf("list runs: %w", err)
 	}
 
-	for i := range tasks.Items {
-		task := &tasks.Items[i]
-		if task.Status.AssignedPod != c.Hostname || task.Status.Phase != v1alpha1.TaskScheduled {
+	for i := range runList.Items {
+		run := &runList.Items[i]
+		if run.Status.AssignedPod != c.Hostname || run.Status.Phase != v1alpha1.RunScheduled {
 			continue
 		}
 
-		task.Status.Phase = v1alpha1.TaskRunning
-		task.Status.StartTime = &metav1.Time{Time: time.Now()}
+		run.Status.Phase = v1alpha1.RunRunning
+		run.Status.StartTime = &metav1.Time{Time: time.Now()}
 
-		if err := c.Client.Status().Update(ctx, task); err != nil {
+		if err := c.Client.Status().Update(ctx, run); err != nil {
 			if apierrors.IsConflict(err) {
 				claimConflicts.Inc()
 				continue
 			}
-			klog.Errorf("Failed to claim task %s: %v", task.Name, err)
+			klog.Errorf("Failed to claim run %s: %v", run.Name, err)
 			continue
 		}
 
-		klog.Infof("Claimed task %s", task.Name)
-		return task, nil
+		klog.Infof("Claimed run %s", run.Name)
+		return run, nil
 	}
 
 	return nil, nil
 }
 
-func (c *Controller) executeTask(ctx context.Context, task *v1alpha1.Task) {
+func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 	start := time.Now()
 	defer func() {
-		taskDuration.WithLabelValues(task.Spec.Runtime).Observe(time.Since(start).Seconds())
+		runDuration.WithLabelValues(run.Spec.Runtime).Observe(time.Since(start).Seconds())
 	}()
 
 	env := make(map[string]string)
-	for _, e := range task.Spec.Env {
+	for _, e := range run.Spec.Env {
 		env[e.Name] = e.Value
 	}
 	var timeoutSec int64
-	if task.Spec.Timeout != nil {
-		timeoutSec = int64(task.Spec.Timeout.Duration.Seconds())
+	if run.Spec.Timeout != nil {
+		timeoutSec = int64(run.Spec.Timeout.Duration.Seconds())
 	}
 
 	// Delegate to runtime via gRPC
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	_, err := c.runtimeCli.CreateTask(rctx, &pb.CreateTaskRequest{
-		Id:             string(task.UID),
-		Commands:       task.Spec.Commands,
+		Id:             string(run.UID),
+		Commands:       run.Spec.Commands,
 		Env:            env,
 		TimeoutSeconds: timeoutSec,
 	})
 	cancel()
 	if err != nil {
-		c.updateTaskStatus(context.Background(), task, v1alpha1.TaskFailed, fmt.Sprintf("runtime CreateTask: %v", err))
-		tasksCompleted.WithLabelValues(task.Spec.Runtime, string(v1alpha1.TaskFailed)).Inc()
+		c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("runtime CreateTask: %v", err))
+		runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
 		return
 	}
 
@@ -168,35 +168,35 @@ func (c *Controller) executeTask(ctx context.Context, task *v1alpha1.Task) {
 	for {
 		select {
 		case <-ctx.Done():
-			c.updateTaskStatus(context.Background(), task, v1alpha1.TaskFailed, "agent shutting down")
-			tasksCompleted.WithLabelValues(task.Spec.Runtime, string(v1alpha1.TaskFailed)).Inc()
+			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, "agent shutting down")
+			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
 			return
 		default:
 		}
 
 		rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		resp, err := c.runtimeCli.GetTask(rctx, &pb.GetTaskRequest{Id: string(task.UID)})
+		resp, err := c.runtimeCli.GetTask(rctx, &pb.GetTaskRequest{Id: string(run.UID)})
 		cancel()
 		if err != nil {
-			c.updateTaskStatus(context.Background(), task, v1alpha1.TaskFailed, fmt.Sprintf("runtime GetTask: %v", err))
-			tasksCompleted.WithLabelValues(task.Spec.Runtime, string(v1alpha1.TaskFailed)).Inc()
+			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("runtime GetTask: %v", err))
+			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
 			return
 		}
 
 		switch resp.State {
 		case pb.TaskState_TASK_STATE_SUCCEEDED:
-			c.updateTaskStatus(context.Background(), task, v1alpha1.TaskSucceeded, resp.Stdout)
-			tasksCompleted.WithLabelValues(task.Spec.Runtime, string(v1alpha1.TaskSucceeded)).Inc()
-			klog.Infof("Task %s succeeded", task.Name)
+			c.updateRunStatus(context.Background(), run, v1alpha1.RunSucceeded, resp.Stdout)
+			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunSucceeded)).Inc()
+			klog.Infof("Run %s succeeded", run.Name)
 			return
 		case pb.TaskState_TASK_STATE_FAILED:
 			msg := resp.ErrorMessage
 			if msg == "" {
 				msg = resp.Stderr
 			}
-			c.updateTaskStatus(context.Background(), task, v1alpha1.TaskFailed, msg)
-			tasksCompleted.WithLabelValues(task.Spec.Runtime, string(v1alpha1.TaskFailed)).Inc()
-			klog.Infof("Task %s failed: %s", task.Name, msg)
+			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, msg)
+			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
+			klog.Infof("Run %s failed: %s", run.Name, msg)
 			return
 		}
 
@@ -204,10 +204,10 @@ func (c *Controller) executeTask(ctx context.Context, task *v1alpha1.Task) {
 	}
 }
 
-func (c *Controller) updateTaskStatus(ctx context.Context, task *v1alpha1.Task, phase v1alpha1.TaskPhase, msg string) {
+func (c *Controller) updateRunStatus(ctx context.Context, run *v1alpha1.Run, phase v1alpha1.RunPhase, msg string) {
 	retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		latest := &v1alpha1.Task{}
-		if err := c.Client.Get(ctx, client.ObjectKeyFromObject(task), latest); err != nil {
+		latest := &v1alpha1.Run{}
+		if err := c.Client.Get(ctx, client.ObjectKeyFromObject(run), latest); err != nil {
 			if apierrors.IsNotFound(err) {
 				return nil
 			}

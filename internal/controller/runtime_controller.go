@@ -110,7 +110,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		Image:           rt.Spec.Image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Args:            rt.Spec.Command,
-		Env:     rt.Spec.Env,
+		Env:             rt.Spec.Env,
 		Resources: corev1.ResourceRequirements{
 			Requests: rt.Spec.Resources.Requests,
 			Limits:   rt.Spec.Resources.Limits,

@@ -19,22 +19,22 @@ import (
 )
 
 type taskEntry struct {
-	cmd     *exec.Cmd
-	state   pb.TaskState
+	cmd      *exec.Cmd
+	state    pb.TaskState
 	exitCode int32
-	stdout  bytes.Buffer
-	stderr  bytes.Buffer
-	errMsg  string
-	done    chan struct{}
+	stdout   bytes.Buffer
+	stderr   bytes.Buffer
+	errMsg   string
+	done     chan struct{}
 }
 
 // Server implements the TaskRuntime gRPC service by executing bash commands.
 type Server struct {
 	pb.UnimplementedTaskRuntimeServer
 
-	mu       sync.Mutex
-	tasks    map[string]*taskEntry
-	workDir  string
+	mu      sync.Mutex
+	tasks   map[string]*taskEntry
+	workDir string
 }
 
 func NewServer(workDir string) *Server {

@@ -4,16 +4,16 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.3
-  name: tasks.kruntime.airconduct.com
+  name: runs.kruntime.airconduct.com
 spec:
   group: kruntime.airconduct.com
   names:
-    kind: Task
-    listKind: TaskList
-    plural: tasks
+    kind: Run
+    listKind: RunList
+    plural: runs
     shortNames:
-    - tk
-    singular: task
+    - rn
+    singular: run
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -32,7 +32,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Task is the Schema for the tasks API.
+        description: Run is the Schema for the runs API.
         properties:
           apiVersion:
             description: |-
@@ -52,7 +52,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: TaskSpec defines the desired state of Task.
+            description: RunSpec defines the desired state of Run.
             properties:
               commands:
                 description: Commands is the list of commands to execute sequentially.
@@ -230,7 +230,7 @@ spec:
                 type: string
               timeout:
                 description: |-
-                  Timeout is the maximum duration the task is allowed to run.
+                  Timeout is the maximum duration the run is allowed to run.
                   If not set, the agent applies a default timeout.
                 type: string
             required:
@@ -238,15 +238,14 @@ spec:
             - runtime
             type: object
           status:
-            description: TaskStatus defines the observed state of Task.
+            description: RunStatus defines the observed state of Run.
             properties:
               assignedPod:
                 description: AssignedPod is the name of the Runtime Pod assigned by
                   the scheduler.
                 type: string
               completionTime:
-                description: CompletionTime is when the task finished (success or
-                  failure).
+                description: CompletionTime is when the run finished (success or failure).
                 format: date-time
                 type: string
               message:
@@ -263,7 +262,7 @@ spec:
                 - Failed
                 type: string
               startTime:
-                description: StartTime is when the task began executing.
+                description: StartTime is when the run began executing.
                 format: date-time
                 type: string
             required:

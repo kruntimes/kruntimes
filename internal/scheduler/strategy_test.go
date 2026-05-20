@@ -20,15 +20,15 @@ func TestLeastLoaded_Select(t *testing.T) {
 	tests := []struct {
 		name    string
 		pods    []corev1.Pod
-		tasks   []v1alpha1.Task
-		task    *v1alpha1.Task
+		tasks   []v1alpha1.Run
+		task    *v1alpha1.Run
 		wantPod string
 		wantErr bool
 	}{
 		{
 			name:    "no candidate pods",
 			pods:    nil,
-			task:    &v1alpha1.Task{},
+			task:    &v1alpha1.Run{},
 			wantErr: true,
 		},
 		{
@@ -36,7 +36,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 			pods: []corev1.Pod{
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
 			},
-			task:    &v1alpha1.Task{},
+			task:    &v1alpha1.Run{},
 			wantPod: "pod-a",
 		},
 		{
@@ -45,17 +45,17 @@ func TestLeastLoaded_Select(t *testing.T) {
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
 			},
-			tasks: []v1alpha1.Task{
+			tasks: []v1alpha1.Run{
 				{
-					ObjectMeta: metav1.ObjectMeta{Name: "task-1", Namespace: "default"},
-					Status:     v1alpha1.TaskStatus{Phase: v1alpha1.TaskRunning, AssignedPod: "pod-a"},
+					ObjectMeta: metav1.ObjectMeta{Name: "run-1", Namespace: "default"},
+					Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "pod-a"},
 				},
 				{
-					ObjectMeta: metav1.ObjectMeta{Name: "task-2", Namespace: "default"},
-					Status:     v1alpha1.TaskStatus{Phase: v1alpha1.TaskRunning, AssignedPod: "pod-a"},
+					ObjectMeta: metav1.ObjectMeta{Name: "run-2", Namespace: "default"},
+					Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "pod-a"},
 				},
 			},
-			task:    &v1alpha1.Task{},
+			task:    &v1alpha1.Run{},
 			wantPod: "pod-b",
 		},
 		{
@@ -71,7 +71,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 				},
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
 			},
-			task:    &v1alpha1.Task{},
+			task:    &v1alpha1.Run{},
 			wantPod: "pod-b",
 		},
 	}
@@ -119,7 +119,7 @@ func TestLeastLoaded_DeterministicTiebreak(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects().Build()
 	s := &LeastLoaded{}
 
-	pod, err := s.Select(context.Background(), client, pods, &v1alpha1.Task{})
+	pod, err := s.Select(context.Background(), client, pods, &v1alpha1.Run{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

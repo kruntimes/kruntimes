@@ -29,7 +29,7 @@ func NewListCmd(c client.Client) *cobra.Command {
 				ns = ""
 			}
 
-			var tasks v1alpha1.TaskList
+			var tasks v1alpha1.RunList
 			if err := c.List(context.Background(), &tasks, client.InNamespace(ns)); err != nil {
 				return fmt.Errorf("list tasks: %w", err)
 			}
@@ -62,6 +62,6 @@ func NewListCmd(c client.Client) *cobra.Command {
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
 	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "List tasks across all namespaces")
 	cmd.Flags().StringVar(&runtime, "runtime", "", "Filter by runtime type")
-	cmd.Flags().StringVar(&phase, "phase", "", "Filter by task phase")
+	cmd.Flags().StringVar(&phase, "phase", "", "Filter by run phase")
 	return cmd
 }

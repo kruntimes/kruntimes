@@ -92,7 +92,7 @@ CI 系统 (Jenkins/GA) 或 Developer
         │ task-cli run --runtime golang-1.22 -- go test ./...
         ▼
    ┌─────────────────────────┐
-   │  创建 Task CRD 对象      │  <─── 唯一入口
+   │  创建 Run CRD 对象      │  <─── 唯一入口
    │  (phase: Pending)       │
    └───────────┬─────────────┘
                │ Watch
@@ -105,7 +105,7 @@ CI 系统 (Jenkins/GA) 或 Developer
             │ Update Task
             ▼
 ┌───────────────────────────────────────┐
-│  Task (phase: Scheduled, assignedPod: golang-pod-a)  │
+│  Run (phase: Scheduled, assignedPod: golang-pod-a)  │
 └───────────┬───────────────────────────┘
             │ Watch (by golang-pod-a)
             ▼

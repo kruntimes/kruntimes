@@ -91,52 +91,52 @@ func initNamespace(t *testing.T) string {
 	return ns.Name
 }
 
-func TestFullTaskLifecycle(t *testing.T) {
+func TestFullRunLifecycle(t *testing.T) {
 	ns := initNamespace(t)
 
-	task := &v1alpha1.Task{
+	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "e2e-",
 			Namespace:    ns,
 		},
-		Spec: v1alpha1.TaskSpec{
+		Spec: v1alpha1.RunSpec{
 			Runtime:  "golang-1.26",
 			Commands: []string{"echo hello"},
 		},
 	}
-	if err := k8sClient.Create(context.Background(), task); err != nil {
+	if err := k8sClient.Create(context.Background(), run); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	t.Logf("Created Task %s (runtime=golang-1.26)", task.Name)
+	t.Logf("Created Run %s (runtime=golang-1.26)", run.Name)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	var lastPhase v1alpha1.TaskPhase
+	var lastPhase v1alpha1.RunPhase
 	for {
 		select {
 		case <-ctx.Done():
-			t.Fatalf("timed out waiting for task completion, last phase=%s", lastPhase)
+			t.Fatalf("timed out waiting for run completion, last phase=%s", lastPhase)
 		default:
 		}
 
 		time.Sleep(time.Second)
 
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(task), task); err != nil {
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(task), run); err != nil {
 			t.Fatalf("get task: %v", err)
 		}
 
-		if task.Status.Phase != lastPhase {
-			t.Logf("Task %s: %s -> %s (pod=%s)", task.Name, lastPhase, task.Status.Phase, task.Status.AssignedPod)
-			lastPhase = task.Status.Phase
+		if run.Status.Phase != lastPhase {
+			t.Logf("Task %s: %s -> %s (pod=%s)", run.Name, lastPhase, run.Status.Phase, run.Status.AssignedPod)
+			lastPhase = run.Status.Phase
 		}
 
-		switch task.Status.Phase {
-		case v1alpha1.TaskSucceeded:
-			t.Logf("Task completed successfully: %s", task.Status.Message)
+		switch run.Status.Phase {
+		case v1alpha1.RunSucceeded:
+			t.Logf("Task completed successfully: %s", run.Status.Message)
 			return
-		case v1alpha1.TaskFailed:
-			t.Fatalf("Task failed: %s", task.Status.Message)
+		case v1alpha1.RunFailed:
+			t.Fatalf("Task failed: %s", run.Status.Message)
 		}
 	}
 }
@@ -144,17 +144,17 @@ func TestFullTaskLifecycle(t *testing.T) {
 func TestSchedulerResponsiveness(t *testing.T) {
 	ns := initNamespace(t)
 
-	task := &v1alpha1.Task{
+	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "e2e-perf-",
 			Namespace:    ns,
 		},
-		Spec: v1alpha1.TaskSpec{
+		Spec: v1alpha1.RunSpec{
 			Runtime:  "golang-1.26",
 			Commands: []string{"echo hello"},
 		},
 	}
-	if err := k8sClient.Create(context.Background(), task); err != nil {
+	if err := k8sClient.Create(context.Background(), run); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 
@@ -166,15 +166,15 @@ func TestSchedulerResponsiveness(t *testing.T) {
 	for {
 		time.Sleep(200 * time.Millisecond)
 
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(task), task); err != nil {
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(task), run); err != nil {
 			t.Fatalf("get task: %v", err)
 		}
 
-		if task.Status.Phase != v1alpha1.TaskPending {
+		if run.Status.Phase != v1alpha1.RunPending {
 			elapsed := time.Since(start)
-			t.Logf("Task scheduled in %v (phase=%s, pod=%s)", elapsed, task.Status.Phase, task.Status.AssignedPod)
+			t.Logf("Task scheduled in %v (phase=%s, pod=%s)", elapsed, run.Status.Phase, run.Status.AssignedPod)
 
-			if task.Status.AssignedPod == "" && task.Status.Phase != v1alpha1.TaskFailed {
+			if run.Status.AssignedPod == "" && run.Status.Phase != v1alpha1.RunFailed {
 				t.Error("expected assignedPod to be set after scheduling")
 			}
 			return

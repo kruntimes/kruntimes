@@ -31,19 +31,19 @@ func NewRunCmd(c client.Client) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "run --runtime <type> [--wait] [flags] -- <command> [args...]",
-		Short: "Create and optionally wait for a Task to complete.",
+		Short: "Create and optionally wait for a Run to complete.",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.Runtime == "" {
 				return fmt.Errorf("--runtime is required")
 			}
 
-			task := &v1alpha1.Task{
+			run := &v1alpha1.Run{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      fmt.Sprintf("task-%s", rand.String(8)),
+					Name:      fmt.Sprintf("run-%s", rand.String(8)),
 					Namespace: opts.Namespace,
 				},
-				Spec: v1alpha1.TaskSpec{
+				Spec: v1alpha1.RunSpec{
 					Runtime:   opts.Runtime,
 					Commands:  []string{strings.Join(args, " ")},
 					RepoURL:   opts.RepoURL,
@@ -52,7 +52,7 @@ func NewRunCmd(c client.Client) *cobra.Command {
 			}
 
 			if opts.Timeout > 0 {
-				task.Spec.Timeout = &metav1.Duration{Duration: opts.Timeout}
+				run.Spec.Timeout = &metav1.Duration{Duration: opts.Timeout}
 			}
 
 			for _, e := range opts.Env {
@@ -61,14 +61,14 @@ func NewRunCmd(c client.Client) *cobra.Command {
 				if len(parts) == 2 {
 					ev.Value = parts[1]
 				}
-				task.Spec.Env = append(task.Spec.Env, ev)
+				run.Spec.Env = append(run.Spec.Env, ev)
 			}
 
 			ctx := context.Background()
-			if err := c.Create(ctx, task); err != nil {
+			if err := c.Create(ctx, run); err != nil {
 				return fmt.Errorf("create task: %w", err)
 			}
-			fmt.Printf("Task %s created\n", task.Name)
+			fmt.Printf("Task %s created\n", run.Name)
 
 			if !opts.Wait {
 				return nil
@@ -77,21 +77,21 @@ func NewRunCmd(c client.Client) *cobra.Command {
 			for {
 				time.Sleep(500 * time.Millisecond)
 
-				latest := &v1alpha1.Task{}
-				if err := c.Get(ctx, types.NamespacedName{Name: task.Name, Namespace: task.Namespace}, latest); err != nil {
+				latest := &v1alpha1.Run{}
+				if err := c.Get(ctx, types.NamespacedName{Name: run.Name, Namespace: run.Namespace}, latest); err != nil {
 					return fmt.Errorf("get task: %w", err)
 				}
 
 				switch latest.Status.Phase {
-				case v1alpha1.TaskSucceeded:
+				case v1alpha1.RunSucceeded:
 					fmt.Println(latest.Status.Message)
 					return nil
-				case v1alpha1.TaskFailed:
+				case v1alpha1.RunFailed:
 					fmt.Println(latest.Status.Message)
 					return fmt.Errorf("task failed")
-				case v1alpha1.TaskRunning:
+				case v1alpha1.RunRunning:
 					fmt.Printf("\rRunning on %s...", latest.Status.AssignedPod)
-				case v1alpha1.TaskScheduled:
+				case v1alpha1.RunScheduled:
 					fmt.Printf("\rScheduled to %s...", latest.Status.AssignedPod)
 				}
 			}
@@ -103,7 +103,7 @@ func NewRunCmd(c client.Client) *cobra.Command {
 	cmd.Flags().StringVar(&opts.RepoURL, "repo-url", "", "Git repository URL")
 	cmd.Flags().StringVar(&opts.CommitSHA, "commit-sha", "", "Git commit SHA")
 	cmd.Flags().StringArrayVar(&opts.Env, "env", nil, "Environment variables (key=val)")
-	cmd.Flags().BoolVar(&opts.Wait, "wait", false, "Block until task completes")
+	cmd.Flags().BoolVar(&opts.Wait, "wait", false, "Block until run completes")
 	cmd.Flags().StringVarP(&opts.Namespace, "namespace", "n", "default", "Kubernetes namespace")
 
 	return cmd

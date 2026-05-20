@@ -1,18 +1,18 @@
 # kruntime
 
-Two-layer scheduling system for Kubernetes that reduces CI/CD task startup time from minutes to seconds.
+Two-layer scheduling system for Kubernetes that reduces CI/CD run startup time from minutes to seconds.
 
 ## Architecture
 
 ```
-CI System → task-cli → Task CRD (Pending)
+CI System → task-cli → Run CRD (Pending)
                           │
-                    Scheduler → Task (Scheduled, assignedPod)
+                    Scheduler → Run (Scheduled, assignedPod)
                           │
-                    Agent (runtime pod) → executes → Task (Succeeded/Failed)
+                    Agent (runtime pod) → executes → Run (Succeeded/Failed)
 ```
 
-Key insight: Scheduler and Agent are fully decoupled — they communicate exclusively through Task CRD status updates.
+Key insight: Scheduler and Agent are fully decoupled — they communicate exclusively through Run CRD status updates.
 
 ## Components
 
@@ -36,8 +36,8 @@ make build
 ```
 
 This produces three binaries in `bin/`:
-- `scheduler` — the task scheduling controller
-- `agent` — the per-pod task executor
+- `scheduler` — the run scheduling controller
+- `agent` — the per-pod run executor
 - `task-cli` — the command-line interface
 
 ### Deploy to Kubernetes
@@ -68,7 +68,7 @@ task-cli run --runtime golang-1.26 --repo-url https://github.com/example/repo.gi
 # List tasks
 task-cli list --all-namespaces
 
-# Get task details
+# Get run details
 task-cli get task-xxxxxxxx
 ```
 
@@ -88,7 +88,7 @@ make test-integration
 make docker-build
 ```
 
-## Task Lifecycle
+## Run Lifecycle
 
 ```
 Pending → Scheduled → Running → Succeeded

@@ -28,8 +28,8 @@ func main() {
 	}
 
 	root := &cobra.Command{
-		Use:   "task-cli",
-		Short: "CLI for interacting with kruntime Task CRDs.",
+		Use:   "run-cli",
+		Short: "CLI for interacting with kruntime Run CRDs.",
 	}
 
 	root.AddCommand(taskcli.NewRunCmd(c))

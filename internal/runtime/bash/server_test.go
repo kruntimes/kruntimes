@@ -169,7 +169,7 @@ func TestCreateTask_Duplicate(t *testing.T) {
 		Commands: []string{"echo second"},
 	})
 	if err == nil {
-		t.Error("expected error for duplicate task ID")
+		t.Error("expected error for duplicate run ID")
 	}
 }
 

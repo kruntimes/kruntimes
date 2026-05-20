@@ -16,7 +16,7 @@ type LeastLoaded struct{}
 
 func (s *LeastLoaded) Name() string { return "least-loaded" }
 
-func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []corev1.Pod, task *v1alpha1.Task) (*corev1.Pod, error) {
+func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []corev1.Pod, run *v1alpha1.Run) (*corev1.Pod, error) {
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no candidate pods")
 	}
@@ -33,7 +33,7 @@ func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []
 			continue
 		}
 
-		var tasks v1alpha1.TaskList
+		var tasks v1alpha1.RunList
 		if err := c.List(ctx, &tasks,
 			client.InNamespace(pod.Namespace),
 		); err != nil {
@@ -42,7 +42,7 @@ func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []
 
 		count := 0
 		for _, t := range tasks.Items {
-			if t.Status.AssignedPod == pod.Name && t.Status.Phase == v1alpha1.TaskRunning {
+			if t.Status.AssignedPod == pod.Name && t.Status.Phase == v1alpha1.RunRunning {
 				count++
 			}
 		}
