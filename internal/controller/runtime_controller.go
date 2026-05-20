@@ -69,10 +69,12 @@ func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	updated := existing.DeepCopy()
-	updated.Spec = deploy.Spec
-	if err := r.Update(ctx, updated); err != nil {
-		return ctrl.Result{}, fmt.Errorf("update deployment: %w", err)
+	// Propagate Deployment status back to Runtime.
+	if rt.Status.ReadyReplicas != existing.Status.ReadyReplicas {
+		rt.Status.ReadyReplicas = existing.Status.ReadyReplicas
+		if err := r.Status().Update(ctx, &rt); err != nil {
+			return ctrl.Result{}, fmt.Errorf("update runtime status: %w", err)
+		}
 	}
 
 	return ctrl.Result{}, nil
