@@ -65,7 +65,7 @@ KIND_CLUSTER_NAME ?= kruntime-e2e
 
 .PHONY: e2e-setup
 e2e-setup: docker-build manifests ## Create kind cluster, load images, and deploy chart.
-	kind create cluster --name $(KIND_CLUSTER_NAME) --wait 120s
+	kind get clusters | grep $(KIND_CLUSTER_NAME) || kind create cluster --name $(KIND_CLUSTER_NAME) --wait 120s
 	kind load docker-image $(IMG_SCHEDULER) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(IMG_CONTROLLER) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(IMG_AGENT) --name $(KIND_CLUSTER_NAME)
