@@ -1,0 +1,16 @@
+apiVersion: kruntime.airconduct.com/v1alpha1
+kind: Runtime
+metadata:
+  name: bash
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kruntime-runtimes.labels" . | nindent 4 }}
+spec:
+  image: {{ .Values.bash.image }}
+  port: {{ .Values.bash.port }}
+  replicas: {{ .Values.bash.replicas }}
+  resources:
+    {{- toYaml .Values.bash.resources | nindent 4 }}
+  command:
+    - --port={{ .Values.bash.port }}
+    - --work-dir=/workspace

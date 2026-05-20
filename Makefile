@@ -159,12 +159,17 @@ template: manifests ## Render Helm chart to stdout for validation.
 ##@ Deployment
 
 .PHONY: deploy
-deploy: manifests ## Deploy kruntime via Helm.
+deploy: manifests ## Deploy kruntime platform via Helm.
 	$(HELM) upgrade --install kruntime ./charts/kruntime --namespace $(NAMESPACE) --create-namespace
+
+.PHONY: deploy-runtimes
+deploy-runtimes: ## Deploy built-in runtimes via Helm.
+	$(HELM) upgrade --install kruntime-runtimes ./charts/kruntime-runtimes --namespace $(NAMESPACE) --create-namespace
 
 .PHONY: undeploy
 undeploy: ## Remove all kruntime resources from K8s cluster.
-	$(HELM) uninstall kruntime --namespace $(NAMESPACE) --ignore-not-found
+	-$(HELM) uninstall kruntime-runtimes --namespace $(NAMESPACE) --ignore-not-found
+	-$(HELM) uninstall kruntime --namespace $(NAMESPACE) --ignore-not-found
 
 ##@ Proto
 
