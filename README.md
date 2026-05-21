@@ -5,7 +5,7 @@ Two-layer scheduling system for Kubernetes that reduces CI/CD run startup time f
 ## Architecture
 
 ```
-CI System → task-cli → Run CRD (Pending)
+CI System → run-cli → Run CRD (Pending)
                           │
                     Scheduler → Run (Scheduled, assignedPod)
                           │
@@ -19,7 +19,7 @@ Key insight: Scheduler and Agent are fully decoupled — they communicate exclus
 - **Task CRD** (`kruntime.airconduct.com/v1alpha1`) — the central state machine
 - **Scheduler** — K8s controller that watches Pending Tasks and assigns them to Runtime Pods
 - **Agent** — process inside each Runtime Pod that claims and executes assigned Tasks
-- **task-cli** — lightweight CLI for creating and monitoring Tasks
+- **run-cli** — lightweight CLI for creating and monitoring Tasks
 
 ## Quick Start
 
@@ -38,7 +38,7 @@ make build
 This produces three binaries in `bin/`:
 - `scheduler` — the run scheduling controller
 - `agent` — the per-pod run executor
-- `task-cli` — the command-line interface
+- `run-cli` — the command-line interface
 
 ### Deploy to Kubernetes
 
@@ -60,16 +60,16 @@ kubectl apply -f config/manager/runtime_deployment.yaml
 
 ```bash
 # Run a quick test
-task-cli run --runtime golang-1.26 --wait -- echo "Hello from kruntime"
+run-cli run --runtime golang-1.26 --wait -- echo "Hello from kruntime"
 
 # Run tests with a repo
-task-cli run --runtime golang-1.26 --repo-url https://github.com/example/repo.git --wait -- go test ./...
+run-cli run --runtime golang-1.26 --repo-url https://github.com/example/repo.git --wait -- go test ./...
 
 # List tasks
-task-cli list --all-namespaces
+run-cli list --all-namespaces
 
 # Get run details
-task-cli get task-xxxxxxxx
+run-cli get run-xxxxxxxx
 ```
 
 ## Development

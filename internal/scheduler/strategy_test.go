@@ -21,14 +21,14 @@ func TestLeastLoaded_Select(t *testing.T) {
 		name    string
 		pods    []corev1.Pod
 		tasks   []v1alpha1.Run
-		task    *v1alpha1.Run
+		run     *v1alpha1.Run
 		wantPod string
 		wantErr bool
 	}{
 		{
 			name:    "no candidate pods",
 			pods:    nil,
-			task:    &v1alpha1.Run{},
+			run:    &v1alpha1.Run{},
 			wantErr: true,
 		},
 		{
@@ -36,7 +36,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 			pods: []corev1.Pod{
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
 			},
-			task:    &v1alpha1.Run{},
+			run:    &v1alpha1.Run{},
 			wantPod: "pod-a",
 		},
 		{
@@ -55,7 +55,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 					Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "pod-a"},
 				},
 			},
-			task:    &v1alpha1.Run{},
+			run:    &v1alpha1.Run{},
 			wantPod: "pod-b",
 		},
 		{
@@ -71,7 +71,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 				},
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
 			},
-			task:    &v1alpha1.Run{},
+			run:    &v1alpha1.Run{},
 			wantPod: "pod-b",
 		},
 	}
@@ -89,7 +89,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 			client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 			s := &LeastLoaded{}
 
-			pod, err := s.Select(context.Background(), client, tt.pods, tt.task)
+			pod, err := s.Select(context.Background(), client, tt.pods, tt.run)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")

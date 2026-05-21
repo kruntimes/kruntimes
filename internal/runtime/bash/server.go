@@ -52,7 +52,7 @@ func (s *Server) Execute(ctx context.Context, req *pb.ExecuteRequest) (*pb.Execu
 	defer s.mu.Unlock()
 
 	if _, exists := s.tasks[req.Id]; exists {
-		return nil, status.Errorf(codes.AlreadyExists, "task %s already exists", req.Id)
+		return nil, status.Errorf(codes.AlreadyExists, "request %s already exists", req.Id)
 	}
 
 	entry := &taskEntry{
@@ -71,7 +71,7 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 	s.mu.Unlock()
 
 	if !ok {
-		return nil, status.Errorf(codes.NotFound, "task %s not found", req.Id)
+		return nil, status.Errorf(codes.NotFound, "request %s not found", req.Id)
 	}
 
 	select {
@@ -112,7 +112,7 @@ func (s *Server) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.CancelR
 	entry, ok := s.tasks[req.Id]
 	if !ok {
 		s.mu.Unlock()
-		return nil, status.Errorf(codes.NotFound, "task %s not found", req.Id)
+		return nil, status.Errorf(codes.NotFound, "request %s not found", req.Id)
 	}
 	s.mu.Unlock() // unlock before killing to avoid deadlock
 

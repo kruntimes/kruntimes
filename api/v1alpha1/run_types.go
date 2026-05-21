@@ -50,7 +50,7 @@ type RunSpec struct {
 // +kubebuilder:object:generate=true
 // RunStatus defines the observed state of Run.
 type RunStatus struct {
-	// Phase is the current lifecycle phase of the task.
+	// Phase is the current lifecycle phase of the run.
 	// +kubebuilder:default=Pending
 	Phase RunPhase `json:"phase"`
 

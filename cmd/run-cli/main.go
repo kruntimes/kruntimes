@@ -12,7 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/airconduct/kruntime/api/v1alpha1"
-	"github.com/airconduct/kruntime/internal/taskcli"
+	"github.com/airconduct/kruntime/internal/runcli"
 )
 
 func main() {
@@ -32,9 +32,9 @@ func main() {
 		Short: "CLI for interacting with kruntime Run CRDs.",
 	}
 
-	root.AddCommand(taskcli.NewRunCmd(c))
-	root.AddCommand(taskcli.NewGetCmd(c))
-	root.AddCommand(taskcli.NewListCmd(c))
+	root.AddCommand(runcli.NewRunCmd(c))
+	root.AddCommand(runcli.NewGetCmd(c))
+	root.AddCommand(runcli.NewListCmd(c))
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

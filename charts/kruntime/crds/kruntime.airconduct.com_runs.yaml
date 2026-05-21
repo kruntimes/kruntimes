@@ -253,7 +253,7 @@ spec:
                 type: string
               phase:
                 default: Pending
-                description: Phase is the current lifecycle phase of the task.
+                description: Phase is the current lifecycle phase of the run.
                 enum:
                 - Pending
                 - Scheduled

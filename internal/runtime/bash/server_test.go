@@ -123,7 +123,7 @@ func TestListAndDeleteTask(t *testing.T) {
 		t.Fatalf("ListTasks: %v", err)
 	}
 	if len(listResp.Entries) != 1 {
-		t.Errorf("expected 1 task, got %d", len(listResp.Entries))
+		t.Errorf("expected 1 request, got %d", len(listResp.Entries))
 	}
 
 	_, err = client.Cancel(ctx, &pb.CancelRequest{Id: "test-3"})
@@ -147,7 +147,7 @@ func TestGetTask_NotFound(t *testing.T) {
 	ctx := context.Background()
 	_, err := client.Status(ctx, &pb.StatusRequest{Id: "nonexistent"})
 	if err == nil {
-		t.Error("expected error for nonexistent task")
+		t.Error("expected error for nonexistent request")
 	}
 }
 

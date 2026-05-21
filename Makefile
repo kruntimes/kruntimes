@@ -91,7 +91,7 @@ build: generate ## Build all binaries.
 	go build -o bin/scheduler ./cmd/scheduler
 	go build -o bin/agent ./cmd/agent
 	go build -o bin/controller ./cmd/controller
-	go build -o bin/task-cli ./cmd/task-cli
+	go build -o bin/run-cli ./cmd/run-cli
 	go build -o bin/bash-runtime ./cmd/bash-runtime
 
 .PHONY: build-scheduler
@@ -107,8 +107,8 @@ build-controller: generate ## Build controller binary.
 	go build -o bin/controller ./cmd/controller
 
 .PHONY: build-cli
-build-cli: generate ## Build task-cli binary.
-	go build -o bin/task-cli ./cmd/task-cli
+build-cli: generate ## Build run-cli binary.
+	go build -o bin/run-cli ./cmd/run-cli
 
 .PHONY: build-bash-runtime
 build-bash-runtime: generate ## Build bash-runtime binary.

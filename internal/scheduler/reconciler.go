@@ -68,7 +68,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		return ctrl.Result{}, fmt.Errorf("get task: %w", err)
+		return ctrl.Result{}, fmt.Errorf("get run: %w", err)
 	}
 
 	// Treat empty phase (CRD default not yet applied) as Pending.
@@ -79,7 +79,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, nil
 	}
 
-	log.Info("Scheduling task", "runtime", run.Spec.Runtime)
+	log.Info("Scheduling run", "runtime", run.Spec.Runtime)
 	start := time.Now()
 	defer func() {
 		syncDuration.WithLabelValues(run.Spec.Runtime).Observe(time.Since(start).Seconds())
@@ -140,7 +140,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, fmt.Errorf("update run status: %w", err)
 	}
 
-	log.Info("Task scheduled", "pod", selected.Name)
+	log.Info("Run scheduled", "pod", selected.Name)
 	runsScheduled.WithLabelValues(run.Spec.Runtime, "scheduled").Inc()
 	return ctrl.Result{}, nil
 }

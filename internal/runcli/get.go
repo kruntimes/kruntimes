@@ -1,4 +1,4 @@
-package taskcli
+package runcli
 
 import (
 	"context"
@@ -17,15 +17,15 @@ func NewGetCmd(c client.Client) *cobra.Command {
 	var namespace string
 
 	cmd := &cobra.Command{
-		Use:   "get <task-name>",
-		Short: "Display details of a Task.",
+		Use:   "get <run-name>",
+		Short: "Display details of a Run.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			run := &v1alpha1.Run{}
 			if err := c.Get(context.Background(), types.NamespacedName{
 				Name: args[0], Namespace: namespace,
 			}, run); err != nil {
-				return fmt.Errorf("get task: %w", err)
+				return fmt.Errorf("get run: %w", err)
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)

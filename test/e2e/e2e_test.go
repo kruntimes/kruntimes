@@ -105,7 +105,7 @@ func TestFullRunLifecycle(t *testing.T) {
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
-		t.Fatalf("create task: %v", err)
+		t.Fatalf("create run: %v", err)
 	}
 	t.Logf("Created Run %s (runtime=golang-1.26)", run.Name)
 
@@ -122,18 +122,18 @@ func TestFullRunLifecycle(t *testing.T) {
 
 		time.Sleep(time.Second)
 
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(task), run); err != nil {
-			t.Fatalf("get task: %v", err)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
 		}
 
 		if run.Status.Phase != lastPhase {
-			t.Logf("Task %s: %s -> %s (pod=%s)", run.Name, lastPhase, run.Status.Phase, run.Status.AssignedPod)
+			t.Logf("Run %s: %s -> %s (pod=%s)", run.Name, lastPhase, run.Status.Phase, run.Status.AssignedPod)
 			lastPhase = run.Status.Phase
 		}
 
 		switch run.Status.Phase {
 		case v1alpha1.RunSucceeded:
-			t.Logf("Task completed successfully: %s", run.Status.Message)
+			t.Logf("Run completed successfully: %s", run.Status.Message)
 			return
 		case v1alpha1.RunFailed:
 			t.Fatalf("Task failed: %s", run.Status.Message)
@@ -155,7 +155,7 @@ func TestSchedulerResponsiveness(t *testing.T) {
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
-		t.Fatalf("create task: %v", err)
+		t.Fatalf("create run: %v", err)
 	}
 
 	start := time.Now()
@@ -166,13 +166,13 @@ func TestSchedulerResponsiveness(t *testing.T) {
 	for {
 		time.Sleep(200 * time.Millisecond)
 
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(task), run); err != nil {
-			t.Fatalf("get task: %v", err)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
 		}
 
 		if run.Status.Phase != v1alpha1.RunPending {
 			elapsed := time.Since(start)
-			t.Logf("Task scheduled in %v (phase=%s, pod=%s)", elapsed, run.Status.Phase, run.Status.AssignedPod)
+			t.Logf("Run scheduled in %v (phase=%s, pod=%s)", elapsed, run.Status.Phase, run.Status.AssignedPod)
 
 			if run.Status.AssignedPod == "" && run.Status.Phase != v1alpha1.RunFailed {
 				t.Error("expected assignedPod to be set after scheduling")
@@ -182,7 +182,7 @@ func TestSchedulerResponsiveness(t *testing.T) {
 
 		select {
 		case <-ctx.Done():
-			t.Fatal("timed out waiting for scheduler to pick up task")
+			t.Fatal("timed out waiting for scheduler to pick up run")
 		default:
 		}
 	}

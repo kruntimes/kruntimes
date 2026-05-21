@@ -97,7 +97,7 @@ func TestSchedulerReconcile(t *testing.T) {
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
-		t.Fatalf("create task: %v", err)
+		t.Fatalf("create run: %v", err)
 	}
 	run.Status.Phase = v1alpha1.RunPending
 	if err := k8sClient.Status().Update(context.Background(), run); err != nil {
@@ -119,7 +119,7 @@ func TestSchedulerReconcile(t *testing.T) {
 
 	var updated v1alpha1.Run
 	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &updated); err != nil {
-		t.Fatalf("get task: %v", err)
+		t.Fatalf("get run: %v", err)
 	}
 
 	if updated.Status.Phase != v1alpha1.RunScheduled {
@@ -150,7 +150,7 @@ func TestAgentClaimAndExecute(t *testing.T) {
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
-		t.Fatalf("create task: %v", err)
+		t.Fatalf("create run: %v", err)
 	}
 
 	// Set status to Scheduled + assigned
@@ -181,7 +181,7 @@ func TestAgentClaimAndExecute(t *testing.T) {
 
 	var final v1alpha1.Run
 	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &final); err != nil {
-		t.Fatalf("get task: %v", err)
+		t.Fatalf("get run: %v", err)
 	}
 
 	// Agent fails because no gRPC runtime is listening on localhost:19091.
@@ -210,7 +210,7 @@ func TestSchedulerNoMatchingPod(t *testing.T) {
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
-		t.Fatalf("create task: %v", err)
+		t.Fatalf("create run: %v", err)
 	}
 	run.Status.Phase = v1alpha1.RunPending
 	if err := k8sClient.Status().Update(context.Background(), run); err != nil {
@@ -232,7 +232,7 @@ func TestSchedulerNoMatchingPod(t *testing.T) {
 
 	var updated v1alpha1.Run
 	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &updated); err != nil {
-		t.Fatalf("get task: %v", err)
+		t.Fatalf("get run: %v", err)
 	}
 
 	if updated.Status.Phase != v1alpha1.RunFailed {

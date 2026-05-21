@@ -1,4 +1,4 @@
-package taskcli
+package runcli
 
 import (
 	"context"
@@ -22,7 +22,7 @@ func NewListCmd(c client.Client) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List Tasks.",
+		Short: "List Runs.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ns := namespace
 			if allNamespaces {

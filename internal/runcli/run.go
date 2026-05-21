@@ -1,4 +1,4 @@
-package taskcli
+package runcli
 
 import (
 	"context"
@@ -66,7 +66,7 @@ func NewRunCmd(c client.Client) *cobra.Command {
 
 			ctx := context.Background()
 			if err := c.Create(ctx, run); err != nil {
-				return fmt.Errorf("create task: %w", err)
+				return fmt.Errorf("create run: %w", err)
 			}
 			fmt.Printf("Task %s created\n", run.Name)
 
@@ -79,7 +79,7 @@ func NewRunCmd(c client.Client) *cobra.Command {
 
 				latest := &v1alpha1.Run{}
 				if err := c.Get(ctx, types.NamespacedName{Name: run.Name, Namespace: run.Namespace}, latest); err != nil {
-					return fmt.Errorf("get task: %w", err)
+					return fmt.Errorf("get run: %w", err)
 				}
 
 				switch latest.Status.Phase {
@@ -88,7 +88,7 @@ func NewRunCmd(c client.Client) *cobra.Command {
 					return nil
 				case v1alpha1.RunFailed:
 					fmt.Println(latest.Status.Message)
-					return fmt.Errorf("task failed")
+					return fmt.Errorf("run failed")
 				case v1alpha1.RunRunning:
 					fmt.Printf("\rRunning on %s...", latest.Status.AssignedPod)
 				case v1alpha1.RunScheduled:
