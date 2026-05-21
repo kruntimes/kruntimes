@@ -54,7 +54,7 @@ type Controller struct {
 	Workers         int
 
 	wg         sync.WaitGroup
-	runtimeCli pb.TaskRuntimeClient
+	runtimeCli pb.RuntimeClient
 }
 
 // Run starts the controller and blocks until ctx is done.
@@ -70,7 +70,7 @@ func (c *Controller) Run(ctx context.Context) error {
 		return fmt.Errorf("dial runtime %s: %w", c.RuntimeEndpoint, err)
 	}
 	defer conn.Close()
-	c.runtimeCli = pb.NewTaskRuntimeClient(conn)
+	c.runtimeCli = pb.NewRuntimeClient(conn)
 
 	klog.Infof("Agent controller starting, hostname=%s, runtime=%s, workers=%d",
 		c.Hostname, c.RuntimeEndpoint, c.Workers)
@@ -151,7 +151,7 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 
 	// Delegate to runtime via gRPC
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	_, err := c.runtimeCli.CreateTask(rctx, &pb.CreateTaskRequest{
+	_, err := c.runtimeCli.Execute(rctx, &pb.ExecuteRequest{
 		Id:             string(run.UID),
 		Commands:       run.Spec.Commands,
 		Env:            env,
@@ -175,7 +175,7 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 		}
 
 		rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		resp, err := c.runtimeCli.GetTask(rctx, &pb.GetTaskRequest{Id: string(run.UID)})
+		resp, err := c.runtimeCli.Status(rctx, &pb.StatusRequest{Id: string(run.UID)})
 		cancel()
 		if err != nil {
 			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("runtime GetTask: %v", err))
@@ -184,12 +184,12 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 		}
 
 		switch resp.State {
-		case pb.TaskState_TASK_STATE_SUCCEEDED:
+		case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
 			c.updateRunStatus(context.Background(), run, v1alpha1.RunSucceeded, resp.Stdout)
 			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunSucceeded)).Inc()
 			klog.Infof("Run %s succeeded", run.Name)
 			return
-		case pb.TaskState_TASK_STATE_FAILED:
+		case pb.ExecutionState_EXECUTION_STATE_FAILED:
 			msg := resp.ErrorMessage
 			if msg == "" {
 				msg = resp.Stderr

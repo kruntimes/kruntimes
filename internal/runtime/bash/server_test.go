@@ -13,11 +13,11 @@ import (
 	pb "github.com/airconduct/kruntime/api/taskruntime/v1"
 )
 
-func startTestServer(t *testing.T) (pb.TaskRuntimeClient, func()) {
+func startTestServer(t *testing.T) (pb.RuntimeClient, func()) {
 	t.Helper()
 
 	srv := grpc.NewServer()
-	pb.RegisterTaskRuntimeServer(srv, NewServer(t.TempDir()))
+	pb.RegisterRuntimeServer(srv, NewServer(t.TempDir()))
 
 	lis, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
@@ -33,7 +33,7 @@ func startTestServer(t *testing.T) (pb.TaskRuntimeClient, func()) {
 		t.Fatalf("dial: %v", err)
 	}
 
-	return pb.NewTaskRuntimeClient(conn), func() {
+	return pb.NewRuntimeClient(conn), func() {
 		conn.Close()
 		srv.Stop()
 	}
@@ -45,7 +45,7 @@ func TestCreateAndGetTask_Success(t *testing.T) {
 
 	ctx := context.Background()
 
-	_, err := client.CreateTask(ctx, &pb.CreateTaskRequest{
+	_, err := client.Execute(ctx, &pb.ExecuteRequest{
 		Id:       "test-1",
 		Commands: []string{"echo hello"},
 	})
@@ -53,19 +53,19 @@ func TestCreateAndGetTask_Success(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	var resp *pb.GetTaskResponse
+	var resp *pb.StatusResponse
 	for i := 0; i < 50; i++ {
-		resp, err = client.GetTask(ctx, &pb.GetTaskRequest{Id: "test-1"})
+		resp, err = client.Status(ctx, &pb.StatusRequest{Id: "test-1"})
 		if err != nil {
 			t.Fatalf("GetTask: %v", err)
 		}
-		if resp.State == pb.TaskState_TASK_STATE_SUCCEEDED || resp.State == pb.TaskState_TASK_STATE_FAILED {
+		if resp.State == pb.ExecutionState_EXECUTION_STATE_SUCCEEDED || resp.State == pb.ExecutionState_EXECUTION_STATE_FAILED {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if resp.State != pb.TaskState_TASK_STATE_SUCCEEDED {
+	if resp.State != pb.ExecutionState_EXECUTION_STATE_SUCCEEDED {
 		t.Errorf("expected SUCCEEDED, got %v (stderr=%s err=%s)", resp.State, resp.Stderr, resp.ErrorMessage)
 	}
 }
@@ -76,7 +76,7 @@ func TestCreateAndGetTask_Failure(t *testing.T) {
 
 	ctx := context.Background()
 
-	_, err := client.CreateTask(ctx, &pb.CreateTaskRequest{
+	_, err := client.Execute(ctx, &pb.ExecuteRequest{
 		Id:       "test-2",
 		Commands: []string{"exit 42"},
 	})
@@ -84,19 +84,19 @@ func TestCreateAndGetTask_Failure(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	var resp *pb.GetTaskResponse
+	var resp *pb.StatusResponse
 	for i := 0; i < 50; i++ {
-		resp, err = client.GetTask(ctx, &pb.GetTaskRequest{Id: "test-2"})
+		resp, err = client.Status(ctx, &pb.StatusRequest{Id: "test-2"})
 		if err != nil {
 			t.Fatalf("GetTask: %v", err)
 		}
-		if resp.State == pb.TaskState_TASK_STATE_SUCCEEDED || resp.State == pb.TaskState_TASK_STATE_FAILED {
+		if resp.State == pb.ExecutionState_EXECUTION_STATE_SUCCEEDED || resp.State == pb.ExecutionState_EXECUTION_STATE_FAILED {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if resp.State != pb.TaskState_TASK_STATE_FAILED {
+	if resp.State != pb.ExecutionState_EXECUTION_STATE_FAILED {
 		t.Errorf("expected FAILED, got %v", resp.State)
 	}
 	if resp.ExitCode != 42 {
@@ -110,7 +110,7 @@ func TestListAndDeleteTask(t *testing.T) {
 
 	ctx := context.Background()
 
-	_, err := client.CreateTask(ctx, &pb.CreateTaskRequest{
+	_, err := client.Execute(ctx, &pb.ExecuteRequest{
 		Id:       "test-3",
 		Commands: []string{"sleep 10"},
 	})
@@ -118,25 +118,25 @@ func TestListAndDeleteTask(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	listResp, err := client.ListTasks(ctx, &pb.ListTasksRequest{})
+	listResp, err := client.List(ctx, &pb.ListRequest{})
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
-	if len(listResp.Tasks) != 1 {
-		t.Errorf("expected 1 task, got %d", len(listResp.Tasks))
+	if len(listResp.Entries) != 1 {
+		t.Errorf("expected 1 task, got %d", len(listResp.Entries))
 	}
 
-	_, err = client.DeleteTask(ctx, &pb.DeleteTaskRequest{Id: "test-3"})
+	_, err = client.Cancel(ctx, &pb.CancelRequest{Id: "test-3"})
 	if err != nil {
 		t.Fatalf("DeleteTask: %v", err)
 	}
 
-	listResp, err = client.ListTasks(ctx, &pb.ListTasksRequest{})
+	listResp, err = client.List(ctx, &pb.ListRequest{})
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
-	if len(listResp.Tasks) != 0 {
-		t.Errorf("expected 0 tasks after delete, got %d", len(listResp.Tasks))
+	if len(listResp.Entries) != 0 {
+		t.Errorf("expected 0 tasks after delete, got %d", len(listResp.Entries))
 	}
 }
 
@@ -145,7 +145,7 @@ func TestGetTask_NotFound(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	_, err := client.GetTask(ctx, &pb.GetTaskRequest{Id: "nonexistent"})
+	_, err := client.Status(ctx, &pb.StatusRequest{Id: "nonexistent"})
 	if err == nil {
 		t.Error("expected error for nonexistent task")
 	}
@@ -156,7 +156,7 @@ func TestCreateTask_Duplicate(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	_, err := client.CreateTask(ctx, &pb.CreateTaskRequest{
+	_, err := client.Execute(ctx, &pb.ExecuteRequest{
 		Id:       "dup-1",
 		Commands: []string{"echo first"},
 	})
@@ -164,7 +164,7 @@ func TestCreateTask_Duplicate(t *testing.T) {
 		t.Fatalf("first CreateTask: %v", err)
 	}
 
-	_, err = client.CreateTask(ctx, &pb.CreateTaskRequest{
+	_, err = client.Execute(ctx, &pb.ExecuteRequest{
 		Id:       "dup-1",
 		Commands: []string{"echo second"},
 	})
@@ -178,7 +178,7 @@ func TestCreateTask_MultipleCommands(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	_, err := client.CreateTask(ctx, &pb.CreateTaskRequest{
+	_, err := client.Execute(ctx, &pb.ExecuteRequest{
 		Id:       "multi-1",
 		Commands: []string{"export FOO=bar", "echo $FOO"},
 	})
@@ -186,19 +186,19 @@ func TestCreateTask_MultipleCommands(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	var resp *pb.GetTaskResponse
+	var resp *pb.StatusResponse
 	for i := 0; i < 50; i++ {
-		resp, err = client.GetTask(ctx, &pb.GetTaskRequest{Id: "multi-1"})
+		resp, err = client.Status(ctx, &pb.StatusRequest{Id: "multi-1"})
 		if err != nil {
 			t.Fatalf("GetTask: %v", err)
 		}
-		if resp.State == pb.TaskState_TASK_STATE_SUCCEEDED || resp.State == pb.TaskState_TASK_STATE_FAILED {
+		if resp.State == pb.ExecutionState_EXECUTION_STATE_SUCCEEDED || resp.State == pb.ExecutionState_EXECUTION_STATE_FAILED {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if resp.State != pb.TaskState_TASK_STATE_SUCCEEDED {
+	if resp.State != pb.ExecutionState_EXECUTION_STATE_SUCCEEDED {
 		t.Errorf("expected SUCCEEDED, got %v (stderr=%s)", resp.State, resp.Stderr)
 	}
 	fmt.Printf("stdout: %s\n", resp.Stdout)

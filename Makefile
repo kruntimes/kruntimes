@@ -183,7 +183,7 @@ proto: protoc protoc-gen-go protoc-gen-go-grpc ## Generate gRPC code from proto 
 		--proto_path=. \
 		--go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		api/taskruntime/v1/taskruntime.proto
+		api/taskruntime/v1/executor.proto
 
 ##@ Tools
 

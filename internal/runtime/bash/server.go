@@ -20,7 +20,7 @@ import (
 
 type taskEntry struct {
 	cmd      *exec.Cmd
-	state    pb.TaskState
+	state    pb.ExecutionState
 	exitCode int32
 	stdout   bytes.Buffer
 	stderr   bytes.Buffer
@@ -30,7 +30,7 @@ type taskEntry struct {
 
 // Server implements the TaskRuntime gRPC service by executing bash commands.
 type Server struct {
-	pb.UnimplementedTaskRuntimeServer
+	pb.UnimplementedRuntimeServer
 
 	mu      sync.Mutex
 	tasks   map[string]*taskEntry
@@ -47,7 +47,7 @@ func NewServer(workDir string) *Server {
 	}
 }
 
-func (s *Server) CreateTask(ctx context.Context, req *pb.CreateTaskRequest) (*pb.CreateTaskResponse, error) {
+func (s *Server) Execute(ctx context.Context, req *pb.ExecuteRequest) (*pb.ExecuteResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -56,16 +56,16 @@ func (s *Server) CreateTask(ctx context.Context, req *pb.CreateTaskRequest) (*pb
 	}
 
 	entry := &taskEntry{
-		state: pb.TaskState_TASK_STATE_RUNNING,
+		state: pb.ExecutionState_EXECUTION_STATE_RUNNING,
 		done:  make(chan struct{}),
 	}
 	s.tasks[req.Id] = entry
 
 	go s.execute(req, entry)
-	return &pb.CreateTaskResponse{Id: req.Id}, nil
+	return &pb.ExecuteResponse{Id: req.Id}, nil
 }
 
-func (s *Server) GetTask(ctx context.Context, req *pb.GetTaskRequest) (*pb.GetTaskResponse, error) {
+func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusResponse, error) {
 	s.mu.Lock()
 	entry, ok := s.tasks[req.Id]
 	s.mu.Unlock()
@@ -79,7 +79,7 @@ func (s *Server) GetTask(ctx context.Context, req *pb.GetTaskRequest) (*pb.GetTa
 	default:
 	}
 
-	return &pb.GetTaskResponse{
+	return &pb.StatusResponse{
 		Id:           req.Id,
 		State:        entry.state,
 		ExitCode:     entry.exitCode,
@@ -89,13 +89,13 @@ func (s *Server) GetTask(ctx context.Context, req *pb.GetTaskRequest) (*pb.GetTa
 	}, nil
 }
 
-func (s *Server) ListTasks(ctx context.Context, req *pb.ListTasksRequest) (*pb.ListTasksResponse, error) {
+func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	resp := &pb.ListTasksResponse{}
+	resp := &pb.ListResponse{}
 	for id, entry := range s.tasks {
-		resp.Tasks = append(resp.Tasks, &pb.GetTaskResponse{
+		resp.Entries = append(resp.Entries, &pb.StatusResponse{
 			Id:           id,
 			State:        entry.state,
 			ExitCode:     entry.exitCode,
@@ -107,7 +107,7 @@ func (s *Server) ListTasks(ctx context.Context, req *pb.ListTasksRequest) (*pb.L
 	return resp, nil
 }
 
-func (s *Server) DeleteTask(ctx context.Context, req *pb.DeleteTaskRequest) (*pb.DeleteTaskResponse, error) {
+func (s *Server) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.CancelResponse, error) {
 	s.mu.Lock()
 	entry, ok := s.tasks[req.Id]
 	if !ok {
@@ -129,10 +129,10 @@ func (s *Server) DeleteTask(ctx context.Context, req *pb.DeleteTaskRequest) (*pb
 	delete(s.tasks, req.Id)
 	s.mu.Unlock()
 
-	return &pb.DeleteTaskResponse{}, nil
+	return &pb.CancelResponse{}, nil
 }
 
-func (s *Server) execute(req *pb.CreateTaskRequest, entry *taskEntry) {
+func (s *Server) execute(req *pb.ExecuteRequest, entry *taskEntry) {
 	defer close(entry.done)
 
 	workDir := req.WorkingDir
@@ -140,7 +140,7 @@ func (s *Server) execute(req *pb.CreateTaskRequest, entry *taskEntry) {
 		workDir = filepath.Join(s.workDir, req.Id)
 	}
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		entry.state = pb.TaskState_TASK_STATE_FAILED
+		entry.state = pb.ExecutionState_EXECUTION_STATE_FAILED
 		entry.errMsg = fmt.Sprintf("mkdir: %v", err)
 		return
 	}
@@ -155,7 +155,7 @@ func (s *Server) execute(req *pb.CreateTaskRequest, entry *taskEntry) {
 		}
 		cmd = exec.Command("bash", "-c", script)
 	} else {
-		entry.state = pb.TaskState_TASK_STATE_FAILED
+		entry.state = pb.ExecutionState_EXECUTION_STATE_FAILED
 		entry.errMsg = "no commands provided"
 		return
 	}
@@ -187,19 +187,19 @@ func (s *Server) execute(req *pb.CreateTaskRequest, entry *taskEntry) {
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				entry.exitCode = int32(exitErr.ExitCode())
-				entry.state = pb.TaskState_TASK_STATE_FAILED
+				entry.state = pb.ExecutionState_EXECUTION_STATE_FAILED
 				entry.errMsg = exitErr.Error()
 			} else {
-				entry.state = pb.TaskState_TASK_STATE_FAILED
+				entry.state = pb.ExecutionState_EXECUTION_STATE_FAILED
 				entry.errMsg = err.Error()
 			}
 		} else {
 			entry.exitCode = 0
-			entry.state = pb.TaskState_TASK_STATE_SUCCEEDED
+			entry.state = pb.ExecutionState_EXECUTION_STATE_SUCCEEDED
 		}
 	case <-ctx.Done():
 		cmd.Process.Kill()
-		entry.state = pb.TaskState_TASK_STATE_FAILED
+		entry.state = pb.ExecutionState_EXECUTION_STATE_FAILED
 		entry.errMsg = "timeout"
 		entry.exitCode = -1
 	}

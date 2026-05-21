@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package executor.v1;
+
+option go_package = "github.com/airconduct/kruntime/api/taskruntime/v1;taskruntimev1";
+
+// Executor is the gRPC service that runtimes must implement.
+// The agent sidecar calls this to delegate command execution.
+service Runtime {
+    rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+    rpc Status(StatusRequest) returns (StatusResponse);
+    rpc List(ListRequest) returns (ListResponse);
+    rpc Cancel(CancelRequest) returns (CancelResponse);
+}
+
+message ExecuteRequest {
+    string id = 1;
+    repeated string commands = 2;
+    map<string, string> env = 3;
+    int64 timeout_seconds = 4;
+    string working_dir = 5;
+}
+
+message ExecuteResponse {
+    string id = 1;
+}
+
+message StatusRequest {
+    string id = 1;
+}
+
+message StatusResponse {
+    string id = 1;
+    ExecutionState state = 2;
+    int32 exit_code = 3;
+    string stdout = 4;
+    string stderr = 5;
+    string error_message = 6;
+}
+
+enum ExecutionState {
+    EXECUTION_STATE_UNSPECIFIED = 0;
+    EXECUTION_STATE_PENDING = 1;
+    EXECUTION_STATE_RUNNING = 2;
+    EXECUTION_STATE_SUCCEEDED = 3;
+    EXECUTION_STATE_FAILED = 4;
+}
+
+message ListRequest {}
+
+message ListResponse {
+    repeated StatusResponse entries = 1;
+}
+
+message CancelRequest {
+    string id = 1;
+}
+
+message CancelResponse {}
