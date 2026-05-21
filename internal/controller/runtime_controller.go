@@ -32,7 +32,7 @@ type RuntimeReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	DefaultAgentImage string
+	DefaultSidecarImage string
 }
 
 // +kubebuilder:rbac:groups=kruntime.airconduct.com,resources=runtimes,verbs=get;list;watch;update;patch
@@ -92,12 +92,12 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 	if port == 0 {
 		port = 9091
 	}
-	agentImage := rt.Spec.AgentImage
-	if agentImage == "" {
-		agentImage = runtimedDefaultImage
+	sidecarImage := rt.Spec.SidecarImage
+	if sidecarImage == "" {
+		sidecarImage = runtimedDefaultImage
 	}
-	if r.DefaultAgentImage != "" {
-		agentImage = r.DefaultAgentImage
+	if r.DefaultSidecarImage != "" {
+		sidecarImage = r.DefaultSidecarImage
 	}
 
 	labels := map[string]string{
@@ -132,9 +132,9 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		}
 	}
 
-	agentContainer := corev1.Container{
+	sidecarContainer := corev1.Container{
 		Name:            "runtimed",
-		Image:           agentImage,
+		Image:           sidecarImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: []string{
 			fmt.Sprintf("--runtime-endpoint=localhost:%d", port),
@@ -180,7 +180,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "kruntime-runtimed",
-					Containers:         []corev1.Container{runtimeContainer, agentContainer},
+					Containers:         []corev1.Container{runtimeContainer, sidecarContainer},
 					Volumes: []corev1.Volume{
 						{
 							Name: workspaceVolume,

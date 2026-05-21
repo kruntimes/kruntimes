@@ -34,9 +34,9 @@ type RuntimeSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	Replicas int32 `json:"replicas,omitempty"`
 
-	// AgentImage overrides the runtimed sidecar image.
+	// SidecarImage overrides the runtimed sidecar image.
 	// +optional
-	AgentImage string `json:"agentImage,omitempty"`
+	SidecarImage string `json:"sidecarImage,omitempty"`
 }
 
 // +kubebuilder:object:generate=true

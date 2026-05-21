@@ -54,9 +54,6 @@ spec:
           spec:
             description: RuntimeSpec defines the desired state of Runtime.
             properties:
-              agentImage:
-                description: AgentImage overrides the runtimed sidecar image.
-                type: string
               command:
                 description: Command is the entrypoint for the runtime container.
                 items:
@@ -294,6 +291,9 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              sidecarImage:
+                description: SidecarImage overrides the runtimed sidecar image.
+                type: string
             required:
             - image
             type: object

@@ -131,7 +131,7 @@ func TestSchedulerReconcile(t *testing.T) {
 	t.Logf("Task %s scheduled to pod %s", updated.Name, updated.Status.AssignedPod)
 }
 
-func TestAgentClaimAndExecute(t *testing.T) {
+func TestRuntimedClaimAndExecute(t *testing.T) {
 	ns := &corev1.Namespace{}
 	ns.GenerateName = "test-"
 	if err := k8sClient.Create(context.Background(), ns); err != nil {
