@@ -26,7 +26,7 @@ controller:
       cpu: 500m
       memory: 256Mi
 
-agent:
+runtimed:
   image: kruntime-runtimed:latest
   imagePullPolicy: IfNotPresent
   workers: 2

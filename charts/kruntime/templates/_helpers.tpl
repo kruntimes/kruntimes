@@ -27,6 +27,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app: kruntime-scheduler
 {{- end }}
 
-{{- define "kruntime.agent.labels" -}}
+{{- define "kruntime.runtimed.labels" -}}
 {{ include "kruntime.labels" . }}
 {{- end }}

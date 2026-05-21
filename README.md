@@ -62,7 +62,7 @@ Scheduler and runtimed are fully decoupled — they communicate exclusively thro
 make build
 ```
 
-Produces five binaries in `bin/`: `scheduler`, `controller`, `agent`, `bash-runtime`, `run-cli`.
+Produces five binaries in `bin/`: `scheduler`, `controller`, `runtimed`, `bash-runtime`, `run-cli`.
 
 ### Deploy
 

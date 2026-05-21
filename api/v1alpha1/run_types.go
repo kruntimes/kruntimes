@@ -34,7 +34,7 @@ type RunSpec struct {
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
 	// Timeout is the maximum duration the run is allowed to run.
-	// If not set, the agent applies a default timeout.
+	// If not set, the runtimed applies a default timeout.
 	// +optional
 	Timeout *metav1.Duration `json:"timeout,omitempty"`
 

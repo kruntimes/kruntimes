@@ -231,7 +231,7 @@ spec:
               timeout:
                 description: |-
                   Timeout is the maximum duration the run is allowed to run.
-                  If not set, the agent applies a default timeout.
+                  If not set, the runtimed applies a default timeout.
                 type: string
             required:
             - commands
