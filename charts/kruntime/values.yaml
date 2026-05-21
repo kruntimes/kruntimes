@@ -27,7 +27,7 @@ controller:
       memory: 256Mi
 
 agent:
-  image: kruntime-agent:latest
+  image: kruntime-runtimed:latest
   imagePullPolicy: IfNotPresent
   workers: 2
   resources:

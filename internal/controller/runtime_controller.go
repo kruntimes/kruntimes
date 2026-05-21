@@ -21,12 +21,12 @@ import (
 
 const (
 	runtimeLabel      = "runtime"
-	agentDefaultImage = "kruntime-agent:latest"
+	runtimedDefaultImage = "kruntime-runtimed:latest"
 	workspaceVolume   = "workspace"
 	workspacePath     = "/workspace"
 )
 
-// RuntimeReconciler watches Runtime CRs and creates Deployments with agent sidecar.
+// RuntimeReconciler watches Runtime CRs and creates Deployments with runtimed sidecar.
 type RuntimeReconciler struct {
 	client.Client
 	Log    logr.Logger
@@ -94,7 +94,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 	}
 	agentImage := rt.Spec.AgentImage
 	if agentImage == "" {
-		agentImage = agentDefaultImage
+		agentImage = runtimedDefaultImage
 	}
 	if r.DefaultAgentImage != "" {
 		agentImage = r.DefaultAgentImage
@@ -133,7 +133,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 	}
 
 	agentContainer := corev1.Container{
-		Name:            "agent",
+		Name:            "runtimed",
 		Image:           agentImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: []string{
@@ -179,7 +179,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "kruntime-agent",
+					ServiceAccountName: "kruntime-runtimed",
 					Containers:         []corev1.Container{runtimeContainer, agentContainer},
 					Volumes: []corev1.Volume{
 						{

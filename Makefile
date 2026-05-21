@@ -1,7 +1,7 @@
 # Image URL to use all building/pushing image targets
 IMG_SCHEDULER ?= kruntime-scheduler:latest
 IMG_CONTROLLER ?= kruntime-controller:latest
-IMG_AGENT ?= kruntime-agent:latest
+IMG_RUNTIMED ?= kruntime-runtimed:latest
 IMG_BASH_RUNTIME ?= kruntime-bash-runtime:latest
 
 # ENVTEST_K8S_VERSION refers to the version of k8s to use for envtest
@@ -68,7 +68,7 @@ e2e-setup: docker-build manifests ## Create kind cluster, load images, and deplo
 	kind get clusters | grep $(KIND_CLUSTER_NAME) || kind create cluster --name $(KIND_CLUSTER_NAME) --wait 120s
 	kind load docker-image $(IMG_SCHEDULER) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(IMG_CONTROLLER) --name $(KIND_CLUSTER_NAME)
-	kind load docker-image $(IMG_AGENT) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image $(IMG_RUNTIMED) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(IMG_BASH_RUNTIME) --name $(KIND_CLUSTER_NAME)
 	$(HELM) upgrade --install kruntime ./charts/kruntime \
 		--namespace $(NAMESPACE) --create-namespace --wait --timeout 120s
@@ -89,7 +89,7 @@ e2e-cleanup: ## Delete the kind cluster.
 .PHONY: build
 build: generate ## Build all binaries.
 	go build -o bin/scheduler ./cmd/scheduler
-	go build -o bin/agent ./cmd/agent
+	go build -o bin/runtimed ./cmd/runtimed
 	go build -o bin/controller ./cmd/controller
 	go build -o bin/run-cli ./cmd/run-cli
 	go build -o bin/bash-runtime ./cmd/bash-runtime
@@ -98,9 +98,9 @@ build: generate ## Build all binaries.
 build-scheduler: generate ## Build scheduler binary.
 	go build -o bin/scheduler ./cmd/scheduler
 
-.PHONY: build-agent
-build-agent: generate ## Build agent binary.
-	go build -o bin/agent ./cmd/agent
+.PHONY: build-runtimed
+build-runtimed: generate ## Build runtimed binary.
+	go build -o bin/runtimed ./cmd/runtimed
 
 .PHONY: build-controller
 build-controller: generate ## Build controller binary.
@@ -118,14 +118,14 @@ build-bash-runtime: generate ## Build bash-runtime binary.
 run-scheduler: generate manifests ## Run scheduler locally (requires kubeconfig).
 	go run ./cmd/scheduler --kubeconfig=$(HOME)/.kube/config
 
-.PHONY: run-agent
-run-agent: generate manifests ## Run agent locally (requires kubeconfig).
-	go run ./cmd/agent --kubeconfig=$(HOME)/.kube/config
+.PHONY: run-runtimed
+run-runtimed: generate manifests ## Run runtimed locally (requires kubeconfig).
+	go run ./cmd/runtimed --kubeconfig=$(HOME)/.kube/config
 
 ##@ Docker
 
 .PHONY: docker-build
-docker-build: docker-build-scheduler docker-build-controller docker-build-agent docker-build-bash-runtime ## Build all Docker images.
+docker-build: docker-build-scheduler docker-build-controller docker-build-runtimed docker-build-bash-runtime ## Build all Docker images.
 
 .PHONY: docker-build-scheduler
 docker-build-scheduler: ## Build scheduler Docker image.
@@ -135,9 +135,9 @@ docker-build-scheduler: ## Build scheduler Docker image.
 docker-build-controller: ## Build controller Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_CONTROLLER) -f Dockerfile.controller .
 
-.PHONY: docker-build-agent
-docker-build-agent: ## Build agent Docker image.
-	$(CONTAINER_TOOL) build -t $(IMG_AGENT) -f Dockerfile.agent .
+.PHONY: docker-build-runtimed
+docker-build-runtimed: ## Build runtimed Docker image.
+	$(CONTAINER_TOOL) build -t $(IMG_RUNTIMED) -f Dockerfile.runtimed .
 
 .PHONY: docker-build-bash-runtime
 docker-build-bash-runtime: ## Build bash-runtime Docker image.
@@ -147,7 +147,7 @@ docker-build-bash-runtime: ## Build bash-runtime Docker image.
 docker-push: ## Push Docker images.
 	$(CONTAINER_TOOL) push $(IMG_SCHEDULER)
 	$(CONTAINER_TOOL) push $(IMG_CONTROLLER)
-	$(CONTAINER_TOOL) push $(IMG_AGENT)
+	$(CONTAINER_TOOL) push $(IMG_RUNTIMED)
 	$(CONTAINER_TOOL) push $(IMG_BASH_RUNTIME)
 
 ##@ Helm

@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kruntime-agent
+  name: kruntime-runtimed
   labels:
     {{- include "kruntime.labels" . | nindent 4 }}
 rules:
@@ -38,14 +38,14 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: kruntime-agent
+  name: kruntime-runtimed
   labels:
     {{- include "kruntime.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: kruntime-agent
+  name: kruntime-runtimed
 subjects:
   - kind: ServiceAccount
-    name: kruntime-agent
+    name: kruntime-runtimed
     namespace: {{ .Release.Namespace }}

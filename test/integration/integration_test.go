@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"github.com/airconduct/kruntime/api/v1alpha1"
-	"github.com/airconduct/kruntime/internal/agent"
+	"github.com/airconduct/kruntime/internal/runtimed"
 	"github.com/airconduct/kruntime/internal/scheduler"
 )
 
@@ -73,7 +73,7 @@ func TestSchedulerReconcile(t *testing.T) {
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
-				{Name: "agent", Image: "busybox", Command: []string{"sleep", "999"}},
+				{Name: "runtimed", Image: "busybox", Command: []string{"sleep", "999"}},
 			},
 		},
 	}
@@ -155,14 +155,14 @@ func TestAgentClaimAndExecute(t *testing.T) {
 
 	// Set status to Scheduled + assigned
 	run.Status.Phase = v1alpha1.RunScheduled
-	run.Status.AssignedPod = "test-agent-pod"
+	run.Status.AssignedPod = "test-runtimed-pod"
 	if err := k8sClient.Status().Update(context.Background(), run); err != nil {
 		t.Fatalf("update run status: %v", err)
 	}
 
-	ctrl := &agent.Controller{
+	ctrl := &runtimed.Controller{
 		Client:          k8sClient,
-		Hostname:        "test-agent-pod",
+		Hostname:        "test-runtimed-pod",
 		RuntimeEndpoint: "localhost:19091",
 		Workers:         1,
 	}
@@ -184,7 +184,7 @@ func TestAgentClaimAndExecute(t *testing.T) {
 		t.Fatalf("get run: %v", err)
 	}
 
-	// Agent fails because no gRPC runtime is listening on localhost:19091.
+	// Runtimed fails because no gRPC runtime is listening on localhost:19091.
 	if final.Status.Phase != v1alpha1.RunFailed {
 		t.Errorf("expected Failed due to no runtime, got %s (message: %s)", final.Status.Phase, final.Status.Message)
 	}

@@ -25,7 +25,7 @@ Two-layer scheduling system on Kubernetes that eliminates cold-start latency by 
                      │ watch (by assigned pod)
                      ▼
 ┌─────────────────────────────────────────────┐
-│  Agent (sidecar)  ──gRPC──▶  Runtime Server │
+│  Runtimed (sidecar)  ──gRPC──▶  Runtime Server │
 │    claims Run            │    (bash / custom)│
 │    delegates Execute()   │    runs commands  │
 │    polls Status()        │                   │
@@ -33,17 +33,17 @@ Two-layer scheduling system on Kubernetes that eliminates cold-start latency by 
 └──────────────────────────┴───────────────────┘
 ```
 
-Scheduler and Agent are fully decoupled — they communicate exclusively through Run CRD status updates.
+Scheduler and runtimed are fully decoupled — they communicate exclusively through Run CRD status updates.
 
 ## Components
 
 | Component | Description |
 |-----------|-------------|
 | **Run CRD** | Central state machine: Pending → Scheduled → Running → Succeeded/Failed |
-| **Runtime CRD** | Defines a runtime type (image, port, replicas). Controller auto-creates Deployment with agent sidecar. |
+| **Runtime CRD** | Defines a runtime type (image, port, replicas). Controller auto-creates Deployment with runtimed sidecar. |
 | **Scheduler** | K8s controller that watches Pending Runs and assigns them to Runtime Pods |
-| **Runtime Controller** | Watches Runtime CRs, creates Deployments with agent sidecar injected |
-| **Agent** | Sidecar in each Runtime Pod. Watches Runs assigned to its pod, delegates execution to the Runtime Server via gRPC |
+| **Runtime Controller** | Watches Runtime CRs, creates Deployments with runtimed sidecar injected |
+| **Runtimed** | Sidecar in each Runtime Pod. Watches Runs assigned to its pod, delegates execution to the Runtime Server via gRPC |
 | **Runtime Server** | Pluggable gRPC server (`Execute` / `Status` / `List` / `Cancel`). Default: bash runtime. |
 | **run-cli** | CLI for creating and monitoring Runs |
 
@@ -145,9 +145,9 @@ spec:
 | Scheduler | :8080 | `kruntime_scheduler_sync_total` | Runs processed |
 | | | `kruntime_scheduler_sync_duration_seconds` | Scheduling latency |
 | | | `kruntime_scheduler_no_pods_total` | Runs with no available runtime |
-| Agent | :9090 | `kruntime_agent_runs_total` | Runs completed |
-| | | `kruntime_agent_run_duration_seconds` | Execution duration |
-| | | `kruntime_agent_claim_conflicts_total` | Claim conflicts |
+| Runtimed | :9090 | `kruntime_runtimed_runs_total` | Runs completed |
+| | | `kruntime_runtimed_run_duration_seconds` | Execution duration |
+| | | `kruntime_runtimed_claim_conflicts_total` | Claim conflicts |
 | Controller | :8082 | (controller-runtime defaults) | |
 
 ## Project Structure
@@ -159,11 +159,11 @@ api/
 cmd/
 ├── scheduler/         Scheduler entry point
 ├── controller/        Runtime controller entry point
-├── agent/             Agent sidecar entry point
+├── runtimed/             Agent sidecar entry point
 ├── bash-runtime/      Default bash runtime server
 └── run-cli/           CLI tool
 internal/
-├── agent/             Agent controller (claim + gRPC delegation)
+├── runtimed/             runtimed controller (claim + gRPC delegation)
 ├── controller/        Runtime controller (Deployment creation)
 ├── scheduler/         Run reconciler + scheduling strategies
 ├── runtime/bash/      Bash runtime gRPC server implementation

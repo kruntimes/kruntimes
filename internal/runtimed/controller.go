@@ -1,4 +1,4 @@
-package agent
+package runtimed
 
 import (
 	"context"
@@ -24,14 +24,14 @@ import (
 var (
 	runsCompleted = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "kruntime_agent_runs_total",
+			Name: "kruntime_runtimed_runs_total",
 			Help: "Total number of runs completed by this agent.",
 		},
 		[]string{"runtime", "result"},
 	)
 	runDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "kruntime_agent_run_duration_seconds",
+			Name:    "kruntime_runtimed_run_duration_seconds",
 			Help:    "Run execution duration.",
 			Buckets: prometheus.DefBuckets,
 		},
@@ -39,7 +39,7 @@ var (
 	)
 	claimConflicts = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "kruntime_agent_claim_conflicts_total",
+			Name: "kruntime_runtimed_claim_conflicts_total",
 			Help: "Total number of run claim conflicts.",
 		},
 	)
@@ -72,7 +72,7 @@ func (c *Controller) Run(ctx context.Context) error {
 	defer conn.Close()
 	c.runtimeCli = pb.NewRuntimeClient(conn)
 
-	klog.Infof("Agent controller starting, hostname=%s, runtime=%s, workers=%d",
+	klog.Infof("runtimed controller starting, hostname=%s, runtime=%s, workers=%d",
 		c.Hostname, c.RuntimeEndpoint, c.Workers)
 
 	sem := make(chan struct{}, c.Workers)
@@ -168,7 +168,7 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 	for {
 		select {
 		case <-ctx.Done():
-			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, "agent shutting down")
+			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, "runtimed shutting down")
 			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
 			return
 		default:

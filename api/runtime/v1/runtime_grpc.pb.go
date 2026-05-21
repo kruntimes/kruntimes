@@ -30,7 +30,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Executor is the gRPC service that runtimes must implement.
-// The agent sidecar calls this to delegate command execution.
+// The runtimed sidecar calls this to delegate command execution.
 type RuntimeClient interface {
 	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*ExecuteResponse, error)
 	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
@@ -91,7 +91,7 @@ func (c *runtimeClient) Cancel(ctx context.Context, in *CancelRequest, opts ...g
 // for forward compatibility.
 //
 // Executor is the gRPC service that runtimes must implement.
-// The agent sidecar calls this to delegate command execution.
+// The runtimed sidecar calls this to delegate command execution.
 type RuntimeServer interface {
 	Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error)
 	Status(context.Context, *StatusRequest) (*StatusResponse, error)

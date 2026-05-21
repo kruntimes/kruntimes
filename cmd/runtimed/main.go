@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/airconduct/kruntime/api/v1alpha1"
-	"github.com/airconduct/kruntime/internal/agent"
+	"github.com/airconduct/kruntime/internal/runtimed"
 )
 
 func main() {
@@ -38,7 +38,7 @@ func main() {
 		hostname, _ = os.Hostname()
 	}
 
-	klog.Infof("Starting kruntime agent, hostname=%s, runtime=%s", hostname, runtimeEndpoint)
+	klog.Infof("Starting kruntime runtimed, hostname=%s, runtime=%s", hostname, runtimeEndpoint)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -53,7 +53,7 @@ func main() {
 		klog.Fatalf("Failed to create client: %v", err)
 	}
 
-	ctrl := &agent.Controller{
+	ctrl := &runtimed.Controller{
 		Client:          c,
 		Hostname:        hostname,
 		RuntimeEndpoint: runtimeEndpoint,
@@ -74,5 +74,5 @@ func main() {
 	if err := ctrl.Run(ctx); err != nil {
 		klog.Fatalf("Controller error: %v", err)
 	}
-	klog.Info("Agent shut down gracefully")
+	klog.Info("Runtimed shut down gracefully")
 }
