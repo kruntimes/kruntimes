@@ -25,7 +25,7 @@ var (
 	runsCompleted = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "kruntime_runtimed_runs_total",
-			Help: "Total number of runs completed by this agent.",
+			Help: "Total number of runs completed by this runtimed.",
 		},
 		[]string{"runtime", "result"},
 	)

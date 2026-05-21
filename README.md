@@ -159,7 +159,7 @@ api/
 cmd/
 ├── scheduler/         Scheduler entry point
 ├── controller/        Runtime controller entry point
-├── runtimed/             Agent sidecar entry point
+├── runtimed/             Runtimed sidecar entry point
 ├── bash-runtime/      Default bash runtime server
 └── run-cli/           CLI tool
 internal/

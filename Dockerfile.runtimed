@@ -1,5 +1,5 @@
 FROM ubuntu:latest
 RUN useradd -u 65532 nonroot
-COPY bin/runtimed /agent
+COPY bin/runtimed /runtimed
 USER 65532
-ENTRYPOINT ["/agent"]
+ENTRYPOINT ["/runtimed"]
