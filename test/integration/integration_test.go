@@ -17,9 +17,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
-	"github.com/airconduct/kruntime/internal/runtimed"
-	"github.com/airconduct/kruntime/internal/scheduler"
+	"github.com/aionops/kruntime/api/v1alpha1"
+	"github.com/aionops/kruntime/internal/runtimed"
+	"github.com/aionops/kruntime/internal/scheduler"
 )
 
 var (

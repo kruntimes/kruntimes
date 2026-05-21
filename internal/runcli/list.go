@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
+	"github.com/aionops/kruntime/api/v1alpha1"
 )
 
 func NewListCmd(c client.Client) *cobra.Command {

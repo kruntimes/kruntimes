@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
+	"github.com/aionops/kruntime/api/v1alpha1"
 )
 
 var (
@@ -56,8 +56,8 @@ type RunReconciler struct {
 	Strategy Strategy
 }
 
-// +kubebuilder:rbac:groups=kruntime.airconduct.com,resources=tasks,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=kruntime.airconduct.com,resources=tasks/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=kruntime.aionops.com,resources=tasks,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=kruntime.aionops.com,resources=tasks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 
 func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

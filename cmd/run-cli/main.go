@@ -11,8 +11,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
-	"github.com/airconduct/kruntime/internal/runcli"
+	"github.com/aionops/kruntime/api/v1alpha1"
+	"github.com/aionops/kruntime/internal/runcli"
 )
 
 func main() {

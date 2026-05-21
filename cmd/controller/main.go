@@ -12,8 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
-	"github.com/airconduct/kruntime/internal/controller"
+	"github.com/aionops/kruntime/api/v1alpha1"
+	"github.com/aionops/kruntime/internal/controller"
 )
 
 var (

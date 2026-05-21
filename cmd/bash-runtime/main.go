@@ -11,8 +11,8 @@ import (
 	"google.golang.org/grpc"
 	"k8s.io/klog/v2"
 
-	pb "github.com/airconduct/kruntime/api/runtime/v1"
-	"github.com/airconduct/kruntime/internal/runtime/bash"
+	pb "github.com/aionops/kruntime/api/runtime/v1"
+	"github.com/aionops/kruntime/internal/runtime/bash"
 )
 
 func main() {

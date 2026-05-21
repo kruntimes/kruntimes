@@ -1,4 +1,4 @@
-module github.com/airconduct/kruntime
+module github.com/aionops/kruntime
 
 go 1.26.3
 

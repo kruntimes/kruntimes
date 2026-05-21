@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
+	"github.com/aionops/kruntime/api/v1alpha1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"google.golang.org/grpc"
@@ -18,7 +18,7 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	pb "github.com/airconduct/kruntime/api/runtime/v1"
+	pb "github.com/aionops/kruntime/api/runtime/v1"
 )
 
 var (

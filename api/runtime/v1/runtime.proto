@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package executor.v1;
 
-option go_package = "github.com/airconduct/kruntime/api/runtime/v1;runtimev1";
+option go_package = "github.com/aionops/kruntime/api/runtime/v1;runtimev1";
 
 // Executor is the gRPC service that runtimes must implement.
 // The agent sidecar calls this to delegate command execution.

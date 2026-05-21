@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	pb "github.com/airconduct/kruntime/api/runtime/v1"
+	pb "github.com/aionops/kruntime/api/runtime/v1"
 )
 
 func startTestServer(t *testing.T) (pb.RuntimeClient, func()) {

@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/airconduct/kruntime/api/v1alpha1"
+	"github.com/aionops/kruntime/api/v1alpha1"
 )
 
 const (
@@ -35,8 +35,8 @@ type RuntimeReconciler struct {
 	DefaultDaemonImage string
 }
 
-// +kubebuilder:rbac:groups=kruntime.airconduct.com,resources=runtimes,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=kruntime.airconduct.com,resources=runtimes/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=kruntime.aionops.com,resources=runtimes,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=kruntime.aionops.com,resources=runtimes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
