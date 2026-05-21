@@ -45,7 +45,7 @@ func main() {
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "kruntime-scheduler.airconduct.com",
+		LeaderElectionID:       "kruntime-scheduler.aionops.com",
 	})
 	mgr.AddHealthzCheck("healthz", func(_ *http.Request) error { return nil })
 	mgr.AddReadyzCheck("readyz", func(_ *http.Request) error { return nil })

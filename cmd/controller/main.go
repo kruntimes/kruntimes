@@ -45,7 +45,7 @@ func main() {
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "kruntime-controller.airconduct.com",
+		LeaderElectionID:       "kruntime-controller.aionops.com",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

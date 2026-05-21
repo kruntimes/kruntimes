@@ -195,7 +195,7 @@ service Runtime {
 Deploy with a Runtime CR:
 
 ```yaml
-apiVersion: kruntime.airconduct.com/v1alpha1
+apiVersion: kruntime.aionops.com/v1alpha1
 kind: Runtime
 metadata:
   name: my-python
