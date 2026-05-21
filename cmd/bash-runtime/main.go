@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc"
 	"k8s.io/klog/v2"
 
-	pb "github.com/airconduct/kruntime/api/taskruntime/v1"
+	pb "github.com/airconduct/kruntime/api/runtime/v1"
 	"github.com/airconduct/kruntime/internal/runtime/bash"
 )
 

@@ -2,9 +2,9 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v5.29.3
-// source: api/taskruntime/v1/executor.proto
+// source: api/runtime/v1/runtime.proto
 
-package taskruntimev1
+package runtimev1
 
 import (
 	context "context"
@@ -237,5 +237,5 @@ var Runtime_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "api/taskruntime/v1/executor.proto",
+	Metadata: "api/runtime/v1/runtime.proto",
 }

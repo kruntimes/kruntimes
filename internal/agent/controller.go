@@ -18,7 +18,7 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	pb "github.com/airconduct/kruntime/api/taskruntime/v1"
+	pb "github.com/airconduct/kruntime/api/runtime/v1"
 )
 
 var (

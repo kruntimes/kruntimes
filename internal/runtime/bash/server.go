@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 
-	pb "github.com/airconduct/kruntime/api/taskruntime/v1"
+	pb "github.com/airconduct/kruntime/api/runtime/v1"
 )
 
 type taskEntry struct {

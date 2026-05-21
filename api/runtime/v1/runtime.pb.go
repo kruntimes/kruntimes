@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v5.29.3
-// source: api/taskruntime/v1/executor.proto
+// source: api/runtime/v1/runtime.proto
 
-package taskruntimev1
+package runtimev1
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -60,11 +60,11 @@ func (x ExecutionState) String() string {
 }
 
 func (ExecutionState) Descriptor() protoreflect.EnumDescriptor {
-	return file_api_taskruntime_v1_executor_proto_enumTypes[0].Descriptor()
+	return file_api_runtime_v1_runtime_proto_enumTypes[0].Descriptor()
 }
 
 func (ExecutionState) Type() protoreflect.EnumType {
-	return &file_api_taskruntime_v1_executor_proto_enumTypes[0]
+	return &file_api_runtime_v1_runtime_proto_enumTypes[0]
 }
 
 func (x ExecutionState) Number() protoreflect.EnumNumber {
@@ -73,7 +73,7 @@ func (x ExecutionState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ExecutionState.Descriptor instead.
 func (ExecutionState) EnumDescriptor() ([]byte, []int) {
-	return file_api_taskruntime_v1_executor_proto_rawDescGZIP(), []int{0}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{0}
 }
 
 type ExecuteRequest struct {
@@ -89,7 +89,7 @@ type ExecuteRequest struct {
 
 func (x *ExecuteRequest) Reset() {
 	*x = ExecuteRequest{}
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[0]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -101,7 +101,7 @@ func (x *ExecuteRequest) String() string {
 func (*ExecuteRequest) ProtoMessage() {}
 
 func (x *ExecuteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[0]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -114,7 +114,7 @@ func (x *ExecuteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteRequest.ProtoReflect.Descriptor instead.
 func (*ExecuteRequest) Descriptor() ([]byte, []int) {
-	return file_api_taskruntime_v1_executor_proto_rawDescGZIP(), []int{0}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *ExecuteRequest) GetId() string {
@@ -161,7 +161,7 @@ type ExecuteResponse struct {
 
 func (x *ExecuteResponse) Reset() {
 	*x = ExecuteResponse{}
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[1]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -173,7 +173,7 @@ func (x *ExecuteResponse) String() string {
 func (*ExecuteResponse) ProtoMessage() {}
 
 func (x *ExecuteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[1]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -186,7 +186,7 @@ func (x *ExecuteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteResponse.ProtoReflect.Descriptor instead.
 func (*ExecuteResponse) Descriptor() ([]byte, []int) {
-	return file_api_taskruntime_v1_executor_proto_rawDescGZIP(), []int{1}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *ExecuteResponse) GetId() string {
@@ -205,7 +205,7 @@ type StatusRequest struct {
 
 func (x *StatusRequest) Reset() {
 	*x = StatusRequest{}
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[2]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -217,7 +217,7 @@ func (x *StatusRequest) String() string {
 func (*StatusRequest) ProtoMessage() {}
 
 func (x *StatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[2]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -230,7 +230,7 @@ func (x *StatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
 func (*StatusRequest) Descriptor() ([]byte, []int) {
-	return file_api_taskruntime_v1_executor_proto_rawDescGZIP(), []int{2}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *StatusRequest) GetId() string {
@@ -254,7 +254,7 @@ type StatusResponse struct {
 
 func (x *StatusResponse) Reset() {
 	*x = StatusResponse{}
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[3]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -266,7 +266,7 @@ func (x *StatusResponse) String() string {
 func (*StatusResponse) ProtoMessage() {}
 
 func (x *StatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[3]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -279,7 +279,7 @@ func (x *StatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
 func (*StatusResponse) Descriptor() ([]byte, []int) {
-	return file_api_taskruntime_v1_executor_proto_rawDescGZIP(), []int{3}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *StatusResponse) GetId() string {
@@ -332,7 +332,7 @@ type ListRequest struct {
 
 func (x *ListRequest) Reset() {
 	*x = ListRequest{}
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[4]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -344,7 +344,7 @@ func (x *ListRequest) String() string {
 func (*ListRequest) ProtoMessage() {}
 
 func (x *ListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[4]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -357,7 +357,7 @@ func (x *ListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRequest.ProtoReflect.Descriptor instead.
 func (*ListRequest) Descriptor() ([]byte, []int) {
-	return file_api_taskruntime_v1_executor_proto_rawDescGZIP(), []int{4}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{4}
 }
 
 type ListResponse struct {
@@ -369,7 +369,7 @@ type ListResponse struct {
 
 func (x *ListResponse) Reset() {
 	*x = ListResponse{}
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[5]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -381,7 +381,7 @@ func (x *ListResponse) String() string {
 func (*ListResponse) ProtoMessage() {}
 
 func (x *ListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[5]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -394,7 +394,7 @@ func (x *ListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListResponse.ProtoReflect.Descriptor instead.
 func (*ListResponse) Descriptor() ([]byte, []int) {
-	return file_api_taskruntime_v1_executor_proto_rawDescGZIP(), []int{5}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ListResponse) GetEntries() []*StatusResponse {
@@ -413,7 +413,7 @@ type CancelRequest struct {
 
 func (x *CancelRequest) Reset() {
 	*x = CancelRequest{}
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[6]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -425,7 +425,7 @@ func (x *CancelRequest) String() string {
 func (*CancelRequest) ProtoMessage() {}
 
 func (x *CancelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[6]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -438,7 +438,7 @@ func (x *CancelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRequest.ProtoReflect.Descriptor instead.
 func (*CancelRequest) Descriptor() ([]byte, []int) {
-	return file_api_taskruntime_v1_executor_proto_rawDescGZIP(), []int{6}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *CancelRequest) GetId() string {
@@ -456,7 +456,7 @@ type CancelResponse struct {
 
 func (x *CancelResponse) Reset() {
 	*x = CancelResponse{}
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[7]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -468,7 +468,7 @@ func (x *CancelResponse) String() string {
 func (*CancelResponse) ProtoMessage() {}
 
 func (x *CancelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_taskruntime_v1_executor_proto_msgTypes[7]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -481,14 +481,14 @@ func (x *CancelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelResponse.ProtoReflect.Descriptor instead.
 func (*CancelResponse) Descriptor() ([]byte, []int) {
-	return file_api_taskruntime_v1_executor_proto_rawDescGZIP(), []int{7}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{7}
 }
 
-var File_api_taskruntime_v1_executor_proto protoreflect.FileDescriptor
+var File_api_runtime_v1_runtime_proto protoreflect.FileDescriptor
 
-const file_api_taskruntime_v1_executor_proto_rawDesc = "" +
+const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\n" +
-	"!api/taskruntime/v1/executor.proto\x12\vexecutor.v1\"\xf6\x01\n" +
+	"\x1capi/runtime/v1/runtime.proto\x12\vexecutor.v1\"\xf6\x01\n" +
 	"\x0eExecuteRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\bcommands\x18\x02 \x03(\tR\bcommands\x126\n" +
@@ -526,23 +526,23 @@ const file_api_taskruntime_v1_executor_proto_rawDesc = "" +
 	"\aExecute\x12\x1b.executor.v1.ExecuteRequest\x1a\x1c.executor.v1.ExecuteResponse\x12A\n" +
 	"\x06Status\x12\x1a.executor.v1.StatusRequest\x1a\x1b.executor.v1.StatusResponse\x12;\n" +
 	"\x04List\x12\x18.executor.v1.ListRequest\x1a\x19.executor.v1.ListResponse\x12A\n" +
-	"\x06Cancel\x12\x1a.executor.v1.CancelRequest\x1a\x1b.executor.v1.CancelResponseBAZ?github.com/airconduct/kruntime/api/taskruntime/v1;taskruntimev1b\x06proto3"
+	"\x06Cancel\x12\x1a.executor.v1.CancelRequest\x1a\x1b.executor.v1.CancelResponseB9Z7github.com/airconduct/kruntime/api/runtime/v1;runtimev1b\x06proto3"
 
 var (
-	file_api_taskruntime_v1_executor_proto_rawDescOnce sync.Once
-	file_api_taskruntime_v1_executor_proto_rawDescData []byte
+	file_api_runtime_v1_runtime_proto_rawDescOnce sync.Once
+	file_api_runtime_v1_runtime_proto_rawDescData []byte
 )
 
-func file_api_taskruntime_v1_executor_proto_rawDescGZIP() []byte {
-	file_api_taskruntime_v1_executor_proto_rawDescOnce.Do(func() {
-		file_api_taskruntime_v1_executor_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_api_taskruntime_v1_executor_proto_rawDesc), len(file_api_taskruntime_v1_executor_proto_rawDesc)))
+func file_api_runtime_v1_runtime_proto_rawDescGZIP() []byte {
+	file_api_runtime_v1_runtime_proto_rawDescOnce.Do(func() {
+		file_api_runtime_v1_runtime_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_api_runtime_v1_runtime_proto_rawDesc), len(file_api_runtime_v1_runtime_proto_rawDesc)))
 	})
-	return file_api_taskruntime_v1_executor_proto_rawDescData
+	return file_api_runtime_v1_runtime_proto_rawDescData
 }
 
-var file_api_taskruntime_v1_executor_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_api_taskruntime_v1_executor_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
-var file_api_taskruntime_v1_executor_proto_goTypes = []any{
+var file_api_runtime_v1_runtime_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_api_runtime_v1_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_api_runtime_v1_runtime_proto_goTypes = []any{
 	(ExecutionState)(0),     // 0: executor.v1.ExecutionState
 	(*ExecuteRequest)(nil),  // 1: executor.v1.ExecuteRequest
 	(*ExecuteResponse)(nil), // 2: executor.v1.ExecuteResponse
@@ -554,7 +554,7 @@ var file_api_taskruntime_v1_executor_proto_goTypes = []any{
 	(*CancelResponse)(nil),  // 8: executor.v1.CancelResponse
 	nil,                     // 9: executor.v1.ExecuteRequest.EnvEntry
 }
-var file_api_taskruntime_v1_executor_proto_depIdxs = []int32{
+var file_api_runtime_v1_runtime_proto_depIdxs = []int32{
 	9, // 0: executor.v1.ExecuteRequest.env:type_name -> executor.v1.ExecuteRequest.EnvEntry
 	0, // 1: executor.v1.StatusResponse.state:type_name -> executor.v1.ExecutionState
 	4, // 2: executor.v1.ListResponse.entries:type_name -> executor.v1.StatusResponse
@@ -573,27 +573,27 @@ var file_api_taskruntime_v1_executor_proto_depIdxs = []int32{
 	0, // [0:3] is the sub-list for field type_name
 }
 
-func init() { file_api_taskruntime_v1_executor_proto_init() }
-func file_api_taskruntime_v1_executor_proto_init() {
-	if File_api_taskruntime_v1_executor_proto != nil {
+func init() { file_api_runtime_v1_runtime_proto_init() }
+func file_api_runtime_v1_runtime_proto_init() {
+	if File_api_runtime_v1_runtime_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_taskruntime_v1_executor_proto_rawDesc), len(file_api_taskruntime_v1_executor_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_runtime_v1_runtime_proto_rawDesc), len(file_api_runtime_v1_runtime_proto_rawDesc)),
 			NumEnums:      1,
 			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_api_taskruntime_v1_executor_proto_goTypes,
-		DependencyIndexes: file_api_taskruntime_v1_executor_proto_depIdxs,
-		EnumInfos:         file_api_taskruntime_v1_executor_proto_enumTypes,
-		MessageInfos:      file_api_taskruntime_v1_executor_proto_msgTypes,
+		GoTypes:           file_api_runtime_v1_runtime_proto_goTypes,
+		DependencyIndexes: file_api_runtime_v1_runtime_proto_depIdxs,
+		EnumInfos:         file_api_runtime_v1_runtime_proto_enumTypes,
+		MessageInfos:      file_api_runtime_v1_runtime_proto_msgTypes,
 	}.Build()
-	File_api_taskruntime_v1_executor_proto = out.File
-	file_api_taskruntime_v1_executor_proto_goTypes = nil
-	file_api_taskruntime_v1_executor_proto_depIdxs = nil
+	File_api_runtime_v1_runtime_proto = out.File
+	file_api_runtime_v1_runtime_proto_goTypes = nil
+	file_api_runtime_v1_runtime_proto_depIdxs = nil
 }
