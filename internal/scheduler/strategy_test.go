@@ -28,7 +28,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 		{
 			name:    "no candidate pods",
 			pods:    nil,
-			run:    &v1alpha1.Run{},
+			run:     &v1alpha1.Run{},
 			wantErr: true,
 		},
 		{
@@ -36,7 +36,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 			pods: []corev1.Pod{
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
 			},
-			run:    &v1alpha1.Run{},
+			run:     &v1alpha1.Run{},
 			wantPod: "pod-a",
 		},
 		{
@@ -55,7 +55,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 					Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "pod-a"},
 				},
 			},
-			run:    &v1alpha1.Run{},
+			run:     &v1alpha1.Run{},
 			wantPod: "pod-b",
 		},
 		{
@@ -71,7 +71,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 				},
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
 			},
-			run:    &v1alpha1.Run{},
+			run:     &v1alpha1.Run{},
 			wantPod: "pod-b",
 		},
 	}
