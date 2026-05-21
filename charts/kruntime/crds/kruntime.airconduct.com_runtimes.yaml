@@ -59,6 +59,9 @@ spec:
                 items:
                   type: string
                 type: array
+              daemonImage:
+                description: DaemonImage overrides the runtimed daemon image.
+                type: string
               env:
                 description: Env is extra environment variables for the runtime container.
                 items:
@@ -291,9 +294,6 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
-              sidecarImage:
-                description: SidecarImage overrides the runtimed sidecar image.
-                type: string
             required:
             - image
             type: object

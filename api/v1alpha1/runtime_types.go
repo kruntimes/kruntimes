@@ -34,9 +34,9 @@ type RuntimeSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	Replicas int32 `json:"replicas,omitempty"`
 
-	// SidecarImage overrides the runtimed sidecar image.
+	// DaemonImage overrides the runtimed daemon image.
 	// +optional
-	SidecarImage string `json:"sidecarImage,omitempty"`
+	DaemonImage string `json:"daemonImage,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
