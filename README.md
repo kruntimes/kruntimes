@@ -1,33 +1,60 @@
 # kruntime
 
-Two-layer scheduling system for Kubernetes that reduces CI/CD run startup time from minutes to seconds.
+Two-layer scheduling system on Kubernetes that eliminates cold-start latency by keeping warm runtime pods ready to execute code in milliseconds.
 
 ## Architecture
 
 ```
-CI System → run-cli → Run CRD (Pending)
-                          │
-                    Scheduler → Run (Scheduled, assignedPod)
-                          │
-                    Agent (runtime pod) → executes → Run (Succeeded/Failed)
+                 ┌──────────────┐
+                 │   run-cli    │
+                 └──────┬───────┘
+                        │ create
+                        ▼
+┌─────────────────────────────────────────────┐
+│  Run CRD (Pending)                          │
+│    spec.runtime: bash                       │
+│    spec.commands: ["echo hello"]            │
+└────────────────────┬────────────────────────┘
+                     │ watch
+                     ▼
+┌─────────────────────────────────────────────┐
+│  Scheduler                                  │
+│    finds matching Runtime pods by label     │
+│    sets assignedPod + phase=Scheduled       │
+└────────────────────┬────────────────────────┘
+                     │ watch (by assigned pod)
+                     ▼
+┌─────────────────────────────────────────────┐
+│  Agent (sidecar)  ──gRPC──▶  Runtime Server │
+│    claims Run            │    (bash / custom)│
+│    delegates Execute()   │    runs commands  │
+│    polls Status()        │                   │
+│    updates Run CRD       │                   │
+└──────────────────────────┴───────────────────┘
 ```
 
-Key insight: Scheduler and Agent are fully decoupled — they communicate exclusively through Run CRD status updates.
+Scheduler and Agent are fully decoupled — they communicate exclusively through Run CRD status updates.
 
 ## Components
 
-- **Task CRD** (`kruntime.airconduct.com/v1alpha1`) — the central state machine
-- **Scheduler** — K8s controller that watches Pending Tasks and assigns them to Runtime Pods
-- **Agent** — process inside each Runtime Pod that claims and executes assigned Tasks
-- **run-cli** — lightweight CLI for creating and monitoring Tasks
+| Component | Description |
+|-----------|-------------|
+| **Run CRD** | Central state machine: Pending → Scheduled → Running → Succeeded/Failed |
+| **Runtime CRD** | Defines a runtime type (image, port, replicas). Controller auto-creates Deployment with agent sidecar. |
+| **Scheduler** | K8s controller that watches Pending Runs and assigns them to Runtime Pods |
+| **Runtime Controller** | Watches Runtime CRs, creates Deployments with agent sidecar injected |
+| **Agent** | Sidecar in each Runtime Pod. Watches Runs assigned to its pod, delegates execution to the Runtime Server via gRPC |
+| **Runtime Server** | Pluggable gRPC server (`Execute` / `Status` / `List` / `Cancel`). Default: bash runtime. |
+| **run-cli** | CLI for creating and monitoring Runs |
 
 ## Quick Start
 
 ### Prerequisites
 
 - Go 1.26+
-- Kubernetes cluster (or envtest for integration tests)
-- controller-gen (`make controller-gen` installs it automatically)
+- Kubernetes cluster (or [kind](https://kind.sigs.k8s.io/) for E2E)
+- Helm 3
+- protoc (for proto generation; `make proto` auto-installs if missing)
 
 ### Build
 
@@ -35,83 +62,119 @@ Key insight: Scheduler and Agent are fully decoupled — they communicate exclus
 make build
 ```
 
-This produces three binaries in `bin/`:
-- `scheduler` — the run scheduling controller
-- `agent` — the per-pod run executor
-- `run-cli` — the command-line interface
+Produces five binaries in `bin/`: `scheduler`, `controller`, `agent`, `bash-runtime`, `run-cli`.
 
-### Deploy to Kubernetes
+### Deploy
 
 ```bash
-# Deploy CRDs
-kubectl apply -k config/crd
+# Deploy the kruntime platform (CRDs, scheduler, controller, RBAC)
+make deploy
 
-# Deploy RBAC
-kubectl apply -k config/rbac
-
-# Deploy scheduler
-kubectl apply -f config/manager/scheduler_deployment.yaml
-
-# Deploy runtime pods (example: golang-1.26)
-kubectl apply -f config/manager/runtime_deployment.yaml
+# Deploy built-in runtimes (bash runtime)
+make deploy-runtimes
 ```
 
-### Create a Task
+### Create a Run
 
 ```bash
-# Run a quick test
-run-cli run --runtime golang-1.26 --wait -- echo "Hello from kruntime"
+# Quick test
+run-cli run --runtime bash --wait -- echo "Hello from kruntime"
 
-# Run tests with a repo
-run-cli run --runtime golang-1.26 --repo-url https://github.com/example/repo.git --wait -- go test ./...
-
-# List tasks
+# List runs
 run-cli list --all-namespaces
 
 # Get run details
 run-cli get run-xxxxxxxx
 ```
 
+### E2E Testing
+
+```bash
+make e2e-setup    # creates kind cluster, builds images, deploys everything
+make e2e-test     # runs full lifecycle + scheduler responsiveness tests
+make e2e-cleanup  # tears down kind cluster
+```
+
 ## Development
 
 ```bash
-# Run all code generation
-make generate manifests
-
-# Run unit tests
-make test
-
-# Run integration tests
-make test-integration
-
-# Build Docker images
-make docker-build
+make proto                 # generate gRPC code from proto
+make generate manifests    # generate deepcopy + CRDs
+make test                  # unit tests
+make test-integration      # integration tests (envtest)
+make docker-build          # build all Docker images
 ```
 
 ## Run Lifecycle
 
 ```
 Pending → Scheduled → Running → Succeeded
-                              → Failed
+                            → Failed
 ```
 
-## Runtime Pods
+## Custom Runtimes
 
-Runtime pods are standard K8s Deployments with a `runtime` label. The scheduler matches Tasks to pods by matching `spec.runtime` to the pod's `runtime` label.
+Implement the `Runtime` gRPC service (`api/runtime/v1/runtime.proto`) to create custom runtimes:
 
-Example runtime label: `runtime: golang-1.26`
+```protobuf
+service Runtime {
+    rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+    rpc Status(StatusRequest) returns (StatusResponse);
+    rpc List(ListRequest) returns (ListResponse);
+    rpc Cancel(CancelRequest) returns (CancelResponse);
+}
+```
+
+Then define a Runtime CR referencing your image:
+
+```yaml
+apiVersion: kruntime.airconduct.com/v1alpha1
+kind: Runtime
+metadata:
+  name: my-python
+spec:
+  image: my-python-runtime:latest
+  port: 9091
+  replicas: 3
+```
 
 ## Metrics
 
-### Scheduler (exposed at :8080)
-- `kruntime_scheduler_sync_total` — tasks processed
-- `kruntime_scheduler_sync_duration_seconds` — scheduling latency
-- `kruntime_scheduler_no_pods_total` — tasks with no available runtime
+| Component | Port | Metric | Description |
+|-----------|------|--------|-------------|
+| Scheduler | :8080 | `kruntime_scheduler_sync_total` | Runs processed |
+| | | `kruntime_scheduler_sync_duration_seconds` | Scheduling latency |
+| | | `kruntime_scheduler_no_pods_total` | Runs with no available runtime |
+| Agent | :9090 | `kruntime_agent_runs_total` | Runs completed |
+| | | `kruntime_agent_run_duration_seconds` | Execution duration |
+| | | `kruntime_agent_claim_conflicts_total` | Claim conflicts |
+| Controller | :8082 | (controller-runtime defaults) | |
 
-### Agent (exposed at :9090)
-- `kruntime_agent_tasks_total` — tasks completed
-- `kruntime_agent_task_duration_seconds` — execution duration
-- `kruntime_agent_claim_conflicts_total` — claim conflicts
+## Project Structure
+
+```
+api/
+├── v1alpha1/          Run + Runtime CRD types
+└── runtime/v1/        gRPC proto + generated code
+cmd/
+├── scheduler/         Scheduler entry point
+├── controller/        Runtime controller entry point
+├── agent/             Agent sidecar entry point
+├── bash-runtime/      Default bash runtime server
+└── run-cli/           CLI tool
+internal/
+├── agent/             Agent controller (claim + gRPC delegation)
+├── controller/        Runtime controller (Deployment creation)
+├── scheduler/         Run reconciler + scheduling strategies
+├── runtime/bash/      Bash runtime gRPC server implementation
+└── runcli/            CLI subcommands (run, get, list)
+charts/
+├── kruntime/          Platform Helm chart (CRDs, scheduler, controller)
+└── kruntime-runtimes/ Built-in runtimes Helm chart
+test/
+├── e2e/               End-to-end tests (kind cluster)
+└── integration/       Integration tests (envtest)
+```
 
 ## License
 
