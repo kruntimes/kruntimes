@@ -1,4 +1,4 @@
-package runcli
+package krt
 
 import (
 	"context"

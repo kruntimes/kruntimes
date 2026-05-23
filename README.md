@@ -49,7 +49,7 @@ No connection pools. No IP tracking. No P2P. Just etcd.
 
 ```
                  ┌──────────────┐
-                 │   run-cli    │
+                 │     krt      │
                  └──────┬───────┘
                         │ create
                         ▼
@@ -86,7 +86,7 @@ No connection pools. No IP tracking. No P2P. Just etcd.
 | **Runtime Controller** | Watches Runtime CRs, creates Deployments with runtimed daemon injected. |
 | **Runtimed** | Daemon in each Runtime Pod. Watches Runs assigned to its pod, delegates execution to the Runtime Server via gRPC. |
 | **Runtime Server** | Pluggable gRPC service (`Execute` / `Status` / `List` / `Cancel`). Default: bash runtime. |
-| **run-cli** | CLI for creating and monitoring Runs. |
+| **krt** | CLI for creating and monitoring Runs. |
 
 ## Quick Start
 
@@ -102,7 +102,7 @@ No connection pools. No IP tracking. No P2P. Just etcd.
 make build
 ```
 
-Produces five binaries: `scheduler`, `controller`, `runtimed`, `bash-runtime`, `run-cli`.
+Produces five binaries: `scheduler`, `controller`, `runtimed`, `bash-runtime`, `krt`.
 
 ### Deploy
 
@@ -114,9 +114,9 @@ make deploy-runtimes  # built-in runtimes (bash)
 ### Create a Run
 
 ```bash
-run-cli run --runtime bash --wait -- echo "Hello from kruntimes"
-run-cli list --all-namespaces
-run-cli get run-xxxxxxxx
+krt run --runtime bash --wait -- echo "Hello from kruntimes"
+krt list --all-namespaces
+krt get run-xxxxxxxx
 ```
 
 ### E2E Testing
@@ -228,13 +228,13 @@ cmd/
 ├── controller/        Runtime controller entry point
 ├── runtimed/          Runtimed daemon entry point
 ├── bash-runtime/      Default bash runtime server
-└── run-cli/           CLI tool
+└── krt/               CLI tool
 internal/
 ├── runtimed/          Runtimed controller (claim + gRPC delegation)
 ├── controller/        Runtime controller (Deployment creation)
 ├── scheduler/         Run reconciler + scheduling strategies
 ├── runtime/bash/      Bash runtime gRPC server implementation
-└── runcli/            CLI subcommands (run, get, list)
+└── krt/               CLI subcommands (run, get, list)
 charts/
 ├── kruntimes/          Platform Helm chart (CRDs, scheduler, controller)
 └── kruntimes-runtimes/ Built-in runtimes Helm chart

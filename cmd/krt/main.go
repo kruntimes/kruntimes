@@ -12,7 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
-	"github.com/kruntimes/kruntimes/internal/runcli"
+	"github.com/kruntimes/kruntimes/internal/krt"
 )
 
 func main() {
@@ -28,13 +28,13 @@ func main() {
 	}
 
 	root := &cobra.Command{
-		Use:   "run-cli",
+		Use:   "krt",
 		Short: "CLI for interacting with kruntimes Run CRDs.",
 	}
 
-	root.AddCommand(runcli.NewRunCmd(c))
-	root.AddCommand(runcli.NewGetCmd(c))
-	root.AddCommand(runcli.NewListCmd(c))
+	root.AddCommand(krt.NewRunCmd(c))
+	root.AddCommand(krt.NewGetCmd(c))
+	root.AddCommand(krt.NewListCmd(c))
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

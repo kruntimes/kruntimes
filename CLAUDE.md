@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test Commands
 
 ```bash
-make build              # compile all 5 binaries (scheduler, controller, runtimed, bash-runtime, run-cli)
+make build              # compile all 5 binaries (scheduler, controller, runtimed, bash-runtime, krt)
 make test               # unit tests (skips integration and e2e)
 make test-integration   # envtest-based integration tests (real API server)
 make e2e-test           # E2E tests against a kind cluster (requires make e2e-setup first)
@@ -59,8 +59,8 @@ The project went through a deliberate renaming cycle:
 - `Task` → `Run` (avoid CI/CD pipeline connotations)
 - `Agent` → `Runtimed` (avoid AI agent confusion; runtimed is like kubelet/containerd)
 - `AgentImage` → `DaemonImage` (accurately describes the runtimed daemon image)
-- `task-cli` → `run-cli`
-- `taskcli` → `runcli`
+- `task-cli` → `run-cli` → `krt`
+- `taskcli` → `runcli` → krt command package
 - Proto `TaskRuntime` service → `Runtime`; methods `CreateTask` → `Execute`, `GetTask` → `Status`
 
 Do NOT reintroduce "Task" or "Agent" naming. The term "task" is reserved for the proto's internal gRPC concepts (e.g., `taskEntry` in bash runtime, `taskruntimes` package name).
