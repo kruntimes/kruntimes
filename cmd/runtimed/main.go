@@ -16,8 +16,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/aionops/kruntime/api/v1alpha1"
-	"github.com/aionops/kruntime/internal/runtimed"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runtimed"
 )
 
 func main() {
@@ -38,7 +38,7 @@ func main() {
 		hostname, _ = os.Hostname()
 	}
 
-	klog.Infof("Starting kruntime runtimed, hostname=%s, runtime=%s", hostname, runtimeEndpoint)
+	klog.Infof("Starting kruntimes runtimed, hostname=%s, runtime=%s", hostname, runtimeEndpoint)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))

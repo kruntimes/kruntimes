@@ -17,9 +17,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	"github.com/aionops/kruntime/api/v1alpha1"
-	"github.com/aionops/kruntime/internal/runtimed"
-	"github.com/aionops/kruntime/internal/scheduler"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runtimed"
+	"github.com/kruntimes/kruntimes/internal/scheduler"
 )
 
 var (
@@ -29,7 +29,7 @@ var (
 
 func TestMain(m *testing.M) {
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "charts", "kruntime", "crds")},
+		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "charts", "kruntimes", "crds")},
 		ErrorIfCRDPathMissing: true,
 	}
 

@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/aionops/kruntime/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
 type runOptions struct {

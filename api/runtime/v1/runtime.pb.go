@@ -526,7 +526,7 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\aExecute\x12\x1b.executor.v1.ExecuteRequest\x1a\x1c.executor.v1.ExecuteResponse\x12A\n" +
 	"\x06Status\x12\x1a.executor.v1.StatusRequest\x1a\x1b.executor.v1.StatusResponse\x12;\n" +
 	"\x04List\x12\x18.executor.v1.ListRequest\x1a\x19.executor.v1.ListResponse\x12A\n" +
-	"\x06Cancel\x12\x1a.executor.v1.CancelRequest\x1a\x1b.executor.v1.CancelResponseB6Z4github.com/aionops/kruntime/api/runtime/v1;runtimev1b\x06proto3"
+	"\x06Cancel\x12\x1a.executor.v1.CancelRequest\x1a\x1b.executor.v1.CancelResponseB9Z7github.com/kruntimes/kruntimes/api/runtime/v1;runtimev1b\x06proto3"
 
 var (
 	file_api_runtime_v1_runtime_proto_rawDescOnce sync.Once

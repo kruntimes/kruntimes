@@ -1,4 +1,4 @@
-module github.com/aionops/kruntime
+module github.com/kruntimes/kruntimes
 
 go 1.26.3
 

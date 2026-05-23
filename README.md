@@ -1,4 +1,4 @@
-# kruntime
+# kruntimes
 
 A two-layer scheduling system built on Kubernetes that eliminates cold-start latency by keeping warm runtime pods ready to execute code in milliseconds. Built for AI agents, CI/CD tasks, serverless functions, and any short-lived, high-concurrency workloads.
 
@@ -16,11 +16,11 @@ Building a serverless platform on vanilla Kubernetes faces four fundamental chal
 
 ## Design
 
-kruntime solves these by treating K8s as an IaaS layer and building all serverless logic in the application layer, under full control of the platform team.
+kruntimes solves these by treating K8s as an IaaS layer and building all serverless logic in the application layer, under full control of the platform team.
 
 ### Reuse over creation
 
-Instead of creating a new Pod for every request, kruntime maintains pools of pre-warmed **Runtime Pods**. Each pod already has the required toolchain, dependencies, and a running daemon. When a Run arrives, the scheduler assigns it to an existing hot pod. Startup drops from minutes to milliseconds — the slowest parts of Pod creation (scheduling, image pulling) never happen at request time.
+Instead of creating a new Pod for every request, kruntimes maintains pools of pre-warmed **Runtime Pods**. Each pod already has the required toolchain, dependencies, and a running daemon. When a Run arrives, the scheduler assigns it to an existing hot pod. Startup drops from minutes to milliseconds — the slowest parts of Pod creation (scheduling, image pulling) never happen at request time.
 
 ### Two-layer scheduling
 
@@ -114,7 +114,7 @@ make deploy-runtimes  # built-in runtimes (bash)
 ### Create a Run
 
 ```bash
-run-cli run --runtime bash --wait -- echo "Hello from kruntime"
+run-cli run --runtime bash --wait -- echo "Hello from kruntimes"
 run-cli list --all-namespaces
 run-cli get run-xxxxxxxx
 ```
@@ -195,7 +195,7 @@ service Runtime {
 Deploy with a Runtime CR:
 
 ```yaml
-apiVersion: kruntime.aionops.com/v1alpha1
+apiVersion: kruntimes.kruntimes.com/v1alpha1
 kind: Runtime
 metadata:
   name: my-python
@@ -209,12 +209,12 @@ spec:
 
 | Component | Port | Metric | Description |
 |-----------|------|--------|-------------|
-| Scheduler | :8080 | `kruntime_scheduler_sync_total` | Runs processed |
-| | | `kruntime_scheduler_sync_duration_seconds` | Scheduling latency |
-| | | `kruntime_scheduler_no_pods_total` | Runs with no available runtime |
-| Runtimed | :9090 | `kruntime_runtimed_runs_total` | Runs completed |
-| | | `kruntime_runtimed_run_duration_seconds` | Execution duration |
-| | | `kruntime_runtimed_claim_conflicts_total` | Claim conflicts |
+| Scheduler | :8080 | `kruntimes_scheduler_sync_total` | Runs processed |
+| | | `kruntimes_scheduler_sync_duration_seconds` | Scheduling latency |
+| | | `kruntimes_scheduler_no_pods_total` | Runs with no available runtime |
+| Runtimed | :9090 | `kruntimes_runtimed_runs_total` | Runs completed |
+| | | `kruntimes_runtimed_run_duration_seconds` | Execution duration |
+| | | `kruntimes_runtimed_claim_conflicts_total` | Claim conflicts |
 | Controller | :8082 | (controller-runtime defaults) | |
 
 ## Project Structure
@@ -236,8 +236,8 @@ internal/
 ├── runtime/bash/      Bash runtime gRPC server implementation
 └── runcli/            CLI subcommands (run, get, list)
 charts/
-├── kruntime/          Platform Helm chart (CRDs, scheduler, controller)
-└── kruntime-runtimes/ Built-in runtimes Helm chart
+├── kruntimes/          Platform Helm chart (CRDs, scheduler, controller)
+└── kruntimes-runtimes/ Built-in runtimes Helm chart
 test/
 ├── e2e/               End-to-end tests (kind cluster)
 └── integration/       Integration tests (envtest)

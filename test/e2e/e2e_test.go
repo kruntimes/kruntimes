@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
-	"github.com/aionops/kruntime/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
 const testNamespace = "default"
@@ -52,7 +52,7 @@ func ensureRuntime(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: v1alpha1.RuntimeSpec{
-			Image:    "kruntime-bash-runtime:latest",
+			Image:    "kruntimes-bash-runtime:latest",
 			Port:     9091,
 			Replicas: 1,
 			Command:  []string{"--port=9091", "--work-dir=/workspace"},

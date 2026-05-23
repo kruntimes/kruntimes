@@ -1,12 +1,12 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kruntime-scheduler
+  name: kruntimes-runtimed
   labels:
-    {{- include "kruntime.labels" . | nindent 4 }}
+    {{- include "kruntimes.labels" . | nindent 4 }}
 rules:
   - apiGroups:
-      - kruntime.aionops.com
+      - kruntimes.kruntimes.com
     resources:
       - runs
     verbs:
@@ -14,7 +14,7 @@ rules:
       - list
       - watch
   - apiGroups:
-      - kruntime.aionops.com
+      - kruntimes.kruntimes.com
     resources:
       - runs/status
     verbs:
@@ -27,16 +27,6 @@ rules:
       - pods
     verbs:
       - get
-      - list
-      - watch
-  - apiGroups:
-      - coordination.k8s.io
-    resources:
-      - leases
-    verbs:
-      - create
-      - get
-      - update
   - apiGroups:
       - ""
     resources:
@@ -48,14 +38,14 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: kruntime-scheduler
+  name: kruntimes-runtimed
   labels:
-    {{- include "kruntime.labels" . | nindent 4 }}
+    {{- include "kruntimes.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: kruntime-scheduler
+  name: kruntimes-runtimed
 subjects:
   - kind: ServiceAccount
-    name: kruntime-scheduler
+    name: kruntimes-runtimed
     namespace: {{ .Release.Namespace }}

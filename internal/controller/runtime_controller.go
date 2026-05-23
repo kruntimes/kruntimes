@@ -16,12 +16,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/aionops/kruntime/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
 const (
 	runtimeLabel      = "runtime"
-	runtimedDefaultImage = "kruntime-runtimed:latest"
+	runtimedDefaultImage = "kruntimes-runtimed:latest"
 	workspaceVolume   = "workspace"
 	workspacePath     = "/workspace"
 )
@@ -35,8 +35,8 @@ type RuntimeReconciler struct {
 	DefaultDaemonImage string
 }
 
-// +kubebuilder:rbac:groups=kruntime.aionops.com,resources=runtimes,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=kruntime.aionops.com,resources=runtimes/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=kruntimes.kruntimes.com,resources=runtimes,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=kruntimes.kruntimes.com,resources=runtimes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
@@ -102,7 +102,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 
 	labels := map[string]string{
 		runtimeLabel: runtimeLabelVal,
-		"app":        "kruntime-" + name,
+		"app":        "kruntimes-" + name,
 	}
 
 	runtimeContainer := corev1.Container{
@@ -179,7 +179,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "kruntime-runtimed",
+					ServiceAccountName: "kruntimes-runtimed",
 					Containers:         []corev1.Container{runtimeContainer, daemonContainer},
 					Volumes: []corev1.Volume{
 						{

@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: kruntime-scheduler
+  name: kruntimes-scheduler
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kruntime.scheduler.labels" . | nindent 4 }}
+    {{- include "kruntimes.scheduler.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.scheduler.replicas }}
   selector:
     matchLabels:
-      app: kruntime-scheduler
+      app: kruntimes-scheduler
   template:
     metadata:
       labels:
-        app: kruntime-scheduler
+        app: kruntimes-scheduler
     spec:
-      serviceAccountName: kruntime-scheduler
+      serviceAccountName: kruntimes-scheduler
       containers:
         - name: scheduler
           image: {{ .Values.scheduler.image }}

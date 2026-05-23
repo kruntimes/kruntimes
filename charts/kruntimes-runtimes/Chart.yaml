@@ -1,12 +1,12 @@
 apiVersion: v2
-name: kruntime-runtimes
-description: Built-in runtimes for kruntime
+name: kruntimes-runtimes
+description: Built-in runtimes for kruntimes
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
 keywords:
-  - kruntime
+  - kruntimes
   - runtime
   - bash
 maintainers:
-  - name: kruntime authors
+  - name: kruntimes authors

@@ -12,8 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/aionops/kruntime/api/v1alpha1"
-	"github.com/aionops/kruntime/internal/controller"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/controller"
 )
 
 var (
@@ -45,7 +45,7 @@ func main() {
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "kruntime-controller.aionops.com",
+		LeaderElectionID:       "kruntimes-controller.kruntimes.com",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

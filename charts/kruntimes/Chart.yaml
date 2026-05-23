@@ -1,5 +1,5 @@
 apiVersion: v2
-name: kruntime
+name: kruntimes
 description: Two-layer scheduling system for CI/CD run warm-up on Kubernetes
 type: application
 version: 0.1.0
@@ -9,4 +9,4 @@ keywords:
   - scheduling
   - task-runner
 maintainers:
-  - name: kruntime authors
+  - name: kruntimes authors

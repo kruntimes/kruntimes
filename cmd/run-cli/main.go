@@ -11,8 +11,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/aionops/kruntime/api/v1alpha1"
-	"github.com/aionops/kruntime/internal/runcli"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runcli"
 )
 
 func main() {
@@ -29,7 +29,7 @@ func main() {
 
 	root := &cobra.Command{
 		Use:   "run-cli",
-		Short: "CLI for interacting with kruntime Run CRDs.",
+		Short: "CLI for interacting with kruntimes Run CRDs.",
 	}
 
 	root.AddCommand(runcli.NewRunCmd(c))

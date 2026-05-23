@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/aionops/kruntime/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
 func TestLeastLoaded_Select(t *testing.T) {

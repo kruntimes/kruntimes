@@ -1,8 +1,8 @@
 # Image URL to use all building/pushing image targets
-IMG_SCHEDULER ?= kruntime-scheduler:latest
-IMG_CONTROLLER ?= kruntime-controller:latest
-IMG_RUNTIMED ?= kruntime-runtimed:latest
-IMG_BASH_RUNTIME ?= kruntime-bash-runtime:latest
+IMG_SCHEDULER ?= kruntimes-scheduler:latest
+IMG_CONTROLLER ?= kruntimes-controller:latest
+IMG_RUNTIMED ?= kruntimes-runtimed:latest
+IMG_BASH_RUNTIME ?= kruntimes-bash-runtime:latest
 
 # ENVTEST_K8S_VERSION refers to the version of k8s to use for envtest
 ENVTEST_K8S_VERSION = 1.32
@@ -40,7 +40,7 @@ generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and
 
 .PHONY: manifests
 manifests: controller-gen ## Generate CRD manifests into Helm chart.
-	$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=charts/kruntime/crds
+	$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=charts/kruntimes/crds
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -61,7 +61,7 @@ test-integration: generate manifests setup-envtest ## Run integration tests (req
 
 ##@ E2E
 
-KIND_CLUSTER_NAME ?= kruntime-e2e
+KIND_CLUSTER_NAME ?= kruntimes-e2e
 
 .PHONY: e2e-setup
 e2e-setup: docker-build manifests ## Create kind cluster, load images, and deploy chart.
@@ -70,7 +70,7 @@ e2e-setup: docker-build manifests ## Create kind cluster, load images, and deplo
 	kind load docker-image $(IMG_CONTROLLER) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(IMG_RUNTIMED) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(IMG_BASH_RUNTIME) --name $(KIND_CLUSTER_NAME)
-	$(HELM) upgrade --install kruntime ./charts/kruntime \
+	$(HELM) upgrade --install kruntimes ./charts/kruntimes \
 		--namespace $(NAMESPACE) --create-namespace --wait --timeout 120s
 
 .PHONY: e2e-test
@@ -154,22 +154,22 @@ docker-push: ## Push Docker images.
 
 .PHONY: template
 template: manifests ## Render Helm chart to stdout for validation.
-	$(HELM) template kruntime ./charts/kruntime --namespace $(NAMESPACE)
+	$(HELM) template kruntimes ./charts/kruntimes --namespace $(NAMESPACE)
 
 ##@ Deployment
 
 .PHONY: deploy
-deploy: manifests ## Deploy kruntime platform via Helm.
-	$(HELM) upgrade --install kruntime ./charts/kruntime --namespace $(NAMESPACE) --create-namespace
+deploy: manifests ## Deploy kruntimes platform via Helm.
+	$(HELM) upgrade --install kruntimes ./charts/kruntimes --namespace $(NAMESPACE) --create-namespace
 
 .PHONY: deploy-runtimes
 deploy-runtimes: ## Deploy built-in runtimes via Helm.
-	$(HELM) upgrade --install kruntime-runtimes ./charts/kruntime-runtimes --namespace $(NAMESPACE) --create-namespace
+	$(HELM) upgrade --install kruntimes-runtimes ./charts/kruntimes-runtimes --namespace $(NAMESPACE) --create-namespace
 
 .PHONY: undeploy
-undeploy: ## Remove all kruntime resources from K8s cluster.
-	-$(HELM) uninstall kruntime-runtimes --namespace $(NAMESPACE) --ignore-not-found
-	-$(HELM) uninstall kruntime --namespace $(NAMESPACE) --ignore-not-found
+undeploy: ## Remove all kruntimes resources from K8s cluster.
+	-$(HELM) uninstall kruntimes-runtimes --namespace $(NAMESPACE) --ignore-not-found
+	-$(HELM) uninstall kruntimes --namespace $(NAMESPACE) --ignore-not-found
 
 ##@ Proto
 
@@ -179,7 +179,7 @@ PROTOC_GEN_GO_GRPC = $(GOBIN)/protoc-gen-go-grpc
 
 .PHONY: proto
 proto: protoc protoc-gen-go protoc-gen-go-grpc ## Generate gRPC code from proto definitions.
-	PATH="$(GOBIN):$(PATH)" $(PROTOC) \
+	@PATH="$(GOBIN):$(PATH)" $(PROTOC) \
 		--proto_path=. \
 		--go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \

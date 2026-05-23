@@ -1,32 +1,38 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kruntime-runtimed
+  name: kruntimes-controller
   labels:
-    {{- include "kruntime.labels" . | nindent 4 }}
+    {{- include "kruntimes.labels" . | nindent 4 }}
 rules:
   - apiGroups:
-      - kruntime.aionops.com
+      - kruntimes.kruntimes.com
     resources:
-      - runs
+      - runtimes
     verbs:
       - get
       - list
       - watch
   - apiGroups:
-      - kruntime.aionops.com
+      - kruntimes.kruntimes.com
     resources:
-      - runs/status
+      - runtimes/status
     verbs:
       - get
       - update
       - patch
   - apiGroups:
-      - ""
+      - apps
     resources:
-      - pods
+      - deployments
     verbs:
       - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
   - apiGroups:
       - ""
     resources:
@@ -34,18 +40,26 @@ rules:
     verbs:
       - create
       - patch
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+      - get
+      - update
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: kruntime-runtimed
+  name: kruntimes-controller
   labels:
-    {{- include "kruntime.labels" . | nindent 4 }}
+    {{- include "kruntimes.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: kruntime-runtimed
+  name: kruntimes-controller
 subjects:
   - kind: ServiceAccount
-    name: kruntime-runtimed
+    name: kruntimes-controller
     namespace: {{ .Release.Namespace }}

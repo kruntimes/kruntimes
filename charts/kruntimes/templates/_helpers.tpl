@@ -1,8 +1,8 @@
-{{- define "kruntime.name" -}}
+{{- define "kruntimes.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{- define "kruntime.fullname" -}}
+{{- define "kruntimes.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -15,18 +15,18 @@
 {{- end }}
 {{- end }}
 
-{{- define "kruntime.labels" -}}
-app.kubernetes.io/name: {{ include "kruntime.name" . }}
+{{- define "kruntimes.labels" -}}
+app.kubernetes.io/name: {{ include "kruntimes.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
-{{- define "kruntime.scheduler.labels" -}}
-{{ include "kruntime.labels" . }}
-app: kruntime-scheduler
+{{- define "kruntimes.scheduler.labels" -}}
+{{ include "kruntimes.labels" . }}
+app: kruntimes-scheduler
 {{- end }}
 
-{{- define "kruntime.runtimed.labels" -}}
-{{ include "kruntime.labels" . }}
+{{- define "kruntimes.runtimed.labels" -}}
+{{ include "kruntimes.labels" . }}
 {{- end }}

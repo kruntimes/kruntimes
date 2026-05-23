@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: kruntime-controller
+  name: kruntimes-controller
   namespace: {{ .Release.Namespace }}
   labels:
-    app: kruntime-controller
-    {{- include "kruntime.labels" . | nindent 4 }}
+    app: kruntimes-controller
+    {{- include "kruntimes.labels" . | nindent 4 }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: kruntime-controller
+      app: kruntimes-controller
   template:
     metadata:
       labels:
-        app: kruntime-controller
+        app: kruntimes-controller
     spec:
-      serviceAccountName: kruntime-controller
+      serviceAccountName: kruntimes-controller
       containers:
         - name: controller
           image: {{ .Values.controller.image }}

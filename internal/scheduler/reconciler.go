@@ -17,20 +17,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	"github.com/aionops/kruntime/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
 var (
 	runsScheduled = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "kruntime_scheduler_sync_total",
+			Name: "kruntimes_scheduler_sync_total",
 			Help: "Total number of tasks processed by the scheduler.",
 		},
 		[]string{"runtime", "result"},
 	)
 	syncDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "kruntime_scheduler_sync_duration_seconds",
+			Name:    "kruntimes_scheduler_sync_duration_seconds",
 			Help:    "Latency of run scheduling.",
 			Buckets: prometheus.DefBuckets,
 		},
@@ -38,7 +38,7 @@ var (
 	)
 	noPodsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "kruntime_scheduler_no_pods_total",
+			Name: "kruntimes_scheduler_no_pods_total",
 			Help: "Total number of tasks that could not find a matching runtime pod.",
 		},
 		[]string{"runtime"},
@@ -56,8 +56,8 @@ type RunReconciler struct {
 	Strategy Strategy
 }
 
-// +kubebuilder:rbac:groups=kruntime.aionops.com,resources=tasks,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=kruntime.aionops.com,resources=tasks/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=kruntimes.kruntimes.com,resources=runs,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=kruntimes.kruntimes.com,resources=runs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 
 func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

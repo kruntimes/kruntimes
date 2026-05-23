@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aionops/kruntime/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"google.golang.org/grpc"
@@ -18,20 +18,20 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	pb "github.com/aionops/kruntime/api/runtime/v1"
+	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 )
 
 var (
 	runsCompleted = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "kruntime_runtimed_runs_total",
+			Name: "kruntimes_runtimed_runs_total",
 			Help: "Total number of runs completed by this runtimed.",
 		},
 		[]string{"runtime", "result"},
 	)
 	runDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "kruntime_runtimed_run_duration_seconds",
+			Name:    "kruntimes_runtimed_run_duration_seconds",
 			Help:    "Run execution duration.",
 			Buckets: prometheus.DefBuckets,
 		},
@@ -39,7 +39,7 @@ var (
 	)
 	claimConflicts = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "kruntime_runtimed_claim_conflicts_total",
+			Name: "kruntimes_runtimed_claim_conflicts_total",
 			Help: "Total number of run claim conflicts.",
 		},
 	)

@@ -12,8 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/aionops/kruntime/api/v1alpha1"
-	"github.com/aionops/kruntime/internal/scheduler"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/scheduler"
 )
 
 var (
@@ -45,7 +45,7 @@ func main() {
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "kruntime-scheduler.aionops.com",
+		LeaderElectionID:       "kruntimes-scheduler.kruntimes.com",
 	})
 	mgr.AddHealthzCheck("healthz", func(_ *http.Request) error { return nil })
 	mgr.AddReadyzCheck("readyz", func(_ *http.Request) error { return nil })

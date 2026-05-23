@@ -2,7 +2,7 @@
 # Each creates a Runtime CR that the controller turns into a Deployment.
 
 bash:
-  image: kruntime-bash-runtime:latest
+  image: kruntimes-bash-runtime:latest
   port: 9091
   replicas: 2
   resources:

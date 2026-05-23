@@ -1,10 +1,10 @@
-apiVersion: kruntime.aionops.com/v1alpha1
+apiVersion: kruntimes.kruntimes.com/v1alpha1
 kind: Runtime
 metadata:
   name: bash
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kruntime-runtimes.labels" . | nindent 4 }}
+    {{- include "kruntimes-runtimes.labels" . | nindent 4 }}
 spec:
   image: {{ .Values.bash.image }}
   port: {{ .Values.bash.port }}

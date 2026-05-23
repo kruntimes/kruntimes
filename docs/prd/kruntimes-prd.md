@@ -44,19 +44,19 @@
 
 
 ## 用户体验
-kruntime 是一个运行在Kubernetes之上的双层调度系统，通过保持预热运行时(Runtime pod) 在毫秒内准备好执行代码，消除冷启动延迟。我们的目标是构建一个简单但功能强大的serverless基础设施, 管理员无需深度优化/改造kubernetes集群就能够容易的部署和运行kruntime, 用户也能够通过简单的接口在kruntime上运行他们的代码, 同时kruntime也提供了丰富的功能来满足不同用户的需求, 例如支持多种编程语言的运行时环境, 支持自定义Runtime Server来扩展更多的执行环境和调度策略, 支持丰富的资源管理功能等.
+kruntimes 是一个运行在Kubernetes之上的双层调度系统，通过保持预热运行时(Runtime pod) 在毫秒内准备好执行代码，消除冷启动延迟。我们的目标是构建一个简单但功能强大的serverless基础设施, 管理员无需深度优化/改造kubernetes集群就能够容易的部署和运行kruntimes, 用户也能够通过简单的接口在kruntimes上运行他们的代码, 同时kruntimes也提供了丰富的功能来满足不同用户的需求, 例如支持多种编程语言的运行时环境, 支持自定义Runtime Server来扩展更多的执行环境和调度策略, 支持丰富的资源管理功能等.
 
 核心的用户体验
 1. 用户接口
    - 通过Kubernetes API进行交互，用户可以使用kubectl命令行工具创建和管理Run CRD对象来执行代码。
-   - 通过SDK(python, golang等)在kruntime上运行代码。
+   - 通过SDK(python, golang等)在kruntimes上运行代码。
 2. 运行时环境
-   - 内建的运行时环境支持多种编程语言，包括Bash、Python、Go、Node.js、WASM等, 对于这些Runtime, Run的调度和执行默认由kruntime的双层调度系统管理.
-   - 同时支持通过自定义Runtime Server扩展支持更多语言和执行环境, 并且能够支持自定义调度, 也就是说调度交给Runtime Server来管理, 这对于一些特殊的执行环境或者需要特殊调度策略的场景非常有用, 例如Slurm, Ray, Spark等.(对于这种case, kruntime提供Slurm和Ray两种Runtime Server的实现, 用户也可以自己实现其他的Runtime Server来支持更多的执行环境)
+   - 内建的运行时环境支持多种编程语言，包括Bash、Python、Go、Node.js、WASM等, 对于这些Runtime, Run的调度和执行默认由kruntimes的双层调度系统管理.
+   - 同时支持通过自定义Runtime Server扩展支持更多语言和执行环境, 并且能够支持自定义调度, 也就是说调度交给Runtime Server来管理, 这对于一些特殊的执行环境或者需要特殊调度策略的场景非常有用, 例如Slurm, Ray, Spark等.(对于这种case, kruntimes提供Slurm和Ray两种Runtime Server的实现, 用户也可以自己实现其他的Runtime Server来支持更多的执行环境)
 3. 资源管理
    - Runtime 默认的资源包括CPU、内存、存储, 用户也可以在 Runtime CRD spec 中增加更多的资源类型, 例如GPU, FPGA等, 以及一些特殊的资源例如网络带宽, 存储IOPS等.
    - 通过在Run CRD spec中指定资源需求, 用户可以确保他们的代码在满足资源需求的环境中运行, 从而提高性能和效率.
-   - kruntime的调度系统会根据资源需求和可用资源来调度Run到合适的Runtime pod上执行, 从而实现高效的资源利用和性能优化.
+   - kruntimes的调度系统会根据资源需求和可用资源来调度Run到合适的Runtime pod上执行, 从而实现高效的资源利用和性能优化.
    - 对于每个Run的资源隔离由Runtime server的本地调度器来管理, 例如在Runtime内部使用Cgroup对Run进行资源隔离
 4. 应用层
    - 我们在未来会提供一些应用层的功能, 例如定时任务(CronRun), 工作流编排(Pipeline)等, 这些功能将建立在核心的用户接口和运行时环境之上, 为用户提供更丰富的功能和更好的用户体验.
