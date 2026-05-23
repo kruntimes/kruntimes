@@ -1,3 +1,10 @@
+FROM golang:1.26 AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o bash-runtime ./runtimes/bash/cmd
+
 FROM ubuntu:latest
-COPY bin/bash-runtime /bash-runtime
+COPY --from=builder /app/bash-runtime /bash-runtime
 ENTRYPOINT ["/bash-runtime"]

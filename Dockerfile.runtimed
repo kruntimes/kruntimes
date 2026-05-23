@@ -1,5 +1,12 @@
+FROM golang:1.26 AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o runtimed ./cmd/runtimed
+
 FROM ubuntu:latest
 RUN useradd -u 65532 nonroot
-COPY bin/runtimed /runtimed
+COPY --from=builder /app/runtimed /runtimed
 USER 65532
 ENTRYPOINT ["/runtimed"]

@@ -75,7 +75,4 @@ Do NOT reintroduce "Task" or "Agent" naming. The term "task" is reserved for the
 
 ### Docker images
 
-All Dockerfiles use a simple `FROM scratch` or `FROM ubuntu:latest` pattern (no registry-dependent builder stages — Go binaries are built on the host with `CGO_ENABLED=0` then copied in). This avoids registry access issues in offline/air-gapped environments:
-
-- `Dockerfile.scheduler`, `Dockerfile.controller`: `FROM scratch`
-- `Dockerfile.runtimed`, `Dockerfile.bash-runtime`: `FROM ubuntu:latest`
+All Dockerfiles use multi-stage builds: a `golang:1.26` builder stage compiles the Go binary with `CGO_ENABLED=0`, then copies it into a minimal final image (`scratch` for scheduler/controller, `ubuntu:latest` for runtimed/bash-runtime).
