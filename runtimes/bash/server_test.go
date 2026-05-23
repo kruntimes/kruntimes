@@ -46,8 +46,8 @@ func TestCreateAndGetTask_Success(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := client.Execute(ctx, &pb.ExecuteRequest{
-		Id:       "test-1",
-		Commands: []string{"echo hello"},
+		Id:   "test-1",
+		Args: []string{"echo hello"},
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -77,8 +77,8 @@ func TestCreateAndGetTask_Failure(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := client.Execute(ctx, &pb.ExecuteRequest{
-		Id:       "test-2",
-		Commands: []string{"exit 42"},
+		Id:   "test-2",
+		Args: []string{"exit 42"},
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -111,8 +111,8 @@ func TestListAndDeleteTask(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := client.Execute(ctx, &pb.ExecuteRequest{
-		Id:       "test-3",
-		Commands: []string{"sleep 10"},
+		Id:   "test-3",
+		Args: []string{"sleep 10"},
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -157,16 +157,16 @@ func TestCreateTask_Duplicate(t *testing.T) {
 
 	ctx := context.Background()
 	_, err := client.Execute(ctx, &pb.ExecuteRequest{
-		Id:       "dup-1",
-		Commands: []string{"echo first"},
+		Id:   "dup-1",
+		Args: []string{"echo first"},
 	})
 	if err != nil {
 		t.Fatalf("first CreateTask: %v", err)
 	}
 
 	_, err = client.Execute(ctx, &pb.ExecuteRequest{
-		Id:       "dup-1",
-		Commands: []string{"echo second"},
+		Id:   "dup-1",
+		Args: []string{"echo second"},
 	})
 	if err == nil {
 		t.Error("expected error for duplicate run ID")
@@ -179,8 +179,8 @@ func TestCreateTask_MultipleCommands(t *testing.T) {
 
 	ctx := context.Background()
 	_, err := client.Execute(ctx, &pb.ExecuteRequest{
-		Id:       "multi-1",
-		Commands: []string{"export FOO=bar", "echo $FOO"},
+		Id:   "multi-1",
+		Args: []string{"export FOO=bar", "echo $FOO"},
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)

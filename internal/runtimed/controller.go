@@ -153,7 +153,7 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	_, err := c.runtimeCli.Execute(rctx, &pb.ExecuteRequest{
 		Id:             string(run.UID),
-		Commands:       run.Spec.Commands,
+		Args:           run.Spec.Args,
 		Env:            env,
 		TimeoutSeconds: timeoutSec,
 	})

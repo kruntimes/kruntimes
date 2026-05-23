@@ -25,9 +25,9 @@ type RunSpec struct {
 	// +kubebuilder:validation:Required
 	Runtime string `json:"runtime"`
 
-	// Commands is the list of commands to execute sequentially.
-	// +kubebuilder:validation:MinItems=1
-	Commands []string `json:"commands"`
+	// Args is the list of arguments passed to the runtime.
+	// +optional
+	Args []string `json:"args,omitempty"`
 
 	// Env is the list of environment variables to set for execution.
 	// +optional

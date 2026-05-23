@@ -95,7 +95,7 @@ func TestFullRunLifecycle(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime:  "bash",
-			Commands: []string{"echo hello"},
+			Args: []string{"echo hello"},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -145,7 +145,7 @@ func TestSchedulerResponsiveness(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime:  "bash",
-			Commands: []string{"echo hello"},
+			Args: []string{"echo hello"},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {

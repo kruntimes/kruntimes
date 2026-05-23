@@ -92,8 +92,8 @@ func TestSchedulerReconcile(t *testing.T) {
 			Namespace:    ns.Name,
 		},
 		Spec: v1alpha1.RunSpec{
-			Runtime:  "bash",
-			Commands: []string{"echo hello"},
+			Runtime: "bash",
+			Args:    []string{"echo hello"},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -145,8 +145,8 @@ func TestRuntimedClaimAndExecute(t *testing.T) {
 			Namespace:    ns.Name,
 		},
 		Spec: v1alpha1.RunSpec{
-			Runtime:  "bash",
-			Commands: []string{"echo hello"},
+			Runtime: "bash",
+			Args:    []string{"echo hello"},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -205,8 +205,8 @@ func TestSchedulerNoMatchingPod(t *testing.T) {
 			Namespace:    ns.Name,
 		},
 		Spec: v1alpha1.RunSpec{
-			Runtime:  "nonexistent-runtime",
-			Commands: []string{"echo hello"},
+			Runtime: "nonexistent-runtime",
+			Args:    []string{"echo hello"},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {

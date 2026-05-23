@@ -35,7 +35,7 @@ func NewGetCmd(c client.Client) *cobra.Command {
 			fmt.Fprintf(w, "Phase:\t%s\n", run.Status.Phase)
 			fmt.Fprintf(w, "Assigned Pod:\t%s\n", run.Status.AssignedPod)
 			fmt.Fprintf(w, "Message:\t%s\n", run.Status.Message)
-			fmt.Fprintf(w, "Command:\t%v\n", run.Spec.Commands)
+			fmt.Fprintf(w, "Args:\t%v\n", run.Spec.Args)
 			if run.Status.StartTime != nil {
 				fmt.Fprintf(w, "Start Time:\t%s\n", run.Status.StartTime.Format("2006-01-02 15:04:05"))
 			}

@@ -79,7 +79,7 @@ func (ExecutionState) EnumDescriptor() ([]byte, []int) {
 type ExecuteRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Commands       []string               `protobuf:"bytes,2,rep,name=commands,proto3" json:"commands,omitempty"`
+	Args           []string               `protobuf:"bytes,2,rep,name=args,proto3" json:"args,omitempty"`
 	Env            map[string]string      `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	TimeoutSeconds int64                  `protobuf:"varint,4,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
 	WorkingDir     string                 `protobuf:"bytes,5,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`
@@ -124,9 +124,9 @@ func (x *ExecuteRequest) GetId() string {
 	return ""
 }
 
-func (x *ExecuteRequest) GetCommands() []string {
+func (x *ExecuteRequest) GetArgs() []string {
 	if x != nil {
-		return x.Commands
+		return x.Args
 	}
 	return nil
 }
@@ -488,10 +488,10 @@ var File_api_runtime_v1_runtime_proto protoreflect.FileDescriptor
 
 const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\n" +
-	"\x1capi/runtime/v1/runtime.proto\x12\vexecutor.v1\"\xf6\x01\n" +
+	"\x1capi/runtime/v1/runtime.proto\x12\vexecutor.v1\"\xee\x01\n" +
 	"\x0eExecuteRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
-	"\bcommands\x18\x02 \x03(\tR\bcommands\x126\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04args\x18\x02 \x03(\tR\x04args\x126\n" +
 	"\x03env\x18\x03 \x03(\v2$.executor.v1.ExecuteRequest.EnvEntryR\x03env\x12'\n" +
 	"\x0ftimeout_seconds\x18\x04 \x01(\x03R\x0etimeoutSeconds\x12\x1f\n" +
 	"\vworking_dir\x18\x05 \x01(\tR\n" +

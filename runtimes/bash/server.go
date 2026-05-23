@@ -146,17 +146,17 @@ func (s *Server) execute(req *pb.ExecuteRequest, entry *taskEntry) {
 	}
 
 	var cmd *exec.Cmd
-	if len(req.Commands) == 1 {
-		cmd = exec.Command("bash", "-c", req.Commands[0])
-	} else if len(req.Commands) > 1 {
+	if len(req.Args) == 1 {
+		cmd = exec.Command("bash", "-c", req.Args[0])
+	} else if len(req.Args) > 1 {
 		script := ""
-		for _, c := range req.Commands {
+		for _, c := range req.Args {
 			script += c + "\n"
 		}
 		cmd = exec.Command("bash", "-c", script)
 	} else {
 		entry.state = pb.ExecutionState_EXECUTION_STATE_FAILED
-		entry.errMsg = "no commands provided"
+		entry.errMsg = "no args provided"
 		return
 	}
 

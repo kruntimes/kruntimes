@@ -54,11 +54,10 @@ spec:
           spec:
             description: RunSpec defines the desired state of Run.
             properties:
-              commands:
-                description: Commands is the list of commands to execute sequentially.
+              args:
+                description: Args is the list of arguments passed to the runtime.
                 items:
                   type: string
-                minItems: 1
                 type: array
               commitSHA:
                 description: CommitSHA is the specific commit to check out.
@@ -234,7 +233,6 @@ spec:
                   If not set, the runtimed applies a default timeout.
                 type: string
             required:
-            - commands
             - runtime
             type: object
           status:

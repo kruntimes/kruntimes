@@ -45,7 +45,7 @@ func NewRunCmd(c client.Client) *cobra.Command {
 				},
 				Spec: v1alpha1.RunSpec{
 					Runtime:   opts.Runtime,
-					Commands:  []string{strings.Join(args, " ")},
+					Args:      []string{strings.Join(args, " ")},
 					RepoURL:   opts.RepoURL,
 					CommitSHA: opts.CommitSHA,
 				},

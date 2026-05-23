@@ -56,7 +56,7 @@ No connection pools. No IP tracking. No P2P. Just etcd.
 ┌─────────────────────────────────────────────┐
 │  Run CRD (Pending)                          │
 │    spec.runtime: bash                       │
-│    spec.commands: ["echo hello"]            │
+│    spec.args: ["echo hello"]                │
 └────────────────────┬────────────────────────┘
                      │ watch
                      ▼
