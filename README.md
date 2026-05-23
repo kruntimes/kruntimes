@@ -227,13 +227,14 @@ cmd/
 ├── scheduler/         Scheduler entry point
 ├── controller/        Runtime controller entry point
 ├── runtimed/          Runtimed daemon entry point
-├── bash-runtime/      Default bash runtime server
 └── krt/               CLI tool
+runtimes/
+└── bash/              Bash runtime gRPC server + entry point
+    └── cmd/
 internal/
 ├── runtimed/          Runtimed controller (claim + gRPC delegation)
 ├── controller/        Runtime controller (Deployment creation)
 ├── scheduler/         Run reconciler + scheduling strategies
-├── runtime/bash/      Bash runtime gRPC server implementation
 └── krt/               CLI subcommands (run, get, list)
 charts/
 ├── kruntimes/          Platform Helm chart (CRDs, scheduler, controller)

@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	runtimeLabel      = "runtime"
+	runtimeLabel         = "runtime"
 	runtimedDefaultImage = "kruntimes-runtimed:latest"
-	workspaceVolume   = "workspace"
-	workspacePath     = "/workspace"
+	workspaceVolume      = "workspace"
+	workspacePath        = "/workspace"
 )
 
 // RuntimeReconciler watches Runtime CRs and creates Deployments with runtimed sidecar.

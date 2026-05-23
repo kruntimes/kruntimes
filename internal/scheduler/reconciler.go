@@ -93,7 +93,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods, &client.ListOptions{
-			Namespace:     req.Namespace,
+		Namespace:     req.Namespace,
 		LabelSelector: sel,
 	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list runtime pods: %w", err)

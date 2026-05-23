@@ -12,7 +12,7 @@ import (
 	"k8s.io/klog/v2"
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
-	"github.com/kruntimes/kruntimes/internal/runtime/bash"
+	"github.com/kruntimes/kruntimes/runtimes/bash"
 )
 
 func main() {

@@ -92,7 +92,7 @@ build: generate ## Build all binaries.
 	go build -o bin/runtimed ./cmd/runtimed
 	go build -o bin/controller ./cmd/controller
 	go build -o bin/krt ./cmd/krt
-	go build -o bin/bash-runtime ./cmd/bash-runtime
+	go build -o bin/bash-runtime ./runtimes/bash/cmd
 
 .PHONY: build-scheduler
 build-scheduler: generate ## Build scheduler binary.
@@ -112,7 +112,7 @@ build-cli: generate ## Build krt binary.
 
 .PHONY: build-bash-runtime
 build-bash-runtime: generate ## Build bash-runtime binary.
-	go build -o bin/bash-runtime ./cmd/bash-runtime
+	go build -o bin/bash-runtime ./runtimes/bash/cmd
 
 .PHONY: run-scheduler
 run-scheduler: generate manifests ## Run scheduler locally (requires kubeconfig).
