@@ -48,7 +48,7 @@ func ensureRuntime(t *testing.T) {
 
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "golang-1.26",
+			Name:      "bash",
 			Namespace: testNamespace,
 		},
 		Spec: v1alpha1.RuntimeSpec{
@@ -69,7 +69,7 @@ func ensureRuntime(t *testing.T) {
 		var pods corev1.PodList
 		if err := k8sClient.List(ctx, &pods,
 			client.InNamespace(testNamespace),
-			client.MatchingLabels{"runtime": "golang-1.26"},
+			client.MatchingLabels{"runtime": "bash"},
 		); err == nil {
 			for _, p := range pods.Items {
 				if p.Status.Phase == corev1.PodRunning {
@@ -94,14 +94,14 @@ func TestFullRunLifecycle(t *testing.T) {
 			Namespace:    testNamespace,
 		},
 		Spec: v1alpha1.RunSpec{
-			Runtime:  "golang-1.26",
+			Runtime:  "bash",
 			Commands: []string{"echo hello"},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	t.Logf("Created Run %s (runtime=golang-1.26)", run.Name)
+	t.Logf("Created Run %s (runtime=bash)", run.Name)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -144,7 +144,7 @@ func TestSchedulerResponsiveness(t *testing.T) {
 			Namespace:    testNamespace,
 		},
 		Spec: v1alpha1.RunSpec{
-			Runtime:  "golang-1.26",
+			Runtime:  "bash",
 			Commands: []string{"echo hello"},
 		},
 	}

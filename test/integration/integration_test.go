@@ -67,9 +67,9 @@ func TestSchedulerReconcile(t *testing.T) {
 	// Create runtime pod
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "golang-pod-",
+			GenerateName: "bash-pod-",
 			Namespace:    ns.Name,
-			Labels:       map[string]string{"runtime": "golang-1.26"},
+			Labels:       map[string]string{"runtime": "bash"},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -92,7 +92,7 @@ func TestSchedulerReconcile(t *testing.T) {
 			Namespace:    ns.Name,
 		},
 		Spec: v1alpha1.RunSpec{
-			Runtime:  "golang-1.26",
+			Runtime:  "bash",
 			Commands: []string{"echo hello"},
 		},
 	}
@@ -145,7 +145,7 @@ func TestRuntimedClaimAndExecute(t *testing.T) {
 			Namespace:    ns.Name,
 		},
 		Spec: v1alpha1.RunSpec{
-			Runtime:  "golang-1.26",
+			Runtime:  "bash",
 			Commands: []string{"echo hello"},
 		},
 	}
