@@ -34,7 +34,7 @@ func NewRunCmd(c client.Client) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run --runtime <type> [--wait] [flags] -- <command> [args...]",
 		Short: "Create and optionally wait for a Run to complete.",
-		Args:  cobra.MinimumNArgs(1),
+		Args:  cobra.MinimumNArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.Runtime == "" {
 				return fmt.Errorf("--runtime is required")
