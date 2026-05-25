@@ -196,11 +196,18 @@ uv run python -m unittest server_test -v
 
 The Python runtime is a standalone gRPC server (Python 3.13) deployed alongside the runtimed daemon. The runtimed handles code preparation (inline dump, git clone) on the shared `/workspace` volume, then delegates execution to the Python runtime via gRPC.
 
+**Execution flow:**
+1. Runtimed prepares source on `/workspace/<uid>/` — inline code dumped to the `entrypoint` file (default `"script"`), or git clone to `repo/`
+2. Runtimed calls gRPC `Execute` with `working_dir` set to the prepared directory, `entrypoint` to the script name, and `handler` (if FaaS mode)
+3. If `handler` is set (e.g. `"app.handler"`), the Python runtime imports the module and calls `handler(event)` with `args` as the event payload
+4. Otherwise, it runs `python <working_dir>/<entrypoint> <args>` as a script
+
 | Mode | Example |
 |------|---------|
 | Inline | `krt run --runtime python --inline "print(1+1)"` |
-| Entrypoint | `krt run --runtime python --inline "def handler(e): return {'ok': True}" --entrypoint script.handler` |
+| FaaS | `krt run --runtime python --inline $'def handler(e):\n  return {"ok": True}' --handler "script.handler"` |
 | Repo | `krt run --runtime python --repo-url https://github.com/user/proj.git` |
+| Entrypoint | `krt run --runtime python --repo-url <url> --entrypoint "main.py"` |
 
 ## Run Lifecycle
 
