@@ -32,9 +32,17 @@ func main() {
 		Short: "CLI for interacting with kruntimes Run CRDs.",
 	}
 
+	runtimeCmd := &cobra.Command{
+		Use:   "runtime",
+		Short: "Manage runtimes.",
+	}
+	runtimeCmd.AddCommand(krt.NewRuntimeListCmd(c))
+	runtimeCmd.AddCommand(krt.NewRuntimeGetCmd(c))
+
 	root.AddCommand(krt.NewRunCmd(c))
 	root.AddCommand(krt.NewGetCmd(c))
 	root.AddCommand(krt.NewListCmd(c))
+	root.AddCommand(runtimeCmd)
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
