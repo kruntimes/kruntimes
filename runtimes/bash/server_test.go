@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -202,4 +204,42 @@ func TestCreateTask_MultipleCommands(t *testing.T) {
 		t.Errorf("expected SUCCEEDED, got %v (stderr=%s)", resp.State, resp.Stderr)
 	}
 	fmt.Printf("stdout: %s\n", resp.Stdout)
+}
+
+func TestExecute_InlineSource(t *testing.T) {
+	client, cleanup := startTestServer(t)
+	defer cleanup()
+
+	// Simulate what runtimed does: write inline code to script.py in a temp dir,
+	// then pass working_dir to the ExecuteRequest.
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "script.py"), []byte("echo hello_from_inline"), 0o644)
+
+	ctx := context.Background()
+	_, err := client.Execute(ctx, &pb.ExecuteRequest{
+		Id:         "inline-1",
+		WorkingDir: workDir,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var resp *pb.StatusResponse
+	for i := 0; i < 50; i++ {
+		resp, err = client.Status(ctx, &pb.StatusRequest{Id: "inline-1"})
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if resp.State == pb.ExecutionState_EXECUTION_STATE_SUCCEEDED || resp.State == pb.ExecutionState_EXECUTION_STATE_FAILED {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if resp.State != pb.ExecutionState_EXECUTION_STATE_SUCCEEDED {
+		t.Errorf("expected SUCCEEDED, got %v (stderr=%s)", resp.State, resp.Stderr)
+	}
+	if resp.Stdout != "hello_from_inline\n" {
+		t.Errorf("expected 'hello_from_inline\n', got %q", resp.Stdout)
+	}
 }

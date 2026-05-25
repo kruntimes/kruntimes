@@ -46,7 +46,7 @@ func NewRunCmd(c client.Client) *cobra.Command {
 			spec := v1alpha1.RunSpec{
 				Runtime:    opts.Runtime,
 				Entrypoint: opts.Entrypoint,
-				Args:       []string{strings.Join(args, " ")},
+				Args:       args,
 			}
 
 			if opts.Inline != "" {

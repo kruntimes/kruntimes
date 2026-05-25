@@ -145,8 +145,14 @@ func (s *Server) execute(req *pb.ExecuteRequest, entry *taskEntry) {
 		return
 	}
 
+	// If working_dir contains a script file (from source.inline), run it.
+	scriptPath := filepath.Join(workDir, "script.py")
 	var cmd *exec.Cmd
-	if len(req.Args) == 1 {
+	if _, err := os.Stat(scriptPath); err == nil {
+		cmdArgs := []string{scriptPath}
+		cmdArgs = append(cmdArgs, req.Args...)
+		cmd = exec.Command("bash", cmdArgs...)
+	} else if len(req.Args) == 1 {
 		cmd = exec.Command("bash", "-c", req.Args[0])
 	} else if len(req.Args) > 1 {
 		script := ""
@@ -156,7 +162,7 @@ func (s *Server) execute(req *pb.ExecuteRequest, entry *taskEntry) {
 		cmd = exec.Command("bash", "-c", script)
 	} else {
 		entry.state = pb.ExecutionState_EXECUTION_STATE_FAILED
-		entry.errMsg = "no args provided"
+		entry.errMsg = "no args or script provided"
 		return
 	}
 
