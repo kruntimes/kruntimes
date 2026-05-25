@@ -91,6 +91,6 @@ cd runtimes/python && uv sync                      # install deps (grpcio, grpci
 
 **Code generation:** `make proto-python` generates gRPC stubs in `runtimes/python/pb/` from `api/runtime/v1/runtime.proto`.
 
-**Tests:** `uv run python -m unittest server_test -v` (5 tests covering inline, entrypoint, duplicate, cancel, failure).
+**Tests:** `uv run python -m unittest server_test -v` (5 tests covering inline, handler, duplicate, cancel, failure).
 
-**How it works:** The runtimed daemon prepares user code on the shared `/workspace` volume (inline → `script`, repo → git clone), then sends `working_dir` + `entrypoint` to the Python gRPC server. The server runs `python <working_dir>/script` or calls `entrypoint` function.
+**How it works:** The runtimed daemon prepares user code on the shared `/workspace` volume (inline → dump to the `entrypoint` file, default `script`; repo → git clone), then sends `working_dir` + `entrypoint` + `handler` to the Python gRPC server. The server runs `python <working_dir>/<entrypoint>` or calls `handler(event)` in FaaS mode.
