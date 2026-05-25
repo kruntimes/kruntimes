@@ -85,7 +85,8 @@ No connection pools. No IP tracking. No P2P. Just etcd.
 | **Scheduler** | K8s controller that watches Pending Runs and assigns them to Runtime Pods in the same namespace. |
 | **Runtime Controller** | Watches Runtime CRs, creates Deployments with runtimed daemon injected. |
 | **Runtimed** | Daemon in each Runtime Pod. Watches Runs assigned to its pod, delegates execution to the Runtime Server via gRPC. |
-| **Runtime Server** | Pluggable gRPC service (`Execute` / `Status` / `List` / `Cancel`). Default: bash runtime. |
+| **Runtime Server** | Pluggable gRPC service (`Execute` / `Status` / `List` / `Cancel`). Built-in: bash, python. |
+| **Python Runtime** | Python 3.13 gRPC server. Supports inline scripts, git repo, and FaaS entrypoint (`module.function`). |
 | **krt** | CLI for creating and monitoring Runs. |
 
 ## Quick Start
@@ -102,19 +103,20 @@ No connection pools. No IP tracking. No P2P. Just etcd.
 make build
 ```
 
-Produces five binaries: `scheduler`, `controller`, `runtimed`, `bash-runtime`, `krt`.
+Produces five binaries: `scheduler`, `controller`, `runtimed`, `bash-runtime`, `krt`. The Python runtime is Docker-only.
 
 ### Deploy
 
 ```bash
 make deploy           # platform (CRDs, scheduler, controller, RBAC)
-make deploy-runtimes  # built-in runtimes (bash)
+make deploy-runtimes  # built-in runtimes (bash, python)
 ```
 
 ### Create a Run
 
 ```bash
 krt run --runtime bash --wait -- echo "Hello from kruntimes"
+krt run --runtime python --inline "print('Hello')" --wait
 krt list --all-namespaces
 krt get run-xxxxxxxx
 ```
@@ -143,7 +145,8 @@ make e2e-cleanup  # tears down kind cluster
 
 ### v0.2 — Runtimes & Scheduling
 
-- [ ] Built-in runtimes: Python, Go, Node.js, WASM
+- [x] Built-in runtimes: Python
+- [ ] Built-in runtimes: Go, Node.js, WASM
 - [ ] Runtime SDK (Python, Go) for programmatic Run creation
 - [ ] Custom scheduling strategies (priority, affinity, bin-packing)
 - [ ] Per-Run resource limits enforced by Runtime Server (cgroups)
@@ -165,12 +168,39 @@ make e2e-cleanup  # tears down kind cluster
 ## Development
 
 ```bash
-make proto                 # generate gRPC code
+make proto                 # generate Go gRPC code
+make proto-python          # generate Python gRPC stubs (requires uv)
 make generate manifests    # generate deepcopy + CRDs
 make test                  # unit tests
 make test-integration      # integration tests (envtest)
 make docker-build          # build all Docker images
 ```
+
+## Python Runtime
+
+### Development Setup
+
+```bash
+# Install uv (Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Generate Python gRPC stubs + install deps
+cd runtimes/python
+uv sync
+
+# Run Python unit tests
+uv run python -m unittest server_test -v
+```
+
+### How it works
+
+The Python runtime is a standalone gRPC server (Python 3.13) deployed alongside the runtimed daemon. The runtimed handles code preparation (inline dump, git clone) on the shared `/workspace` volume, then delegates execution to the Python runtime via gRPC.
+
+| Mode | Example |
+|------|---------|
+| Inline | `krt run --runtime python --inline "print(1+1)"` |
+| Entrypoint | `krt run --runtime python --inline "def handler(e): return {'ok': True}" --entrypoint script.handler` |
+| Repo | `krt run --runtime python --repo-url https://github.com/user/proj.git` |
 
 ## Run Lifecycle
 
@@ -229,8 +259,13 @@ cmd/
 ├── runtimed/          Runtimed daemon entry point
 └── krt/               CLI tool
 runtimes/
-└── bash/              Bash runtime gRPC server + entry point
-    └── cmd/
+├── bash/              Bash runtime gRPC server (Go)
+│   └── cmd/
+└── python/            Python runtime gRPC server + tests
+    ├── server.py
+    ├── server_test.py
+    ├── cmd/main.py
+    └── pb/             Generated gRPC stubs
 internal/
 ├── runtimed/          Runtimed controller (claim + gRPC delegation)
 ├── controller/        Runtime controller (Deployment creation)
