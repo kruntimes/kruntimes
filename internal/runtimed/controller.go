@@ -149,13 +149,27 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 		timeoutSec = int64(run.Spec.Timeout.Duration.Seconds())
 	}
 
+	// Map Source fields to proto
+	var sourceInline, sourceRepoURL, sourceCommitSHA string
+	if run.Spec.Source != nil {
+		if run.Spec.Source.Inline != nil {
+			sourceInline = *run.Spec.Source.Inline
+		}
+		sourceRepoURL = run.Spec.Source.RepoURL
+		sourceCommitSHA = run.Spec.Source.CommitSHA
+	}
+
 	// Delegate to runtime via gRPC
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	_, err := c.runtimeCli.Execute(rctx, &pb.ExecuteRequest{
-		Id:             string(run.UID),
-		Args:           run.Spec.Args,
-		Env:            env,
-		TimeoutSeconds: timeoutSec,
+		Id:              string(run.UID),
+		Args:            run.Spec.Args,
+		Env:             env,
+		TimeoutSeconds:  timeoutSec,
+		SourceInline:    sourceInline,
+		SourceRepoUrl:   sourceRepoURL,
+		SourceCommitSha: sourceCommitSHA,
+		Entrypoint:      run.Spec.Entrypoint,
 	})
 	cancel()
 	if err != nil {

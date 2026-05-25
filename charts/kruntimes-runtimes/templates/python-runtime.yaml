@@ -1,0 +1,16 @@
+apiVersion: kruntimes.kruntimes.com/v1alpha1
+kind: Runtime
+metadata:
+  name: python
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kruntimes-runtimes.labels" . | nindent 4 }}
+spec:
+  image: {{ .Values.python.image }}
+  port: {{ .Values.python.port }}
+  replicas: {{ .Values.python.replicas }}
+  resources:
+    {{- toYaml .Values.python.resources | nindent 4 }}
+  command:
+    - --port={{ .Values.python.port }}
+    - --work-dir=/workspace

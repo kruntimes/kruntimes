@@ -18,12 +18,38 @@ const (
 )
 
 // +kubebuilder:object:generate=true
+// CodeSource specifies where the code to run comes from.
+type CodeSource struct {
+	// Inline is the source code as a string (for simple scripts).
+	// Mutually exclusive with RepoURL.
+	// +optional
+	Inline *string `json:"inline,omitempty"`
+
+	// RepoURL is the Git repository URL to clone before execution.
+	// +optional
+	RepoURL string `json:"repoURL,omitempty"`
+
+	// CommitSHA is the specific commit to check out.
+	// +optional
+	CommitSHA string `json:"commitSHA,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
 // RunSpec defines the desired state of Run.
 type RunSpec struct {
-	// Runtime is the execution environment type (e.g., "golang-1.22-test").
+	// Runtime is the execution environment type (e.g., "python").
 	// It maps to the "runtime" label on Runtime Pods.
 	// +kubebuilder:validation:Required
 	Runtime string `json:"runtime"`
+
+	// Source specifies where the code to run comes from.
+	// +optional
+	Source *CodeSource `json:"source,omitempty"`
+
+	// Entrypoint is the module.function to call (FaaS mode).
+	// When set, the runtime imports and calls the function instead of running a script.
+	// +optional
+	Entrypoint string `json:"entrypoint,omitempty"`
 
 	// Args is the list of arguments passed to the runtime.
 	// +optional
@@ -37,14 +63,6 @@ type RunSpec struct {
 	// If not set, the runtimed applies a default timeout.
 	// +optional
 	Timeout *metav1.Duration `json:"timeout,omitempty"`
-
-	// RepoURL is the Git repository URL to clone before execution.
-	// +optional
-	RepoURL string `json:"repoURL,omitempty"`
-
-	// CommitSHA is the specific commit to check out.
-	// +optional
-	CommitSHA string `json:"commitSHA,omitempty"`
 }
 
 // +kubebuilder:object:generate=true

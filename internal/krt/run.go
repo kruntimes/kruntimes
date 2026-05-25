@@ -17,13 +17,15 @@ import (
 )
 
 type runOptions struct {
-	Runtime   string
-	Timeout   time.Duration
-	RepoURL   string
-	CommitSHA string
-	Env       []string
-	Wait      bool
-	Namespace string
+	Runtime    string
+	Timeout    time.Duration
+	Inline     string
+	RepoURL    string
+	CommitSHA  string
+	Entrypoint string
+	Env        []string
+	Wait       bool
+	Namespace  string
 }
 
 func NewRunCmd(c client.Client) *cobra.Command {
@@ -37,18 +39,32 @@ func NewRunCmd(c client.Client) *cobra.Command {
 			if opts.Runtime == "" {
 				return fmt.Errorf("--runtime is required")
 			}
+			if opts.Inline != "" && opts.RepoURL != "" {
+				return fmt.Errorf("--inline and --repo-url are mutually exclusive")
+			}
+
+			spec := v1alpha1.RunSpec{
+				Runtime:    opts.Runtime,
+				Entrypoint: opts.Entrypoint,
+				Args:       []string{strings.Join(args, " ")},
+			}
+
+			if opts.Inline != "" {
+				inline := opts.Inline
+				spec.Source = &v1alpha1.CodeSource{Inline: &inline}
+			} else if opts.RepoURL != "" {
+				spec.Source = &v1alpha1.CodeSource{
+					RepoURL:   opts.RepoURL,
+					CommitSHA: opts.CommitSHA,
+				}
+			}
 
 			run := &v1alpha1.Run{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("run-%s", rand.String(8)),
 					Namespace: opts.Namespace,
 				},
-				Spec: v1alpha1.RunSpec{
-					Runtime:   opts.Runtime,
-					Args:      []string{strings.Join(args, " ")},
-					RepoURL:   opts.RepoURL,
-					CommitSHA: opts.CommitSHA,
-				},
+				Spec: spec,
 			}
 
 			if opts.Timeout > 0 {
@@ -100,6 +116,8 @@ func NewRunCmd(c client.Client) *cobra.Command {
 
 	cmd.Flags().StringVar(&opts.Runtime, "runtime", "", "Runtime environment type (required)")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 0, "Task timeout")
+	cmd.Flags().StringVar(&opts.Inline, "inline", "", "Inline source code to execute")
+	cmd.Flags().StringVar(&opts.Entrypoint, "entrypoint", "", "Entrypoint in module.function format")
 	cmd.Flags().StringVar(&opts.RepoURL, "repo-url", "", "Git repository URL")
 	cmd.Flags().StringVar(&opts.CommitSHA, "commit-sha", "", "Git commit SHA")
 	cmd.Flags().StringArrayVar(&opts.Env, "env", nil, "Environment variables (key=val)")

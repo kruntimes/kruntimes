@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -43,19 +44,19 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func ensureRuntime(t *testing.T) {
+func ensureRuntime(t *testing.T, name, image string, port int32) {
 	t.Helper()
 
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "bash",
+			Name:      name,
 			Namespace: testNamespace,
 		},
 		Spec: v1alpha1.RuntimeSpec{
-			Image:    "kruntimes-bash-runtime:latest",
-			Port:     9091,
+			Image:    image,
+			Port:     port,
 			Replicas: 1,
-			Command:  []string{"--port=9091", "--work-dir=/workspace"},
+			Command:  []string{fmt.Sprintf("--port=%d", port), "--work-dir=/workspace"},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), rt); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -69,7 +70,7 @@ func ensureRuntime(t *testing.T) {
 		var pods corev1.PodList
 		if err := k8sClient.List(ctx, &pods,
 			client.InNamespace(testNamespace),
-			client.MatchingLabels{"runtime": "bash"},
+			client.MatchingLabels{"runtime": name},
 		); err == nil {
 			for _, p := range pods.Items {
 				if p.Status.Phase == corev1.PodRunning {
@@ -86,7 +87,7 @@ func ensureRuntime(t *testing.T) {
 }
 
 func TestFullRunLifecycle(t *testing.T) {
-	ensureRuntime(t)
+	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
@@ -136,7 +137,7 @@ func TestFullRunLifecycle(t *testing.T) {
 }
 
 func TestSchedulerResponsiveness(t *testing.T) {
-	ensureRuntime(t)
+	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
@@ -174,6 +175,57 @@ func TestSchedulerResponsiveness(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatal("timed out waiting for scheduler to pick up run")
 		default:
+		}
+	}
+}
+
+func TestPythonInlineRun(t *testing.T) {
+	ensureRuntime(t, "python", "kruntimes-python-runtime:latest", 9092)
+
+	inline := `print("hello from python")`
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-py-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "python",
+			Source:  &v1alpha1.CodeSource{Inline: &inline},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	t.Logf("Created Python Run %s", run.Name)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	var lastPhase v1alpha1.RunPhase
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for run completion, last phase=%s", lastPhase)
+		default:
+		}
+
+		time.Sleep(time.Second)
+
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+
+		if run.Status.Phase != lastPhase {
+			t.Logf("Python Run %s: %s -> %s (pod=%s)", run.Name, lastPhase, run.Status.Phase, run.Status.AssignedPod)
+			lastPhase = run.Status.Phase
+		}
+
+		switch run.Status.Phase {
+		case v1alpha1.RunSucceeded:
+			t.Logf("Python Run completed successfully: %s", run.Status.Message)
+			return
+		case v1alpha1.RunFailed:
+			t.Fatalf("Python Run failed: %s", run.Status.Message)
 		}
 	}
 }

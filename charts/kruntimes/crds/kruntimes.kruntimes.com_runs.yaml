@@ -59,8 +59,10 @@ spec:
                 items:
                   type: string
                 type: array
-              commitSHA:
-                description: CommitSHA is the specific commit to check out.
+              entrypoint:
+                description: |-
+                  Entrypoint is the module.function to call (FaaS mode).
+                  When set, the runtime imports and calls the function instead of running a script.
                 type: string
               env:
                 description: Env is the list of environment variables to set for execution.
@@ -219,14 +221,27 @@ spec:
                   - name
                   type: object
                 type: array
-              repoURL:
-                description: RepoURL is the Git repository URL to clone before execution.
-                type: string
               runtime:
                 description: |-
-                  Runtime is the execution environment type (e.g., "golang-1.22-test").
+                  Runtime is the execution environment type (e.g., "python").
                   It maps to the "runtime" label on Runtime Pods.
                 type: string
+              source:
+                description: Source specifies where the code to run comes from.
+                properties:
+                  commitSHA:
+                    description: CommitSHA is the specific commit to check out.
+                    type: string
+                  inline:
+                    description: |-
+                      Inline is the source code as a string (for simple scripts).
+                      Mutually exclusive with RepoURL.
+                    type: string
+                  repoURL:
+                    description: RepoURL is the Git repository URL to clone before
+                      execution.
+                    type: string
+                type: object
               timeout:
                 description: |-
                   Timeout is the maximum duration the run is allowed to run.

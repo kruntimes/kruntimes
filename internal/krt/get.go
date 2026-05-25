@@ -36,6 +36,20 @@ func NewGetCmd(c client.Client) *cobra.Command {
 			fmt.Fprintf(w, "Assigned Pod:\t%s\n", run.Status.AssignedPod)
 			fmt.Fprintf(w, "Message:\t%s\n", run.Status.Message)
 			fmt.Fprintf(w, "Args:\t%v\n", run.Spec.Args)
+			if run.Spec.Entrypoint != "" {
+				fmt.Fprintf(w, "Entrypoint:\t%s\n", run.Spec.Entrypoint)
+			}
+			if run.Spec.Source != nil {
+				if run.Spec.Source.Inline != nil {
+					fmt.Fprintf(w, "Source Inline:\t%s\n", *run.Spec.Source.Inline)
+				}
+				if run.Spec.Source.RepoURL != "" {
+					fmt.Fprintf(w, "Source Repo:\t%s\n", run.Spec.Source.RepoURL)
+				}
+				if run.Spec.Source.CommitSHA != "" {
+					fmt.Fprintf(w, "Source Commit:\t%s\n", run.Spec.Source.CommitSHA)
+				}
+			}
 			if run.Status.StartTime != nil {
 				fmt.Fprintf(w, "Start Time:\t%s\n", run.Status.StartTime.Format("2006-01-02 15:04:05"))
 			}

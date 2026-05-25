@@ -19,6 +19,15 @@ message ExecuteRequest {
     map<string, string> env = 3;
     int64 timeout_seconds = 4;
     string working_dir = 5;
+
+    // source_inline is the inline code string (script mode, no repo).
+    string source_inline = 6;
+    // source_repo_url is the git repo URL (mutually exclusive with source_inline).
+    string source_repo_url = 7;
+    // source_commit_sha is the git commit SHA (only valid with source_repo_url).
+    string source_commit_sha = 8;
+    // entrypoint in module.function format (FaaS mode).
+    string entrypoint = 9;
 }
 
 message ExecuteResponse {

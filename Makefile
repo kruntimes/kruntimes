@@ -3,6 +3,7 @@ IMG_SCHEDULER ?= kruntimes-scheduler:latest
 IMG_CONTROLLER ?= kruntimes-controller:latest
 IMG_RUNTIMED ?= kruntimes-runtimed:latest
 IMG_BASH_RUNTIME ?= kruntimes-bash-runtime:latest
+IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:latest
 
 # ENVTEST_K8S_VERSION refers to the version of k8s to use for envtest
 ENVTEST_K8S_VERSION = 1.32
@@ -70,6 +71,7 @@ e2e-setup: docker-build manifests ## Create kind cluster, load images, and deplo
 	kind load docker-image $(IMG_CONTROLLER) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(IMG_RUNTIMED) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(IMG_BASH_RUNTIME) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image $(IMG_PYTHON_RUNTIME) --name $(KIND_CLUSTER_NAME)
 	$(HELM) upgrade --install kruntimes ./charts/kruntimes \
 		--namespace $(NAMESPACE) --create-namespace --wait --timeout 120s
 
@@ -125,7 +127,7 @@ run-runtimed: generate manifests ## Run runtimed locally (requires kubeconfig).
 ##@ Docker
 
 .PHONY: docker-build
-docker-build: docker-build-scheduler docker-build-controller docker-build-runtimed docker-build-bash-runtime ## Build all Docker images.
+docker-build: docker-build-scheduler docker-build-controller docker-build-runtimed docker-build-bash-runtime docker-build-python-runtime ## Build all Docker images.
 
 .PHONY: docker-build-scheduler
 docker-build-scheduler: ## Build scheduler Docker image.
@@ -143,12 +145,17 @@ docker-build-runtimed: ## Build runtimed Docker image.
 docker-build-bash-runtime: ## Build bash-runtime Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_BASH_RUNTIME) -f Dockerfile.bash-runtime .
 
+.PHONY: docker-build-python-runtime
+docker-build-python-runtime: proto-python ## Build python-runtime Docker image.
+	$(CONTAINER_TOOL) build -t $(IMG_PYTHON_RUNTIME) -f Dockerfile.python-runtime .
+
 .PHONY: docker-push
 docker-push: ## Push Docker images.
 	$(CONTAINER_TOOL) push $(IMG_SCHEDULER)
 	$(CONTAINER_TOOL) push $(IMG_CONTROLLER)
 	$(CONTAINER_TOOL) push $(IMG_RUNTIMED)
 	$(CONTAINER_TOOL) push $(IMG_BASH_RUNTIME)
+	$(CONTAINER_TOOL) push $(IMG_PYTHON_RUNTIME)
 
 ##@ Helm
 
@@ -214,3 +221,14 @@ protoc-gen-go: ## Install protoc-gen-go if not present.
 .PHONY: protoc-gen-go-grpc
 protoc-gen-go-grpc: ## Install protoc-gen-go-grpc if not present.
 	@test -x $(PROTOC_GEN_GO_GRPC) || go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+.PHONY: proto-python
+proto-python: ## Generate Python gRPC stubs from proto.
+	@mkdir -p runtimes/python/pb
+	@touch runtimes/python/pb/__init__.py
+	@cd runtimes/python && uv run python -m grpc_tools.protoc \
+		--proto_path=../../api/runtime/v1 \
+		--python_out=pb \
+		--grpc_python_out=pb \
+		../../api/runtime/v1/runtime.proto
+	@cd runtimes/python && sed -i 's/^import runtime_pb2 as/from . import runtime_pb2 as/' pb/runtime_pb2_grpc.py
