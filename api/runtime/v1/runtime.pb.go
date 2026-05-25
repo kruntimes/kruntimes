@@ -83,14 +83,8 @@ type ExecuteRequest struct {
 	Env            map[string]string      `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	TimeoutSeconds int64                  `protobuf:"varint,4,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
 	WorkingDir     string                 `protobuf:"bytes,5,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`
-	// source_inline is the inline code string (script mode, no repo).
-	SourceInline string `protobuf:"bytes,6,opt,name=source_inline,json=sourceInline,proto3" json:"source_inline,omitempty"`
-	// source_repo_url is the git repo URL (mutually exclusive with source_inline).
-	SourceRepoUrl string `protobuf:"bytes,7,opt,name=source_repo_url,json=sourceRepoUrl,proto3" json:"source_repo_url,omitempty"`
-	// source_commit_sha is the git commit SHA (only valid with source_repo_url).
-	SourceCommitSha string `protobuf:"bytes,8,opt,name=source_commit_sha,json=sourceCommitSha,proto3" json:"source_commit_sha,omitempty"`
 	// entrypoint in module.function format (FaaS mode).
-	Entrypoint    string `protobuf:"bytes,9,opt,name=entrypoint,proto3" json:"entrypoint,omitempty"`
+	Entrypoint    string `protobuf:"bytes,6,opt,name=entrypoint,proto3" json:"entrypoint,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -156,27 +150,6 @@ func (x *ExecuteRequest) GetTimeoutSeconds() int64 {
 func (x *ExecuteRequest) GetWorkingDir() string {
 	if x != nil {
 		return x.WorkingDir
-	}
-	return ""
-}
-
-func (x *ExecuteRequest) GetSourceInline() string {
-	if x != nil {
-		return x.SourceInline
-	}
-	return ""
-}
-
-func (x *ExecuteRequest) GetSourceRepoUrl() string {
-	if x != nil {
-		return x.SourceRepoUrl
-	}
-	return ""
-}
-
-func (x *ExecuteRequest) GetSourceCommitSha() string {
-	if x != nil {
-		return x.SourceCommitSha
 	}
 	return ""
 }
@@ -524,19 +497,16 @@ var File_api_runtime_v1_runtime_proto protoreflect.FileDescriptor
 
 const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\n" +
-	"\x1capi/runtime/v1/runtime.proto\x12\vexecutor.v1\"\x87\x03\n" +
+	"\x1capi/runtime/v1/runtime.proto\x12\vexecutor.v1\"\x8e\x02\n" +
 	"\x0eExecuteRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04args\x18\x02 \x03(\tR\x04args\x126\n" +
 	"\x03env\x18\x03 \x03(\v2$.executor.v1.ExecuteRequest.EnvEntryR\x03env\x12'\n" +
 	"\x0ftimeout_seconds\x18\x04 \x01(\x03R\x0etimeoutSeconds\x12\x1f\n" +
 	"\vworking_dir\x18\x05 \x01(\tR\n" +
-	"workingDir\x12#\n" +
-	"\rsource_inline\x18\x06 \x01(\tR\fsourceInline\x12&\n" +
-	"\x0fsource_repo_url\x18\a \x01(\tR\rsourceRepoUrl\x12*\n" +
-	"\x11source_commit_sha\x18\b \x01(\tR\x0fsourceCommitSha\x12\x1e\n" +
+	"workingDir\x12\x1e\n" +
 	"\n" +
-	"entrypoint\x18\t \x01(\tR\n" +
+	"entrypoint\x18\x06 \x01(\tR\n" +
 	"entrypoint\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +

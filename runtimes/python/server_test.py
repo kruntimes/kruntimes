@@ -39,10 +39,16 @@ class TestPythonRuntime(unittest.TestCase):
             time.sleep(0.05)
         self.fail(f"timed out waiting for {task_id}")
 
+    def _prepare_inline(self, code):
+        td = Path(tempfile.mkdtemp(dir=str(self.work_dir)))
+        (td / "script.py").write_text(code)
+        return str(td)
+
     def test_inline_success(self):
+        wd = self._prepare_inline("print(42)")
         resp = self.stub.Execute(runtime_pb2.ExecuteRequest(
             id="test1",
-            source_inline="print(42)",
+            working_dir=wd,
         ))
         self.assertEqual(resp.id, "test1")
         status = self._wait("test1")
@@ -50,21 +56,22 @@ class TestPythonRuntime(unittest.TestCase):
         self.assertIn("42", status.stdout)
 
     def test_inline_failure(self):
+        wd = self._prepare_inline("raise ValueError('boom')")
         self.stub.Execute(runtime_pb2.ExecuteRequest(
             id="test2",
-            source_inline="raise ValueError('boom')",
+            working_dir=wd,
         ))
         status = self._wait("test2")
         self.assertEqual(status.state, runtime_pb2.EXECUTION_STATE_FAILED)
 
     def test_entrypoint_mode(self):
-        code = """
+        wd = self._prepare_inline("""
 def handler(event):
     return {"status": "ok", "args": event.get("args", [])}
-"""
+""")
         self.stub.Execute(runtime_pb2.ExecuteRequest(
             id="test3",
-            source_inline=code,
+            working_dir=wd,
             entrypoint="script.handler",
             args=["hello", "world"],
         ))
@@ -73,23 +80,25 @@ def handler(event):
         self.assertIn("ok", status.stdout)
 
     def test_list_and_cancel(self):
+        wd = self._prepare_inline("import time; time.sleep(30)")
         self.stub.Execute(runtime_pb2.ExecuteRequest(
             id="test4",
-            source_inline="import time; time.sleep(30)",
+            working_dir=wd,
         ))
         lst = self.stub.List(runtime_pb2.ListRequest())
         self.assertGreaterEqual(len(lst.entries), 1)
         self.stub.Cancel(runtime_pb2.CancelRequest(id="test4"))
 
     def test_duplicate_id(self):
+        wd = self._prepare_inline("print(1)")
         self.stub.Execute(runtime_pb2.ExecuteRequest(
             id="dup",
-            source_inline="print(1)",
+            working_dir=wd,
         ))
         with self.assertRaises(grpc.RpcError) as ctx:
             self.stub.Execute(runtime_pb2.ExecuteRequest(
                 id="dup",
-                source_inline="print(2)",
+                working_dir=wd,
             ))
         self.assertEqual(ctx.exception.code(), grpc.StatusCode.ALREADY_EXISTS)
 

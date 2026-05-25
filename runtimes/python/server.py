@@ -12,8 +12,8 @@ from pb import runtime_pb2_grpc
 
 class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
     def __init__(self, work_dir="/workspace"):
-        self.work_dir = Path(work_dir)
-        self.work_dir.mkdir(parents=True, exist_ok=True)
+        self.base_dir = Path(work_dir)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
         self._tasks = {}
         self._lock = threading.Lock()
 
@@ -32,7 +32,7 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
                 "error_message": "",
             }
 
-        task_dir = self.work_dir / task_id
+        task_dir = Path(request.working_dir) if request.working_dir else (self.base_dir / task_id)
         task_dir.mkdir(parents=True, exist_ok=True)
 
         state = self._tasks[task_id]
@@ -90,53 +90,17 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
 
     def _execute(self, task_id, task_dir, request, state):
         try:
-            if request.source_inline:
-                script_path = self._prepare_inline(task_dir, request)
-            elif request.source_repo_url:
-                script_path = self._clone_repo(task_dir, request)
-            else:
-                script_path = None
-
             if request.entrypoint:
-                self._run_entrypoint(task_id, task_dir, script_path, request, state)
-            elif script_path:
-                self._run_script(task_id, task_dir, script_path, request, state)
+                self._run_entrypoint(task_id, task_dir, request, state)
             else:
-                self._run_script(task_id, task_dir, None, request, state)
-
+                self._run_script(task_id, task_dir, request, state)
         except Exception as e:
             state["state"] = runtime_pb2.EXECUTION_STATE_FAILED
             state["error_message"] = str(e)
 
-    def _prepare_inline(self, task_dir, request):
-        script_path = task_dir / "script.py"
-        script_path.write_text(request.source_inline)
-        return script_path
-
-    def _clone_repo(self, task_dir, request):
-        clone_dir = task_dir / "repo"
-        subprocess.run(
-            ["git", "clone", request.source_repo_url, str(clone_dir)],
-            cwd=str(task_dir), capture_output=True, check=True, timeout=120,
-        )
-        if request.source_commit_sha:
-            subprocess.run(
-                ["git", "checkout", request.source_commit_sha],
-                cwd=str(clone_dir), capture_output=True, check=True, timeout=30,
-            )
-
-        req_file = clone_dir / "requirements.txt"
-        if req_file.exists():
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-r", str(req_file)],
-                cwd=str(clone_dir), capture_output=True, timeout=120,
-            )
-        return clone_dir
-
-    def _run_entrypoint(self, task_id, task_dir, script_path, request, state):
-        src_dir = script_path.parent if script_path else task_dir
+    def _run_entrypoint(self, task_id, task_dir, request, state):
+        src_dir = task_dir
         sys.path.insert(0, str(src_dir))
-
         try:
             module_name, func_name = request.entrypoint.rsplit(".", 1)
             import importlib
@@ -148,23 +112,23 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
             if result is not None:
                 state["stdout"] = json.dumps(result)
             state["state"] = runtime_pb2.EXECUTION_STATE_SUCCEEDED
-
         finally:
             sys.path.pop(0)
 
-    def _run_script(self, task_id, task_dir, script_path, request, state):
-        cmd = [sys.executable]
-        if script_path:
-            cmd.append(str(script_path))
+    def _run_script(self, task_id, task_dir, request, state):
+        script = task_dir / "script.py"
+        if script.exists():
+            cmd = [sys.executable, str(script)] + list(request.args)
         elif request.args:
-            args = list(request.args)
-            cmd.append(args[0])
-            cmd.extend(args[1:])
+            cmd = [sys.executable] + list(request.args)
         else:
             state["state"] = runtime_pb2.EXECUTION_STATE_FAILED
             state["error_message"] = "no script or args provided"
             return
 
+        self._run_cmd(task_id, task_dir, cmd, request, state)
+
+    def _run_cmd(self, task_id, task_dir, cmd, request, state):
         env = os.environ.copy()
         env.update(request.env)
         timeout = request.timeout_seconds or 600

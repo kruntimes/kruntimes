@@ -3,6 +3,9 @@ package runtimed
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -20,6 +23,8 @@ import (
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 )
+
+const workspacePath = "/workspace"
 
 var (
 	runsCompleted = promauto.NewCounterVec(
@@ -134,11 +139,63 @@ func (c *Controller) claimRun(ctx context.Context) (*v1alpha1.Run, error) {
 	return nil, nil
 }
 
+func (c *Controller) prepareSource(run *v1alpha1.Run) (string, error) {
+	if run.Spec.Source == nil {
+		return "", nil
+	}
+
+	runDir := filepath.Join(workspacePath, string(run.UID))
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", runDir, err)
+	}
+
+	if run.Spec.Source.Inline != nil {
+		scriptPath := filepath.Join(runDir, "script.py")
+		if err := os.WriteFile(scriptPath, []byte(*run.Spec.Source.Inline), 0o644); err != nil {
+			return "", fmt.Errorf("write inline: %w", err)
+		}
+		return runDir, nil
+	}
+
+	if run.Spec.Source.RepoURL != "" {
+		cloneDir := filepath.Join(runDir, "repo")
+		args := []string{"clone", run.Spec.Source.RepoURL, cloneDir}
+		if run.Spec.Source.CommitSHA == "" {
+			args = append(args, "--depth=1")
+		}
+		cmd := exec.Command("git", args...)
+		cmd.Dir = runDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("git clone: %w\n%s", err, string(out))
+		}
+
+		if run.Spec.Source.CommitSHA != "" {
+			cmd := exec.Command("git", "checkout", run.Spec.Source.CommitSHA)
+			cmd.Dir = cloneDir
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				return "", fmt.Errorf("git checkout: %w\n%s", err, string(out))
+			}
+		}
+		return cloneDir, nil
+	}
+
+	return "", nil
+}
+
 func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 	start := time.Now()
 	defer func() {
 		runDuration.WithLabelValues(run.Spec.Runtime).Observe(time.Since(start).Seconds())
 	}()
+
+	workingDir, err := c.prepareSource(run)
+	if err != nil {
+		c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("prepare source: %v", err))
+		runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
+		return
+	}
 
 	env := make(map[string]string)
 	for _, e := range run.Spec.Env {
@@ -149,27 +206,14 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 		timeoutSec = int64(run.Spec.Timeout.Duration.Seconds())
 	}
 
-	// Map Source fields to proto
-	var sourceInline, sourceRepoURL, sourceCommitSHA string
-	if run.Spec.Source != nil {
-		if run.Spec.Source.Inline != nil {
-			sourceInline = *run.Spec.Source.Inline
-		}
-		sourceRepoURL = run.Spec.Source.RepoURL
-		sourceCommitSHA = run.Spec.Source.CommitSHA
-	}
-
-	// Delegate to runtime via gRPC
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	_, err := c.runtimeCli.Execute(rctx, &pb.ExecuteRequest{
-		Id:              string(run.UID),
-		Args:            run.Spec.Args,
-		Env:             env,
-		TimeoutSeconds:  timeoutSec,
-		SourceInline:    sourceInline,
-		SourceRepoUrl:   sourceRepoURL,
-		SourceCommitSha: sourceCommitSHA,
-		Entrypoint:      run.Spec.Entrypoint,
+	_, err = c.runtimeCli.Execute(rctx, &pb.ExecuteRequest{
+		Id:             string(run.UID),
+		Args:           run.Spec.Args,
+		Env:            env,
+		TimeoutSeconds: timeoutSec,
+		WorkingDir:     workingDir,
+		Entrypoint:     run.Spec.Entrypoint,
 	})
 	cancel()
 	if err != nil {
@@ -178,7 +222,6 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 		return
 	}
 
-	// Poll for completion
 	for {
 		select {
 		case <-ctx.Done():
