@@ -90,19 +90,18 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
 
     def _execute(self, task_id, task_dir, request, state):
         try:
-            if request.entrypoint:
-                self._run_entrypoint(task_id, task_dir, request, state)
+            if request.handler:
+                self._run_handler(task_id, task_dir, request, state)
             else:
-                self._run_script(task_id, task_dir, request, state)
+                self._run_entrypoint(task_id, task_dir, request, state)
         except Exception as e:
             state["state"] = runtime_pb2.EXECUTION_STATE_FAILED
             state["error_message"] = str(e)
 
-    def _run_entrypoint(self, task_id, task_dir, request, state):
-        src_dir = task_dir
-        sys.path.insert(0, str(src_dir))
+    def _run_handler(self, task_id, task_dir, request, state):
+        sys.path.insert(0, str(task_dir))
         try:
-            module_name, func_name = request.entrypoint.rsplit(".", 1)
+            module_name, func_name = request.handler.rsplit(".", 1)
             import importlib
             mod = importlib.import_module(module_name)
             func = getattr(mod, func_name)
@@ -115,8 +114,9 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
         finally:
             sys.path.pop(0)
 
-    def _run_script(self, task_id, task_dir, request, state):
-        script = task_dir / "script.py"
+    def _run_entrypoint(self, task_id, task_dir, request, state):
+        entrypoint = request.entrypoint or "script"
+        script = task_dir / entrypoint
         if script.exists():
             cmd = [sys.executable, str(script)] + list(request.args)
         elif request.args:
@@ -126,9 +126,6 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
             state["error_message"] = "no script or args provided"
             return
 
-        self._run_cmd(task_id, task_dir, cmd, request, state)
-
-    def _run_cmd(self, task_id, task_dir, cmd, request, state):
         env = os.environ.copy()
         env.update(request.env)
         timeout = request.timeout_seconds or 600

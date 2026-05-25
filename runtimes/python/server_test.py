@@ -39,9 +39,9 @@ class TestPythonRuntime(unittest.TestCase):
             time.sleep(0.05)
         self.fail(f"timed out waiting for {task_id}")
 
-    def _prepare_inline(self, code):
+    def _prepare_inline(self, code, filename="script"):
         td = Path(tempfile.mkdtemp(dir=str(self.work_dir)))
-        (td / "script.py").write_text(code)
+        (td / filename).write_text(code)
         return str(td)
 
     def test_inline_success(self):
@@ -64,15 +64,16 @@ class TestPythonRuntime(unittest.TestCase):
         status = self._wait("test2")
         self.assertEqual(status.state, runtime_pb2.EXECUTION_STATE_FAILED)
 
-    def test_entrypoint_mode(self):
+    def test_handler_mode(self):
         wd = self._prepare_inline("""
 def handler(event):
     return {"status": "ok", "args": event.get("args", [])}
-""")
+""", filename="app.py")
         self.stub.Execute(runtime_pb2.ExecuteRequest(
             id="test3",
             working_dir=wd,
-            entrypoint="script.handler",
+            entrypoint="app.py",
+            handler="app.handler",
             args=["hello", "world"],
         ))
         status = self._wait("test3")

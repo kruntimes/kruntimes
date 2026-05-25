@@ -20,8 +20,10 @@ message ExecuteRequest {
     int64 timeout_seconds = 4;
     string working_dir = 5;
 
-    // entrypoint in module.function format (FaaS mode).
+    // entrypoint is the script file to execute within working_dir.
     string entrypoint = 6;
+    // handler in module.function format (FaaS mode).
+    string handler = 7;
 }
 
 message ExecuteResponse {

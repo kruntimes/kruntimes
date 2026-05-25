@@ -49,7 +49,7 @@ Run CRD (Pending) → Scheduler → Run (Scheduled, assignedPod)
 
 - **Runtime Controller** (`internal/controller/runtime_controller.go`): watches `Runtime` CRs, creates/updates Deployments with the runtime container + runtimed daemon injected. Propagates `deploy.Status.ReadyReplicas` to `rt.Status.ReadyReplicas`. Uses `Owns(&appsv1.Deployment{})` so Deployment status changes trigger reconciliation.
 
-- **Runtimed** (`internal/runtimed/controller.go`): runs inside each Runtime Pod. Polls for Runs with `assignedPod == $HOSTNAME && phase == Scheduled`, claims them (phase→Running), prepares source code on the shared `/workspace` volume (inline dump to `script.py`, git clone), then calls runtime gRPC `Execute()` with `working_dir` pointing to the prepared code. Polls `Status()`, updates Run CRD. Uses a worker semaphore for concurrency control. Connects to runtime via `--runtime-endpoint` flag.
+- **Runtimed** (`internal/runtimed/controller.go`): runs inside each Runtime Pod. Polls for Runs with `assignedPod == $HOSTNAME && phase == Scheduled`, claims them (phase→Running), prepares source code on the shared `/workspace` volume (inline dump to `script`, git clone), then calls runtime gRPC `Execute()` with `working_dir` pointing to the prepared code. Polls `Status()`, updates Run CRD. Uses a worker semaphore for concurrency control. Connects to runtime via `--runtime-endpoint` flag.
 
 ### Deployment
 
@@ -93,4 +93,4 @@ cd runtimes/python && uv sync                      # install deps (grpcio, grpci
 
 **Tests:** `uv run python -m unittest server_test -v` (5 tests covering inline, entrypoint, duplicate, cancel, failure).
 
-**How it works:** The runtimed daemon prepares user code on the shared `/workspace` volume (inline → `script.py`, repo → git clone), then sends `working_dir` + `entrypoint` to the Python gRPC server. The server runs `python <working_dir>/script.py` or calls `entrypoint` function.
+**How it works:** The runtimed daemon prepares user code on the shared `/workspace` volume (inline → `script`, repo → git clone), then sends `working_dir` + `entrypoint` to the Python gRPC server. The server runs `python <working_dir>/script` or calls `entrypoint` function.

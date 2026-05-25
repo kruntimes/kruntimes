@@ -46,10 +46,14 @@ type RunSpec struct {
 	// +optional
 	Source *CodeSource `json:"source,omitempty"`
 
-	// Entrypoint is the module.function to call (FaaS mode).
-	// When set, the runtime imports and calls the function instead of running a script.
+	// Entrypoint is the script file to execute (default "script" for inline source).
 	// +optional
 	Entrypoint string `json:"entrypoint,omitempty"`
+
+	// Handler is the module.function to call (FaaS mode).
+	// When set, the runtime imports and calls the function instead of running a script.
+	// +optional
+	Handler string `json:"handler,omitempty"`
 
 	// Args is the list of arguments passed to the runtime.
 	// +optional

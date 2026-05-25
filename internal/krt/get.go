@@ -39,6 +39,9 @@ func NewGetCmd(c client.Client) *cobra.Command {
 			if run.Spec.Entrypoint != "" {
 				fmt.Fprintf(w, "Entrypoint:\t%s\n", run.Spec.Entrypoint)
 			}
+			if run.Spec.Handler != "" {
+				fmt.Fprintf(w, "Handler:\t%s\n", run.Spec.Handler)
+			}
 			if run.Spec.Source != nil {
 				if run.Spec.Source.Inline != nil {
 					fmt.Fprintf(w, "Source Inline:\t%s\n", *run.Spec.Source.Inline)

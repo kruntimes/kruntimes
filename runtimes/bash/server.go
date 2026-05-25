@@ -145,8 +145,12 @@ func (s *Server) execute(req *pb.ExecuteRequest, entry *taskEntry) {
 		return
 	}
 
-	// If working_dir contains a script file (from source.inline), run it.
-	scriptPath := filepath.Join(workDir, "script.py")
+	// If working_dir contains the entrypoint script, run it.
+	entrypoint := req.Entrypoint
+	if entrypoint == "" {
+		entrypoint = "script"
+	}
+	scriptPath := filepath.Join(workDir, entrypoint)
 	var cmd *exec.Cmd
 	if _, err := os.Stat(scriptPath); err == nil {
 		cmdArgs := []string{scriptPath}

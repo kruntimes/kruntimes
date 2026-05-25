@@ -83,8 +83,10 @@ type ExecuteRequest struct {
 	Env            map[string]string      `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	TimeoutSeconds int64                  `protobuf:"varint,4,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
 	WorkingDir     string                 `protobuf:"bytes,5,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`
-	// entrypoint in module.function format (FaaS mode).
-	Entrypoint    string `protobuf:"bytes,6,opt,name=entrypoint,proto3" json:"entrypoint,omitempty"`
+	// entrypoint is the script file to execute within working_dir.
+	Entrypoint string `protobuf:"bytes,6,opt,name=entrypoint,proto3" json:"entrypoint,omitempty"`
+	// handler in module.function format (FaaS mode).
+	Handler       string `protobuf:"bytes,7,opt,name=handler,proto3" json:"handler,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -157,6 +159,13 @@ func (x *ExecuteRequest) GetWorkingDir() string {
 func (x *ExecuteRequest) GetEntrypoint() string {
 	if x != nil {
 		return x.Entrypoint
+	}
+	return ""
+}
+
+func (x *ExecuteRequest) GetHandler() string {
+	if x != nil {
+		return x.Handler
 	}
 	return ""
 }
@@ -497,7 +506,7 @@ var File_api_runtime_v1_runtime_proto protoreflect.FileDescriptor
 
 const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\n" +
-	"\x1capi/runtime/v1/runtime.proto\x12\vexecutor.v1\"\x8e\x02\n" +
+	"\x1capi/runtime/v1/runtime.proto\x12\vexecutor.v1\"\xa8\x02\n" +
 	"\x0eExecuteRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04args\x18\x02 \x03(\tR\x04args\x126\n" +
@@ -507,7 +516,8 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"workingDir\x12\x1e\n" +
 	"\n" +
 	"entrypoint\x18\x06 \x01(\tR\n" +
-	"entrypoint\x1a6\n" +
+	"entrypoint\x12\x18\n" +
+	"\ahandler\x18\a \x01(\tR\ahandler\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"!\n" +

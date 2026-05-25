@@ -60,9 +60,8 @@ spec:
                   type: string
                 type: array
               entrypoint:
-                description: |-
-                  Entrypoint is the module.function to call (FaaS mode).
-                  When set, the runtime imports and calls the function instead of running a script.
+                description: Entrypoint is the script file to execute (default "script"
+                  for inline source).
                 type: string
               env:
                 description: Env is the list of environment variables to set for execution.
@@ -221,6 +220,11 @@ spec:
                   - name
                   type: object
                 type: array
+              handler:
+                description: |-
+                  Handler is the module.function to call (FaaS mode).
+                  When set, the runtime imports and calls the function instead of running a script.
+                type: string
               runtime:
                 description: |-
                   Runtime is the execution environment type (e.g., "python").

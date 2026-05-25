@@ -50,8 +50,6 @@ var (
 	)
 )
 
-// Controller watches for Runs assigned to this pod and delegates
-// execution to the runtime via gRPC.
 type Controller struct {
 	Client          client.Client
 	Hostname        string
@@ -62,7 +60,6 @@ type Controller struct {
 	runtimeCli pb.RuntimeClient
 }
 
-// Run starts the controller and blocks until ctx is done.
 func (c *Controller) Run(ctx context.Context) error {
 	if c.Workers <= 0 {
 		c.Workers = 2
@@ -150,7 +147,11 @@ func (c *Controller) prepareSource(run *v1alpha1.Run) (string, error) {
 	}
 
 	if run.Spec.Source.Inline != nil {
-		scriptPath := filepath.Join(runDir, "script.py")
+		fileName := run.Spec.Entrypoint
+		if fileName == "" {
+			fileName = "script"
+		}
+		scriptPath := filepath.Join(runDir, fileName)
 		if err := os.WriteFile(scriptPath, []byte(*run.Spec.Source.Inline), 0o644); err != nil {
 			return "", fmt.Errorf("write inline: %w", err)
 		}
@@ -206,6 +207,11 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 		timeoutSec = int64(run.Spec.Timeout.Duration.Seconds())
 	}
 
+	entrypoint := run.Spec.Entrypoint
+	if entrypoint == "" {
+		entrypoint = "script"
+	}
+
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	_, err = c.runtimeCli.Execute(rctx, &pb.ExecuteRequest{
 		Id:             string(run.UID),
@@ -213,7 +219,8 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 		Env:            env,
 		TimeoutSeconds: timeoutSec,
 		WorkingDir:     workingDir,
-		Entrypoint:     run.Spec.Entrypoint,
+		Entrypoint:     entrypoint,
+		Handler:        run.Spec.Handler,
 	})
 	cancel()
 	if err != nil {
