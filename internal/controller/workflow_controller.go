@@ -101,9 +101,9 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 
 		if wf.Status.Jobs == nil {
-				wf.Status.Jobs = make(map[string]v1alpha1.JobStatus)
-			}
-			wf.Status.Jobs[job.Name] = js
+			wf.Status.Jobs = make(map[string]v1alpha1.JobStatus)
+		}
+		wf.Status.Jobs[job.Name] = js
 	}
 
 	if anyFailed {
