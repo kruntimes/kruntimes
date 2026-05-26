@@ -10,7 +10,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/rand"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -102,7 +101,10 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			allDone = false
 		}
 
-		wf.Status.Jobs[job.Name] = js
+		if wf.Status.Jobs == nil {
+				wf.Status.Jobs = make(map[string]v1alpha1.JobStatus)
+			}
+			wf.Status.Jobs[job.Name] = js
 	}
 
 	if anyFailed {
@@ -160,6 +162,7 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 			ss.Phase = v1alpha1.StepRunning
 			ss.RunName = run.Name
 			js.Steps[step.Name] = ss
+			return // wait for Run to complete before next step
 
 		case v1alpha1.StepRunning:
 			var run v1alpha1.Run
@@ -223,7 +226,7 @@ func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, job *v1alpha1.JobSp
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("wf-%s-%s-%s", wf.Name, job.Name, rand.String(5)),
+			Name:      fmt.Sprintf("wf-%s-%s-%s", wf.Name, job.Name, step.Name),
 			Namespace: wf.Namespace,
 			Labels: map[string]string{
 				"workflow": wf.Name,

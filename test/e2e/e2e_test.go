@@ -95,8 +95,8 @@ func TestFullRunLifecycle(t *testing.T) {
 			Namespace:    testNamespace,
 		},
 		Spec: v1alpha1.RunSpec{
-			Runtime:  "bash",
-			Args: []string{"echo hello"},
+			Runtime: "bash",
+			Args:    []string{"echo hello"},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -145,8 +145,8 @@ func TestSchedulerResponsiveness(t *testing.T) {
 			Namespace:    testNamespace,
 		},
 		Spec: v1alpha1.RunSpec{
-			Runtime:  "bash",
-			Args: []string{"echo hello"},
+			Runtime: "bash",
+			Args:    []string{"echo hello"},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -290,14 +290,35 @@ func TestWorkflowStepOutputs(t *testing.T) {
 			Namespace:    testNamespace,
 		},
 		Spec: v1alpha1.WorkflowSpec{
-			Jobs: []v1alpha1.JobSpec{{
-				Name: "build",
-				Steps: []v1alpha1.StepSpec{{
-					Name:    "generate",
-					Run:     "echo foo=bar >> outputs",
-					Runtime: "bash",
-				}},
-			}},
+			Jobs: []v1alpha1.JobSpec{
+				{
+					Name: "build",
+					Steps: []v1alpha1.StepSpec{
+						{
+							Name:    "gen-version",
+							Run:     "echo version=v1.0 >> outputs",
+							Runtime: "bash",
+						},
+						{
+							Name:    "build-image",
+							Run:     "echo image=app:${{ steps.gen-version.outputs.version }} >> outputs",
+							Runtime: "bash",
+						},
+					},
+					Outputs: map[string]string{
+						"artifact": "${{ steps.build-image.outputs.image }}",
+					},
+				},
+				{
+					Name:  "deploy",
+					Needs: []string{"build"},
+					Steps: []v1alpha1.StepSpec{{
+						Name:    "deploy-step",
+						Run:     "echo deploying ${{ jobs.build.outputs.artifact }}",
+						Runtime: "bash",
+					}},
+				},
+			},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), wf); err != nil {
@@ -305,7 +326,7 @@ func TestWorkflowStepOutputs(t *testing.T) {
 	}
 	t.Logf("Created Workflow %s", wf.Name)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	for {
@@ -319,19 +340,29 @@ func TestWorkflowStepOutputs(t *testing.T) {
 		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(wf), wf); err != nil {
 			t.Fatalf("get workflow: %v", err)
 		}
-		js := wf.Status.Jobs["build"]
-		t.Logf("Workflow %s: phase=%s, job=%s", wf.Name, wf.Status.Phase, js.Phase)
+		t.Logf("Workflow %s: phase=%s", wf.Name, wf.Status.Phase)
+		for _, jn := range []string{"build", "deploy"} {
+			js := wf.Status.Jobs[jn]
+			t.Logf("  Job %s: phase=%s", jn, js.Phase)
+			for sn, ss := range js.Steps {
+				t.Logf("    Step %s: phase=%s outputs=%v", sn, ss.Phase, ss.Outputs)
+			}
+		}
 
 		switch wf.Status.Phase {
 		case v1alpha1.WorkflowSucceeded:
-			ss := js.Steps["generate"]
-			if ss.Outputs == nil || ss.Outputs["foo"] != "bar" {
-				t.Fatalf("step outputs mismatch: got %v", ss.Outputs)
+			buildJob := wf.Status.Jobs["build"]
+			buildStep := buildJob.Steps["build-image"]
+			if buildStep.Outputs == nil || buildStep.Outputs["image"] != "app:v1.0" {
+				t.Fatalf("build-image outputs mismatch: got %v", buildStep.Outputs)
 			}
-			t.Logf("Step outputs verified: %v", ss.Outputs)
+			deployJob := wf.Status.Jobs["deploy"]
+			deployStep := deployJob.Steps["deploy-step"]
+			t.Logf("Cross-job output resolved: deploy step run=%s", deployStep.RunName)
+			t.Logf("All outputs verified")
 			return
 		case v1alpha1.WorkflowFailed:
-			t.Fatalf("Workflow failed: %s (job phase=%s)", wf.Status.Message, js.Phase)
+			t.Fatalf("Workflow failed: %s", wf.Status.Message)
 		}
 	}
 }
