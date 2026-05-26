@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -38,6 +39,10 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("get workflow: %w", err)
+	}
+
+	if wf.Status.Jobs == nil {
+		wf.Status.Jobs = make(map[string]v1alpha1.JobStatus)
 	}
 
 	if wf.Status.Phase == v1alpha1.WorkflowSucceeded || wf.Status.Phase == v1alpha1.WorkflowFailed {
@@ -116,6 +121,9 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 }
 
 func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workflow, job *v1alpha1.JobSpec, js *v1alpha1.JobStatus, completedOutputs map[string]map[string]string, log logr.Logger) {
+	if js.Steps == nil {
+		js.Steps = make(map[string]v1alpha1.StepStatus)
+	}
 	for i := range job.Steps {
 		step := &job.Steps[i]
 		ss, exists := js.Steps[step.Name]
@@ -133,6 +141,13 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 				js.Steps[step.Name] = ss
 				js.Phase = v1alpha1.JobFailed
 				log.Error(err, "build run", "step", step.Name)
+				return
+			}
+			if err := controllerutil.SetControllerReference(wf, run, r.Scheme); err != nil {
+				ss.Phase = v1alpha1.StepFailed
+				js.Steps[step.Name] = ss
+				js.Phase = v1alpha1.JobFailed
+				log.Error(err, "set owner ref", "step", step.Name)
 				return
 			}
 			if err := r.Create(ctx, run); err != nil {
@@ -198,6 +213,11 @@ func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, job *v1alpha1.JobSp
 		rt = "bash"
 	}
 
+	runArgs := resolvedArgs
+	if resolvedRun != "" {
+		runArgs = append([]string{resolvedRun}, runArgs...)
+	}
+
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("wf-%s-%s-%s", wf.Name, job.Name, rand.String(5)),
@@ -210,7 +230,7 @@ func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, job *v1alpha1.JobSp
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: rt,
-			Args:    append([]string{"-c", resolvedRun}, resolvedArgs...),
+			Args:    runArgs,
 		},
 	}
 
@@ -252,5 +272,6 @@ func stepOutputs(js *v1alpha1.JobStatus) map[string]map[string]string {
 func (r *WorkflowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Workflow{}).
+		Owns(&v1alpha1.Run{}).
 		Complete(r)
 }

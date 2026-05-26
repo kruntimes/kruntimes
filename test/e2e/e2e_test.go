@@ -229,3 +229,54 @@ func TestPythonInlineRun(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkflowSingleJob(t *testing.T) {
+	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
+
+	wf := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-wf-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.WorkflowSpec{
+			Jobs: []v1alpha1.JobSpec{{
+				Name: "test",
+				Steps: []v1alpha1.StepSpec{{
+					Name:    "hello",
+					Run:     "echo hello_from_workflow",
+					Runtime: "bash",
+				}},
+			}},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), wf); err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	t.Logf("Created Workflow %s", wf.Name)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for workflow completion")
+		default:
+		}
+		time.Sleep(time.Second)
+
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(wf), wf); err != nil {
+			t.Fatalf("get workflow: %v", err)
+		}
+		js := wf.Status.Jobs["test"]
+		t.Logf("Workflow %s: phase=%s, job=%s", wf.Name, wf.Status.Phase, js.Phase)
+
+		switch wf.Status.Phase {
+		case v1alpha1.WorkflowSucceeded:
+			t.Logf("Workflow succeeded: %s", wf.Status.Message)
+			return
+		case v1alpha1.WorkflowFailed:
+			t.Fatalf("Workflow failed: %s (job phase=%s)", wf.Status.Message, js.Phase)
+		}
+	}
+}
