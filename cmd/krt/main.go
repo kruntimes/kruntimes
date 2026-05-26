@@ -39,10 +39,18 @@ func main() {
 	runtimeCmd.AddCommand(krt.NewRuntimeListCmd(c))
 	runtimeCmd.AddCommand(krt.NewRuntimeGetCmd(c))
 
+	workflowCmd := &cobra.Command{
+		Use:   "workflow",
+		Short: "Manage workflows.",
+	}
+	workflowCmd.AddCommand(krt.NewWorkflowListCmd(c))
+	workflowCmd.AddCommand(krt.NewWorkflowGetCmd(c))
+
 	root.AddCommand(krt.NewRunCmd(c))
 	root.AddCommand(krt.NewGetCmd(c))
 	root.AddCommand(krt.NewListCmd(c))
 	root.AddCommand(runtimeCmd)
+	root.AddCommand(workflowCmd)
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
