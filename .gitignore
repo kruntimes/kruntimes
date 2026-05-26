@@ -34,5 +34,5 @@ Thumbs.db
 tmp/
 __pycache__/
 .python-version
-krt
-controller
+/krt
+/controller
