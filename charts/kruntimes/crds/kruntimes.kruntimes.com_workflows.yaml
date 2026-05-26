@@ -1,0 +1,187 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: workflows.kruntimes.kruntimes.com
+spec:
+  group: kruntimes.kruntimes.com
+  names:
+    kind: Workflow
+    listKind: WorkflowList
+    plural: workflows
+    shortNames:
+    - wf
+    singular: workflow
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Workflow is the Schema for the workflows API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: WorkflowSpec defines the desired state of Workflow.
+            properties:
+              jobs:
+                description: Jobs is the list of jobs in the workflow.
+                items:
+                  description: JobSpec defines a single job within a workflow.
+                  properties:
+                    name:
+                      description: Name of the job.
+                      type: string
+                    needs:
+                      description: Needs is the list of job names that must complete
+                        before this job starts.
+                      items:
+                        type: string
+                      type: array
+                    outputs:
+                      additionalProperties:
+                        type: string
+                      description: Outputs maps job-level output names to ${{ }} expressions.
+                      type: object
+                    steps:
+                      description: Steps is the list of steps to run sequentially
+                        within the job.
+                      items:
+                        description: StepSpec defines a single step within a job.
+                        properties:
+                          args:
+                            description: Args is positional arguments for the step.
+                            items:
+                              type: string
+                            type: array
+                          env:
+                            additionalProperties:
+                              type: string
+                            description: Env is extra environment variables for the
+                              step.
+                            type: object
+                          name:
+                            description: Name of the step.
+                            type: string
+                          run:
+                            description: Run is the inline command/script to execute.
+                            type: string
+                          runtime:
+                            description: |-
+                              Runtime is the runtime type to use for this step.
+                              Defaults to the workflow-level runtime.
+                            type: string
+                          uses:
+                            description: Uses references an Action or WorkflowTemplate
+                              (future).
+                            type: string
+                          with:
+                            additionalProperties:
+                              type: string
+                            description: With passes parameters to an Action (future).
+                            type: object
+                        required:
+                        - name
+                        type: object
+                      minItems: 1
+                      type: array
+                  required:
+                  - name
+                  - steps
+                  type: object
+                type: array
+            required:
+            - jobs
+            type: object
+          status:
+            description: WorkflowStatus defines the observed state of Workflow.
+            properties:
+              jobs:
+                additionalProperties:
+                  description: JobStatus tracks the status of a job.
+                  properties:
+                    phase:
+                      description: Phase is the current phase of the job.
+                      enum:
+                      - Pending
+                      - Waiting
+                      - Running
+                      - Succeeded
+                      - Failed
+                      type: string
+                    steps:
+                      additionalProperties:
+                        description: StepStatus tracks the status of a step.
+                        properties:
+                          outputs:
+                            additionalProperties:
+                              type: string
+                            description: Outputs is key-value pairs exposed by this
+                              step.
+                            type: object
+                          phase:
+                            description: Phase is the current phase of the step.
+                            enum:
+                            - Pending
+                            - Running
+                            - Succeeded
+                            - Failed
+                            type: string
+                          runName:
+                            description: RunName is the name of the Run CRD created
+                              for this step.
+                            type: string
+                        required:
+                        - phase
+                        type: object
+                      description: Steps tracks the status of each step by name.
+                      type: object
+                  required:
+                  - phase
+                  type: object
+                description: Jobs tracks the status of each job by name.
+                type: object
+              message:
+                description: Message is a human-readable status or error message.
+                type: string
+              phase:
+                default: Pending
+                description: Phase is the current lifecycle phase of the workflow.
+                enum:
+                - Pending
+                - Running
+                - Succeeded
+                - Failed
+                type: string
+            required:
+            - phase
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

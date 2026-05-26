@@ -65,6 +65,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	wfReconciler := &controller.WorkflowReconciler{
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("Workflow"),
+		Scheme: mgr.GetScheme(),
+	}
+	if err := wfReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Workflow")
+		os.Exit(1)
+	}
+
 	setupLog.Info("starting controller manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
