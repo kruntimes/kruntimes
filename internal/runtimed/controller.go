@@ -139,13 +139,13 @@ func (c *Controller) claimRun(ctx context.Context) (*v1alpha1.Run, error) {
 }
 
 func (c *Controller) prepareSource(run *v1alpha1.Run) (string, error) {
-	if run.Spec.Source == nil {
-		return "", nil
-	}
-
 	runDir := filepath.Join(workspacePath, string(run.UID))
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir %s: %w", runDir, err)
+	}
+
+	if run.Spec.Source == nil {
+		return runDir, nil
 	}
 
 	if run.Spec.Source.Inline != nil {

@@ -213,9 +213,12 @@ func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, job *v1alpha1.JobSp
 		rt = "bash"
 	}
 
-	runArgs := resolvedArgs
+	runSpec := v1alpha1.RunSpec{
+		Runtime: rt,
+		Args:    resolvedArgs,
+	}
 	if resolvedRun != "" {
-		runArgs = append([]string{resolvedRun}, runArgs...)
+		runSpec.Source = &v1alpha1.CodeSource{Inline: &resolvedRun}
 	}
 
 	run := &v1alpha1.Run{
@@ -228,10 +231,7 @@ func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, job *v1alpha1.JobSp
 				"step":     step.Name,
 			},
 		},
-		Spec: v1alpha1.RunSpec{
-			Runtime: rt,
-			Args:    runArgs,
-		},
+		Spec: runSpec,
 	}
 
 	if len(resolvedEnv) > 0 {
