@@ -91,6 +91,10 @@ type RunStatus struct {
 	// CompletionTime is when the run finished (success or failure).
 	// +optional
 	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
+
+	// Outputs is the key-value pairs exposed by this Run (from $OUTPUTS file).
+	// +optional
+	Outputs map[string]string `json:"outputs,omitempty"`
 }
 
 // +kubebuilder:object:root=true

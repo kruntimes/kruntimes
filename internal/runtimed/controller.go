@@ -1,11 +1,13 @@
 package runtimed
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -193,7 +195,7 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 
 	workingDir, err := c.prepareSource(run)
 	if err != nil {
-		c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("prepare source: %v", err))
+		c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("prepare source: %v", err), nil)
 		runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
 		return
 	}
@@ -224,7 +226,7 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 	})
 	cancel()
 	if err != nil {
-		c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("runtime CreateTask: %v", err))
+		c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("runtime CreateTask: %v", err), nil)
 		runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
 		return
 	}
@@ -232,7 +234,7 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 	for {
 		select {
 		case <-ctx.Done():
-			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, "runtimed shutting down")
+			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, "runtimed shutting down", nil)
 			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
 			return
 		default:
@@ -242,14 +244,14 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 		resp, err := c.runtimeCli.Status(rctx, &pb.StatusRequest{Id: string(run.UID)})
 		cancel()
 		if err != nil {
-			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("runtime GetTask: %v", err))
+			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("runtime GetTask: %v", err), nil)
 			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
 			return
 		}
 
 		switch resp.State {
 		case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
-			c.updateRunStatus(context.Background(), run, v1alpha1.RunSucceeded, resp.Stdout)
+			c.updateRunStatus(context.Background(), run, v1alpha1.RunSucceeded, resp.Stdout, readOutputs(workingDir))
 			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunSucceeded)).Inc()
 			klog.Infof("Run %s succeeded", run.Name)
 			return
@@ -258,7 +260,7 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 			if msg == "" {
 				msg = resp.Stderr
 			}
-			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, msg)
+			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, msg, nil)
 			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
 			klog.Infof("Run %s failed: %s", run.Name, msg)
 			return
@@ -268,7 +270,7 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 	}
 }
 
-func (c *Controller) updateRunStatus(ctx context.Context, run *v1alpha1.Run, phase v1alpha1.RunPhase, msg string) {
+func (c *Controller) updateRunStatus(ctx context.Context, run *v1alpha1.Run, phase v1alpha1.RunPhase, msg string, outputs map[string]string) {
 	retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		latest := &v1alpha1.Run{}
 		if err := c.Client.Get(ctx, client.ObjectKeyFromObject(run), latest); err != nil {
@@ -281,7 +283,34 @@ func (c *Controller) updateRunStatus(ctx context.Context, run *v1alpha1.Run, pha
 		now := metav1.Now()
 		latest.Status.Phase = phase
 		latest.Status.Message = msg
+		latest.Status.Outputs = outputs
 		latest.Status.CompletionTime = &now
 		return c.Client.Status().Update(ctx, latest)
 	})
+}
+
+// readOutputs reads key=value pairs from the outputs file in workingDir.
+func readOutputs(workingDir string) map[string]string {
+	if workingDir == "" {
+		return nil
+	}
+	f, err := os.Open(filepath.Join(workingDir, "outputs"))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	outputs := make(map[string]string)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			outputs[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+	return outputs
 }
