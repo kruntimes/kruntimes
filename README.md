@@ -143,10 +143,28 @@ make e2e-cleanup  # tears down kind cluster
 - [x] Leader election for scheduler and controller HA
 - [x] E2E test suite with kind
 
-### v0.2 — Runtimes & Scheduling
+### v0.2 — Runtimes & Workflows
 
 - [x] Built-in runtimes: Python
 - [ ] Built-in runtimes: Go, Node.js, WASM
+
+**v0.2.1 — Workflow**
+- [ ] Workflow CRD (jobs, steps, needs, outputs)
+- [ ] `${{ }}` expression resolution (steps/jobs outputs)
+- [ ] `$OUTPUTS` file → `Run.Status.Outputs`
+- [ ] CLI: `krt workflow create/list/get`
+
+**v0.2.2 — Action**
+- [ ] Action CRD (reusable step templates)
+- [ ] `uses: actions/<name>` with `with:` inputs
+- [ ] Action input/output passing
+
+**v0.2.3 — WorkflowTemplate**
+- [ ] WorkflowTemplate CRD (reusable job templates)
+- [ ] `uses: workflows/<name>` with `with:` inputs
+- [ ] Template input/output passing
+
+**v0.2.x — Scheduling**
 - [ ] Runtime SDK (Python, Go) for programmatic Run creation
 - [ ] Custom scheduling strategies (priority, affinity, bin-packing)
 - [ ] Per-Run resource limits enforced by Runtime Server (cgroups)
@@ -162,7 +180,6 @@ make e2e-cleanup  # tears down kind cluster
 
 - [ ] Stale run reaper (auto-requeue runs stuck in Running with dead daemon)
 - [ ] CronRun CRD for scheduled execution
-- [ ] Pipeline / workflow orchestration
 - [ ] Webhook triggers (GitHub, Slack, etc.)
 
 ## Development
