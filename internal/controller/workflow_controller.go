@@ -9,7 +9,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -126,6 +125,43 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 	if js.Steps == nil {
 		js.Steps = make(map[string]v1alpha1.StepStatus)
 	}
+
+	// List existing Runs for this workflow+job and diff.
+	var runs v1alpha1.RunList
+	if err := r.List(ctx, &runs,
+		client.InNamespace(wf.Namespace),
+		client.MatchingLabels{"workflow": wf.Name, "job": job.Name},
+	); err != nil {
+		log.Error(err, "list runs", "job", job.Name)
+		return
+	}
+	runsByStep := make(map[string]*v1alpha1.Run)
+	for i := range runs.Items {
+		run := &runs.Items[i]
+		if sn := run.Labels["step"]; sn != "" {
+			runsByStep[sn] = run
+		}
+	}
+
+	// Sync step statuses from Run phases.
+	for name, run := range runsByStep {
+		ss := js.Steps[name]
+		switch run.Status.Phase {
+		case v1alpha1.RunSucceeded:
+			if ss.Phase == v1alpha1.StepRunning {
+				ss.Phase = v1alpha1.StepSucceeded
+				ss.Outputs = run.Status.Outputs
+			}
+		case v1alpha1.RunFailed:
+			if ss.Phase == v1alpha1.StepRunning {
+				ss.Phase = v1alpha1.StepFailed
+			}
+		}
+		ss.RunName = run.Name
+		js.Steps[name] = ss
+	}
+
+	// Process steps in order.
 	for i := range job.Steps {
 		step := &job.Steps[i]
 		ss, exists := js.Steps[step.Name]
@@ -152,7 +188,7 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 				log.Error(err, "set owner ref", "step", step.Name)
 				return
 			}
-			if err := r.Create(ctx, run); err != nil {
+			if err := r.Create(ctx, run); err != nil && !apierrors.IsAlreadyExists(err) {
 				ss.Phase = v1alpha1.StepFailed
 				js.Steps[step.Name] = ss
 				js.Phase = v1alpha1.JobFailed
@@ -162,24 +198,10 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 			ss.Phase = v1alpha1.StepRunning
 			ss.RunName = run.Name
 			js.Steps[step.Name] = ss
-			return // wait for Run to complete before next step
+			return
 
 		case v1alpha1.StepRunning:
-			var run v1alpha1.Run
-			if err := r.Get(ctx, types.NamespacedName{Name: ss.RunName, Namespace: wf.Namespace}, &run); err != nil {
-				log.Error(err, "get run", "run", ss.RunName)
-				return
-			}
-			switch run.Status.Phase {
-			case v1alpha1.RunSucceeded:
-				ss.Phase = v1alpha1.StepSucceeded
-				ss.Outputs = run.Status.Outputs
-			case v1alpha1.RunFailed:
-				ss.Phase = v1alpha1.StepFailed
-			default:
-				return
-			}
-			js.Steps[step.Name] = ss
+			return // still running, wait for next reconcile
 
 		case v1alpha1.StepFailed:
 			js.Phase = v1alpha1.JobFailed
