@@ -71,7 +71,7 @@ func NewLogsCmd(k8sClient client.Client) *cobra.Command {
 			if !follow {
 				return showLogsOnce(cmd.Context(), cli, uid, tailLines)
 			}
-			return followLogs(cmd.Context(), cli, uid)
+			return followLogs(cmd.Context(), cli, uid, tailLines)
 		},
 	}
 
@@ -91,19 +91,35 @@ func showLogsOnce(ctx context.Context, cli pb.RuntimeClient, uid string, tailLin
 	if output == "" {
 		output = resp.Stderr
 	}
-	if tailLines > 0 {
-		lines := strings.Split(output, "\n")
-		if len(lines) > tailLines {
-			lines = lines[len(lines)-tailLines:]
-		}
-		output = strings.Join(lines, "\n")
-	}
-	fmt.Print(output)
+	fmt.Print(tailOutput(output, tailLines))
 	return nil
 }
 
-func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string) error {
+func tailOutput(output string, n int) string {
+	if n <= 0 {
+		return output
+	}
+	lines := strings.Split(output, "\n")
+	// Trim trailing empty line from split.
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines int) error {
+	// First fetch current logs and show tail if requested.
 	var lastStdout string
+	if tailLines > 0 {
+		resp, err := cli.Status(ctx, &pb.StatusRequest{Id: uid})
+		if err == nil {
+			lastStdout = tailOutput(resp.Stdout, tailLines)
+			fmt.Print(lastStdout)
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
