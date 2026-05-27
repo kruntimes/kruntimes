@@ -312,5 +312,8 @@ func readOutputs(workingDir string) map[string]string {
 			outputs[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		klog.Warningf("error reading outputs file %s: %v", workingDir, err)
+	}
 	return outputs
 }
