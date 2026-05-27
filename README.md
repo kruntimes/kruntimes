@@ -1,4 +1,7 @@
 # kruntimes
+<p align="center">
+  <img src="docs/logo.png" alt="kruntimes logo" />
+</p>
 
 A two-layer scheduling system built on Kubernetes that eliminates cold-start latency by keeping warm runtime pods ready to execute code in milliseconds. Built for AI agents, CI/CD tasks, serverless functions, and any short-lived, high-concurrency workloads.
 
