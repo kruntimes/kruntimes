@@ -119,10 +119,7 @@ func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines
 		if err == nil {
 			tail := tailOutput(resp.Stdout, tailLines)
 			fmt.Print(tail)
-			// Mark everything before the tail as already seen.
-			if idx := tailIndex(resp.Stdout, tail); idx >= 0 {
-				seen = idx
-			}
+			seen = len(resp.Stdout)
 		}
 	}
 
@@ -156,14 +153,3 @@ func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines
 	}
 }
 
-// tailIndex finds the byte position of tail in full.
-func tailIndex(full, tail string) int {
-	if tail == "" {
-		return len(full)
-	}
-	idx := strings.LastIndex(full, tail)
-	if idx >= 0 {
-		return idx
-	}
-	return len(full) - len(tail)
-}
