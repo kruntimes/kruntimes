@@ -24,10 +24,12 @@ func main() {
 	var (
 		metricsAddr     string
 		runtimeEndpoint string
+		statusAddr      string
 		workers         int
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":9090", "The address the metrics endpoint binds to.")
+	flag.StringVar(&statusAddr, "status-addr", ":9093", "gRPC address for the status proxy (for krt logs).")
 	flag.StringVar(&runtimeEndpoint, "runtime-endpoint", "localhost:9091", "gRPC endpoint of the runtime server.")
 	flag.IntVar(&workers, "workers", 2, "Number of concurrent run execution workers.")
 	klog.InitFlags(nil)
@@ -68,6 +70,12 @@ func main() {
 		klog.Infof("Metrics server listening on %s", metricsAddr)
 		if err := http.ListenAndServe(metricsAddr, nil); err != nil {
 			klog.Errorf("Metrics server: %v", err)
+		}
+	}()
+
+	go func() {
+		if err := runtimed.StartStatusProxy(ctx, runtimeEndpoint, statusAddr); err != nil {
+			klog.Errorf("Status proxy: %v", err)
 		}
 	}()
 
