@@ -301,56 +301,89 @@ make e2e-cleanup  # tears down kind cluster
 
 ## Roadmap
 
-### v0.1 — Current
+### v0.1 — Core Execution
 
-- [x] Run CRD with full lifecycle (Pending → Scheduled → Running → Succeeded/Failed)
-- [x] Runtime CRD + controller with automatic daemon injection
+- [x] Run CRD with lifecycle: Pending → Scheduled → Running → Succeeded/Failed
+- [x] Runtime CRD + controller with automatic runtimed sidecar injection
 - [x] Pluggable gRPC Runtime Server interface
 - [x] Default bash runtime
-- [x] Two-layer scheduling (least-loaded strategy)
-- [x] Helm chart deployment (platform + runtimes)
-- [x] Prometheus metrics (scheduler + runtimed)
+- [x] Built-in Python runtime
+- [x] Two-layer scheduling with least-loaded strategy
+- [x] Helm chart deployment
+- [x] Prometheus metrics for scheduler and runtimed
 - [x] Leader election for scheduler and controller HA
 - [x] E2E test suite with kind
 
-### v0.2 — Runtimes & Workflows
+### v0.2 — Reliability & Operability
 
-- [x] Built-in runtimes: Python
-- [ ] Built-in runtimes: Go, Node.js, WASM
+- [ ] Run cancellation and timeout phases
+- [ ] Retry policy: maxAttempts, backoff, retryable failure reasons
+- [ ] Stale Run reaper for dead or stale Runtime Pods
+- [ ] Runtime Pod heartbeat and capacity reporting
+- [ ] Runtimed recovery after restart using Runtime Server `List`
+- [ ] Log streaming via `krt logs`
+- [ ] Result and artifact references outside etcd
+- [ ] TTL-based garbage collection for completed Runs
+- [ ] Standard metrics: queue time, dispatch latency, execution time, retries, failures, active Runs
 
-**v0.2.1 — Workflow**
-- [ ] Workflow CRD (jobs, steps, needs, outputs)
-- [ ] `${{ }}` expression resolution (steps/jobs outputs)
-- [ ] `$OUTPUTS` file → `Run.Status.Outputs`
-- [ ] CLI: `krt workflow create/list/get`
+### v0.3 — Workflow
 
-**v0.2.2 — Action**
-- [ ] Action CRD (reusable step templates)
+- [ ] Workflow CRD with jobs, steps, needs, and outputs
+- [ ] Workflow controller creates child Runs from DAG steps
+- [ ] Workflow status aggregation from child Runs
+- [ ] Workflow cancellation, timeout, and retry propagation
+- [ ] Minimal `${{ }}` expression resolution for inputs and previous step outputs
+- [ ] `$OUTPUTS` file → bounded `Run.Status.Outputs`
+- [ ] CLI: `krt workflow create/list/get/cancel`
+
+### v0.4 — Reuse & Developer Experience
+
+- [ ] Action CRD for reusable step templates
 - [ ] `uses: actions/<name>` with `with:` inputs
 - [ ] Action input/output passing
-
-**v0.2.3 — WorkflowTemplate**
-- [ ] WorkflowTemplate CRD (reusable job templates)
+- [ ] WorkflowTemplate CRD for reusable workflow/job templates
 - [ ] `uses: workflows/<name>` with `with:` inputs
-- [ ] Template input/output passing
+- [ ] Runtime SDKs for Python and Go
+- [ ] CLI improvements for logs, results, and debugging
 
-**v0.2.x — Scheduling**
-- [ ] Runtime SDK (Python, Go) for programmatic Run creation
-- [ ] Custom scheduling strategies (priority, affinity, bin-packing)
-- [ ] Per-Run resource limits enforced by Runtime Server (cgroups)
-- [ ] GPU and extended resource support in Runtime CRD
+### v0.5 — Runtime Expansion & Scheduling
 
-### v0.3 — Advanced Runtimes
+- [ ] Built-in runtime: Go
+- [ ] Built-in runtime: Node.js
+- [ ] Experimental runtime: WASM/WASI
+- [ ] Run priority
+- [ ] Runtime affinity / anti-affinity
+- [ ] Bin-packing scheduler strategy
+- [ ] Pluggable scheduler strategy interface
+- [ ] Runtime Pod draining mode
 
-- [ ] Custom Runtime Server examples: Slurm, Ray
-- [ ] Runtime-managed scheduling mode (Runtime Server handles its own queue)
+### v0.6 — Isolation & Specialized Resources
+
+- [ ] Per-Run concurrency limits
+- [ ] Per-Run CPU/memory accounting
+- [ ] Experimental cgroup-based per-Run resource enforcement
+- [ ] Runtime CRD support for extended resources
+- [ ] Experimental GPU Runtime pools
+- [ ] Security baseline: RBAC, ServiceAccount, securityContext, NetworkPolicy examples
+
+### v0.7 — Advanced Runtime Integration
+
+- [ ] Custom Runtime Server examples: Ray
+- [ ] Custom Runtime Server examples: Slurm
+- [ ] Experimental Runtime-managed scheduling mode
+- [ ] Runtime-managed queue and status synchronization model
+
+### v1.0 — Stable Platform
+
+- [ ] Stable `v1` CRD APIs
+- [ ] Upgrade and migration strategy
 - [ ] Multi-tenant namespace isolation
-
-### v1.0 — Platform Features
-
-- [ ] Stale run reaper (auto-requeue runs stuck in Running with dead daemon)
-- [ ] CronRun CRD for scheduled execution
-- [ ] Webhook triggers (GitHub, Slack, etc.)
+- [ ] Production-ready observability dashboards
+- [ ] Documented execution semantics: at-least-once, retry, timeout, cancellation
+- [ ] Security hardening guide
+- [ ] Performance benchmarks
+- [ ] CronRun CRD
+- [ ] Webhook triggers: GitHub, Slack, etc.
 
 ## Development
 
