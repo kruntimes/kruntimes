@@ -39,16 +39,17 @@ const (
 // +kubebuilder:object:generate=true
 // WorkflowSpec defines the desired state of Workflow.
 type WorkflowSpec struct {
-	// Jobs is the list of jobs in the workflow.
-	Jobs []JobSpec `json:"jobs"`
+	// Jobs is a map of job names to job specs. Jobs run in parallel unless
+	// constrained by needs; the map order is not significant.
+	Jobs map[string]JobSpec `json:"jobs"`
 }
 
 // +kubebuilder:object:generate=true
 // JobSpec defines a single job within a workflow.
 type JobSpec struct {
-	// Name of the job.
+	// RunsOn is the runtime to use for all steps in this job (e.g., "bash", "python").
 	// +kubebuilder:validation:Required
-	Name string `json:"name"`
+	RunsOn string `json:"runs-on"`
 
 	// Needs is the list of job names that must complete before this job starts.
 	// +optional
@@ -77,11 +78,6 @@ type StepSpec struct {
 	// Args is positional arguments for the step.
 	// +optional
 	Args []string `json:"args,omitempty"`
-
-	// Runtime is the runtime type to use for this step.
-	// Defaults to the workflow-level runtime.
-	// +optional
-	Runtime string `json:"runtime,omitempty"`
 
 	// Env is extra environment variables for the step.
 	// +optional

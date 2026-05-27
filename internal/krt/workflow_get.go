@@ -36,9 +36,9 @@ func NewWorkflowGetCmd(c client.Client) *cobra.Command {
 				fmt.Fprintf(w, "Message:\t%s\n", wf.Status.Message)
 			}
 			fmt.Fprintf(w, "Jobs:\t%d\n", len(wf.Spec.Jobs))
-			for _, job := range wf.Spec.Jobs {
-				js := wf.Status.Jobs[job.Name]
-				fmt.Fprintf(w, "  %s:\t(%d steps, phase=%s)\n", job.Name, len(job.Steps), js.Phase)
+			for jobName, job := range wf.Spec.Jobs {
+				js := wf.Status.Jobs[jobName]
+				fmt.Fprintf(w, "  %s:\t(runs-on=%s, %d steps, phase=%s)\n", jobName, job.RunsOn, len(job.Steps), js.Phase)
 				if len(job.Needs) > 0 {
 					fmt.Fprintf(w, "    Needs:\t%v\n", job.Needs)
 				}

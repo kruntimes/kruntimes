@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -57,13 +58,27 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 	}
 
+	// Detect implicit needs from cross-job output references.
+	jobs := detectImplicitNeeds(wf.Spec.Jobs)
+
+	sorted, err := topoSort(jobs)
+	if err != nil {
+		wf.Status.Phase = v1alpha1.WorkflowFailed
+		wf.Status.Message = err.Error()
+		if uerr := r.Status().Update(ctx, &wf); uerr != nil {
+			return ctrl.Result{}, fmt.Errorf("update workflow failed: %w", uerr)
+		}
+		return ctrl.Result{}, nil
+	}
+
 	completedOutputs := make(map[string]map[string]string)
 	allDone := true
 	anyFailed := false
 
-	for i := range wf.Spec.Jobs {
-		job := &wf.Spec.Jobs[i]
-		js, exists := wf.Status.Jobs[job.Name]
+	for _, jobName := range sorted {
+		jobSpec := jobs[jobName]
+		job := jobSpec
+		js, exists := wf.Status.Jobs[jobName]
 		if !exists {
 			js = v1alpha1.JobStatus{Phase: v1alpha1.JobPending, Steps: make(map[string]v1alpha1.StepStatus)}
 		}
@@ -75,7 +90,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			js.Phase = v1alpha1.JobRunning
 		}
 		if js.Phase == v1alpha1.JobRunning {
-			r.runJobSteps(ctx, &wf, job, &js, completedOutputs, log)
+			r.runJobSteps(ctx, &wf, jobName, &job, &js, completedOutputs, log)
 		}
 
 		switch js.Phase {
@@ -86,12 +101,12 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 					ectx := &resolveContext{steps: stepOutputs(&js), jobs: completedOutputs}
 					val, err := resolveExpr(expr, ectx)
 					if err != nil {
-						log.Error(err, "resolve job output", "job", job.Name, "key", k)
+						log.Error(err, "resolve job output", "job", jobName, "key", k)
 						continue
 					}
 					jobOutputs[k] = val
 				}
-				completedOutputs[job.Name] = jobOutputs
+				completedOutputs[jobName] = jobOutputs
 			}
 		case v1alpha1.JobFailed:
 			anyFailed = true
@@ -103,7 +118,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if wf.Status.Jobs == nil {
 			wf.Status.Jobs = make(map[string]v1alpha1.JobStatus)
 		}
-		wf.Status.Jobs[job.Name] = js
+		wf.Status.Jobs[jobName] = js
 	}
 
 	if anyFailed {
@@ -121,7 +136,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
-func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workflow, job *v1alpha1.JobSpec, js *v1alpha1.JobStatus, completedOutputs map[string]map[string]string, log logr.Logger) {
+func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workflow, jobName string, job *v1alpha1.JobSpec, js *v1alpha1.JobStatus, completedOutputs map[string]map[string]string, log logr.Logger) {
 	if js.Steps == nil {
 		js.Steps = make(map[string]v1alpha1.StepStatus)
 	}
@@ -130,9 +145,9 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 	var runs v1alpha1.RunList
 	if err := r.List(ctx, &runs,
 		client.InNamespace(wf.Namespace),
-		client.MatchingLabels{"workflow": wf.Name, "job": job.Name},
+		client.MatchingLabels{"workflow": wf.Name, "job": jobName},
 	); err != nil {
-		log.Error(err, "list runs", "job", job.Name)
+		log.Error(err, "list runs", "job", jobName)
 		return
 	}
 	runsByStep := make(map[string]*v1alpha1.Run)
@@ -173,7 +188,7 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 		switch ss.Phase {
 		case v1alpha1.StepPending:
 			exprCtx := &resolveContext{steps: stepOutputs(js), jobs: completedOutputs}
-			run, err := r.buildRun(wf, job, step, exprCtx)
+			run, err := r.buildRun(wf, jobName, job, step, exprCtx)
 			if err != nil {
 				ss.Phase = v1alpha1.StepFailed
 				js.Steps[step.Name] = ss
@@ -201,7 +216,7 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 			return
 
 		case v1alpha1.StepRunning:
-			return // still running, wait for next reconcile
+			return
 
 		case v1alpha1.StepFailed:
 			js.Phase = v1alpha1.JobFailed
@@ -219,7 +234,7 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 	js.Phase = v1alpha1.JobSucceeded
 }
 
-func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, job *v1alpha1.JobSpec, step *v1alpha1.StepSpec, ctx *resolveContext) (*v1alpha1.Run, error) {
+func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, jobName string, job *v1alpha1.JobSpec, step *v1alpha1.StepSpec, ctx *resolveContext) (*v1alpha1.Run, error) {
 	resolvedRun, err := resolveExpr(step.Run, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve run: %w", err)
@@ -233,7 +248,7 @@ func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, job *v1alpha1.JobSp
 		return nil, fmt.Errorf("resolve env: %w", err)
 	}
 
-	rt := step.Runtime
+	rt := job.RunsOn
 	if rt == "" {
 		rt = "bash"
 	}
@@ -248,11 +263,11 @@ func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, job *v1alpha1.JobSp
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("wf-%s-%s-%s", wf.Name, job.Name, step.Name),
+			Name:      fmt.Sprintf("wf-%s-%s-%s", wf.Name, jobName, step.Name),
 			Namespace: wf.Namespace,
 			Labels: map[string]string{
 				"workflow": wf.Name,
-				"job":      job.Name,
+				"job":      jobName,
 				"step":     step.Name,
 			},
 		},
@@ -291,6 +306,84 @@ func stepOutputs(js *v1alpha1.JobStatus) map[string]map[string]string {
 		}
 	}
 	return m
+}
+
+// detectImplicitNeeds adds implicit needs based on ${{ jobs.X.outputs.* }} references.
+func detectImplicitNeeds(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.JobSpec {
+	result := make(map[string]v1alpha1.JobSpec, len(jobs))
+	for name, job := range jobs {
+		needs := make(map[string]bool)
+		for _, n := range job.Needs {
+			needs[n] = true
+		}
+		for _, step := range job.Steps {
+			for _, ref := range exprPattern.FindAllStringSubmatch(step.Run, -1) {
+				if parts := strings.SplitN(ref[1], ".", 4); len(parts) == 4 && parts[0] == "jobs" && parts[1] != name && parts[2] == "outputs" {
+					needs[parts[1]] = true
+				}
+			}
+			for _, arg := range step.Args {
+				for _, ref := range exprPattern.FindAllStringSubmatch(arg, -1) {
+					if parts := strings.SplitN(ref[1], ".", 4); len(parts) == 4 && parts[0] == "jobs" && parts[1] != name && parts[2] == "outputs" {
+						needs[parts[1]] = true
+					}
+				}
+			}
+		}
+		// Build the merged job spec.
+		merged := v1alpha1.JobSpec{
+			RunsOn:  job.RunsOn,
+			Steps:   job.Steps,
+			Outputs: job.Outputs,
+		}
+		for n := range needs {
+			merged.Needs = append(merged.Needs, n)
+		}
+		result[name] = merged
+	}
+	return result
+}
+
+// topoSort returns job names in topological order. Returns error on cycle.
+func topoSort(jobs map[string]v1alpha1.JobSpec) ([]string, error) {
+	inDegree := make(map[string]int)
+	deps := make(map[string][]string)
+	for name := range jobs {
+		inDegree[name] = 0
+	}
+	for name, job := range jobs {
+		for _, n := range job.Needs {
+			if _, ok := jobs[n]; !ok {
+				continue // reference to unknown job
+			}
+			deps[n] = append(deps[n], name)
+			inDegree[name]++
+		}
+	}
+
+	var names []string
+	queue := make([]string, 0)
+	for name, d := range inDegree {
+		if d == 0 {
+			queue = append(queue, name)
+		}
+	}
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		names = append(names, name)
+		for _, dep := range deps[name] {
+			inDegree[dep]--
+			if inDegree[dep] == 0 {
+				queue = append(queue, dep)
+			}
+		}
+	}
+
+	if len(names) != len(jobs) {
+		return nil, fmt.Errorf("cycle detected in job dependencies")
+	}
+	return names, nil
 }
 
 // SetupWithManager registers the Workflow reconciler.

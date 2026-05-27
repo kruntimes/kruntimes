@@ -239,14 +239,15 @@ func TestWorkflowSingleJob(t *testing.T) {
 			Namespace:    testNamespace,
 		},
 		Spec: v1alpha1.WorkflowSpec{
-			Jobs: []v1alpha1.JobSpec{{
-				Name: "test",
-				Steps: []v1alpha1.StepSpec{{
-					Name:    "hello",
-					Run:     "echo hello_from_workflow",
-					Runtime: "bash",
-				}},
-			}},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"test": {
+					RunsOn: "bash",
+					Steps: []v1alpha1.StepSpec{{
+						Name: "hello",
+						Run:  "echo hello_from_workflow",
+					}},
+				},
+			},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), wf); err != nil {
@@ -290,32 +291,29 @@ func TestWorkflowStepOutputs(t *testing.T) {
 			Namespace:    testNamespace,
 		},
 		Spec: v1alpha1.WorkflowSpec{
-			Jobs: []v1alpha1.JobSpec{
-				{
-					Name: "build",
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {
+					RunsOn: "bash",
 					Steps: []v1alpha1.StepSpec{
 						{
-							Name:    "gen-version",
-							Run:     "echo version=v1.0 >> outputs",
-							Runtime: "bash",
+							Name: "gen-version",
+							Run:  "echo version=v1.0 >> outputs",
 						},
 						{
-							Name:    "build-image",
-							Run:     "echo image=app:${{ steps.gen-version.outputs.version }} >> outputs",
-							Runtime: "bash",
+							Name: "build-image",
+							Run:  "echo image=app:${{ steps.gen-version.outputs.version }} >> outputs",
 						},
 					},
 					Outputs: map[string]string{
 						"artifact": "${{ steps.build-image.outputs.image }}",
 					},
 				},
-				{
-					Name:  "deploy",
-					Needs: []string{"build"},
+				"deploy": {
+					RunsOn: "bash",
+					Needs:  []string{"build"},
 					Steps: []v1alpha1.StepSpec{{
-						Name:    "deploy-step",
-						Run:     "echo deploying ${{ jobs.build.outputs.artifact }}",
-						Runtime: "bash",
+						Name: "deploy-step",
+						Run:  "echo deploying ${{ jobs.build.outputs.artifact }}",
 					}},
 				},
 			},

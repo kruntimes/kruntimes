@@ -43,6 +43,7 @@ func main() {
 		Use:   "workflow",
 		Short: "Manage workflows.",
 	}
+	workflowCmd.AddCommand(krt.NewWorkflowCreateCmd(c))
 	workflowCmd.AddCommand(krt.NewWorkflowListCmd(c))
 	workflowCmd.AddCommand(krt.NewWorkflowGetCmd(c))
 

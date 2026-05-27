@@ -49,13 +49,9 @@ spec:
             description: WorkflowSpec defines the desired state of Workflow.
             properties:
               jobs:
-                description: Jobs is the list of jobs in the workflow.
-                items:
+                additionalProperties:
                   description: JobSpec defines a single job within a workflow.
                   properties:
-                    name:
-                      description: Name of the job.
-                      type: string
                     needs:
                       description: Needs is the list of job names that must complete
                         before this job starts.
@@ -67,6 +63,10 @@ spec:
                         type: string
                       description: Outputs maps job-level output names to ${{ }} expressions.
                       type: object
+                    runs-on:
+                      description: RunsOn is the runtime to use for all steps in this
+                        job (e.g., "bash", "python").
+                      type: string
                     steps:
                       description: Steps is the list of steps to run sequentially
                         within the job.
@@ -90,11 +90,6 @@ spec:
                           run:
                             description: Run is the inline command/script to execute.
                             type: string
-                          runtime:
-                            description: |-
-                              Runtime is the runtime type to use for this step.
-                              Defaults to the workflow-level runtime.
-                            type: string
                           uses:
                             description: Uses references an Action or WorkflowTemplate
                               (future).
@@ -110,10 +105,13 @@ spec:
                       minItems: 1
                       type: array
                   required:
-                  - name
+                  - runs-on
                   - steps
                   type: object
-                type: array
+                description: |-
+                  Jobs is a map of job names to job specs. Jobs run in parallel unless
+                  constrained by needs; the map order is not significant.
+                type: object
             required:
             - jobs
             type: object
