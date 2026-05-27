@@ -7,15 +7,25 @@ A two-layer scheduling system built on Kubernetes that eliminates cold-start lat
 
 ## Background
 
-Building a serverless platform on vanilla Kubernetes faces four fundamental challenges:
+Building a serverless/FaaS platform on vanilla Kubernetes faces several structural challenges:
 
-**Cold start: minutes, not milliseconds.** Pod scheduling, image pulling, and container initialization take 1-5 minutes. Serverless requires sub-second startup. While Firecracker boots in ~100ms, combining it with lazy image loading requires non-standard K8s modifications most platform teams can't afford.
+**Cold starts are hard to make consistently sub-second**.
 
-**Scheduler mismatch.** The K8s scheduler is built for long-running services. It struggles with massive volumes of short-lived, high-concurrency tasks — low throughput, slow decisions. Batch schedulers (Volcano, etc.) target big-data jobs but lack awareness of fine-grained function workloads.
+A Pod startup path includes scheduling, image distribution, container creation, network initialization, readiness checks, and application initialization. After scale-to-zero, vanilla Kubernetes can struggle to deliver consistently sub-second startup. Firecracker, lazy image loading, image caching, and node pre-warming can reduce cold-start latency, but they usually require cooperation from the node runtime or infrastructure layer, not just an upper-level application platform.
 
-**Elasticity gap.** Native HPA reacts too slowly to traffic spikes. KEDA makes fast scaling decisions, but the underlying Pods still start slowly — "decide fast, execute slow." The result is always a compromise: cold-start hacks or expensive pre-warmed pools.
+**The Kubernetes control plane is not designed as a fine-grained function scheduler**.
 
-**Conway's Law.** The team building the serverless platform is rarely the team managing the K8s infrastructure. Organizational boundaries make it politically impossible to push through low-level optimizations like custom schedulers, image lazy-loading, or node pre-warming. The only viable path is to build *above* K8s, not inside it.
+The default Kubernetes scheduler and control-plane object model are better suited to relatively long-lived Pods than to mapping every function invocation to a short-lived Pod. High volumes of short-lived, high-concurrency tasks amplify API server, scheduler, CRI, CNI, and image-pull overhead. Batch schedulers can improve queuing, fairness, and gang scheduling, but they are primarily designed for batch, AI/ML, HPC, or big-data workloads, not fine-grained function invocation scheduling.
+
+**There is still an elasticity gap**.
+
+HPA, KEDA, and Knative can improve scaling decisions, event-driven scale-to-zero, and request buffering during scale-from-zero. But they do not, by themselves, eliminate the underlying Pod startup latency. In production, this usually becomes a trade-off among pre-warmed pools, request buffering, asynchronous queues, image optimization, node caching, startup latency, and cost.
+
+**Conway’s Law matters**.
+
+The team building the serverless platform is often not the same team managing the Kubernetes control plane, node runtime, networking, or cluster infrastructure. If the platform team cannot change schedulers, container runtimes, snapshotters, CNI behavior, image caching policies, or node pre-warming strategies, then the practical path is usually to build above Kubernetes rather than depend on invasive changes inside it.
+
+In short: **vanilla Kubernetes is a reasonable substrate for serverless platforms, but not a complete low-latency FaaS runtime by itself. The harder requirements — sub-second cold starts, fine-grained scheduling, and fast elasticity — usually require either infrastructure-level optimizations or a platform layer that deliberately avoids treating every invocation as a new Pod**.
 
 ## Design
 
