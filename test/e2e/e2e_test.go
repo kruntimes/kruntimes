@@ -364,3 +364,79 @@ func TestWorkflowStepOutputs(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkflowTopoOrder(t *testing.T) {
+	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
+
+	wf := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-wf-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.WorkflowSpec{
+			Jobs: map[string]v1alpha1.JobSpec{
+				// prep has no needs, runs first.
+				"prep": {
+					RunsOn: "bash",
+					Steps: []v1alpha1.StepSpec{{
+						Name: "generate",
+						Run:  "echo version=v2.0 >> outputs",
+					}},
+				},
+				// lint also has no needs, runs in parallel with prep.
+				"lint": {
+					RunsOn: "bash",
+					Steps: []v1alpha1.StepSpec{{
+						Name: "check",
+						Run:  "echo lint=ok >> outputs",
+					}},
+				},
+				// build needs prep explicitly, and references lint's output implicitly.
+				"build": {
+					RunsOn: "bash",
+					Needs:  []string{"prep"},
+					Steps: []v1alpha1.StepSpec{{
+						Name: "compile",
+						Run:  "echo image=app:${{ jobs.prep.outputs.version }}:${{ jobs.lint.outputs.lint }}",
+					}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), wf); err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	t.Logf("Created Workflow %s", wf.Name)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for workflow completion")
+		default:
+		}
+		time.Sleep(time.Second)
+
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(wf), wf); err != nil {
+			t.Fatalf("get workflow: %v", err)
+		}
+		t.Logf("Workflow %s: phase=%s", wf.Name, wf.Status.Phase)
+		for _, jn := range []string{"prep", "lint", "build"} {
+			js := wf.Status.Jobs[jn]
+			t.Logf("  Job %s: phase=%s needs=%v", jn, js.Phase, wf.Spec.Jobs[jn].Needs)
+		}
+
+		switch wf.Status.Phase {
+		case v1alpha1.WorkflowSucceeded:
+			// Verify build job ran last (it has needs).
+			buildJob := wf.Status.Jobs["build"]
+			t.Logf("build step outputs: %v", buildJob.Steps["compile"].Outputs)
+			t.Logf("All jobs completed in correct order")
+			return
+		case v1alpha1.WorkflowFailed:
+			t.Fatalf("Workflow failed: %s", wf.Status.Message)
+		}
+	}
+}

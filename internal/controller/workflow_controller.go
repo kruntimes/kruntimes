@@ -95,10 +95,17 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 		switch js.Phase {
 		case v1alpha1.JobSucceeded:
+			jobOutputs := make(map[string]string)
+			// Expose step outputs with both "step.key" and bare "key" for cross-job refs.
+			for name, ss := range js.Steps {
+				for k, v := range ss.Outputs {
+					jobOutputs[name+"."+k] = v
+					jobOutputs[k] = v // ${{ jobs.X.outputs.key }} ref
+				}
+			}
 			if job.Outputs != nil {
-				jobOutputs := make(map[string]string)
+				ectx := &resolveContext{steps: stepOutputs(&js), jobs: completedOutputs}
 				for k, expr := range job.Outputs {
-					ectx := &resolveContext{steps: stepOutputs(&js), jobs: completedOutputs}
 					val, err := resolveExpr(expr, ectx)
 					if err != nil {
 						log.Error(err, "resolve job output", "job", jobName, "key", k)
@@ -106,8 +113,8 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 					}
 					jobOutputs[k] = val
 				}
-				completedOutputs[jobName] = jobOutputs
 			}
+			completedOutputs[jobName] = jobOutputs
 		case v1alpha1.JobFailed:
 			anyFailed = true
 			allDone = false
