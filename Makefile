@@ -51,15 +51,9 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
-GOLANGCI_LINT = $(shell which golangci-lint 2>/dev/null)
-
 .PHONY: lint
-lint: fmt vet ## Run linters (golangci-lint if available, else go vet).
-	@if [ -x "$(GOLANGCI_LINT)" ]; then \
-		$(GOLANGCI_LINT) run ./...; \
-	else \
-		echo "golangci-lint not found, skipping (only go vet ran)"; \
-	fi
+lint: fmt vet golangci-lint ## Run go fmt, go vet, and golangci-lint.
+	$(GOLANGCI_LINT) run ./...
 
 .PHONY: test
 test: generate manifests fmt vet ## Run unit tests.
@@ -213,6 +207,11 @@ SETUP_ENVTEST = $(GOBIN)/setup-envtest
 .PHONY: setup-envtest
 setup-envtest: ## Download setup-envtest locally if not already installed.
 	@test -x $(SETUP_ENVTEST) || go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+
+GOLANGCI_LINT = $(GOBIN)/golangci-lint
+.PHONY: golangci-lint
+golangci-lint: ## Install golangci-lint if not present.
+	@test -x $(GOLANGCI_LINT) || go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 .PHONY: protoc
 protoc: ## Install protoc compiler if not present.
