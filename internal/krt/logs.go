@@ -111,15 +111,21 @@ func tailOutput(output string, n int) string {
 }
 
 func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines int) error {
-	// First fetch current logs and show tail if requested.
-	var lastStdout string
+	// Where to start slicing: 0 = from beginning, or skip first N bytes for tail.
+	seen := 0
+
 	if tailLines > 0 {
 		resp, err := cli.Status(ctx, &pb.StatusRequest{Id: uid})
 		if err == nil {
-			lastStdout = tailOutput(resp.Stdout, tailLines)
-			fmt.Print(lastStdout)
+			tail := tailOutput(resp.Stdout, tailLines)
+			fmt.Print(tail)
+			// Mark everything before the tail as already seen.
+			if idx := tailIndex(resp.Stdout, tail); idx >= 0 {
+				seen = idx
+			}
 		}
 	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -133,9 +139,9 @@ func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines
 			continue
 		}
 
-		if newOut := resp.Stdout[len(lastStdout):]; newOut != "" {
+		if newOut := resp.Stdout[seen:]; newOut != "" {
 			fmt.Print(newOut)
-			lastStdout = resp.Stdout
+			seen = len(resp.Stdout)
 		}
 		if resp.Stderr != "" {
 			fmt.Fprint(os.Stderr, resp.Stderr)
@@ -148,4 +154,16 @@ func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines
 
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+// tailIndex finds the byte position of tail in full.
+func tailIndex(full, tail string) int {
+	if tail == "" {
+		return len(full)
+	}
+	idx := strings.LastIndex(full, tail)
+	if idx >= 0 {
+		return idx
+	}
+	return len(full) - len(tail)
 }
