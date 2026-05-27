@@ -104,47 +104,160 @@ No request-time Pod creation. No per-run Kubernetes scheduling. No global connec
 
 ## Architecture
 
-```
-                 ┌──────────────┐
-                 │     krt      │
-                 └──────┬───────┘
-                        │ create
-                        ▼
-┌─────────────────────────────────────────────┐
-│  Run CRD (Pending)                          │
-│    spec.runtime: bash                       │
-│    spec.args: ["echo hello"]                │
-└────────────────────┬────────────────────────┘
-                     │ watch
-                     ▼
-┌─────────────────────────────────────────────┐
-│  Scheduler                                  │
-│    finds matching Runtime pods by label     │
-│    sets assignedPod + phase=Scheduled       │
-└────────────────────┬────────────────────────┘
-                     │ watch (by assigned pod)
-                     ▼
-┌─────────────────────────────────────────────┐
-│  Runtimed (sidecar) ──gRPC──▶ Runtime Server│
-│    claims Run            │   (bash / custom)│
-│    delegates Execute()   │   runs commands  │
-│    polls Status()        │                  │
-│    updates Run CRD       │                  │
-└──────────────────────────┴──────────────────┘
+```text
+                         ┌──────────────┐
+                         │     krt      │
+                         └──────┬───────┘
+                                │ create Run
+                                ▼
+┌─────────────────────────────────────────────────────┐
+│  Run CRD (Pending)                                  │
+│    spec.runtime: bash                               │
+│    spec.args: ["echo hello"]                        │
+│    status.phase: Pending                            │
+└────────────────────────┬────────────────────────────┘
+                         │ watch
+                         ▼
+┌─────────────────────────────────────────────────────┐
+│  Scheduler                                          │
+│    finds healthy Runtime Pods by runtime label      │
+│    checks capacity / load / readiness               │
+│    sets assignment + phase=Scheduled                │
+└────────────────────────┬────────────────────────────┘
+                         │ watch assigned Runs
+                         ▼
+┌─────────────────────────────────────────────────────┐
+│  Runtime Pod                                        │
+│                                                     │
+│  ┌────────────────────┐        gRPC                 │
+│  │     Runtimed       │ ─────────────────────────▶  │
+│  │  - claims Run      │                             │
+│  │  - Execute()       │        ┌─────────────────┐  │
+│  │  - Status()        │        │ Runtime Server  │  │
+│  │  - Cancel()        │        │ bash / python / │  │
+│  │  - updates CRD     │        │ custom executor │  │
+│  └────────────────────┘        └─────────────────┘  │
+└─────────────────────────────────────────────────────┘
+
+
+┌────────────────────┐
+│  Runtime CRD        │
+│    image            │
+│    port             │
+│    replicas         │
+│    labels           │
+│    resources        │
+│    concurrency      │
+└─────────┬──────────┘
+          │ reconcile
+          ▼
+┌──────────────────────────────┐
+│  Runtime Controller           │
+│    creates Runtime Deployment │
+│    injects runtimed sidecar   │
+└─────────┬────────────────────┘
+          │ creates
+          ▼
+┌──────────────────────────────┐
+│  Runtime Deployment / Pods    │
+└──────────────────────────────┘
 ```
 
-## Components
+### Components
 
 | Component | Description |
 |-----------|-------------|
-| **Run CRD** | Central state machine: Pending → Scheduled → Running → Succeeded/Failed |
-| **Runtime CRD** | Defines a runtime type (image, port, replicas). Controller auto-creates Deployment with runtimed daemon. |
-| **Scheduler** | K8s controller that watches Pending Runs and assigns them to Runtime Pods in the same namespace. |
-| **Runtime Controller** | Watches Runtime CRs, creates Deployments with runtimed daemon injected. |
-| **Runtimed** | Daemon in each Runtime Pod. Watches Runs assigned to its pod, delegates execution to the Runtime Server via gRPC. |
-| **Runtime Server** | Pluggable gRPC service (`Execute` / `Status` / `List` / `Cancel`). Built-in: bash, python. |
-| **Python Runtime** | Python 3.13 gRPC server. Supports inline scripts, git repo, and FaaS entrypoint (`module.function`). |
-| **krt** | CLI for creating and monitoring Runs. |
+| **Run CRD** | Durable control-plane record and state machine for one execution. Tracks desired runtime, input, assignment, lifecycle phase, retry policy, timestamps, and result references. |
+| **Runtime CRD** | Defines a runtime pool: image, port, replicas or min/max replicas, labels, resource profile, concurrency limit, and runtime-specific configuration. |
+| **Runtime Controller** | Watches Runtime CRs and reconciles them into Deployments. Each Runtime Pod contains the Runtime Server container plus the kruntimes-managed `runtimed` sidecar. |
+| **Scheduler** | Kubernetes controller that watches Pending Runs, finds healthy Runtime Pods in the same namespace with matching labels and available capacity, then assigns Runs by updating Run status. |
+| **Runtimed** | Sidecar daemon in each Runtime Pod. Watches Runs assigned to its pod, atomically claims them, delegates execution to the local Runtime Server via gRPC, and updates Run status. |
+| **Runtime Server** | Pluggable local gRPC service that performs the actual execution. Implements `Execute`, `Status`, `List`, and `Cancel`. Built-in implementations include bash and Python. |
+| **Failover Controller** | Detects stale assignments when Runtime Pods disappear, stop heartbeating, or fail to claim Runs before deadline. Requeues or fails Runs according to retry policy. |
+| **krt** | CLI for creating Runs, watching status, streaming logs, cancelling executions, and retrieving results. |
+
+### Runtime Pod Model
+
+Each Runtime Pod contains two cooperating processes:
+
+```text
+Runtime Pod
+├── runtimed sidecar        # kruntimes control agent
+└── Runtime Server          # bash / python / custom executor
+```
+
+`runtimed` owns Kubernetes communication. The Runtime Server only exposes a local execution API and does not need to know about Kubernetes.
+
+### Run State Machine
+
+```text
+Pending
+  └─ Scheduled
+       └─ Running
+            ├─ Succeeded
+            ├─ Failed
+            ├─ Timeout
+            └─ Cancelled
+```
+
+The Run CRD should also use conditions for detailed status, for example:
+
+```yaml
+status:
+  phase: Running
+  assignment:
+    podName: runtime-bash-abc123
+    podUID: 4f9...
+    assignedAt: "2026-05-27T10:00:00Z"
+  conditions:
+    - type: Scheduled
+      status: "True"
+      reason: Assigned
+    - type: Running
+      status: "True"
+      reason: RuntimeStarted
+```
+
+### Assignment and Claiming
+
+Scheduling and execution are separate steps:
+
+1. The Scheduler assigns a Pending Run to a healthy Runtime Pod with available capacity.
+2. The assigned Runtimed observes the Run.
+3. Runtimed atomically claims the Run by transitioning it from `Scheduled` to `Running`.
+4. If the claim update fails, the Run was already cancelled, expired, or reassigned.
+5. Runtime Server executes the workload locally.
+6. Runtimed writes the terminal status and result references back to the Run CRD.
+
+This prevents stale Runtime Pods from overwriting newer scheduling decisions.
+
+### Runtime Server API
+
+The Runtime Server API is local to a Runtime Pod:
+
+```text
+Execute(RunSpec) -> ExecutionID
+Status(ExecutionID) -> ExecutionStatus
+List() -> repeated Execution
+Cancel(ExecutionID) -> CancelResult
+```
+
+`List` is used by Runtimed to recover local execution state after restart. `Cancel` is best-effort and should eventually result in `Cancelled`, `Failed`, or `Timeout`.
+
+### Data Plane vs Control Plane
+
+The Run CRD is the source of truth for compact lifecycle state.
+
+Large or high-frequency data should not be stored directly in etcd:
+
+- logs,
+- artifacts,
+- stdout/stderr streams,
+- large results,
+- fine-grained progress events,
+- high-frequency heartbeats.
+
+Instead, the Run status should store references to external storage or streaming channels.
 
 ## Quick Start
 
