@@ -6,26 +6,55 @@
 A two-layer scheduling system built on Kubernetes that eliminates cold-start latency by keeping warm runtime pods ready to execute code in milliseconds. Built for AI agents, CI/CD tasks, serverless functions, and any short-lived, high-concurrency workloads.
 
 ## Background
-
 Building a serverless/FaaS platform on vanilla Kubernetes faces several structural challenges:
 
-**Cold starts are hard to make consistently sub-second**.
+**Cold starts are hard to make consistently sub-second**
 
-A Pod startup path includes scheduling, image distribution, container creation, network initialization, readiness checks, and application initialization. After scale-to-zero, vanilla Kubernetes can struggle to deliver consistently sub-second startup. Firecracker, lazy image loading, image caching, and node pre-warming can reduce cold-start latency, but they usually require cooperation from the node runtime or infrastructure layer, not just an upper-level application platform.
+A Pod startup path includes scheduling, image distribution, container creation, network initialization, readiness checks, and application initialization. After scale-to-zero, vanilla Kubernetes can struggle to deliver consistently sub-second startup.
 
-**The Kubernetes control plane is not designed as a fine-grained function scheduler**.
+Technologies such as [Firecracker](https://firecracker-microvm.github.io/), [lazy image loading with containerd stargz snapshotter](https://github.com/containerd/stargz-snapshotter), image caching, and node pre-warming can reduce cold-start latency, but they usually require cooperation from the node runtime or infrastructure layer — not just an upper-level application platform.
 
-The default Kubernetes scheduler and control-plane object model are better suited to relatively long-lived Pods than to mapping every function invocation to a short-lived Pod. High volumes of short-lived, high-concurrency tasks amplify API server, scheduler, CRI, CNI, and image-pull overhead. Batch schedulers can improve queuing, fairness, and gang scheduling, but they are primarily designed for batch, AI/ML, HPC, or big-data workloads, not fine-grained function invocation scheduling.
+In other words, fast microVM boot time alone is not the full cold-start story. The full path still includes image loading, network setup, runtime initialization, and application readiness.
 
-**There is still an elasticity gap**.
+**The Kubernetes control plane is not designed as a fine-grained function scheduler**
 
-HPA, KEDA, and Knative can improve scaling decisions, event-driven scale-to-zero, and request buffering during scale-from-zero. But they do not, by themselves, eliminate the underlying Pod startup latency. In production, this usually becomes a trade-off among pre-warmed pools, request buffering, asynchronous queues, image optimization, node caching, startup latency, and cost.
+The default Kubernetes scheduler and control-plane object model are better suited to relatively long-lived Pods than to mapping every function invocation to a short-lived Pod.
 
-**Conway’s Law matters**.
+High volumes of short-lived, high-concurrency tasks amplify overhead across the API server, scheduler, CRI, CNI, image pulling, and controller loops. The Kubernetes [Scheduling Framework](https://kubernetes.io/docs/concepts/scheduling-eviction/scheduling-framework/) is extensible, but using it effectively often requires infrastructure-level ownership.
 
-The team building the serverless platform is often not the same team managing the Kubernetes control plane, node runtime, networking, or cluster infrastructure. If the platform team cannot change schedulers, container runtimes, snapshotters, CNI behavior, image caching policies, or node pre-warming strategies, then the practical path is usually to build above Kubernetes rather than depend on invasive changes inside it.
+Batch schedulers such as [Volcano](https://volcano.sh/) can improve queuing, fairness, gang scheduling, and resource-aware placement. However, they are primarily designed for batch, AI/ML, HPC, and big-data workloads, rather than fine-grained function invocation scheduling.
 
-In short: **vanilla Kubernetes is a reasonable substrate for serverless platforms, but not a complete low-latency FaaS runtime by itself. The harder requirements — sub-second cold starts, fine-grained scheduling, and fast elasticity — usually require either infrastructure-level optimizations or a platform layer that deliberately avoids treating every invocation as a new Pod**.
+**There is still an elasticity gap**
+
+[Horizontal Pod Autoscaler](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) can scale workloads based on metrics, and [KEDA](https://keda.sh/) can improve event-driven scaling and scale-to-zero behavior. [Knative Serving](https://knative.dev/docs/serving/) can also buffer requests during scale-from-zero through its Activator component.
+
+However, these systems mainly improve *when* to scale and how to route or buffer traffic. They do not, by themselves, eliminate the underlying Pod startup latency.
+
+In production, this usually becomes a trade-off among:
+
+- pre-warmed pools,
+- request buffering,
+- asynchronous queues,
+- image optimization,
+- node-level caching,
+- startup latency,
+- and infrastructure cost.
+
+This is the core problem: the platform may be able to decide to scale quickly, but the underlying execution substrate may still be slow to materialize capacity.
+
+**Conway's Law matters**
+
+The team building the serverless platform is often not the same team managing the Kubernetes control plane, node runtime, networking, or cluster infrastructure.
+
+If the platform team cannot change schedulers, container runtimes, snapshotters, CNI behavior, image caching policies, or node pre-warming strategies, then the practical path is usually to build above Kubernetes rather than depend on invasive changes inside it.
+
+This does not mean Kubernetes is a bad substrate. It means that vanilla Kubernetes is not, by itself, a complete low-latency FaaS runtime.
+
+**Summary**
+
+Vanilla Kubernetes is a reasonable substrate for serverless platforms, but not a complete low-latency FaaS runtime by itself.
+
+The harder requirements — sub-second cold starts, fine-grained scheduling, and fast elasticity — usually require either infrastructure-level optimizations or a platform layer that deliberately avoids treating every invocation as a new Pod.
 
 ## Design
 
