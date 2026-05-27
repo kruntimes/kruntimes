@@ -117,11 +117,11 @@ func (s *Server) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.CancelR
 	s.mu.Unlock() // unlock before killing to avoid deadlock
 
 	if entry.cmd != nil && entry.cmd.Process != nil {
-		entry.cmd.Process.Signal(syscall.SIGTERM)
+		_ = entry.cmd.Process.Signal(syscall.SIGTERM)
 		select {
 		case <-entry.done:
 		case <-time.After(5 * time.Second):
-			entry.cmd.Process.Kill()
+			_ = entry.cmd.Process.Kill()
 		}
 	}
 
@@ -208,7 +208,7 @@ func (s *Server) execute(req *pb.ExecuteRequest, entry *taskEntry) {
 			entry.state = pb.ExecutionState_EXECUTION_STATE_SUCCEEDED
 		}
 	case <-ctx.Done():
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		entry.state = pb.ExecutionState_EXECUTION_STATE_FAILED
 		entry.errMsg = "timeout"
 		entry.exitCode = -1

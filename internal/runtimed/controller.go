@@ -271,7 +271,7 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 }
 
 func (c *Controller) updateRunStatus(ctx context.Context, run *v1alpha1.Run, phase v1alpha1.RunPhase, msg string, outputs map[string]string) {
-	retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	_ = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		latest := &v1alpha1.Run{}
 		if err := c.Client.Get(ctx, client.ObjectKeyFromObject(run), latest); err != nil {
 			if apierrors.IsNotFound(err) {

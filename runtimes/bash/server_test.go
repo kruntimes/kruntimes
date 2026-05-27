@@ -26,7 +26,7 @@ func startTestServer(t *testing.T) (pb.RuntimeClient, func()) {
 		t.Fatalf("listen: %v", err)
 	}
 
-	go srv.Serve(lis)
+	go func() { _ = srv.Serve(lis) }()
 
 	conn, err := grpc.NewClient(lis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -213,7 +213,7 @@ func TestExecute_InlineSource(t *testing.T) {
 	// Simulate what runtimed does: write inline code to script in a temp dir,
 	// then pass working_dir to the ExecuteRequest.
 	workDir := t.TempDir()
-	os.WriteFile(filepath.Join(workDir, "script"), []byte("echo hello_from_inline"), 0o644)
+	_ = os.WriteFile(filepath.Join(workDir, "script"), []byte("echo hello_from_inline"), 0o644)
 
 	ctx := context.Background()
 	_, err := client.Execute(ctx, &pb.ExecuteRequest{

@@ -47,8 +47,8 @@ func main() {
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "kruntimes-scheduler.kruntimes.com",
 	})
-	mgr.AddHealthzCheck("healthz", func(_ *http.Request) error { return nil })
-	mgr.AddReadyzCheck("readyz", func(_ *http.Request) error { return nil })
+	_ = mgr.AddHealthzCheck("healthz", func(_ *http.Request) error { return nil })
+	_ = mgr.AddReadyzCheck("readyz", func(_ *http.Request) error { return nil })
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)

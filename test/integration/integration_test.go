@@ -62,7 +62,7 @@ func TestSchedulerReconcile(t *testing.T) {
 	if err := k8sClient.Create(context.Background(), ns); err != nil {
 		t.Fatalf("create ns: %v", err)
 	}
-	defer k8sClient.Delete(context.Background(), ns)
+	defer func() { _ = k8sClient.Delete(context.Background(), ns) }()
 
 	// Create runtime pod
 	pod := &corev1.Pod{
@@ -137,7 +137,7 @@ func TestRuntimedClaimAndExecute(t *testing.T) {
 	if err := k8sClient.Create(context.Background(), ns); err != nil {
 		t.Fatalf("create ns: %v", err)
 	}
-	defer k8sClient.Delete(context.Background(), ns)
+	defer func() { _ = k8sClient.Delete(context.Background(), ns) }()
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
@@ -197,7 +197,7 @@ func TestSchedulerNoMatchingPod(t *testing.T) {
 	if err := k8sClient.Create(context.Background(), ns); err != nil {
 		t.Fatalf("create ns: %v", err)
 	}
-	defer k8sClient.Delete(context.Background(), ns)
+	defer func() { _ = k8sClient.Delete(context.Background(), ns) }()
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{

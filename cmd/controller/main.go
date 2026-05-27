@@ -52,8 +52,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	mgr.AddHealthzCheck("healthz", func(_ *http.Request) error { return nil })
-	mgr.AddReadyzCheck("readyz", func(_ *http.Request) error { return nil })
+	_ = mgr.AddHealthzCheck("healthz", func(_ *http.Request) error { return nil })
+	_ = mgr.AddReadyzCheck("readyz", func(_ *http.Request) error { return nil })
 
 	reconciler := &controller.RuntimeReconciler{
 		Client: mgr.GetClient(),
