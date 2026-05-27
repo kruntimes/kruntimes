@@ -91,7 +91,11 @@ func showLogsOnce(ctx context.Context, cli pb.RuntimeClient, uid string, tailLin
 	if output == "" {
 		output = resp.Stderr
 	}
-	fmt.Print(tailOutput(output, tailLines))
+	out := tailOutput(output, tailLines)
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	fmt.Print(out)
 	return nil
 }
 
@@ -118,6 +122,9 @@ func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines
 		resp, err := cli.Status(ctx, &pb.StatusRequest{Id: uid})
 		if err == nil {
 			tail := tailOutput(resp.Stdout, tailLines)
+			if tail != "" && !strings.HasSuffix(tail, "\n") {
+				tail += "\n"
+			}
 			fmt.Print(tail)
 			seen = len(resp.Stdout)
 		}
