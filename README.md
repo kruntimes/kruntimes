@@ -58,34 +58,49 @@ The harder requirements — sub-second cold starts, fine-grained scheduling, and
 
 ## Design
 
-kruntimes solves these by treating K8s as an IaaS layer and building all serverless logic in the application layer, under full control of the platform team.
+kruntimes addresses these challenges by treating Kubernetes as an IaaS-like substrate and moving serverless-specific logic into the application layer, where it remains under the platform team's control.
 
 ### Reuse over creation
 
-Instead of creating a new Pod for every request, kruntimes maintains pools of pre-warmed **Runtime Pods**. Each pod already has the required toolchain, dependencies, and a running daemon. When a Run arrives, the scheduler assigns it to an existing hot pod. Startup drops from minutes to milliseconds — the slowest parts of Pod creation (scheduling, image pulling) never happen at request time.
+Instead of creating a new Pod for every request, kruntimes maintains pools of pre-warmed **Runtime Pods**. Each pod already has the required toolchain, dependencies, and a running daemon. When a Run arrives, the scheduler assigns it to an existing hot pod.
+
+This removes the slowest parts of the critical path — Kubernetes scheduling, image pulling, and container startup — from request time. For lightweight Runs, dispatch latency can drop from seconds or minutes to milliseconds.
+
+Each Run executes in a clean workspace with explicit setup, teardown, timeout, cancellation, and resource cleanup. For untrusted workloads, Runtime implementations can add stronger isolation boundaries such as per-run containers, gVisor, Firecracker, nsjail, or other sandboxing mechanisms.
 
 ### Two-layer scheduling
 
-```
+```text
 Layer 1 (K8s)  →  maintains Runtime Pod pools (coarse, low-frequency)
 Layer 2 (app)  →  assigns individual Runs to pods within a pool (fine, high-throughput)
 ```
 
-This separation lets us implement application-level queuing, prioritization, and resource allocation without touching K8s internals.
+This separation lets kruntimes implement application-level queuing, prioritization, backpressure, and resource allocation without touching Kubernetes internals.
+
+Runtime Pods continuously report health, capacity, supported Runtime labels, active Run count, and load. The application scheduler uses this information to place Runs onto hot pods without relying on Kubernetes scheduling for every execution.
+
+Because multiple Runs may share a Runtime Pod, kruntimes enforces per-Run concurrency, timeout, cancellation, and resource limits at the runtime layer.
 
 ### Runtime abstraction
 
-Different execution environments (Go, Python, Node.js, BuildKit) are modeled as distinct **Runtime** types. Each Runtime is an independent Deployment pool with a specific container image and toolchain. This gives natural environment isolation, guarantees consistency (all runs use the same pre-built image), and makes adding new languages trivial — deploy a new pool, register a label.
+Different execution environments — such as language runtimes like Go, Python, and Node.js, or specialized executors like BuildKit — are modeled as distinct **Runtime** types.
+
+Each Runtime is backed by an independent Deployment pool with a specific container image, toolchain, resource profile, and security policy. This provides natural environment isolation, guarantees consistency across Runs, and makes adding new environments an operational workflow: build a new Runtime image, deploy a pool, and register its labels and capabilities.
 
 ### Declarative CRDs, not P2P
 
-The **Run CRD** is the sole source of truth — it holds *what to run*, *which environment*, *who is assigned*, and *the result*. All components communicate exclusively through CRD status updates:
+The **Run CRD** is the durable source of truth for control-plane state: what to run, which Runtime is required, which pod is assigned, current lifecycle phase, retry policy, and references to results.
 
-- **Scheduler** watches Pending Runs, sets `assignedPod` + `phase=Scheduled`
-- **Runtimed** watches Runs assigned to its pod, delegates to the Runtime Server via gRPC, updates status
-- **Failover** is free: if a pod dies, its Runs timeout and are re-scheduled
+Control-plane coordination happens through CRD state transitions:
 
-No connection pools. No IP tracking. No P2P. Just etcd.
+- **Scheduler** watches Pending Runs and assigns them to healthy Runtime Pods with available capacity.
+- **Runtimed** watches Runs assigned to its pod, delegates execution to the local Runtime Server via gRPC, and updates Run status.
+- **Runtime Server** performs the actual execution inside the Runtime Pod and reports completion, failure, timeout, or cancellation.
+- **Failover controller** detects stale assignments when a Runtime Pod disappears or stops heartbeating, then marks affected Runs eligible for rescheduling according to their retry policy.
+
+The CRD stores compact lifecycle state and references to outputs. High-volume data such as logs, artifacts, streaming output, and fine-grained heartbeats should be stored outside etcd.
+
+No request-time Pod creation. No per-run Kubernetes scheduling. No global connection pool or direct pod-to-pod routing requirement. Kubernetes remains the coarse-grained resource substrate; kruntimes owns the fine-grained serverless control plane.
 
 ## Architecture
 
