@@ -5,12 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test Commands
 
 ```bash
-make build              # compile all 5 Go binaries (scheduler, controller, runtimed, bash-runtime, krt)
+make build              # compile all 5 Go binaries
+make lint               # go fmt + go vet + golangci-lint (if installed) (scheduler, controller, runtimed, bash-runtime, krt)
 make test               # unit tests (skips integration and e2e)
 make test-integration   # envtest-based integration tests (real API server)
 make e2e-test           # E2E tests against a kind cluster (requires make e2e-setup first)
 make e2e                # full E2E: kind cluster + deploy + test
 make proto              # regenerate Go gRPC code from api/runtime/v1/runtime.proto
+make proto-python       # regenerate Python gRPC stubs (requires uv)
 make proto-python       # regenerate Python gRPC stubs (requires uv)
 make generate manifests # regenerate deepcopy + CRD YAML manifests
 make deploy             # helm install the platform chart
@@ -19,7 +21,6 @@ make deploy-runtimes    # helm install built-in runtimes (bash, python)
 
 Run a single Go test: `go test ./internal/scheduler/... -run TestName -v`
 Run Python tests: `cd runtimes/python && uv run python -m unittest server_test -v`
-Run E2E with existing kind cluster: `make e2e-test` (cluster must already exist)
 
 ## Architecture
 

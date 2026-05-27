@@ -51,6 +51,16 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+GOLANGCI_LINT = $(shell which golangci-lint 2>/dev/null)
+
+.PHONY: lint
+lint: fmt vet ## Run linters (golangci-lint if available, else go vet).
+	@if [ -x "$(GOLANGCI_LINT)" ]; then \
+		$(GOLANGCI_LINT) run ./...; \
+	else \
+		echo "golangci-lint not found, skipping (only go vet ran)"; \
+	fi
+
 .PHONY: test
 test: generate manifests fmt vet ## Run unit tests.
 	go test $$(go list ./... | grep -v /test/integration) -coverprofile cover.out
