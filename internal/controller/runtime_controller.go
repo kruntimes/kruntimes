@@ -138,7 +138,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: []string{
 			fmt.Sprintf("--runtime-endpoint=localhost:%d", port),
-				"--status-addr=:9093",
+			"--status-addr=:9093",
 		},
 		Env: []corev1.EnvVar{
 			{

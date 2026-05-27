@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,19 +19,19 @@ import (
 
 func NewLogsCmd(k8sClient client.Client) *cobra.Command {
 	var (
-		namespace string
-		follow    bool
+		namespace  string
+		follow     bool
+		tailLines  int
 		statusPort int
 	)
 
 	cmd := &cobra.Command{
 		Use:   "logs <run-name>",
-		Short: "Stream logs from a Run.",
+		Short: "Show logs from a Run.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runName := args[0]
 
-			// Get the Run to find assigned pod and UID.
 			run := &v1alpha1.Run{}
 			if err := k8sClient.Get(cmd.Context(), client.ObjectKey{Name: runName, Namespace: namespace}, run); err != nil {
 				return fmt.Errorf("get run: %w", err)
@@ -39,7 +40,7 @@ func NewLogsCmd(k8sClient client.Client) *cobra.Command {
 				return fmt.Errorf("run %s not yet assigned", runName)
 			}
 
-			// Start port-forward to the pod's status proxy.
+			// Start port-forward.
 			localPort := fmt.Sprintf("%d", statusPort)
 			remotePort := fmt.Sprintf("%d:9093", statusPort)
 			pfCtx, pfCancel := context.WithCancel(cmd.Context())
@@ -55,10 +56,8 @@ func NewLogsCmd(k8sClient client.Client) *cobra.Command {
 			}
 			defer pfCmd.Process.Kill()
 
-			// Wait for port-forward to be ready.
 			time.Sleep(500 * time.Millisecond)
 
-			// Connect gRPC client to the forwarded port.
 			target := fmt.Sprintf("localhost:%s", localPort)
 			conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
@@ -69,47 +68,68 @@ func NewLogsCmd(k8sClient client.Client) *cobra.Command {
 			cli := pb.NewRuntimeClient(conn)
 			uid := string(run.UID)
 
-			var lastStdout string
-			for {
-				select {
-				case <-cmd.Context().Done():
-					return nil
-				default:
-				}
-
-				resp, err := cli.Status(cmd.Context(), &pb.StatusRequest{Id: uid})
-				if err != nil {
-					// If the run isn't on this pod, the runtime server won't know about it.
-					// This is expected while the run hasn't reached this pod yet.
-					if !follow {
-						return fmt.Errorf("status: %w", err)
-					}
-					time.Sleep(time.Second)
-					continue
-				}
-
-				// Print new stdout since last poll.
-				if newOut := resp.Stdout[len(lastStdout):]; newOut != "" {
-					fmt.Print(newOut)
-					lastStdout = resp.Stdout
-				}
-				// Print stderr if present and new.
-				if resp.Stderr != "" {
-					fmt.Fprint(os.Stderr, resp.Stderr)
-				}
-
-				if resp.State == pb.ExecutionState_EXECUTION_STATE_SUCCEEDED ||
-					resp.State == pb.ExecutionState_EXECUTION_STATE_FAILED {
-					return nil
-				}
-
-				time.Sleep(500 * time.Millisecond)
+			if !follow {
+				return showLogsOnce(cmd.Context(), cli, uid, tailLines)
 			}
+			return followLogs(cmd.Context(), cli, uid)
 		},
 	}
 
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
-	cmd.Flags().BoolVarP(&follow, "follow", "f", true, "Follow log output")
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output")
+	cmd.Flags().IntVar(&tailLines, "tail", 0, "Number of lines from the end of the logs to show")
 	cmd.Flags().IntVar(&statusPort, "status-port", 19093, "Local port for port-forward")
 	return cmd
+}
+
+func showLogsOnce(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines int) error {
+	resp, err := cli.Status(ctx, &pb.StatusRequest{Id: uid})
+	if err != nil {
+		return fmt.Errorf("status: %w", err)
+	}
+	output := resp.Stdout
+	if output == "" {
+		output = resp.Stderr
+	}
+	if tailLines > 0 {
+		lines := strings.Split(output, "\n")
+		if len(lines) > tailLines {
+			lines = lines[len(lines)-tailLines:]
+		}
+		output = strings.Join(lines, "\n")
+	}
+	fmt.Print(output)
+	return nil
+}
+
+func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string) error {
+	var lastStdout string
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		resp, err := cli.Status(ctx, &pb.StatusRequest{Id: uid})
+		if err != nil {
+			time.Sleep(time.Second)
+			continue
+		}
+
+		if newOut := resp.Stdout[len(lastStdout):]; newOut != "" {
+			fmt.Print(newOut)
+			lastStdout = resp.Stdout
+		}
+		if resp.Stderr != "" {
+			fmt.Fprint(os.Stderr, resp.Stderr)
+		}
+
+		if resp.State == pb.ExecutionState_EXECUTION_STATE_SUCCEEDED ||
+			resp.State == pb.ExecutionState_EXECUTION_STATE_FAILED {
+			return nil
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
 }
