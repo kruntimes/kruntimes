@@ -320,19 +320,19 @@ make e2e-cleanup  # tears down kind cluster
 - [ ] Stale Run reaper for dead or stale Runtime Pods
 - [ ] Runtime Pod heartbeat and capacity reporting
 - [ ] Runtimed recovery after restart using Runtime Server `List`
-- [ ] Log streaming via `krt logs`
+- [x] Log streaming via `krt logs`
 - [ ] Result and artifact references outside etcd
 - [ ] TTL-based garbage collection for completed Runs
-- [ ] Standard metrics: queue time, dispatch latency, execution time, retries, failures, active Runs
+- [x] Standard metrics: queue time, dispatch latency, execution time, retries, failures, active Runs
 
 ### v0.3 — Workflow
 
-- [ ] Workflow CRD with jobs, steps, needs, and outputs
-- [ ] Workflow controller creates child Runs from DAG steps
-- [ ] Workflow status aggregation from child Runs
+- [x] Workflow CRD with jobs, steps, needs, and outputs
+- [x] Workflow controller creates child Runs from DAG steps
+- [x] Workflow status aggregation from child Runs
 - [ ] Workflow cancellation, timeout, and retry propagation
-- [ ] Minimal `${{ }}` expression resolution for inputs and previous step outputs
-- [ ] `$OUTPUTS` file → bounded `Run.Status.Outputs`
+- [x] Minimal `${{ }}` expression resolution for inputs and previous step outputs
+- [x] `$OUTPUTS` file → bounded `Run.Status.Outputs`
 - [ ] CLI: `krt workflow create/list/get/cancel`
 
 ### v0.4 — Reuse & Developer Experience
