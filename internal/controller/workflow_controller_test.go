@@ -96,7 +96,7 @@ func TestDetectImplicitNeeds_CrossJobRef(t *testing.T) {
 	jobs := map[string]v1alpha1.JobSpec{
 		"build": {
 			RunsOn: "bash",
-			Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "echo done >> outputs"}},
+			Steps:  []v1alpha1.StepSpec{{Name: "compile", Run: "echo done >> outputs"}},
 		},
 		"deploy": {
 			RunsOn: "bash",

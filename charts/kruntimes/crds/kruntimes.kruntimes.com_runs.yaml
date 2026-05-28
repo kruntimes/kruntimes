@@ -59,6 +59,10 @@ spec:
                 items:
                   type: string
                 type: array
+              cancelRequested:
+                description: CancelRequested is set to true to request cancellation
+                  of a running Run.
+                type: boolean
               entrypoint:
                 description: Entrypoint is the script file to execute (default "script"
                   for inline source).
@@ -249,7 +253,7 @@ spec:
               timeout:
                 description: |-
                   Timeout is the maximum duration the run is allowed to run.
-                  If not set, the runtimed applies a default timeout.
+                  If not set, the run runs with no time limit.
                 type: string
             required:
             - runtime
@@ -283,6 +287,8 @@ spec:
                 - Running
                 - Succeeded
                 - Failed
+                - Timeout
+                - Cancelled
                 type: string
               startTime:
                 description: StartTime is when the run began executing.

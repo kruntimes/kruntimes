@@ -164,7 +164,6 @@ func TestRuntimedClaimAndExecute(t *testing.T) {
 		Client:          k8sClient,
 		Hostname:        "test-runtimed-pod",
 		RuntimeEndpoint: "localhost:19091",
-		Workers:         1,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

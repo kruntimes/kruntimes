@@ -6,7 +6,7 @@ import (
 )
 
 // RunPhase is the lifecycle phase of a Run.
-// +kubebuilder:validation:Enum=Pending;Scheduled;Running;Succeeded;Failed
+// +kubebuilder:validation:Enum=Pending;Scheduled;Running;Succeeded;Failed;Timeout;Cancelled
 type RunPhase string
 
 const (
@@ -15,6 +15,8 @@ const (
 	RunRunning   RunPhase = "Running"
 	RunSucceeded RunPhase = "Succeeded"
 	RunFailed    RunPhase = "Failed"
+	RunTimeout   RunPhase = "Timeout"
+	RunCancelled RunPhase = "Cancelled"
 )
 
 // +kubebuilder:object:generate=true
@@ -64,9 +66,13 @@ type RunSpec struct {
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
 	// Timeout is the maximum duration the run is allowed to run.
-	// If not set, the runtimed applies a default timeout.
+	// If not set, the run runs with no time limit.
 	// +optional
 	Timeout *metav1.Duration `json:"timeout,omitempty"`
+
+	// CancelRequested is set to true to request cancellation of a running Run.
+	// +optional
+	CancelRequested bool `json:"cancelRequested,omitempty"`
 }
 
 // +kubebuilder:object:generate=true

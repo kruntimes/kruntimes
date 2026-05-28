@@ -182,11 +182,14 @@ func (s *Server) execute(req *pb.ExecuteRequest, entry *taskEntry) {
 	entry.cmd = cmd
 
 	timeout := req.TimeoutSeconds
-	if timeout <= 0 {
-		timeout = 600 // default 10 min
-	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if timeout <= 0 {
+		ctx, cancel = context.WithCancel(context.Background())
+	} else {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	}
 	defer cancel()
 
 	done := make(chan error, 1)

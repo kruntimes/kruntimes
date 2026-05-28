@@ -3,35 +3,46 @@ package main
 import (
 	"context"
 	"flag"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/runtimed"
 )
 
+var (
+	scheme   = runtime.NewScheme()
+	setupLog = ctrl.Log.WithName("setup")
+)
+
+func init() {
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+}
+
 func main() {
 	var (
 		metricsAddr     string
+		probeAddr       string
 		runtimeEndpoint string
 		statusAddr      string
 		workers         int
 	)
 
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":9090", "The address the metrics endpoint binds to.")
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":9090", "Metrics endpoint address.")
+	flag.StringVar(&probeAddr, "health-probe-bind-address", ":9094", "Health probe endpoint.")
 	flag.StringVar(&statusAddr, "status-addr", ":9093", "gRPC address for the status proxy (for krt logs).")
 	flag.StringVar(&runtimeEndpoint, "runtime-endpoint", "localhost:9091", "gRPC endpoint of the runtime server.")
-	flag.IntVar(&workers, "workers", 2, "Number of concurrent run execution workers.")
+	flag.IntVar(&workers, "workers", 2, "Max concurrent run executions.")
 	klog.InitFlags(nil)
 	flag.Parse()
 
@@ -40,47 +51,44 @@ func main() {
 		hostname, _ = os.Hostname()
 	}
 
-	klog.Infof("Starting kruntimes runtimed, hostname=%s, runtime=%s", hostname, runtimeEndpoint)
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
-	scheme := runtime.NewScheme()
-	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(v1alpha1.AddToScheme(scheme))
-
-	restConfig := ctrl.GetConfigOrDie()
-	restConfig.QPS = 50
-	restConfig.Burst = 100
-
-	c, err := client.New(restConfig, client.Options{Scheme: scheme})
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme:                 scheme,
+		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
+		HealthProbeBindAddress: probeAddr,
+	})
 	if err != nil {
-		klog.Fatalf("Failed to create client: %v", err)
-	}
-
-	ctrl := &runtimed.Controller{
-		Client:          c,
-		Hostname:        hostname,
-		RuntimeEndpoint: runtimeEndpoint,
-		Workers:         workers,
+		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	go func() {
-		http.Handle("/metrics", promhttp.Handler())
-		klog.Infof("Metrics server listening on %s", metricsAddr)
-		if err := http.ListenAndServe(metricsAddr, nil); err != nil {
-			klog.Errorf("Metrics server: %v", err)
-		}
-	}()
-
+	// Start status proxy for krt logs.
 	go func() {
 		if err := runtimed.StartStatusProxy(ctx, runtimeEndpoint, statusAddr); err != nil {
 			klog.Errorf("Status proxy: %v", err)
 		}
 	}()
 
-	if err := ctrl.Run(ctx); err != nil {
-		klog.Fatalf("Controller error: %v", err)
+	runtimedCtrl := &runtimed.Controller{
+		Client:          mgr.GetClient(),
+		Log:             ctrl.Log.WithName("controllers").WithName("Runtimed"),
+		Hostname:        hostname,
+		RuntimeEndpoint: runtimeEndpoint,
+	}
+
+	if err := runtimedCtrl.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Runtimed")
+		os.Exit(1)
+	}
+
+	setupLog.Info("starting runtimed", "hostname", hostname, "runtime", runtimeEndpoint)
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+		setupLog.Error(err, "problem running manager")
+		os.Exit(1)
 	}
 	klog.Info("Runtimed shut down gracefully")
 }

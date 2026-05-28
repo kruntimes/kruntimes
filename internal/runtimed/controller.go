@@ -11,22 +11,29 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 )
 
-const workspacePath = "/workspace"
+const (
+	workspacePath = "/workspace"
+	pollInterval  = 500 * time.Millisecond
+)
 
 var (
 	runsCompleted = promauto.NewCounterVec(
@@ -44,161 +51,233 @@ var (
 		},
 		[]string{"runtime"},
 	)
-	claimConflicts = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "kruntimes_runtimed_claim_conflicts_total",
-			Help: "Total number of run claim conflicts.",
-		},
-	)
 )
 
+type activeRun struct {
+	run       *v1alpha1.Run
+	workDir   string
+	deadline  time.Time
+	start     time.Time
+	lastState pb.ExecutionState
+}
+
+// Controller reconciles Runs assigned to this pod.
 type Controller struct {
-	Client          client.Client
+	client.Client
+	Log             logr.Logger
 	Hostname        string
 	RuntimeEndpoint string
-	Workers         int
 
-	wg         sync.WaitGroup
+	activeRuns sync.Map // uid → *activeRun
+	rlegCh     chan event.GenericEvent
+
 	runtimeCli pb.RuntimeClient
 }
 
-func (c *Controller) Run(ctx context.Context) error {
-	if c.Workers <= 0 {
-		c.Workers = 2
+// SetupWithManager registers the controller with controller-runtime.
+func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
+	c.rlegCh = make(chan event.GenericEvent, 256)
+
+	if err := mgr.Add(c); err != nil {
+		return err
 	}
 
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&v1alpha1.Run{}).
+		WithEventFilter(c.runFilter()).
+		WatchesRawSource(source.Channel(c.rlegCh, &handler.EnqueueRequestForObject{})).
+		Complete(c)
+}
+
+// Start implements manager.Runnable.
+func (c *Controller) Start(ctx context.Context) error {
 	conn, err := grpc.NewClient(c.RuntimeEndpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
 		return fmt.Errorf("dial runtime %s: %w", c.RuntimeEndpoint, err)
 	}
-	defer conn.Close()
 	c.runtimeCli = pb.NewRuntimeClient(conn)
+	go func() { <-ctx.Done(); conn.Close() }()
 
-	klog.Infof("runtimed controller starting, hostname=%s, runtime=%s, workers=%d",
-		c.Hostname, c.RuntimeEndpoint, c.Workers)
+	go c.rlegLoop(ctx)
 
-	sem := make(chan struct{}, c.Workers)
-
-	wait.UntilWithContext(ctx, func(ctx context.Context) {
-		run, err := c.claimRun(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			klog.V(4).Infof("No run claimed: %v", err)
-			return
-		}
-		if run == nil {
-			return
-		}
-
-		sem <- struct{}{}
-		c.wg.Add(1)
-		go func(r *v1alpha1.Run) {
-			defer c.wg.Done()
-			defer func() { <-sem }()
-			c.executeRun(ctx, r)
-		}(run)
-	}, 500*time.Millisecond)
-
-	c.wg.Wait()
+	klog.Infof("runtimed controller started, hostname=%s, runtime=%s", c.Hostname, c.RuntimeEndpoint)
 	return nil
 }
 
-func (c *Controller) claimRun(ctx context.Context) (*v1alpha1.Run, error) {
-	var runList v1alpha1.RunList
-	if err := c.Client.List(ctx, &runList); err != nil {
-		return nil, fmt.Errorf("list runs: %w", err)
+func (c *Controller) runFilter() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			run, ok := e.Object.(*v1alpha1.Run)
+			return ok && run.Status.AssignedPod == c.Hostname
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			run, ok := e.ObjectNew.(*v1alpha1.Run)
+			return ok && run.Status.AssignedPod == c.Hostname
+		},
+		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
+		GenericFunc: func(e event.GenericEvent) bool { return false },
 	}
-
-	for i := range runList.Items {
-		run := &runList.Items[i]
-		if run.Status.AssignedPod != c.Hostname || run.Status.Phase != v1alpha1.RunScheduled {
-			continue
-		}
-
-		run.Status.Phase = v1alpha1.RunRunning
-		run.Status.StartTime = &metav1.Time{Time: time.Now()}
-
-		if err := c.Client.Status().Update(ctx, run); err != nil {
-			if apierrors.IsConflict(err) {
-				claimConflicts.Inc()
-				continue
-			}
-			klog.Errorf("Failed to claim run %s: %v", run.Name, err)
-			continue
-		}
-
-		klog.Infof("Claimed run %s", run.Name)
-		return run, nil
-	}
-
-	return nil, nil
 }
 
-func (c *Controller) prepareSource(run *v1alpha1.Run) (string, error) {
-	runDir := filepath.Join(workspacePath, string(run.UID))
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		return "", fmt.Errorf("mkdir %s: %w", runDir, err)
+// Reconcile handles a single Run assigned to this pod.
+func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := c.Log.WithValues("run", req.NamespacedName)
+
+	var run v1alpha1.Run
+	if err := c.Get(ctx, req.NamespacedName, &run); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if run.Spec.Source == nil {
-		return runDir, nil
-	}
+	uid := string(run.UID)
 
-	if run.Spec.Source.Inline != nil {
-		fileName := run.Spec.Entrypoint
-		if fileName == "" {
-			fileName = "script"
-		}
-		scriptPath := filepath.Join(runDir, fileName)
-		if err := os.WriteFile(scriptPath, []byte(*run.Spec.Source.Inline), 0o644); err != nil {
-			return "", fmt.Errorf("write inline: %w", err)
-		}
-		return runDir, nil
-	}
-
-	if run.Spec.Source.RepoURL != "" {
-		cloneDir := filepath.Join(runDir, "repo")
-		args := []string{"clone", run.Spec.Source.RepoURL, cloneDir}
-		if run.Spec.Source.CommitSHA == "" {
-			args = append(args, "--depth=1")
-		}
-		cmd := exec.Command("git", args...)
-		cmd.Dir = runDir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return "", fmt.Errorf("git clone: %w\n%s", err, string(out))
-		}
-
-		if run.Spec.Source.CommitSHA != "" {
-			cmd := exec.Command("git", "checkout", run.Spec.Source.CommitSHA)
-			cmd.Dir = cloneDir
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				return "", fmt.Errorf("git checkout: %w\n%s", err, string(out))
+	switch run.Status.Phase {
+	case v1alpha1.RunScheduled:
+		if _, exists := c.activeRuns.Load(uid); !exists {
+			if ar := c.claimAndExecute(ctx, &run); ar != nil {
+				c.activeRuns.Store(uid, ar)
 			}
 		}
-		return cloneDir, nil
+
+	case v1alpha1.RunRunning:
+		val, exists := c.activeRuns.Load(uid)
+		if !exists {
+			return ctrl.Result{}, nil
+		}
+		ar := val.(*activeRun)
+		ar.run = &run
+		c.handleRunning(ctx, ar, uid, log)
 	}
 
-	return "", nil
+	return ctrl.Result{}, nil
 }
 
-func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
-	start := time.Now()
-	defer func() {
-		runDuration.WithLabelValues(run.Spec.Runtime).Observe(time.Since(start).Seconds())
-	}()
-
-	workingDir, err := c.prepareSource(run)
-	if err != nil {
-		c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("prepare source: %v", err), nil)
-		runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
+func (c *Controller) handleRunning(ctx context.Context, ar *activeRun, uid string, log logr.Logger) {
+	if ar.run.Spec.CancelRequested {
+		_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
+		c.finishRun(ctx, ar, v1alpha1.RunCancelled, "cancelled by user")
+		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunCancelled)).Inc()
+		c.activeRuns.Delete(uid)
 		return
 	}
+
+	if !ar.deadline.IsZero() && time.Now().After(ar.deadline) {
+		_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
+		c.finishRun(ctx, ar, v1alpha1.RunTimeout, fmt.Sprintf("timeout after %s", ar.run.Spec.Timeout.Duration))
+		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunTimeout)).Inc()
+		c.activeRuns.Delete(uid)
+		return
+	}
+
+	resp, err := c.pollStatus(ctx, uid)
+	if err != nil {
+		log.Error(err, "gRPC Status")
+		return
+	}
+
+	ar.lastState = resp.State
+
+	switch resp.State {
+	case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
+		c.finishRun(ctx, ar, v1alpha1.RunSucceeded, resp.Stdout)
+		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunSucceeded)).Inc()
+		c.activeRuns.Delete(uid)
+	case pb.ExecutionState_EXECUTION_STATE_FAILED:
+		msg := resp.ErrorMessage
+		if msg == "" {
+			msg = resp.Stderr
+		}
+		c.finishRun(ctx, ar, v1alpha1.RunFailed, msg)
+		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
+		c.activeRuns.Delete(uid)
+	}
+}
+
+func (c *Controller) rlegLoop(ctx context.Context) {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		c.activeRuns.Range(func(key, value any) bool {
+			uid := key.(string)
+			ar := value.(*activeRun)
+
+			if ar.run.Status.Phase != v1alpha1.RunRunning {
+				return true
+			}
+
+			if !ar.deadline.IsZero() && time.Now().After(ar.deadline) {
+				c.rlegCh <- event.GenericEvent{Object: ar.run}
+				return true
+			}
+
+			resp, err := c.pollStatus(ctx, uid)
+			if err != nil {
+				return true
+			}
+
+			if resp.State != ar.lastState {
+				ar.lastState = resp.State
+				if resp.State != pb.ExecutionState_EXECUTION_STATE_RUNNING {
+					c.rlegCh <- event.GenericEvent{Object: ar.run}
+				}
+			}
+			return true
+		})
+	}
+}
+
+func (c *Controller) pollStatus(ctx context.Context, uid string) (*pb.StatusResponse, error) {
+	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return c.runtimeCli.Status(rctx, &pb.StatusRequest{Id: uid})
+}
+
+func (c *Controller) claimAndExecute(ctx context.Context, run *v1alpha1.Run) *activeRun {
+	run.Status.Phase = v1alpha1.RunRunning
+	run.Status.StartTime = &metav1.Time{Time: time.Now()}
+
+	if err := c.Status().Update(ctx, run); err != nil {
+		klog.Errorf("claim run %s: %v", run.Name, err)
+		return nil
+	}
+
+	klog.Infof("Claimed run %s", run.Name)
+
+	ar := &activeRun{
+		run:       run,
+		start:     time.Now(),
+		workDir:   filepath.Join(workspacePath, string(run.UID)),
+		lastState: pb.ExecutionState_EXECUTION_STATE_RUNNING,
+	}
+
+	if run.Spec.Timeout != nil && run.Status.StartTime != nil {
+		ar.deadline = run.Status.StartTime.Add(run.Spec.Timeout.Duration)
+	}
+
+	go c.execute(ctx, ar)
+
+	return ar
+}
+
+func (c *Controller) execute(ctx context.Context, ar *activeRun) {
+	run := ar.run
+
+	workDir, err := prepareSource(run)
+	if err != nil {
+		c.finishRun(ctx, ar, v1alpha1.RunFailed, fmt.Sprintf("prepare source: %v", err))
+		runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
+		c.activeRuns.Delete(string(run.UID))
+		return
+	}
+	ar.workDir = workDir
 
 	env := make(map[string]string)
 	for _, e := range run.Spec.Env {
@@ -220,76 +299,120 @@ func (c *Controller) executeRun(ctx context.Context, run *v1alpha1.Run) {
 		Args:           run.Spec.Args,
 		Env:            env,
 		TimeoutSeconds: timeoutSec,
-		WorkingDir:     workingDir,
+		WorkingDir:     workDir,
 		Entrypoint:     entrypoint,
 		Handler:        run.Spec.Handler,
 	})
 	cancel()
 	if err != nil {
-		c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("runtime CreateTask: %v", err), nil)
+		c.finishRun(ctx, ar, v1alpha1.RunFailed, fmt.Sprintf("runtime Execute: %v", err))
 		runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
-		return
+		c.activeRuns.Delete(string(run.UID))
 	}
+}
+
+// Run starts the controller without a controller-runtime manager (integration tests).
+func (c *Controller) Run(ctx context.Context) error {
+	c.Log = ctrl.Log.WithName("runtimed")
+
+	conn, err := grpc.NewClient(c.RuntimeEndpoint,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		return fmt.Errorf("dial runtime %s: %w", c.RuntimeEndpoint, err)
+	}
+	c.runtimeCli = pb.NewRuntimeClient(conn)
+	defer conn.Close()
+
+	go c.rlegLoop(ctx)
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, "runtimed shutting down", nil)
-			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
-			return
-		default:
-		}
-
-		rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		resp, err := c.runtimeCli.Status(rctx, &pb.StatusRequest{Id: string(run.UID)})
-		cancel()
-		if err != nil {
-			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, fmt.Sprintf("runtime GetTask: %v", err), nil)
-			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
-			return
-		}
-
-		switch resp.State {
-		case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
-			c.updateRunStatus(context.Background(), run, v1alpha1.RunSucceeded, resp.Stdout, readOutputs(workingDir))
-			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunSucceeded)).Inc()
-			klog.Infof("Run %s succeeded", run.Name)
-			return
-		case pb.ExecutionState_EXECUTION_STATE_FAILED:
-			msg := resp.ErrorMessage
-			if msg == "" {
-				msg = resp.Stderr
+			return nil
+		case <-ticker.C:
+			var runList v1alpha1.RunList
+			if err := c.List(ctx, &runList); err != nil {
+				continue
 			}
-			c.updateRunStatus(context.Background(), run, v1alpha1.RunFailed, msg, nil)
-			runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
-			klog.Infof("Run %s failed: %s", run.Name, msg)
-			return
+			for _, r := range runList.Items {
+				if r.Status.AssignedPod != c.Hostname {
+					continue
+				}
+				uid := string(r.UID)
+				if _, exists := c.activeRuns.Load(uid); !exists {
+					_, _ = c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&r)})
+				}
+			}
 		}
-
-		time.Sleep(200 * time.Millisecond)
 	}
 }
 
-func (c *Controller) updateRunStatus(ctx context.Context, run *v1alpha1.Run, phase v1alpha1.RunPhase, msg string, outputs map[string]string) {
+func (c *Controller) finishRun(ctx context.Context, ar *activeRun, phase v1alpha1.RunPhase, msg string) {
 	_ = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		latest := &v1alpha1.Run{}
-		if err := c.Client.Get(ctx, client.ObjectKeyFromObject(run), latest); err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil
-			}
-			return err
+		if err := c.Get(ctx, client.ObjectKeyFromObject(ar.run), latest); err != nil {
+			return client.IgnoreNotFound(err)
 		}
-
 		now := metav1.Now()
 		latest.Status.Phase = phase
 		latest.Status.Message = msg
-		latest.Status.Outputs = outputs
+		if phase == v1alpha1.RunSucceeded {
+			latest.Status.Outputs = readOutputs(ar.workDir)
+		}
 		latest.Status.CompletionTime = &now
-		return c.Client.Status().Update(ctx, latest)
+		return c.Status().Update(ctx, latest)
 	})
+	runDuration.WithLabelValues(ar.run.Spec.Runtime).Observe(time.Since(ar.start).Seconds())
 }
 
-// readOutputs reads key=value pairs from the outputs file in workingDir.
+func prepareSource(run *v1alpha1.Run) (string, error) {
+	runDir := filepath.Join(workspacePath, string(run.UID))
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", runDir, err)
+	}
+	if run.Spec.Source == nil {
+		return runDir, nil
+	}
+	if run.Spec.Source.Inline != nil {
+		fileName := run.Spec.Entrypoint
+		if fileName == "" {
+			fileName = "script"
+		}
+		scriptPath := filepath.Join(runDir, fileName)
+		if err := os.WriteFile(scriptPath, []byte(*run.Spec.Source.Inline), 0o644); err != nil {
+			return "", fmt.Errorf("write inline: %w", err)
+		}
+		return runDir, nil
+	}
+	if run.Spec.Source.RepoURL != "" {
+		cloneDir := filepath.Join(runDir, "repo")
+		args := []string{"clone", run.Spec.Source.RepoURL, cloneDir}
+		if run.Spec.Source.CommitSHA == "" {
+			args = append(args, "--depth=1")
+		}
+		cmd := exec.Command("git", args...)
+		cmd.Dir = runDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("git clone: %w\n%s", err, string(out))
+		}
+		if run.Spec.Source.CommitSHA != "" {
+			cmd := exec.Command("git", "checkout", run.Spec.Source.CommitSHA)
+			cmd.Dir = cloneDir
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				return "", fmt.Errorf("git checkout: %w\n%s", err, string(out))
+			}
+		}
+		return cloneDir, nil
+	}
+	return "", nil
+}
+
 func readOutputs(workingDir string) map[string]string {
 	if workingDir == "" {
 		return nil

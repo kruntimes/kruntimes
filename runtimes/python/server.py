@@ -128,7 +128,7 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
 
         env = os.environ.copy()
         env.update(request.env)
-        timeout = request.timeout_seconds or 600
+        timeout = request.timeout_seconds or None
 
         try:
             proc = subprocess.Popen(

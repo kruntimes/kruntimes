@@ -54,7 +54,7 @@ func NewLogsCmd(k8sClient client.Client) *cobra.Command {
 			if err := pfCmd.Start(); err != nil {
 				return fmt.Errorf("start port-forward: %w", err)
 			}
-			defer pfCmd.Process.Kill()
+			defer func() { _ = pfCmd.Process.Kill() }()
 
 			time.Sleep(500 * time.Millisecond)
 
@@ -159,4 +159,3 @@ func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines
 		time.Sleep(500 * time.Millisecond)
 	}
 }
-
