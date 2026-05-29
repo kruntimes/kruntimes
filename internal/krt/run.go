@@ -3,6 +3,8 @@ package krt
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -19,7 +21,7 @@ import (
 type runOptions struct {
 	Runtime    string
 	Timeout    time.Duration
-	Inline     string
+	File       string
 	RepoURL    string
 	CommitSHA  string
 	Entrypoint string
@@ -37,11 +39,23 @@ func NewRunCmd(c client.Client) *cobra.Command {
 		Short: "Create and optionally wait for a Run to complete.",
 		Args:  cobra.MinimumNArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.Runtime == "" {
-				return fmt.Errorf("--runtime is required")
+			if opts.File != "" && opts.RepoURL != "" {
+				return fmt.Errorf("-f/--file and --repo-url are mutually exclusive")
 			}
-			if opts.Inline != "" && opts.RepoURL != "" {
-				return fmt.Errorf("--inline and --repo-url are mutually exclusive")
+
+			var inline string
+			if opts.File != "" {
+				var data []byte
+				var err error
+				if opts.File == "-" {
+					data, err = io.ReadAll(os.Stdin)
+				} else {
+					data, err = os.ReadFile(opts.File)
+				}
+				if err != nil {
+					return fmt.Errorf("read file: %w", err)
+				}
+				inline = string(data)
 			}
 
 			spec := v1alpha1.RunSpec{
@@ -51,8 +65,7 @@ func NewRunCmd(c client.Client) *cobra.Command {
 				Args:       args,
 			}
 
-			if opts.Inline != "" {
-				inline := opts.Inline
+			if inline != "" {
 				spec.Source = &v1alpha1.CodeSource{Inline: &inline}
 			} else if opts.RepoURL != "" {
 				spec.Source = &v1alpha1.CodeSource{
@@ -116,9 +129,9 @@ func NewRunCmd(c client.Client) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Runtime, "runtime", "", "Runtime environment type (required)")
+	cmd.Flags().StringVarP(&opts.Runtime, "runtime", "r", "bash", "Runtime environment type")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 0, "Task timeout")
-	cmd.Flags().StringVar(&opts.Inline, "inline", "", "Inline source code to execute")
+	cmd.Flags().StringVarP(&opts.File, "file", "f", "", `Read source code from file, or "-" for stdin`)
 	cmd.Flags().StringVar(&opts.Entrypoint, "entrypoint", "", `Entrypoint script file (default "script")`)
 	cmd.Flags().StringVar(&opts.Handler, "handler", "", "Handler in module.function format")
 	cmd.Flags().StringVar(&opts.RepoURL, "repo-url", "", "Git repository URL")

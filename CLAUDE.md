@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Commit Convention
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>[optional scope]: <description>
+```
+
+Types: `feat`, `fix`, `refactor`, `chore`, `perf`, `ci`, `ops`, `build`, `docs`, `style`, `revert`, `test`.
+
+Examples: `feat(krt): add -f flag for stdin/file input`, `fix(scheduler): handle empty phase on create`, `refactor(runtimed): use controller-runtime reconciler`.
+
 ## Build & Test Commands
 
 ```bash
