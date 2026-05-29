@@ -284,8 +284,8 @@ make deploy-runtimes  # built-in runtimes (bash, python)
 ### Create a Run
 
 ```bash
-krt run --runtime bash --wait -- echo "Hello from kruntimes"
-krt run --runtime python --inline "print('Hello')" --wait
+krt run -r bash --wait -- echo "Hello from kruntimes"
+echo "print('Hello')" | krt run -r python -f - --wait
 krt list --all-namespaces
 krt get run-xxxxxxxx
 ```
@@ -315,7 +315,7 @@ make e2e-cleanup  # tears down kind cluster
 
 ### v0.2 — Reliability & Operability
 
-- [ ] Run cancellation and timeout phases
+- [x] Run cancellation and timeout phases
 - [ ] Retry policy: maxAttempts, backoff, retryable failure reasons
 - [ ] Stale Run reaper for dead or stale Runtime Pods
 - [ ] Runtime Pod heartbeat and capacity reporting
@@ -333,7 +333,9 @@ make e2e-cleanup  # tears down kind cluster
 - [ ] Workflow cancellation, timeout, and retry propagation
 - [x] Minimal `${{ }}` expression resolution for inputs and previous step outputs
 - [x] `$OUTPUTS` file → bounded `Run.Status.Outputs`
-- [ ] CLI: `krt workflow create/list/get/cancel`
+- [x] CLI: `krt workflow create/list/get`
+- [x] CLI: `krt cancel <run>`
+- [x] CLI: `krt logs` with `-f`/`--follow` and `--tail`
 
 ### v0.4 — Reuse & Developer Experience
 
@@ -423,16 +425,19 @@ The Python runtime is a standalone gRPC server (Python 3.13) deployed alongside 
 
 | Mode | Example |
 |------|---------|
-| Inline | `krt run --runtime python --inline "print(1+1)"` |
-| FaaS | `krt run --runtime python --inline $'def handler(e):\n  return {"ok": True}' --handler "script.handler"` |
-| Repo | `krt run --runtime python --repo-url https://github.com/user/proj.git` |
-| Entrypoint | `krt run --runtime python --repo-url <url> --entrypoint "main.py"` |
+| Inline | `echo "print(1+1)" \| krt run -r python -f -` |
+| File | `krt run -r python -f script.py` |
+| FaaS | `echo $'def handler(e):\n  return {"ok": True}' \| krt run -r python -f - --handler "script.handler"` |
+| Repo | `krt run -r python --repo-url https://github.com/user/proj.git` |
+| Entrypoint | `krt run -r python --repo-url <url> --entrypoint "main.py"` |
 
 ## Run Lifecycle
 
 ```
 Pending → Scheduled → Running → Succeeded
                             → Failed
+                            → Timeout
+                            → Cancelled
 ```
 
 ## Custom Runtimes
@@ -494,6 +499,7 @@ runtimes/
     └── pb/             Generated gRPC stubs
 internal/
 ├── runtimed/          Runtimed controller (claim + gRPC delegation)
+│   ├── rleg/          Run Lifecycle Event Generator (polling + state diff)
 ├── controller/        Runtime controller (Deployment creation)
 ├── scheduler/         Run reconciler + scheduling strategies
 └── krt/               CLI subcommands (run, get, list)

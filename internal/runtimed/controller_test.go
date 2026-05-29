@@ -95,7 +95,7 @@ func TestReadOutputs_Nonexistent(t *testing.T) {
 func TestReadOutputs_Valid(t *testing.T) {
 	dir := t.TempDir()
 	content := "key1=val1\nkey2=val2\n# comment\nkey3 = val3\n"
-	os.WriteFile(filepath.Join(dir, "outputs"), []byte(content), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "outputs"), []byte(content), 0o644)
 
 	outputs := readOutputs(dir)
 	if len(outputs) != 3 {
@@ -115,7 +115,7 @@ func TestReadOutputs_Valid(t *testing.T) {
 func TestReadOutputs_SkipsMalformed(t *testing.T) {
 	dir := t.TempDir()
 	content := "no_equal_sign\n=empty_key\nb=\n  \n"
-	os.WriteFile(filepath.Join(dir, "outputs"), []byte(content), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "outputs"), []byte(content), 0o644)
 
 	outputs := readOutputs(dir)
 	// "no_equal_sign" has no "=", skipped. "=empty_key" yields key="" value="empty_key".
