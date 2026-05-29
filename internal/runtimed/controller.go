@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"google.golang.org/grpc"
@@ -28,6 +27,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
 )
 
 const (
@@ -54,11 +55,10 @@ var (
 )
 
 type activeRun struct {
-	run       *v1alpha1.Run
-	workDir   string
-	deadline  time.Time
-	start     time.Time
-	lastState pb.ExecutionState
+	run      *v1alpha1.Run
+	workDir  string
+	deadline time.Time
+	start    time.Time
 }
 
 // Controller reconciles Runs assigned to this pod.
@@ -72,6 +72,7 @@ type Controller struct {
 	rlegCh     chan event.GenericEvent
 
 	runtimeCli pb.RuntimeClient
+	rleg       rlegpkg.RunLifecycleEventGenerator
 }
 
 // SetupWithManager registers the controller with controller-runtime.
@@ -100,10 +101,31 @@ func (c *Controller) Start(ctx context.Context) error {
 	c.runtimeCli = pb.NewRuntimeClient(conn)
 	go func() { <-ctx.Done(); conn.Close() }()
 
-	go c.rlegLoop(ctx)
+	c.rleg = rlegpkg.NewGenericRLEG(&statusAdapter{cli: c.runtimeCli}, rlegpkg.DefaultRelistInterval)
+	go c.rleg.Start(ctx)
+	go c.forwardRLEGEvents(ctx)
 
 	klog.Infof("runtimed controller started, hostname=%s, runtime=%s", c.Hostname, c.RuntimeEndpoint)
 	return nil
+}
+
+// forwardRLEGEvents translates RLEG events to controller-runtime GenericEvents.
+func (c *Controller) forwardRLEGEvents(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-c.rleg.Events():
+			if !ok {
+				return
+			}
+			select {
+			case c.rlegCh <- event.GenericEvent{Object: ev.Run}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
 }
 
 func (c *Controller) runFilter() predicate.Predicate {
@@ -137,6 +159,7 @@ func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		if _, exists := c.activeRuns.Load(uid); !exists {
 			if ar := c.claimAndExecute(ctx, &run); ar != nil {
 				c.activeRuns.Store(uid, ar)
+				c.rleg.AddRun(ar.run)
 			}
 		}
 
@@ -147,6 +170,7 @@ func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		ar := val.(*activeRun)
 		ar.run = &run
+		c.rleg.UpdateRun(&run)
 		c.handleRunning(ctx, ar, uid, log)
 	}
 
@@ -158,7 +182,6 @@ func (c *Controller) handleRunning(ctx context.Context, ar *activeRun, uid strin
 		_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
 		c.finishRun(ctx, ar, v1alpha1.RunCancelled, "cancelled by user")
 		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunCancelled)).Inc()
-		c.activeRuns.Delete(uid)
 		return
 	}
 
@@ -166,7 +189,6 @@ func (c *Controller) handleRunning(ctx context.Context, ar *activeRun, uid strin
 		_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
 		c.finishRun(ctx, ar, v1alpha1.RunTimeout, fmt.Sprintf("timeout after %s", ar.run.Spec.Timeout.Duration))
 		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunTimeout)).Inc()
-		c.activeRuns.Delete(uid)
 		return
 	}
 
@@ -176,13 +198,10 @@ func (c *Controller) handleRunning(ctx context.Context, ar *activeRun, uid strin
 		return
 	}
 
-	ar.lastState = resp.State
-
 	switch resp.State {
 	case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
 		c.finishRun(ctx, ar, v1alpha1.RunSucceeded, resp.Stdout)
 		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunSucceeded)).Inc()
-		c.activeRuns.Delete(uid)
 	case pb.ExecutionState_EXECUTION_STATE_FAILED:
 		msg := resp.ErrorMessage
 		if msg == "" {
@@ -190,47 +209,6 @@ func (c *Controller) handleRunning(ctx context.Context, ar *activeRun, uid strin
 		}
 		c.finishRun(ctx, ar, v1alpha1.RunFailed, msg)
 		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
-		c.activeRuns.Delete(uid)
-	}
-}
-
-func (c *Controller) rlegLoop(ctx context.Context) {
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-
-		c.activeRuns.Range(func(key, value any) bool {
-			uid := key.(string)
-			ar := value.(*activeRun)
-
-			if ar.run.Status.Phase != v1alpha1.RunRunning {
-				return true
-			}
-
-			if !ar.deadline.IsZero() && time.Now().After(ar.deadline) {
-				c.rlegCh <- event.GenericEvent{Object: ar.run}
-				return true
-			}
-
-			resp, err := c.pollStatus(ctx, uid)
-			if err != nil {
-				return true
-			}
-
-			if resp.State != ar.lastState {
-				ar.lastState = resp.State
-				if resp.State != pb.ExecutionState_EXECUTION_STATE_RUNNING {
-					c.rlegCh <- event.GenericEvent{Object: ar.run}
-				}
-			}
-			return true
-		})
 	}
 }
 
@@ -252,10 +230,9 @@ func (c *Controller) claimAndExecute(ctx context.Context, run *v1alpha1.Run) *ac
 	klog.Infof("Claimed run %s", run.Name)
 
 	ar := &activeRun{
-		run:       run,
-		start:     time.Now(),
-		workDir:   filepath.Join(workspacePath, string(run.UID)),
-		lastState: pb.ExecutionState_EXECUTION_STATE_RUNNING,
+		run:     run,
+		start:   time.Now(),
+		workDir: filepath.Join(workspacePath, string(run.UID)),
 	}
 
 	if run.Spec.Timeout != nil && run.Status.StartTime != nil {
@@ -324,7 +301,22 @@ func (c *Controller) Run(ctx context.Context) error {
 	c.runtimeCli = pb.NewRuntimeClient(conn)
 	defer conn.Close()
 
-	go c.rlegLoop(ctx)
+	c.rleg = rlegpkg.NewGenericRLEG(&statusAdapter{cli: c.runtimeCli}, rlegpkg.DefaultRelistInterval)
+	go c.rleg.Start(ctx)
+
+	c.rlegCh = make(chan event.GenericEvent, 256)
+	go c.forwardRLEGEvents(ctx)
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev := <-c.rlegCh:
+				_, _ = c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ev.Object)})
+			}
+		}
+	}()
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -352,6 +344,9 @@ func (c *Controller) Run(ctx context.Context) error {
 }
 
 func (c *Controller) finishRun(ctx context.Context, ar *activeRun, phase v1alpha1.RunPhase, msg string) {
+	c.rleg.RemoveRun(string(ar.run.UID))
+	c.activeRuns.Delete(string(ar.run.UID))
+
 	_ = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		latest := &v1alpha1.Run{}
 		if err := c.Get(ctx, client.ObjectKeyFromObject(ar.run), latest); err != nil {
@@ -439,4 +434,13 @@ func readOutputs(workingDir string) map[string]string {
 		klog.Warningf("error reading outputs file %s: %v", workingDir, err)
 	}
 	return outputs
+}
+
+// statusAdapter adapts the gRPC client to rlegpkg.StatusProvider.
+type statusAdapter struct {
+	cli pb.RuntimeClient
+}
+
+func (a *statusAdapter) Status(ctx context.Context, uid string) (*pb.StatusResponse, error) {
+	return a.cli.Status(ctx, &pb.StatusRequest{Id: uid})
 }
