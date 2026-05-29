@@ -31,8 +31,8 @@ import (
 	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
 )
 
-const (
-	workspacePath = "/workspace"
+var (
+	workspacePath = "/workspace" //nolint:gochecknoglobals
 	pollInterval  = 500 * time.Millisecond
 )
 
