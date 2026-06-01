@@ -316,7 +316,7 @@ make e2e-cleanup  # tears down kind cluster
 ### v0.2 — Reliability & Operability
 
 - [x] Run cancellation and timeout phases
-- [ ] Retry policy: maxAttempts, backoff, retryable failure reasons
+- [x] Retry policy: maxAttempts, backoff, retryable failure reasons
 - [ ] Stale Run reaper for dead or stale Runtime Pods
 - [ ] Runtime Pod heartbeat and capacity reporting
 - [ ] Runtimed recovery after restart using Runtime Server `List`
@@ -500,6 +500,7 @@ runtimes/
 internal/
 ├── runtimed/          Runtimed controller (claim + gRPC delegation)
 │   ├── rleg/          Run Lifecycle Event Generator (polling + state diff)
+│   ├── retry.go        Retry policy helpers (calcBackoff, shouldRetry)
 ├── controller/        Runtime controller (Deployment creation)
 ├── scheduler/         Run reconciler + scheduling strategies
 └── krt/               CLI subcommands (run, get, list)
