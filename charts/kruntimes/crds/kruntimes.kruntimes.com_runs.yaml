@@ -229,6 +229,30 @@ spec:
                   Handler is the module.function to call (FaaS mode).
                   When set, the runtime imports and calls the function instead of running a script.
                 type: string
+              retryPolicy:
+                description: RetryPolicy is the retry strategy for the Run. If nil,
+                  no retries are attempted.
+                properties:
+                  backoff:
+                    description: |-
+                      Backoff is the initial backoff duration between retries.
+                      The backoff doubles after each retry (exponential backoff with 2x multiplier),
+                      capped at 60 seconds.
+                    type: string
+                  maxAttempts:
+                    description: |-
+                      MaxAttempts is the maximum number of execution attempts (including the initial attempt).
+                      Default: 1 (no retries).
+                    format: int32
+                    type: integer
+                  retryableReasons:
+                    description: |-
+                      RetryableReasons lists the failure reasons that are eligible for retry.
+                      If empty, all reasons except "Cancelled" are retryable.
+                    items:
+                      type: string
+                    type: array
+                type: object
               runtime:
                 description: |-
                   Runtime is the execution environment type (e.g., "python").
@@ -265,10 +289,72 @@ spec:
                 description: AssignedPod is the name of the Runtime Pod assigned by
                   the scheduler.
                 type: string
+              attempt:
+                description: Attempt is the current execution attempt number (1-based).
+                format: int32
+                type: integer
               completionTime:
                 description: CompletionTime is when the run finished (success or failure).
                 format: date-time
                 type: string
+              conditions:
+                description: Conditions represent the current state of the Run's lifecycle
+                  conditions.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
               message:
                 description: Message is a human-readable status or error message.
                 type: string

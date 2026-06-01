@@ -51,8 +51,11 @@ func (s *Server) Execute(ctx context.Context, req *pb.ExecuteRequest) (*pb.Execu
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.tasks[req.Id]; exists {
-		return nil, status.Errorf(codes.AlreadyExists, "request %s already exists", req.Id)
+	if existing, exists := s.tasks[req.Id]; exists {
+		if existing.cmd != nil && existing.cmd.Process != nil {
+			_ = existing.cmd.Process.Kill()
+		}
+		delete(s.tasks, req.Id)
 	}
 
 	entry := &taskEntry{

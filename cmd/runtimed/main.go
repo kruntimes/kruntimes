@@ -78,6 +78,7 @@ func main() {
 		Log:             ctrl.Log.WithName("controllers").WithName("Runtimed"),
 		Hostname:        hostname,
 		RuntimeEndpoint: runtimeEndpoint,
+		Recorder:        mgr.GetEventRecorderFor("runtimed"),
 	}
 
 	if err := runtimedCtrl.SetupWithManager(mgr); err != nil {

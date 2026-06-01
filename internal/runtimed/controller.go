@@ -16,8 +16,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/util/retry"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -31,10 +33,7 @@ import (
 	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
 )
 
-var (
-	workspacePath = "/workspace" //nolint:gochecknoglobals
-	pollInterval  = 500 * time.Millisecond
-)
+var workspacePath = "/workspace" //nolint:gochecknoglobals
 
 var (
 	runsCompleted = promauto.NewCounterVec(
@@ -73,6 +72,7 @@ type Controller struct {
 
 	runtimeCli pb.RuntimeClient
 	rleg       rlegpkg.RunLifecycleEventGenerator
+	Recorder   record.EventRecorder
 }
 
 // SetupWithManager registers the controller with controller-runtime.
@@ -143,119 +143,297 @@ func (c *Controller) runFilter() predicate.Predicate {
 	}
 }
 
-// Reconcile handles a single Run assigned to this pod.
+// Reconcile reads the Run spec+status, dispatches to the appropriate
+// sub-reconciler based on phase, then updates the status once.
 func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := c.Log.WithValues("run", req.NamespacedName)
-
 	var run v1alpha1.Run
 	if err := c.Get(ctx, req.NamespacedName, &run); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	uid := string(run.UID)
-
 	switch run.Status.Phase {
 	case v1alpha1.RunScheduled:
-		if _, exists := c.activeRuns.Load(uid); !exists {
-			if ar := c.claimAndExecute(ctx, &run); ar != nil {
-				c.activeRuns.Store(uid, ar)
-				c.rleg.AddRun(ar.run)
-			}
-		}
-
+		return c.reconcileScheduled(ctx, &run)
 	case v1alpha1.RunRunning:
-		val, exists := c.activeRuns.Load(uid)
-		if !exists {
-			return ctrl.Result{}, nil
-		}
-		ar := val.(*activeRun)
-		ar.run = &run
-		c.rleg.UpdateRun(&run)
-		c.handleRunning(ctx, ar, uid, log)
+		return c.reconcileRunning(ctx, &run)
 	}
-
 	return ctrl.Result{}, nil
 }
 
-func (c *Controller) handleRunning(ctx context.Context, ar *activeRun, uid string, log logr.Logger) {
-	if ar.run.Spec.CancelRequested {
-		_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
-		c.finishRun(ctx, ar, v1alpha1.RunCancelled, "cancelled by user")
-		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunCancelled)).Inc()
-		return
+// ---------------------------------------------------------------------------
+// Scheduled → claim + start execution
+// ---------------------------------------------------------------------------
+
+func (c *Controller) reconcileScheduled(ctx context.Context, run *v1alpha1.Run) (ctrl.Result, error) {
+	uid := string(run.UID)
+	if _, exists := c.activeRuns.Load(uid); exists {
+		return ctrl.Result{}, nil
 	}
 
-	if !ar.deadline.IsZero() && time.Now().After(ar.deadline) {
-		_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
-		c.finishRun(ctx, ar, v1alpha1.RunTimeout, fmt.Sprintf("timeout after %s", ar.run.Spec.Timeout.Duration))
-		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunTimeout)).Inc()
-		return
-	}
-
-	resp, err := c.pollStatus(ctx, uid)
-	if err != nil {
-		log.Error(err, "gRPC Status")
-		return
-	}
-
-	switch resp.State {
-	case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
-		c.finishRun(ctx, ar, v1alpha1.RunSucceeded, resp.Stdout)
-		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunSucceeded)).Inc()
-	case pb.ExecutionState_EXECUTION_STATE_FAILED:
-		msg := resp.ErrorMessage
-		if msg == "" {
-			msg = resp.Stderr
-		}
-		c.finishRun(ctx, ar, v1alpha1.RunFailed, msg)
-		runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
-	}
-}
-
-func (c *Controller) pollStatus(ctx context.Context, uid string) (*pb.StatusResponse, error) {
-	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	return c.runtimeCli.Status(rctx, &pb.StatusRequest{Id: uid})
-}
-
-func (c *Controller) claimAndExecute(ctx context.Context, run *v1alpha1.Run) *activeRun {
 	run.Status.Phase = v1alpha1.RunRunning
 	run.Status.StartTime = &metav1.Time{Time: time.Now()}
-
 	if err := c.Status().Update(ctx, run); err != nil {
-		klog.Errorf("claim run %s: %v", run.Name, err)
-		return nil
+		return ctrl.Result{}, err
 	}
-
 	klog.Infof("Claimed run %s", run.Name)
 
 	ar := &activeRun{
 		run:     run,
 		start:   time.Now(),
-		workDir: filepath.Join(workspacePath, string(run.UID)),
+		workDir: filepath.Join(workspacePath, uid),
 	}
-
-	if run.Spec.Timeout != nil && run.Status.StartTime != nil {
+	if run.Spec.Timeout != nil {
 		ar.deadline = run.Status.StartTime.Add(run.Spec.Timeout.Duration)
 	}
 
-	go c.execute(ctx, ar)
-
-	return ar
-}
-
-func (c *Controller) execute(ctx context.Context, ar *activeRun) {
-	run := ar.run
+	c.activeRuns.Store(uid, ar)
 
 	workDir, err := prepareSource(run)
 	if err != nil {
-		c.finishRun(ctx, ar, v1alpha1.RunFailed, fmt.Sprintf("prepare source: %v", err))
-		runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
-		c.activeRuns.Delete(string(run.UID))
-		return
+		return c.applyFailure(ctx, ar, reasonPrepareSource, fmt.Sprintf("prepare source: %v", err))
 	}
 	ar.workDir = workDir
+	if err := c.startExecution(ctx, ar); err != nil {
+		return c.applyFailure(ctx, ar, reasonRuntimeExecute, fmt.Sprintf("runtime Execute: %v", err))
+	}
+	c.rleg.AddRun(run)
+	return ctrl.Result{}, nil
+}
 
+// ---------------------------------------------------------------------------
+// Running — dispatch by sub-state (cancel / backoff / active)
+// ---------------------------------------------------------------------------
+
+func (c *Controller) reconcileRunning(ctx context.Context, run *v1alpha1.Run) (ctrl.Result, error) {
+	uid := string(run.UID)
+	val, exists := c.activeRuns.Load(uid)
+	if !exists {
+		return ctrl.Result{}, nil
+	}
+	ar := val.(*activeRun)
+	ar.run = run
+	c.rleg.UpdateRun(run)
+
+	// Cancel takes priority.
+	if run.Spec.CancelRequested {
+		return c.applyCancel(ctx, ar)
+	}
+
+	cond := meta.FindStatusCondition(run.Status.Conditions, "Running")
+	if cond != nil && cond.Status == metav1.ConditionFalse {
+		return c.reconcileRetryBackoff(ctx, ar)
+	}
+	return c.reconcileRunningActive(ctx, ar)
+}
+
+// ---------------------------------------------------------------------------
+// Cancel
+// ---------------------------------------------------------------------------
+
+func (c *Controller) applyCancel(ctx context.Context, ar *activeRun) (ctrl.Result, error) {
+	run := ar.run
+	uid := string(run.UID)
+	_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
+	return c.applyTerminal(ctx, ar, v1alpha1.RunCancelled, reasonCancelled, "cancelled by user")
+}
+
+// ---------------------------------------------------------------------------
+// Timeout
+// ---------------------------------------------------------------------------
+
+func (c *Controller) handleTimeout(ctx context.Context, ar *activeRun) (ctrl.Result, error) {
+	uid := string(ar.run.UID)
+	_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
+	msg := fmt.Sprintf("timeout after %s", ar.run.Spec.Timeout.Duration)
+	return c.applyFailure(ctx, ar, reasonTimeout, msg)
+}
+
+// ===========================================================================
+// reconcileRunningActive — poll gRPC status, handle terminal states
+// ===========================================================================
+
+func (c *Controller) reconcileRunningActive(ctx context.Context, ar *activeRun) (ctrl.Result, error) {
+	if !ar.deadline.IsZero() && time.Now().After(ar.deadline) {
+		return c.handleTimeout(ctx, ar)
+	}
+
+	resp, err := c.pollStatus(ctx, string(ar.run.UID))
+	if err != nil {
+		return ctrl.Result{}, nil
+	}
+
+	switch resp.State {
+	case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
+		return c.applySuccess(ctx, ar, resp.Stdout)
+	case pb.ExecutionState_EXECUTION_STATE_FAILED:
+		reason := classifyFailureReason(resp, nil)
+		msg := resp.ErrorMessage
+		if msg == "" {
+			msg = resp.Stderr
+		}
+		return c.applyFailure(ctx, ar, reason, msg)
+	}
+	return ctrl.Result{}, nil
+}
+
+// ===========================================================================
+// Retry backoff — check if backoff has expired, start retry if so
+// ===========================================================================
+
+func (c *Controller) reconcileRetryBackoff(ctx context.Context, ar *activeRun) (ctrl.Result, error) {
+	run := ar.run
+	policy := withRetryDefaults(run.Spec.RetryPolicy)
+	backoff := calcBackoff(policy, run.Status.Attempt)
+
+	cond := meta.FindStatusCondition(run.Status.Conditions, "Running")
+	if cond == nil {
+		return ctrl.Result{}, nil
+	}
+	retryAfter := cond.LastTransitionTime.Add(backoff)
+	if time.Now().Before(retryAfter) {
+		return ctrl.Result{RequeueAfter: time.Until(retryAfter)}, nil
+	}
+
+	// Backoff expired — start the retry.
+	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+		Type: "Running", Status: metav1.ConditionTrue, Reason: "Retrying", Message: "Retry after failure",
+	})
+	if err := c.Status().Update(ctx, run); err != nil {
+		return ctrl.Result{}, err
+	}
+	c.recordEvent(run, corev1.EventTypeNormal, "RunRetrying",
+		"Retry attempt %d/%d starting", run.Status.Attempt+1, policy.MaxAttempts)
+	if err := c.startExecution(ctx, ar); err != nil {
+		return c.applyFailure(ctx, ar, reasonRuntimeExecute, fmt.Sprintf("runtime Execute: %v", err))
+	}
+	c.rleg.AddRun(run)
+	return ctrl.Result{}, nil
+}
+
+// ===========================================================================
+// applySuccess — terminal success, no retry
+// ===========================================================================
+
+func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, stdout string) (ctrl.Result, error) {
+	run := ar.run
+	now := metav1.Now()
+	if run.Status.Attempt == 0 {
+		run.Status.Attempt = 1
+	}
+	run.Status.Phase = v1alpha1.RunSucceeded
+	run.Status.Message = stdout
+	run.Status.CompletionTime = &now
+	run.Status.Outputs = readOutputs(ar.workDir)
+	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+		Type: "Running", Status: metav1.ConditionFalse, Reason: "Completed", Message: "",
+	})
+	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+		Type: "Completed", Status: metav1.ConditionTrue, Reason: "RunCompleted", Message: "Completed successfully",
+	})
+
+	if err := c.Status().Update(ctx, run); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	c.cleanup(ctx, ar, v1alpha1.RunSucceeded)
+	if run.Status.Attempt > 1 {
+		c.recordEvent(run, corev1.EventTypeNormal, "RunSucceeded",
+			"Run succeeded after %d attempts", run.Status.Attempt)
+	}
+	return ctrl.Result{}, nil
+}
+
+// ===========================================================================
+// applyFailure — terminal failure or schedule retry
+// ===========================================================================
+
+func (c *Controller) applyFailure(ctx context.Context, ar *activeRun, reason, msg string) (ctrl.Result, error) {
+	run := ar.run
+	policy := withRetryDefaults(run.Spec.RetryPolicy)
+
+	curAttempt := run.Status.Attempt
+	if curAttempt == 0 {
+		curAttempt = 1
+	}
+
+	if !shouldRetry(policy, curAttempt, reason) {
+		return c.applyTerminal(ctx, ar, v1alpha1.RunFailed, reason, msg)
+	}
+
+	// Schedule retry.
+	return c.scheduleRetry(ctx, ar, curAttempt, policy, reason, msg)
+}
+
+func (c *Controller) scheduleRetry(ctx context.Context, ar *activeRun, curAttempt int32, policy *v1alpha1.RetryPolicy, reason, msg string) (ctrl.Result, error) {
+	run := ar.run
+	nextAttempt := curAttempt + 1
+	backoff := calcBackoff(policy, nextAttempt)
+
+	run.Status.Attempt = nextAttempt
+	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+		Type: "Running", Status: metav1.ConditionFalse, Reason: reason, Message: msg,
+	})
+
+	if err := c.Status().Update(ctx, run); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	c.rleg.RemoveRun(string(run.UID))
+	c.recordEvent(run, corev1.EventTypeWarning, "RunFailedRetrying",
+		"Run failed (attempt %d/%d), retrying in %s. Reason: %s: %s",
+		curAttempt, policy.MaxAttempts, backoff, reason, msg)
+	c.scheduleRetryReconcile(run, backoff)
+	return ctrl.Result{}, nil
+}
+
+// ===========================================================================
+// applyTerminal — common terminal phase transition
+// ===========================================================================
+
+func (c *Controller) applyTerminal(ctx context.Context, ar *activeRun, phase v1alpha1.RunPhase, reason, msg string) (ctrl.Result, error) {
+	run := ar.run
+	if run.Status.Attempt == 0 {
+		run.Status.Attempt = 1
+	}
+
+	now := metav1.Now()
+	run.Status.Phase = phase
+	run.Status.Message = msg
+	run.Status.CompletionTime = &now
+	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+		Type: "Running", Status: metav1.ConditionFalse, Reason: reason, Message: msg,
+	})
+	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+		Type: "Completed", Status: metav1.ConditionFalse, Reason: reason, Message: msg,
+	})
+
+	if err := c.Status().Update(ctx, run); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	c.cleanup(ctx, ar, phase)
+	c.recordEvent(run, corev1.EventTypeWarning, "RunRetriesExhausted",
+		"Run failed after %d attempts: %s: %s", run.Status.Attempt, reason, msg)
+	return ctrl.Result{}, nil
+}
+
+// ===========================================================================
+// cleanup — in-memory bookkeeping after a successful status update
+// ===========================================================================
+
+func (c *Controller) cleanup(_ context.Context, ar *activeRun, phase v1alpha1.RunPhase) {
+	c.rleg.RemoveRun(string(ar.run.UID))
+	c.activeRuns.Delete(string(ar.run.UID))
+	runDuration.WithLabelValues(ar.run.Spec.Runtime).Observe(time.Since(ar.start).Seconds())
+	runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(phase)).Inc()
+}
+
+// ===========================================================================
+// startExecution — common gRPC Execute call used for initial and retry.
+// ===========================================================================
+
+func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
+	run := ar.run
 	env := make(map[string]string)
 	for _, e := range run.Spec.Env {
 		env[e.Name] = e.Value
@@ -264,105 +442,56 @@ func (c *Controller) execute(ctx context.Context, ar *activeRun) {
 	if run.Spec.Timeout != nil {
 		timeoutSec = int64(run.Spec.Timeout.Duration.Seconds())
 	}
-
 	entrypoint := run.Spec.Entrypoint
 	if entrypoint == "" {
 		entrypoint = "script"
 	}
-
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	_, err = c.runtimeCli.Execute(rctx, &pb.ExecuteRequest{
+	defer cancel()
+	_, err := c.runtimeCli.Execute(rctx, &pb.ExecuteRequest{
 		Id:             string(run.UID),
 		Args:           run.Spec.Args,
 		Env:            env,
 		TimeoutSeconds: timeoutSec,
-		WorkingDir:     workDir,
+		WorkingDir:     ar.workDir,
 		Entrypoint:     entrypoint,
 		Handler:        run.Spec.Handler,
 	})
-	cancel()
-	if err != nil {
-		c.finishRun(ctx, ar, v1alpha1.RunFailed, fmt.Sprintf("runtime Execute: %v", err))
-		runsCompleted.WithLabelValues(run.Spec.Runtime, string(v1alpha1.RunFailed)).Inc()
-		c.activeRuns.Delete(string(run.UID))
+	return err
+}
+
+func (c *Controller) pollStatus(ctx context.Context, uid string) (*pb.StatusResponse, error) {
+	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return c.runtimeCli.Status(rctx, &pb.StatusRequest{Id: uid})
+}
+
+// ===========================================================================
+// Events
+// ===========================================================================
+
+func (c *Controller) recordEvent(run *v1alpha1.Run, eventType, reason, messageFmt string, args ...any) {
+	if c.Recorder != nil {
+		c.Recorder.Eventf(run, eventType, reason, messageFmt, args...)
 	}
 }
 
-// Run starts the controller without a controller-runtime manager (integration tests).
-func (c *Controller) Run(ctx context.Context) error {
-	c.Log = ctrl.Log.WithName("runtimed")
-
-	conn, err := grpc.NewClient(c.RuntimeEndpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		return fmt.Errorf("dial runtime %s: %w", c.RuntimeEndpoint, err)
+func (c *Controller) scheduleRetryReconcile(run *v1alpha1.Run, backoff time.Duration) {
+	if c.rlegCh == nil {
+		return
 	}
-	c.runtimeCli = pb.NewRuntimeClient(conn)
-	defer conn.Close()
-
-	c.rleg = rlegpkg.NewGenericRLEG(&statusAdapter{cli: c.runtimeCli}, rlegpkg.DefaultRelistInterval)
-	go c.rleg.Start(ctx)
-
-	c.rlegCh = make(chan event.GenericEvent, 256)
-	go c.forwardRLEGEvents(ctx)
-
 	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ev := <-c.rlegCh:
-				_, _ = c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ev.Object)})
-			}
+		time.Sleep(backoff)
+		select {
+		case c.rlegCh <- event.GenericEvent{Object: run}:
+		default:
 		}
 	}()
-
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			var runList v1alpha1.RunList
-			if err := c.List(ctx, &runList); err != nil {
-				continue
-			}
-			for _, r := range runList.Items {
-				if r.Status.AssignedPod != c.Hostname {
-					continue
-				}
-				uid := string(r.UID)
-				if _, exists := c.activeRuns.Load(uid); !exists {
-					_, _ = c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&r)})
-				}
-			}
-		}
-	}
 }
 
-func (c *Controller) finishRun(ctx context.Context, ar *activeRun, phase v1alpha1.RunPhase, msg string) {
-	c.rleg.RemoveRun(string(ar.run.UID))
-	c.activeRuns.Delete(string(ar.run.UID))
-
-	_ = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		latest := &v1alpha1.Run{}
-		if err := c.Get(ctx, client.ObjectKeyFromObject(ar.run), latest); err != nil {
-			return client.IgnoreNotFound(err)
-		}
-		now := metav1.Now()
-		latest.Status.Phase = phase
-		latest.Status.Message = msg
-		if phase == v1alpha1.RunSucceeded {
-			latest.Status.Outputs = readOutputs(ar.workDir)
-		}
-		latest.Status.CompletionTime = &now
-		return c.Status().Update(ctx, latest)
-	})
-	runDuration.WithLabelValues(ar.run.Spec.Runtime).Observe(time.Since(ar.start).Seconds())
-}
+// ===========================================================================
+// Helper functions
+// ===========================================================================
 
 func prepareSource(run *v1alpha1.Run) (string, error) {
 	runDir := filepath.Join(workspacePath, string(run.UID))

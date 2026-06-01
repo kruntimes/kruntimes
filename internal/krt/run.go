@@ -19,16 +19,18 @@ import (
 )
 
 type runOptions struct {
-	Runtime    string
-	Timeout    time.Duration
-	File       string
-	RepoURL    string
-	CommitSHA  string
-	Entrypoint string
-	Handler    string
-	Env        []string
-	Wait       bool
-	Namespace  string
+	Runtime       string
+	Timeout       time.Duration
+	File          string
+	RepoURL       string
+	CommitSHA     string
+	Entrypoint    string
+	Handler       string
+	Env           []string
+	Wait          bool
+	RetryAttempts int32
+	RetryBackoff  time.Duration
+	Namespace     string
 }
 
 func NewRunCmd(c client.Client) *cobra.Command {
@@ -71,6 +73,17 @@ func NewRunCmd(c client.Client) *cobra.Command {
 				spec.Source = &v1alpha1.CodeSource{
 					RepoURL:   opts.RepoURL,
 					CommitSHA: opts.CommitSHA,
+				}
+			}
+
+			if opts.RetryAttempts > 0 {
+				backoff := opts.RetryBackoff
+				if backoff <= 0 {
+					backoff = time.Second
+				}
+				spec.RetryPolicy = &v1alpha1.RetryPolicy{
+					MaxAttempts: opts.RetryAttempts,
+					Backoff:     metav1.Duration{Duration: backoff},
 				}
 			}
 
@@ -138,6 +151,8 @@ func NewRunCmd(c client.Client) *cobra.Command {
 	cmd.Flags().StringVar(&opts.CommitSHA, "commit-sha", "", "Git commit SHA")
 	cmd.Flags().StringArrayVar(&opts.Env, "env", nil, "Environment variables (key=val)")
 	cmd.Flags().BoolVar(&opts.Wait, "wait", false, "Block until run completes")
+	cmd.Flags().Int32Var(&opts.RetryAttempts, "retry-attempts", 0, "Maximum execution attempts (including initial attempt)")
+	cmd.Flags().DurationVar(&opts.RetryBackoff, "retry-backoff", 0, "Initial backoff between retries")
 	cmd.Flags().StringVarP(&opts.Namespace, "namespace", "n", "default", "Kubernetes namespace")
 
 	return cmd

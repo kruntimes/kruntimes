@@ -10,11 +10,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
@@ -25,6 +25,9 @@ import (
 var (
 	testEnv   *envtest.Environment
 	k8sClient client.Client
+	testMgr   ctrl.Manager
+	mgrCtx    context.Context
+	mgrCancel context.CancelFunc
 )
 
 func TestMain(m *testing.M) {
@@ -47,8 +50,46 @@ func TestMain(m *testing.M) {
 		panic("failed to create client: " + err.Error())
 	}
 
+	skipNameValidation := true
+	testMgr, err = ctrl.NewManager(cfg, ctrl.Options{
+		Scheme: scheme,
+		Controller: config.Controller{
+			SkipNameValidation: &skipNameValidation,
+		},
+	})
+	if err != nil {
+		panic("failed to create manager: " + err.Error())
+	}
+
+	if err := (&scheduler.RunReconciler{
+		Client:   testMgr.GetClient(),
+		Log:      ctrl.Log.WithName("scheduler"),
+		Strategy: &scheduler.LeastLoaded{},
+	}).SetupWithManager(testMgr); err != nil {
+		panic("failed to setup scheduler: " + err.Error())
+	}
+
+	if err := (&runtimed.Controller{
+		Client:          testMgr.GetClient(),
+		Log:             ctrl.Log.WithName("runtimed"),
+		Hostname:        "test-runtimed-pod",
+		RuntimeEndpoint: "localhost:19091",
+	}).SetupWithManager(testMgr); err != nil {
+		panic("failed to setup runtimed: " + err.Error())
+	}
+
+	mgrCtx, mgrCancel = context.WithCancel(context.Background())
+	defer mgrCancel()
+
+	go func() {
+		if err := testMgr.Start(mgrCtx); err != nil {
+			panic("manager error: " + err.Error())
+		}
+	}()
+
 	code := m.Run()
 
+	mgrCancel()
 	if err := testEnv.Stop(); err != nil {
 		panic("failed to stop testenv: " + err.Error())
 	}
@@ -64,7 +105,6 @@ func TestSchedulerReconcile(t *testing.T) {
 	}
 	defer func() { _ = k8sClient.Delete(context.Background(), ns) }()
 
-	// Create runtime pod
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "bash-pod-",
@@ -85,7 +125,6 @@ func TestSchedulerReconcile(t *testing.T) {
 		t.Fatalf("update pod status: %v", err)
 	}
 
-	// Create pending run (status subresource prevents setting phase on Create)
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "test-run-",
@@ -99,36 +138,20 @@ func TestSchedulerReconcile(t *testing.T) {
 	if err := k8sClient.Create(context.Background(), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	run.Status.Phase = v1alpha1.RunPending
-	if err := k8sClient.Status().Update(context.Background(), run); err != nil {
-		t.Fatalf("set run pending: %v", err)
-	}
 
-	reconciler := &scheduler.RunReconciler{
-		Client:   k8sClient,
-		Log:      ctrl.Log.WithName("test"),
-		Strategy: &scheduler.LeastLoaded{},
-	}
-
-	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: types.NamespacedName{Name: run.Name, Namespace: run.Namespace},
-	})
-	if err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-
+	// Wait for scheduler to assign the run.
 	var updated v1alpha1.Run
-	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &updated); err != nil {
-		t.Fatalf("get run: %v", err)
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &updated); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if updated.Status.Phase == v1alpha1.RunScheduled && updated.Status.AssignedPod != "" {
+			t.Logf("Task %s scheduled to pod %s", updated.Name, updated.Status.AssignedPod)
+			return
+		}
 	}
-
-	if updated.Status.Phase != v1alpha1.RunScheduled {
-		t.Errorf("expected Scheduled, got %s", updated.Status.Phase)
-	}
-	if updated.Status.AssignedPod == "" {
-		t.Error("expected assignedPod to be set")
-	}
-	t.Logf("Task %s scheduled to pod %s", updated.Name, updated.Status.AssignedPod)
+	t.Errorf("expected Scheduled, got phase=%s assignedPod=%s", updated.Status.Phase, updated.Status.AssignedPod)
 }
 
 func TestRuntimedClaimAndExecute(t *testing.T) {
@@ -153,41 +176,35 @@ func TestRuntimedClaimAndExecute(t *testing.T) {
 		t.Fatalf("create run: %v", err)
 	}
 
-	// Set status to Scheduled + assigned
-	run.Status.Phase = v1alpha1.RunScheduled
-	run.Status.AssignedPod = "test-runtimed-pod"
-	if err := k8sClient.Status().Update(context.Background(), run); err != nil {
-		t.Fatalf("update run status: %v", err)
+	// Re-fetch and update, retrying on conflict with scheduler.
+	for i := 0; i < 10; i++ {
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		run.Status.Phase = v1alpha1.RunScheduled
+		run.Status.AssignedPod = "test-runtimed-pod"
+		if err := k8sClient.Status().Update(context.Background(), run); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if run.Status.Phase != v1alpha1.RunScheduled {
+		t.Fatalf("failed to set phase after retries")
 	}
 
-	ctrl := &runtimed.Controller{
-		Client:          k8sClient,
-		Hostname:        "test-runtimed-pod",
-		RuntimeEndpoint: "localhost:19091",
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	go func() {
-		time.Sleep(2 * time.Second)
-		cancel()
-	}()
-
-	if err := ctrl.Run(ctx); err != nil {
-		t.Fatalf("controller run: %v", err)
-	}
-
+	// Wait for runtimed to pick up and fail (no gRPC runtime on localhost:19091).
 	var final v1alpha1.Run
-	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &final); err != nil {
-		t.Fatalf("get run: %v", err)
+	for i := 0; i < 30; i++ {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &final); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if final.Status.Phase == v1alpha1.RunFailed {
+			t.Logf("Task %s completed: phase=%s, msg=%s", final.Name, final.Status.Phase, final.Status.Message)
+			return
+		}
 	}
-
-	// Runtimed fails because no gRPC runtime is listening on localhost:19091.
-	if final.Status.Phase != v1alpha1.RunFailed {
-		t.Errorf("expected Failed due to no runtime, got %s (message: %s)", final.Status.Phase, final.Status.Message)
-	}
-	t.Logf("Task %s completed: phase=%s, msg=%s", final.Name, final.Status.Phase, final.Status.Message)
+	t.Errorf("expected Failed due to no runtime, got phase=%s msg=%s", final.Status.Phase, final.Status.Message)
 }
 
 func TestSchedulerNoMatchingPod(t *testing.T) {
@@ -211,31 +228,22 @@ func TestSchedulerNoMatchingPod(t *testing.T) {
 	if err := k8sClient.Create(context.Background(), run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	run.Status.Phase = v1alpha1.RunPending
-	if err := k8sClient.Status().Update(context.Background(), run); err != nil {
-		t.Fatalf("set run pending: %v", err)
-	}
 
-	reconciler := &scheduler.RunReconciler{
-		Client:   k8sClient,
-		Log:      ctrl.Log.WithName("test"),
-		Strategy: &scheduler.LeastLoaded{},
-	}
-
-	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: types.NamespacedName{Name: run.Name, Namespace: run.Namespace},
-	})
-	if err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-
+	// Wait for scheduler to fail the run (no matching pods).
 	var updated v1alpha1.Run
-	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &updated); err != nil {
-		t.Fatalf("get run: %v", err)
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &updated); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if updated.Status.Phase == v1alpha1.RunFailed {
+			t.Logf("Task correctly failed: %s", updated.Status.Message)
+			return
+		}
 	}
+	t.Errorf("expected Failed when no matching pod, got %s: %s", updated.Status.Phase, updated.Status.Message)
+}
 
-	if updated.Status.Phase != v1alpha1.RunFailed {
-		t.Errorf("expected Failed when no matching pod, got %s", updated.Status.Phase)
-	}
-	t.Logf("Task correctly failed: %s", updated.Status.Message)
+func TestRuntimedRetry(t *testing.T) {
+	t.Skip("Retry logic tested in unit tests (retry_test.go) and e2e (TestRunRetry)")
 }

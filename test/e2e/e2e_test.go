@@ -86,6 +86,71 @@ func ensureRuntime(t *testing.T, name, image string, port int32) {
 	}
 }
 
+func waitForRun(t *testing.T, run *v1alpha1.Run, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	var lastPhase v1alpha1.RunPhase
+	var lastAttempt int32
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for run %s, last phase=%s, attempt=%d, msg=%s", run.Name, lastPhase, lastAttempt, run.Status.Message)
+		default:
+		}
+
+		time.Sleep(500 * time.Millisecond)
+
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+
+		if run.Status.Phase != lastPhase || run.Status.Attempt != lastAttempt {
+			t.Logf("Run %s: phase=%s, attempt=%d (pod=%s)", run.Name, run.Status.Phase, run.Status.Attempt, run.Status.AssignedPod)
+			for _, c := range run.Status.Conditions {
+				t.Logf("  Condition: type=%s status=%s reason=%s", c.Type, c.Status, c.Reason)
+			}
+			lastPhase = run.Status.Phase
+			lastAttempt = run.Status.Attempt
+		}
+
+		switch run.Status.Phase {
+		case v1alpha1.RunSucceeded:
+			return
+		case v1alpha1.RunFailed, v1alpha1.RunTimeout, v1alpha1.RunCancelled:
+			t.Fatalf("Run failed: phase=%s, msg=%s (attempt=%d)", run.Status.Phase, run.Status.Message, run.Status.Attempt)
+		}
+	}
+}
+
+func waitForWorkflow(t *testing.T, wf *v1alpha1.Workflow, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for workflow completion")
+		default:
+		}
+		time.Sleep(500 * time.Millisecond)
+
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(wf), wf); err != nil {
+			t.Fatalf("get workflow: %v", err)
+		}
+		t.Logf("Workflow %s: phase=%s", wf.Name, wf.Status.Phase)
+
+		switch wf.Status.Phase {
+		case v1alpha1.WorkflowSucceeded:
+			return
+		case v1alpha1.WorkflowFailed:
+			t.Fatalf("Workflow failed: %s", wf.Status.Message)
+		}
+	}
+}
+
 func TestFullRunLifecycle(t *testing.T) {
 	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
 
@@ -103,37 +168,8 @@ func TestFullRunLifecycle(t *testing.T) {
 		t.Fatalf("create run: %v", err)
 	}
 	t.Logf("Created Run %s (runtime=bash)", run.Name)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	var lastPhase v1alpha1.RunPhase
-	for {
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for run completion, last phase=%s", lastPhase)
-		default:
-		}
-
-		time.Sleep(time.Second)
-
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
-			t.Fatalf("get run: %v", err)
-		}
-
-		if run.Status.Phase != lastPhase {
-			t.Logf("Run %s: %s -> %s (pod=%s)", run.Name, lastPhase, run.Status.Phase, run.Status.AssignedPod)
-			lastPhase = run.Status.Phase
-		}
-
-		switch run.Status.Phase {
-		case v1alpha1.RunSucceeded:
-			t.Logf("Run completed successfully: %s", run.Status.Message)
-			return
-		case v1alpha1.RunFailed:
-			t.Fatalf("Run failed: %s", run.Status.Message)
-		}
-	}
+	waitForRun(t, run, 30*time.Second)
+	t.Logf("Run completed successfully: %s", run.Status.Message)
 }
 
 func TestSchedulerResponsiveness(t *testing.T) {
@@ -155,7 +191,7 @@ func TestSchedulerResponsiveness(t *testing.T) {
 
 	start := time.Now()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	for {
@@ -197,37 +233,8 @@ func TestPythonInlineRun(t *testing.T) {
 		t.Fatalf("create run: %v", err)
 	}
 	t.Logf("Created Python Run %s", run.Name)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	var lastPhase v1alpha1.RunPhase
-	for {
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for run completion, last phase=%s", lastPhase)
-		default:
-		}
-
-		time.Sleep(time.Second)
-
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
-			t.Fatalf("get run: %v", err)
-		}
-
-		if run.Status.Phase != lastPhase {
-			t.Logf("Python Run %s: %s -> %s (pod=%s)", run.Name, lastPhase, run.Status.Phase, run.Status.AssignedPod)
-			lastPhase = run.Status.Phase
-		}
-
-		switch run.Status.Phase {
-		case v1alpha1.RunSucceeded:
-			t.Logf("Python Run completed successfully: %s", run.Status.Message)
-			return
-		case v1alpha1.RunFailed:
-			t.Fatalf("Python Run failed: %s", run.Status.Message)
-		}
-	}
+	waitForRun(t, run, 30*time.Second)
+	t.Logf("Python Run completed successfully: %s", run.Status.Message)
 }
 
 func TestWorkflowSingleJob(t *testing.T) {
@@ -254,32 +261,8 @@ func TestWorkflowSingleJob(t *testing.T) {
 		t.Fatalf("create workflow: %v", err)
 	}
 	t.Logf("Created Workflow %s", wf.Name)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			t.Fatal("timed out waiting for workflow completion")
-		default:
-		}
-		time.Sleep(time.Second)
-
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(wf), wf); err != nil {
-			t.Fatalf("get workflow: %v", err)
-		}
-		js := wf.Status.Jobs["test"]
-		t.Logf("Workflow %s: phase=%s, job=%s", wf.Name, wf.Status.Phase, js.Phase)
-
-		switch wf.Status.Phase {
-		case v1alpha1.WorkflowSucceeded:
-			t.Logf("Workflow succeeded: %s", wf.Status.Message)
-			return
-		case v1alpha1.WorkflowFailed:
-			t.Fatalf("Workflow failed: %s (job phase=%s)", wf.Status.Message, js.Phase)
-		}
-	}
+	waitForWorkflow(t, wf, 30*time.Second)
+	t.Logf("Workflow succeeded: %s", wf.Status.Message)
 }
 
 func TestWorkflowStepOutputs(t *testing.T) {
@@ -323,46 +306,59 @@ func TestWorkflowStepOutputs(t *testing.T) {
 		t.Fatalf("create workflow: %v", err)
 	}
 	t.Logf("Created Workflow %s", wf.Name)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			t.Fatal("timed out waiting for workflow completion")
-		default:
-		}
-		time.Sleep(time.Second)
-
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(wf), wf); err != nil {
-			t.Fatalf("get workflow: %v", err)
-		}
-		t.Logf("Workflow %s: phase=%s", wf.Name, wf.Status.Phase)
-		for _, jn := range []string{"build", "deploy"} {
-			js := wf.Status.Jobs[jn]
-			t.Logf("  Job %s: phase=%s", jn, js.Phase)
-			for sn, ss := range js.Steps {
-				t.Logf("    Step %s: phase=%s outputs=%v", sn, ss.Phase, ss.Outputs)
-			}
-		}
-
-		switch wf.Status.Phase {
-		case v1alpha1.WorkflowSucceeded:
-			buildJob := wf.Status.Jobs["build"]
-			buildStep := buildJob.Steps["build-image"]
-			if buildStep.Outputs == nil || buildStep.Outputs["image"] != "app:v1.0" {
-				t.Fatalf("build-image outputs mismatch: got %v", buildStep.Outputs)
-			}
-			deployJob := wf.Status.Jobs["deploy"]
-			deployStep := deployJob.Steps["deploy-step"]
-			t.Logf("Cross-job output resolved: deploy step run=%s", deployStep.RunName)
-			t.Logf("All outputs verified")
-			return
-		case v1alpha1.WorkflowFailed:
-			t.Fatalf("Workflow failed: %s", wf.Status.Message)
-		}
+	waitForWorkflow(t, wf, 60*time.Second)
+	buildJob := wf.Status.Jobs["build"]
+	buildStep := buildJob.Steps["build-image"]
+	if buildStep.Outputs == nil || buildStep.Outputs["image"] != "app:v1.0" {
+		t.Fatalf("build-image outputs mismatch: got %v", buildStep.Outputs)
 	}
+	t.Logf("All outputs verified")
+}
+
+func TestRunRetry(t *testing.T) {
+	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
+
+	// Script that fails the first 2 times, succeeds on the 3rd.
+	// Uses a counter file in the workspace (which persists across retries).
+	inline := `#!/bin/bash
+COUNTER_FILE=retry_count
+if [ -f "$COUNTER_FILE" ]; then
+  count=$(cat "$COUNTER_FILE")
+else
+  count=0
+fi
+count=$((count + 1))
+echo "$count" > "$COUNTER_FILE"
+if [ "$count" -lt 3 ]; then
+  echo "attempt $count, failing intentionally"
+  exit 1
+fi
+echo "succeeded on attempt $count"
+`
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-retry-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime:    "bash",
+			Source:     &v1alpha1.CodeSource{Inline: &inline},
+			Entrypoint: "script.sh",
+			RetryPolicy: &v1alpha1.RetryPolicy{
+				MaxAttempts: 5,
+				Backoff:     metav1.Duration{Duration: time.Second},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	t.Logf("Created Run %s (retry test)", run.Name)
+	waitForRun(t, run, 30*time.Second)
+	if run.Status.Attempt < 3 {
+		t.Fatalf("expected at least 3 attempts, got %d", run.Status.Attempt)
+	}
+	t.Logf("Run succeeded after %d attempts: %s", run.Status.Attempt, run.Status.Message)
 }
 
 func TestWorkflowTopoOrder(t *testing.T) {
@@ -407,36 +403,6 @@ func TestWorkflowTopoOrder(t *testing.T) {
 		t.Fatalf("create workflow: %v", err)
 	}
 	t.Logf("Created Workflow %s", wf.Name)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			t.Fatal("timed out waiting for workflow completion")
-		default:
-		}
-		time.Sleep(time.Second)
-
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(wf), wf); err != nil {
-			t.Fatalf("get workflow: %v", err)
-		}
-		t.Logf("Workflow %s: phase=%s", wf.Name, wf.Status.Phase)
-		for _, jn := range []string{"prep", "lint", "build"} {
-			js := wf.Status.Jobs[jn]
-			t.Logf("  Job %s: phase=%s needs=%v", jn, js.Phase, wf.Spec.Jobs[jn].Needs)
-		}
-
-		switch wf.Status.Phase {
-		case v1alpha1.WorkflowSucceeded:
-			// Verify build job ran last (it has needs).
-			buildJob := wf.Status.Jobs["build"]
-			t.Logf("build step outputs: %v", buildJob.Steps["compile"].Outputs)
-			t.Logf("All jobs completed in correct order")
-			return
-		case v1alpha1.WorkflowFailed:
-			t.Fatalf("Workflow failed: %s", wf.Status.Message)
-		}
-	}
+	waitForWorkflow(t, wf, 60*time.Second)
+	t.Logf("All jobs completed in correct order")
 }

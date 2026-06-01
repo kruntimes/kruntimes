@@ -20,6 +20,26 @@ const (
 )
 
 // +kubebuilder:object:generate=true
+// RetryPolicy specifies the retry strategy for a Run.
+type RetryPolicy struct {
+	// MaxAttempts is the maximum number of execution attempts (including the initial attempt).
+	// Default: 1 (no retries).
+	// +optional
+	MaxAttempts int32 `json:"maxAttempts,omitempty"`
+
+	// Backoff is the initial backoff duration between retries.
+	// The backoff doubles after each retry (exponential backoff with 2x multiplier),
+	// capped at 60 seconds.
+	// +optional
+	Backoff metav1.Duration `json:"backoff,omitempty"`
+
+	// RetryableReasons lists the failure reasons that are eligible for retry.
+	// If empty, all reasons except "Cancelled" are retryable.
+	// +optional
+	RetryableReasons []string `json:"retryableReasons,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
 // CodeSource specifies where the code to run comes from.
 type CodeSource struct {
 	// Inline is the source code as a string (for simple scripts).
@@ -73,6 +93,10 @@ type RunSpec struct {
 	// CancelRequested is set to true to request cancellation of a running Run.
 	// +optional
 	CancelRequested bool `json:"cancelRequested,omitempty"`
+
+	// RetryPolicy is the retry strategy for the Run. If nil, no retries are attempted.
+	// +optional
+	RetryPolicy *RetryPolicy `json:"retryPolicy,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
@@ -101,6 +125,14 @@ type RunStatus struct {
 	// Outputs is the key-value pairs exposed by this Run (from $OUTPUTS file).
 	// +optional
 	Outputs map[string]string `json:"outputs,omitempty"`
+
+	// Attempt is the current execution attempt number (1-based).
+	// +optional
+	Attempt int32 `json:"attempt,omitempty"`
+
+	// Conditions represent the current state of the Run's lifecycle conditions.
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

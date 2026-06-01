@@ -62,7 +62,7 @@ test: generate manifests fmt vet ## Run unit tests.
 .PHONY: test-integration
 test-integration: generate manifests setup-envtest ## Run integration tests (requires envtest).
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" \
-	go test ./test/integration/... -v -count=1
+	go test ./test/integration/... -v -count=1 -failfast
 
 ##@ E2E
 
@@ -81,7 +81,7 @@ e2e-setup: docker-build manifests ## Create kind cluster, load images, and deplo
 
 .PHONY: e2e-test
 e2e-test: ## Run E2E tests against the kind cluster.
-	go test ./test/e2e/... -v -count=1 -tags=e2e
+	go test ./test/e2e/... -v -count=1 -tags=e2e -failfast
 
 .PHONY: e2e
 e2e: e2e-setup e2e-test ## Full E2E: setup cluster, deploy, run tests.

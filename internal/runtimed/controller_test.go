@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -126,7 +129,43 @@ func TestReadOutputs_SkipsMalformed(t *testing.T) {
 }
 
 func TestStatusAdapter(t *testing.T) {
-	// statusAdapter is tested in integration tests; verify it compiles and wraps correctly.
-	// This is a compile-time check that the adapter satisfies the interface.
 	var _ = (*statusAdapter)(nil)
+}
+
+func TestHandleFailure_NoRetry(t *testing.T) {
+	// When maxAttempts=1 (default), handleFailure should call finishRun directly.
+	// This test verifies the logic through shouldRetry.
+	p := withRetryDefaults(nil) // maxAttempts=1
+	// First execution (attempt=0 → curAttempt=1)
+	if shouldRetry(p, 1, reasonRuntimeError) {
+		t.Error("should not retry when maxAttempts=1")
+	}
+}
+
+func TestHandleFailure_RetryAndBackoff(t *testing.T) {
+	p := withRetryDefaults(&v1alpha1.RetryPolicy{
+		MaxAttempts: 3,
+		Backoff:     metav1.Duration{Duration: time.Second},
+	})
+
+	// First execution fails (attempt 1)
+	if !shouldRetry(p, 1, reasonRuntimeError) {
+		t.Error("should retry on attempt 1 of 3")
+	}
+	// Second execution fails (attempt 2)
+	if !shouldRetry(p, 2, reasonRuntimeError) {
+		t.Error("should retry on attempt 2 of 3")
+	}
+	// Third execution fails (attempt 3) — maxAttempts reached
+	if shouldRetry(p, 3, reasonRuntimeError) {
+		t.Error("should not retry on attempt 3 of 3")
+	}
+
+	// Verify backoff for each attempt
+	if d := calcBackoff(p, 2); d != time.Second {
+		t.Errorf("attempt 2 backoff: expected 1s, got %v", d)
+	}
+	if d := calcBackoff(p, 3); d != 2*time.Second {
+		t.Errorf("attempt 3 backoff: expected 2s, got %v", d)
+	}
 }

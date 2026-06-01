@@ -166,12 +166,13 @@ func TestCreateTask_Duplicate(t *testing.T) {
 		t.Fatalf("first CreateTask: %v", err)
 	}
 
+	// Duplicate Execute should succeed (cancels the old execution for retry).
 	_, err = client.Execute(ctx, &pb.ExecuteRequest{
 		Id:   "dup-1",
 		Args: []string{"echo second"},
 	})
-	if err == nil {
-		t.Error("expected error for duplicate run ID")
+	if err != nil {
+		t.Fatalf("second CreateTask (retry): %v", err)
 	}
 }
 
