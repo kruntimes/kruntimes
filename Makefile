@@ -57,7 +57,7 @@ lint: fmt vet golangci-lint ## Run go fmt, go vet, and golangci-lint.
 
 .PHONY: test
 test: generate manifests fmt vet ## Run unit tests.
-	go test $$(go list ./... | grep -v /test/integration) -coverprofile cover.out
+	go test $$(go list ./... | grep -v /test/integration | grep -v /test/e2e) -coverprofile cover.out
 
 .PHONY: test-integration
 test-integration: generate manifests setup-envtest ## Run integration tests (requires envtest).
@@ -81,7 +81,7 @@ e2e-setup: docker-build manifests ## Create kind cluster, load images, and deplo
 
 .PHONY: e2e-test
 e2e-test: ## Run E2E tests against the kind cluster.
-	go test ./test/e2e/... -v -count=1 -tags=e2e -failfast
+	go test ./test/e2e/... -v -count=1 -failfast
 
 .PHONY: e2e
 e2e: e2e-setup e2e-test ## Full E2E: setup cluster, deploy, run tests.
