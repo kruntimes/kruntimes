@@ -172,7 +172,7 @@ No request-time Pod creation. No per-run Kubernetes scheduling. No global connec
 | **Scheduler** | Kubernetes controller that watches Pending Runs, finds healthy Runtime Pods in the same namespace with matching labels and available capacity, then assigns Runs by updating Run status. |
 | **Runtimed** | Sidecar daemon in each Runtime Pod. Watches Runs assigned to its pod, atomically claims them, delegates execution to the local Runtime Server via gRPC, and updates Run status. |
 | **Runtime Server** | Pluggable local gRPC service that performs the actual execution. Implements `Execute`, `Status`, `List`, and `Cancel`. Built-in implementations include bash and Python. |
-| **Failover Controller** | Detects stale assignments when Runtime Pods disappear, stop heartbeating, or fail to claim Runs before deadline. Requeues or fails Runs according to retry policy. |
+| **Stale Run Reaper** | Watches Running Runs and checks assigned Pod health. If the pod is deleted or unhealthy for too long, resets the Run for retry (if RetryPolicy configured) or marks it Failed. Runs in the controller manager. |
 | **krt** | CLI for creating Runs, watching status, streaming logs, cancelling executions, and retrieving results. |
 
 ### Runtime Pod Model
@@ -239,9 +239,10 @@ Execute(RunSpec) -> ExecutionID
 Status(ExecutionID) -> ExecutionStatus
 List() -> repeated Execution
 Cancel(ExecutionID) -> CancelResult
+Health() -> HealthStatus
 ```
 
-`List` is used by Runtimed to recover local execution state after restart. `Cancel` is best-effort and should eventually result in `Cancelled`, `Failed`, or `Timeout`.
+`List` is used by Runtimed to recover local execution state after restart. `Cancel` is best-effort and should eventually result in `Cancelled`, `Failed`, or `Timeout`. `Health` is used for Kubernetes pod liveness probes and runtime health checks.
 
 ### Data Plane vs Control Plane
 
@@ -317,7 +318,7 @@ make e2e-cleanup  # tears down kind cluster
 
 - [x] Run cancellation and timeout phases
 - [x] Retry policy: maxAttempts, backoff, retryable failure reasons
-- [ ] Stale Run reaper for dead or stale Runtime Pods
+- [x] Stale Run reaper for dead or stale Runtime Pods
 - [ ] Runtime Pod heartbeat and capacity reporting
 - [ ] Runtimed recovery after restart using Runtime Server `List`
 - [x] Log streaming via `krt logs`
@@ -450,6 +451,7 @@ service Runtime {
     rpc Status(StatusRequest) returns (StatusResponse);
     rpc List(ListRequest) returns (ListResponse);
     rpc Cancel(CancelRequest) returns (CancelResponse);
+    rpc Health(HealthRequest) returns (HealthResponse);
 }
 ```
 
@@ -501,7 +503,7 @@ internal/
 ├── runtimed/          Runtimed controller (claim + gRPC delegation)
 │   ├── rleg/          Run Lifecycle Event Generator (polling + state diff)
 │   ├── retry.go        Retry policy helpers (calcBackoff, shouldRetry)
-├── controller/        Runtime controller (Deployment creation)
+├── controller/        Runtime + Workflow controllers, Stale Run Reaper
 ├── scheduler/         Run reconciler + scheduling strategies
 └── krt/               CLI subcommands (run, get, list)
 charts/
