@@ -132,6 +132,26 @@ func TestStatusAdapter(t *testing.T) {
 	var _ = (*statusAdapter)(nil)
 }
 
+func TestTerminalPhaseForFailure(t *testing.T) {
+	tests := []struct {
+		name     string
+		reason   string
+		expected v1alpha1.RunPhase
+	}{
+		{"timeout", reasonTimeout, v1alpha1.RunTimeout},
+		{"runtime_error", reasonRuntimeError, v1alpha1.RunFailed},
+		{"prepare_source", reasonPrepareSource, v1alpha1.RunFailed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := terminalPhaseForFailure(tt.reason); got != tt.expected {
+				t.Fatalf("terminalPhaseForFailure(%s) = %s, want %s", tt.reason, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestHandleFailure_NoRetry(t *testing.T) {
 	// When maxAttempts=1 (default), handleFailure should call finishRun directly.
 	// This test verifies the logic through shouldRetry.

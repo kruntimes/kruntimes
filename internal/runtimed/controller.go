@@ -357,11 +357,18 @@ func (c *Controller) applyFailure(ctx context.Context, ar *activeRun, reason, ms
 	}
 
 	if !shouldRetry(policy, curAttempt, reason) {
-		return c.applyTerminal(ctx, ar, v1alpha1.RunFailed, reason, msg)
+		return c.applyTerminal(ctx, ar, terminalPhaseForFailure(reason), reason, msg)
 	}
 
 	// Schedule retry.
 	return c.scheduleRetry(ctx, ar, curAttempt, policy, reason, msg)
+}
+
+func terminalPhaseForFailure(reason string) v1alpha1.RunPhase {
+	if reason == reasonTimeout {
+		return v1alpha1.RunTimeout
+	}
+	return v1alpha1.RunFailed
 }
 
 func (c *Controller) scheduleRetry(ctx context.Context, ar *activeRun, curAttempt int32, policy *v1alpha1.RetryPolicy, reason, msg string) (ctrl.Result, error) {
