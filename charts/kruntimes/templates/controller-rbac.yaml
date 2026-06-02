@@ -47,6 +47,13 @@ rules:
       - watch
       - create
   - apiGroups:
+      - kruntimes.kruntimes.com
+    resources:
+      - runs/status
+    verbs:
+      - update
+      - patch
+  - apiGroups:
       - apps
     resources:
       - deployments
@@ -58,6 +65,14 @@ rules:
       - update
       - patch
       - delete
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
   - apiGroups:
       - ""
     resources:

@@ -4,11 +4,13 @@ import (
 	"flag"
 	"net/http"
 	"os"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
@@ -31,21 +33,27 @@ func main() {
 		metricsAddr          string
 		probeAddr            string
 		enableLeaderElection bool
+		staleThreshold       time.Duration
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8082", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8083", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election for controller manager.")
+	flag.DurationVar(&staleThreshold, "stale-threshold", 30*time.Second, "Threshold for marking a Run as stale when its assigned pod is unhealthy.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
+	skipNameValidation := true
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "kruntimes-controller.kruntimes.com",
+		Controller: config.Controller{
+			SkipNameValidation: &skipNameValidation,
+		},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -72,6 +80,17 @@ func main() {
 	}
 	if err := wfReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Workflow")
+		os.Exit(1)
+	}
+
+	staleReaper := &controller.StaleRunReaper{
+		Client:             mgr.GetClient(),
+		Log:                ctrl.Log.WithName("controllers").WithName("StaleReaper"),
+		Recorder:           mgr.GetEventRecorderFor("stale-reaper"),
+		StalenessThreshold: staleThreshold,
+	}
+	if err := staleReaper.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "StaleReaper")
 		os.Exit(1)
 	}
 

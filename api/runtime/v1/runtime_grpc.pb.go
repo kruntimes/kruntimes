@@ -23,6 +23,7 @@ const (
 	Runtime_Status_FullMethodName  = "/executor.v1.Runtime/Status"
 	Runtime_List_FullMethodName    = "/executor.v1.Runtime/List"
 	Runtime_Cancel_FullMethodName  = "/executor.v1.Runtime/Cancel"
+	Runtime_Health_FullMethodName  = "/executor.v1.Runtime/Health"
 )
 
 // RuntimeClient is the client API for Runtime service.
@@ -36,6 +37,7 @@ type RuntimeClient interface {
 	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
 	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error)
 	Cancel(ctx context.Context, in *CancelRequest, opts ...grpc.CallOption) (*CancelResponse, error)
+	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
 }
 
 type runtimeClient struct {
@@ -86,6 +88,16 @@ func (c *runtimeClient) Cancel(ctx context.Context, in *CancelRequest, opts ...g
 	return out, nil
 }
 
+func (c *runtimeClient) Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HealthResponse)
+	err := c.cc.Invoke(ctx, Runtime_Health_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RuntimeServer is the server API for Runtime service.
 // All implementations must embed UnimplementedRuntimeServer
 // for forward compatibility.
@@ -97,6 +109,7 @@ type RuntimeServer interface {
 	Status(context.Context, *StatusRequest) (*StatusResponse, error)
 	List(context.Context, *ListRequest) (*ListResponse, error)
 	Cancel(context.Context, *CancelRequest) (*CancelResponse, error)
+	Health(context.Context, *HealthRequest) (*HealthResponse, error)
 	mustEmbedUnimplementedRuntimeServer()
 }
 
@@ -118,6 +131,9 @@ func (UnimplementedRuntimeServer) List(context.Context, *ListRequest) (*ListResp
 }
 func (UnimplementedRuntimeServer) Cancel(context.Context, *CancelRequest) (*CancelResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Cancel not implemented")
+}
+func (UnimplementedRuntimeServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
 }
 func (UnimplementedRuntimeServer) mustEmbedUnimplementedRuntimeServer() {}
 func (UnimplementedRuntimeServer) testEmbeddedByValue()                 {}
@@ -212,6 +228,24 @@ func _Runtime_Cancel_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Runtime_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HealthRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RuntimeServer).Health(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Runtime_Health_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RuntimeServer).Health(ctx, req.(*HealthRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Runtime_ServiceDesc is the grpc.ServiceDesc for Runtime service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -234,6 +268,10 @@ var Runtime_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Cancel",
 			Handler:    _Runtime_Cancel_Handler,
+		},
+		{
+			MethodName: "Health",
+			Handler:    _Runtime_Health_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

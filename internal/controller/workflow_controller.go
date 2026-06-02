@@ -167,7 +167,10 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 
 	// Sync step statuses from Run phases.
 	for name, run := range runsByStep {
-		ss := js.Steps[name]
+		ss, exists := js.Steps[name]
+		if !exists {
+			ss = v1alpha1.StepStatus{Phase: v1alpha1.StepPending}
+		}
 		switch run.Status.Phase {
 		case v1alpha1.RunSucceeded:
 			if ss.Phase == v1alpha1.StepRunning {

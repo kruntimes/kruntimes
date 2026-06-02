@@ -244,3 +244,16 @@ func TestExecute_InlineSource(t *testing.T) {
 		t.Errorf("expected 'hello_from_inline\n', got %q", resp.Stdout)
 	}
 }
+
+func TestHealth(t *testing.T) {
+	client, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := client.Health(context.Background(), &pb.HealthRequest{})
+	if err != nil {
+		t.Fatalf("Health: %v", err)
+	}
+	if !resp.Healthy {
+		t.Error("expected healthy=true")
+	}
+}

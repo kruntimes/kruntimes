@@ -11,6 +11,7 @@ service Runtime {
     rpc Status(StatusRequest) returns (StatusResponse);
     rpc List(ListRequest) returns (ListResponse);
     rpc Cancel(CancelRequest) returns (CancelResponse);
+    rpc Health(HealthRequest) returns (HealthResponse);
 }
 
 message ExecuteRequest {
@@ -62,3 +63,10 @@ message CancelRequest {
 }
 
 message CancelResponse {}
+
+message HealthRequest {}
+
+message HealthResponse {
+    bool healthy = 1;
+    string message = 2;
+}

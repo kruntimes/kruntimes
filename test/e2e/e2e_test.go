@@ -406,3 +406,148 @@ func TestWorkflowTopoOrder(t *testing.T) {
 	waitForWorkflow(t, wf, 60*time.Second)
 	t.Logf("All jobs completed in correct order")
 }
+
+func TestStaleRunNoRetry(t *testing.T) {
+	runtimeName := "bash-stale-no-retry"
+	ensureRuntime(t, runtimeName, "kruntimes-bash-runtime:latest", 9091)
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-stale-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Args:    []string{"sleep 300"},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	t.Logf("Created Run %s (stale, no retry)", run.Name)
+
+	// Wait for Run to be Running on a pod.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if run.Status.Phase == v1alpha1.RunRunning {
+			t.Logf("Run running on pod %s", run.Status.AssignedPod)
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for run to start, phase=%s", run.Status.Phase)
+		default:
+		}
+	}
+
+	// Delete the assigned pod.
+	podName := run.Status.AssignedPod
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: testNamespace}}
+	if err := k8sClient.Delete(context.Background(), pod); err != nil {
+		t.Fatalf("delete pod %s: %v", podName, err)
+	}
+	t.Logf("Deleted pod %s", podName)
+
+	// Wait for stale reaper to detect and fail the Run.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel2()
+	var lastPhase v1alpha1.RunPhase
+	for {
+		time.Sleep(500 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if run.Status.Phase != lastPhase {
+			t.Logf("Run %s: phase=%s, attempt=%d (pod=%s)", run.Name, run.Status.Phase, run.Status.Attempt, run.Status.AssignedPod)
+			lastPhase = run.Status.Phase
+		}
+		switch run.Status.Phase {
+		case v1alpha1.RunFailed:
+			t.Logf("Run correctly marked Failed after pod deletion: %s", run.Status.Message)
+			return
+		case v1alpha1.RunSucceeded:
+			t.Error("expected Failed, got Succeeded")
+			return
+		}
+		select {
+		case <-ctx2.Done():
+			t.Fatalf("timed out waiting for stale detection, phase=%s", run.Status.Phase)
+		default:
+		}
+	}
+}
+
+func TestStaleRunWithRetry(t *testing.T) {
+	runtimeName := "bash-stale-retry"
+	ensureRuntime(t, runtimeName, "kruntimes-bash-runtime:latest", 9091)
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-stale-retry-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Args:    []string{"sleep 300"},
+			RetryPolicy: &v1alpha1.RetryPolicy{
+				MaxAttempts: 3,
+				Backoff:     metav1.Duration{Duration: time.Second},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	t.Logf("Created Run %s (stale, with retry)", run.Name)
+
+	// Wait for Run to be Running.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if run.Status.Phase == v1alpha1.RunRunning {
+			t.Logf("Run running on pod %s", run.Status.AssignedPod)
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for run to start, phase=%s", run.Status.Phase)
+		default:
+		}
+	}
+
+	// Delete the assigned pod.
+	podName := run.Status.AssignedPod
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: testNamespace}}
+	if err := k8sClient.Delete(context.Background(), pod); err != nil {
+		t.Fatalf("delete pod %s: %v", podName, err)
+	}
+	t.Logf("Deleted pod %s", podName)
+
+	// Wait for stale reaper to reset for retry, then scheduler re-assigns.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel2()
+	for {
+		time.Sleep(500 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if run.Status.Phase == v1alpha1.RunRunning && run.Status.Attempt >= 1 {
+			t.Logf("Run retried on pod %s (attempt=%d)", run.Status.AssignedPod, run.Status.Attempt)
+			return
+		}
+		select {
+		case <-ctx2.Done():
+			t.Fatalf("timed out waiting for retry, phase=%s attempt=%d", run.Status.Phase, run.Status.Attempt)
+		default:
+		}
+	}
+}

@@ -135,6 +135,10 @@ func (s *Server) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.CancelR
 	return &pb.CancelResponse{}, nil
 }
 
+func (s *Server) Health(ctx context.Context, req *pb.HealthRequest) (*pb.HealthResponse, error) {
+	return &pb.HealthResponse{Healthy: true}, nil
+}
+
 func (s *Server) execute(req *pb.ExecuteRequest, entry *taskEntry) {
 	defer close(entry.done)
 

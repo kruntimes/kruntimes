@@ -88,6 +88,9 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
             self._tasks.pop(request.id, None)
         return runtime_pb2.CancelResponse()
 
+    def Health(self, request, context):
+        return runtime_pb2.HealthResponse(healthy=True)
+
     def _execute(self, task_id, task_dir, request, state):
         try:
             if request.handler:

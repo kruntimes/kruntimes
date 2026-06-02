@@ -56,6 +56,11 @@ class RuntimeStub(object):
                 request_serializer=runtime__pb2.CancelRequest.SerializeToString,
                 response_deserializer=runtime__pb2.CancelResponse.FromString,
                 _registered_method=True)
+        self.Health = channel.unary_unary(
+                '/executor.v1.Runtime/Health',
+                request_serializer=runtime__pb2.HealthRequest.SerializeToString,
+                response_deserializer=runtime__pb2.HealthResponse.FromString,
+                _registered_method=True)
 
 
 class RuntimeServicer(object):
@@ -87,6 +92,12 @@ class RuntimeServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Health(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RuntimeServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -109,6 +120,11 @@ def add_RuntimeServicer_to_server(servicer, server):
                     servicer.Cancel,
                     request_deserializer=runtime__pb2.CancelRequest.FromString,
                     response_serializer=runtime__pb2.CancelResponse.SerializeToString,
+            ),
+            'Health': grpc.unary_unary_rpc_method_handler(
+                    servicer.Health,
+                    request_deserializer=runtime__pb2.HealthRequest.FromString,
+                    response_serializer=runtime__pb2.HealthResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -221,6 +237,33 @@ class Runtime(object):
             '/executor.v1.Runtime/Cancel',
             runtime__pb2.CancelRequest.SerializeToString,
             runtime__pb2.CancelResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Health(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/executor.v1.Runtime/Health',
+            runtime__pb2.HealthRequest.SerializeToString,
+            runtime__pb2.HealthResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -110,7 +111,17 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		Image:           rt.Spec.Image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Args:            rt.Spec.Command,
-		Env:             rt.Spec.Env,
+		Ports: []corev1.ContainerPort{
+			{Name: "grpc", ContainerPort: port, Protocol: corev1.ProtocolTCP},
+		},
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
+			},
+			InitialDelaySeconds: 5,
+			PeriodSeconds:       10,
+		},
+		Env: rt.Spec.Env,
 		Resources: corev1.ResourceRequirements{
 			Requests: rt.Spec.Resources.Requests,
 			Limits:   rt.Spec.Resources.Limits,
