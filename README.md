@@ -319,12 +319,23 @@ make e2e-cleanup  # tears down kind cluster
 - [x] Run cancellation and timeout phases
 - [x] Retry policy: maxAttempts, backoff, retryable failure reasons
 - [x] Stale Run reaper for dead or stale Runtime Pods
+- [x] Timeout terminal failures end in `RunTimeout`, not generic `Failed`
+- [x] Cancelled / Timeout / Failed terminal condition updates use a shared terminal transition path
+- [x] Scheduler keeps Runs `Pending` when no Runtime Pod is available
+- [ ] Scheduler assignment checks Pod readiness, not only Pod existence
+- [ ] Unified retry engine shared by runtimed and stale reaper
+- [x] Deterministic attempt counting and retry exhaustion behavior
 - [ ] Runtime Pod heartbeat and capacity reporting
 - [ ] Runtimed recovery after restart using Runtime Server `List`
 - [x] Log streaming via `krt logs`
 - [ ] Result and artifact references outside etcd
 - [ ] TTL-based garbage collection for completed Runs
 - [x] Standard metrics: queue time, dispatch latency, execution time, retries, failures, active Runs
+- [ ] Documented execution semantics: at-least-once, retry, timeout, cancellation
+- [ ] E2E coverage for timeout behavior
+- [x] E2E coverage for no-capacity scheduling behavior
+- [x] E2E coverage for stale-pod retry behavior
+- [ ] E2E coverage for cancellation races
 
 ### v0.3 — Workflow
 
@@ -381,7 +392,7 @@ make e2e-cleanup  # tears down kind cluster
 - [ ] Upgrade and migration strategy
 - [ ] Multi-tenant namespace isolation
 - [ ] Production-ready observability dashboards
-- [ ] Documented execution semantics: at-least-once, retry, timeout, cancellation
+- [ ] Stable execution semantics compatibility contract
 - [ ] Security hardening guide
 - [ ] Performance benchmarks
 - [ ] CronRun CRD
