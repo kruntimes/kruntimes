@@ -67,24 +67,45 @@ test-integration: generate manifests setup-envtest ## Run integration tests (req
 ##@ E2E
 
 KIND_CLUSTER_NAME ?= kruntimes-e2e
+E2E_IMAGE_TAG ?= latest
+E2E_RUN_IMAGE_TAG ?= e2e-$(shell date +%Y%m%d%H%M%S)
+E2E_IMG_SCHEDULER ?= kruntimes-scheduler:$(E2E_IMAGE_TAG)
+E2E_IMG_CONTROLLER ?= kruntimes-controller:$(E2E_IMAGE_TAG)
+E2E_IMG_RUNTIMED ?= kruntimes-runtimed:$(E2E_IMAGE_TAG)
+E2E_IMG_BASH_RUNTIME ?= kruntimes-bash-runtime:$(E2E_IMAGE_TAG)
+E2E_IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:$(E2E_IMAGE_TAG)
 
 .PHONY: e2e-setup
-e2e-setup: docker-build manifests ## Create kind cluster, load images, and deploy chart.
+e2e-setup: manifests ## Create kind cluster, load images, and deploy chart.
+	$(MAKE) docker-build \
+		IMG_SCHEDULER=$(E2E_IMG_SCHEDULER) \
+		IMG_CONTROLLER=$(E2E_IMG_CONTROLLER) \
+		IMG_RUNTIMED=$(E2E_IMG_RUNTIMED) \
+		IMG_BASH_RUNTIME=$(E2E_IMG_BASH_RUNTIME) \
+		IMG_PYTHON_RUNTIME=$(E2E_IMG_PYTHON_RUNTIME)
 	kind get clusters | grep $(KIND_CLUSTER_NAME) || kind create cluster --name $(KIND_CLUSTER_NAME) --wait 120s
-	kind load docker-image $(IMG_SCHEDULER) --name $(KIND_CLUSTER_NAME)
-	kind load docker-image $(IMG_CONTROLLER) --name $(KIND_CLUSTER_NAME)
-	kind load docker-image $(IMG_RUNTIMED) --name $(KIND_CLUSTER_NAME)
-	kind load docker-image $(IMG_BASH_RUNTIME) --name $(KIND_CLUSTER_NAME)
-	kind load docker-image $(IMG_PYTHON_RUNTIME) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image $(E2E_IMG_SCHEDULER) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image $(E2E_IMG_CONTROLLER) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image $(E2E_IMG_RUNTIMED) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image $(E2E_IMG_BASH_RUNTIME) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image $(E2E_IMG_PYTHON_RUNTIME) --name $(KIND_CLUSTER_NAME)
 	$(HELM) upgrade --install kruntimes ./charts/kruntimes \
+		--set scheduler.image=$(E2E_IMG_SCHEDULER) \
+		--set controller.image=$(E2E_IMG_CONTROLLER) \
+		--set runtimed.image=$(E2E_IMG_RUNTIMED) \
 		--namespace $(NAMESPACE) --create-namespace --wait --timeout 120s
 
 .PHONY: e2e-test
 e2e-test: ## Run E2E tests against the kind cluster.
+	KRUNTIMES_BASH_RUNTIME_IMAGE=$(E2E_IMG_BASH_RUNTIME) \
+	KRUNTIMES_PYTHON_RUNTIME_IMAGE=$(E2E_IMG_PYTHON_RUNTIME) \
+	KRUNTIMES_RUNTIMED_IMAGE=$(E2E_IMG_RUNTIMED) \
 	go test ./test/e2e/... -v -count=1 -failfast
 
 .PHONY: e2e
-e2e: e2e-setup e2e-test ## Full E2E: setup cluster, deploy, run tests.
+e2e: ## Full E2E: setup cluster, deploy, run tests.
+	$(MAKE) e2e-setup E2E_IMAGE_TAG=$(E2E_RUN_IMAGE_TAG)
+	$(MAKE) e2e-test E2E_IMAGE_TAG=$(E2E_RUN_IMAGE_TAG)
 
 .PHONY: e2e-cleanup
 e2e-cleanup: ## Delete the kind cluster.

@@ -322,7 +322,7 @@ make e2e-cleanup  # tears down kind cluster
 - [x] Timeout terminal failures end in `RunTimeout`, not generic `Failed`
 - [x] Cancelled / Timeout / Failed terminal condition updates use a shared terminal transition path
 - [x] Scheduler keeps Runs `Pending` when no Runtime Pod is available
-- [ ] Scheduler assignment checks Pod readiness, not only Pod existence
+- [x] Scheduler assignment checks Pod readiness, not only Pod existence
 - [ ] Unified retry engine shared by runtimed and stale reaper
 - [x] Deterministic attempt counting and retry exhaustion behavior
 - [ ] Runtime Pod heartbeat and capacity reporting

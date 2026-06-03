@@ -24,6 +24,27 @@ const testNamespace = "default"
 
 var k8sClient client.Client
 
+func bashRuntimeImage() string {
+	if image := os.Getenv("KRUNTIMES_BASH_RUNTIME_IMAGE"); image != "" {
+		return image
+	}
+	return "kruntimes-bash-runtime:latest"
+}
+
+func pythonRuntimeImage() string {
+	if image := os.Getenv("KRUNTIMES_PYTHON_RUNTIME_IMAGE"); image != "" {
+		return image
+	}
+	return "kruntimes-python-runtime:latest"
+}
+
+func runtimedImage() string {
+	if image := os.Getenv("KRUNTIMES_RUNTIMED_IMAGE"); image != "" {
+		return image
+	}
+	return "kruntimes-runtimed:latest"
+}
+
 func TestMain(m *testing.M) {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -59,6 +80,18 @@ func ensureRuntime(t *testing.T, name, image string, port int32) {
 	}
 	if err := k8sClient.Create(context.Background(), rt); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create runtime: %v", err)
+	} else if apierrors.IsAlreadyExists(err) {
+		existing := &v1alpha1.Runtime{}
+		if getErr := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(rt), existing); getErr != nil {
+			t.Fatalf("get runtime: %v", getErr)
+		}
+		existing.Spec.Image = image
+		existing.Spec.Port = port
+		existing.Spec.Replicas = 1
+		existing.Spec.Command = []string{fmt.Sprintf("--port=%d", port), "--work-dir=/workspace"}
+		if updateErr := k8sClient.Update(context.Background(), existing); updateErr != nil {
+			t.Fatalf("update runtime: %v", updateErr)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -71,7 +104,7 @@ func ensureRuntime(t *testing.T, name, image string, port int32) {
 			client.MatchingLabels{"runtime": name},
 		); err == nil {
 			for _, p := range pods.Items {
-				if p.Status.Phase == corev1.PodRunning {
+				if isRuntimePodReady(&p, image, runtimedImage()) {
 					return
 				}
 			}
@@ -82,6 +115,30 @@ func ensureRuntime(t *testing.T, name, image string, port int32) {
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+func isRuntimePodReady(pod *corev1.Pod, runtimeImage, daemonImage string) bool {
+	if pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil {
+		return false
+	}
+	if containerImage(pod, "runtime") != runtimeImage || containerImage(pod, "runtimed") != daemonImage {
+		return false
+	}
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady {
+			return cond.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+func containerImage(pod *corev1.Pod, name string) string {
+	for _, container := range pod.Spec.Containers {
+		if container.Name == name {
+			return container.Image
+		}
+	}
+	return ""
 }
 
 func waitForRun(t *testing.T, run *v1alpha1.Run, timeout time.Duration) {
@@ -150,7 +207,7 @@ func waitForWorkflow(t *testing.T, wf *v1alpha1.Workflow, timeout time.Duration)
 }
 
 func TestFullRunLifecycle(t *testing.T) {
-	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
@@ -171,7 +228,7 @@ func TestFullRunLifecycle(t *testing.T) {
 }
 
 func TestSchedulerResponsiveness(t *testing.T) {
-	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
@@ -261,7 +318,7 @@ func TestSchedulerKeepsRunPendingWithoutRuntimePod(t *testing.T) {
 }
 
 func TestPythonInlineRun(t *testing.T) {
-	ensureRuntime(t, "python", "kruntimes-python-runtime:latest", 9092)
+	ensureRuntime(t, "python", pythonRuntimeImage(), 9092)
 
 	inline := `print("hello from python")`
 	run := &v1alpha1.Run{
@@ -283,7 +340,7 @@ func TestPythonInlineRun(t *testing.T) {
 }
 
 func TestWorkflowSingleJob(t *testing.T) {
-	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	wf := &v1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{
@@ -311,7 +368,7 @@ func TestWorkflowSingleJob(t *testing.T) {
 }
 
 func TestWorkflowStepOutputs(t *testing.T) {
-	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	wf := &v1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{
@@ -361,7 +418,7 @@ func TestWorkflowStepOutputs(t *testing.T) {
 }
 
 func TestRunRetry(t *testing.T) {
-	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	// Script that fails the first 2 times, succeeds on the 3rd.
 	// Uses a counter file in the workspace (which persists across retries).
@@ -407,7 +464,7 @@ echo "succeeded on attempt $count"
 }
 
 func TestWorkflowTopoOrder(t *testing.T) {
-	ensureRuntime(t, "bash", "kruntimes-bash-runtime:latest", 9091)
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	wf := &v1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{
@@ -454,7 +511,7 @@ func TestWorkflowTopoOrder(t *testing.T) {
 
 func TestStaleRunNoRetry(t *testing.T) {
 	runtimeName := "bash-stale-no-retry"
-	ensureRuntime(t, runtimeName, "kruntimes-bash-runtime:latest", 9091)
+	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
@@ -529,7 +586,7 @@ func TestStaleRunNoRetry(t *testing.T) {
 
 func TestStaleRunWithRetry(t *testing.T) {
 	runtimeName := "bash-stale-retry"
-	ensureRuntime(t, runtimeName, "kruntimes-bash-runtime:latest", 9091)
+	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{

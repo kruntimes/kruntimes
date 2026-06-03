@@ -7,6 +7,7 @@ import (
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -70,6 +71,20 @@ func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
+	if !equality.Semantic.DeepEqual(existing.Labels, deploy.Labels) ||
+		!equality.Semantic.DeepEqual(existing.Spec, deploy.Spec) {
+		existing.Labels = deploy.Labels
+		existing.Spec = deploy.Spec
+		if err := controllerutil.SetControllerReference(&rt, &existing, r.Scheme); err != nil {
+			return ctrl.Result{}, fmt.Errorf("set owner ref: %w", err)
+		}
+		if err := r.Update(ctx, &existing); err != nil {
+			return ctrl.Result{}, fmt.Errorf("update deployment: %w", err)
+		}
+		log.Info("Updated Deployment", "deployment", existing.Name)
+		return ctrl.Result{}, nil
+	}
+
 	// Propagate Deployment status back to Runtime.
 	if rt.Status.ReadyReplicas != existing.Status.ReadyReplicas {
 		rt.Status.ReadyReplicas = existing.Status.ReadyReplicas
@@ -120,6 +135,13 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			},
 			InitialDelaySeconds: 5,
 			PeriodSeconds:       10,
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
+			},
+			InitialDelaySeconds: 1,
+			PeriodSeconds:       5,
 		},
 		Env: rt.Spec.Env,
 		Resources: corev1.ResourceRequirements{

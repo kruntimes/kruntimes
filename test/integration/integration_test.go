@@ -121,6 +121,9 @@ func TestSchedulerReconcile(t *testing.T) {
 		t.Fatalf("create pod: %v", err)
 	}
 	pod.Status.Phase = corev1.PodRunning
+	pod.Status.Conditions = []corev1.PodCondition{
+		{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.Now()},
+	}
 	if err := k8sClient.Status().Update(context.Background(), pod); err != nil {
 		t.Fatalf("update pod status: %v", err)
 	}
@@ -247,6 +250,70 @@ func TestSchedulerKeepsPendingWhenNoMatchingPod(t *testing.T) {
 		}
 	}
 	t.Errorf("expected Pending when no matching pod, got %s: %s", updated.Status.Phase, updated.Status.Message)
+}
+
+func TestSchedulerSkipsNotReadyPod(t *testing.T) {
+	ns := &corev1.Namespace{}
+	ns.GenerateName = "test-"
+	if err := k8sClient.Create(context.Background(), ns); err != nil {
+		t.Fatalf("create ns: %v", err)
+	}
+	defer func() { _ = k8sClient.Delete(context.Background(), ns) }()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "bash-pod-",
+			Namespace:    ns.Name,
+			Labels:       map[string]string{"runtime": "bash"},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "runtimed", Image: "busybox", Command: []string{"sleep", "999"}},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), pod); err != nil {
+		t.Fatalf("create pod: %v", err)
+	}
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.Conditions = []corev1.PodCondition{
+		{Type: corev1.PodReady, Status: corev1.ConditionFalse, LastTransitionTime: metav1.Now()},
+	}
+	if err := k8sClient.Status().Update(context.Background(), pod); err != nil {
+		t.Fatalf("update pod status: %v", err)
+	}
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "test-run-",
+			Namespace:    ns.Name,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Args:    []string{"echo hello"},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	var updated v1alpha1.Run
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &updated); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if updated.Status.Phase == v1alpha1.RunScheduled {
+			t.Fatalf("expected NotReady pod to be skipped, got scheduled to %s", updated.Status.AssignedPod)
+		}
+		if updated.Status.Phase == v1alpha1.RunPending && updated.Status.Message != "" {
+			if updated.Status.AssignedPod != "" {
+				t.Fatalf("expected no assigned pod, got %s", updated.Status.AssignedPod)
+			}
+			return
+		}
+	}
+	t.Errorf("expected Pending when matching pod is not ready, got %s: %s", updated.Status.Phase, updated.Status.Message)
 }
 
 func TestRuntimedRetry(t *testing.T) {

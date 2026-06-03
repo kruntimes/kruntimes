@@ -101,7 +101,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	var candidates []corev1.Pod
 	for _, pod := range pods.Items {
-		if pod.Status.Phase == corev1.PodRunning && pod.DeletionTimestamp.IsZero() {
+		if isPodSchedulable(&pod) {
 			candidates = append(candidates, pod)
 		}
 	}
@@ -147,6 +147,18 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	log.Info("Run scheduled", "pod", selected.Name)
 	runsScheduled.WithLabelValues(run.Spec.Runtime, "scheduled").Inc()
 	return ctrl.Result{}, nil
+}
+
+func isPodSchedulable(pod *corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodRunning || !pod.DeletionTimestamp.IsZero() {
+		return false
+	}
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady {
+			return cond.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // SetupWithManager registers the reconciler with the controller manager.

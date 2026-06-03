@@ -25,6 +25,7 @@ spec:
             - --leader-elect=true
             - --metrics-bind-address=:8082
             - --health-probe-bind-address=:8083
+            - --default-daemon-image={{ .Values.runtimed.image }}
           ports:
             - containerPort: 8082
               name: metrics
