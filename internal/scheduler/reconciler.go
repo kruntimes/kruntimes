@@ -9,6 +9,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -18,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	runretry "github.com/kruntimes/kruntimes/internal/retry"
 )
 
 var (
@@ -84,6 +87,10 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	defer func() {
 		syncDuration.WithLabelValues(run.Spec.Runtime).Observe(time.Since(start).Seconds())
 	}()
+
+	if retryDelay := pendingRetryDelay(&run); retryDelay > 0 {
+		return ctrl.Result{RequeueAfter: retryDelay}, nil
+	}
 
 	reqLabel, err := labels.NewRequirement("runtime", selection.Equals, []string{run.Spec.Runtime})
 	if err != nil {
@@ -159,6 +166,19 @@ func isPodSchedulable(pod *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+func pendingRetryDelay(run *v1alpha1.Run) time.Duration {
+	if run.Status.Phase != v1alpha1.RunPending || run.Status.Attempt <= 1 {
+		return 0
+	}
+	cond := meta.FindStatusCondition(run.Status.Conditions, "Running")
+	if cond == nil || cond.Status != metav1.ConditionFalse {
+		return 0
+	}
+	policy := runretry.WithDefaults(run.Spec.RetryPolicy)
+	retryAt := cond.LastTransitionTime.Add(runretry.Backoff(policy, run.Status.Attempt))
+	return time.Until(retryAt)
 }
 
 // SetupWithManager registers the reconciler with the controller manager.

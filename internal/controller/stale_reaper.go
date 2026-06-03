@@ -7,6 +7,7 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -15,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	runretry "github.com/kruntimes/kruntimes/internal/retry"
 )
 
 // StaleRunReaper watches Running Runs and detects those assigned to
@@ -100,7 +102,7 @@ func (r *StaleRunReaper) isPodStale(pod *corev1.Pod) bool {
 }
 
 func (r *StaleRunReaper) handleStaleRun(ctx context.Context, run *v1alpha1.Run) {
-	reason := "PodGone"
+	reason := runretry.ReasonPodGone
 	msg := "assigned pod was deleted"
 
 	// Determine failure reason.
@@ -108,37 +110,38 @@ func (r *StaleRunReaper) handleStaleRun(ctx context.Context, run *v1alpha1.Run) 
 	err := r.Get(ctx, client.ObjectKey{Name: run.Status.AssignedPod, Namespace: run.Namespace}, &pod)
 	if err == nil {
 		if pod.DeletionTimestamp != nil {
-			reason = "PodTerminating"
+			reason = runretry.ReasonPodTerminating
 			msg = "assigned pod is terminating"
 		} else {
-			reason = "PodUnhealthy"
+			reason = runretry.ReasonPodUnhealthy
 			msg = "assigned pod is not ready"
 		}
 	}
 
 	podName := run.Status.AssignedPod
-	policy := run.Spec.RetryPolicy
-	if policy != nil && policy.MaxAttempts > 1 {
+	policy := runretry.WithDefaults(run.Spec.RetryPolicy)
+	curAttempt := runretry.CurrentAttempt(run.Status.Attempt)
+	if runretry.ShouldRetry(policy, curAttempt, reason) {
 		// Reset for retry — scheduler will re-assign.
+		nextAttempt := runretry.NextAttempt(run.Status.Attempt)
+		run.Status.Attempt = nextAttempt
 		run.Status.Phase = v1alpha1.RunPending
 		run.Status.AssignedPod = ""
 		run.Status.StartTime = nil
-		if run.Status.Attempt == 0 {
-			run.Status.Attempt = 1
-		}
+		meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+			Type: "Running", Status: metav1.ConditionFalse, Reason: reason, Message: msg,
+		})
 		if r.Recorder != nil {
 			r.Recorder.Eventf(run, corev1.EventTypeWarning, "StaleRunRetrying",
-				"Pod %s is unhealthy (%s), rescheduling run for retry (attempt %d/%d)",
-				podName, reason, run.Status.Attempt, policy.MaxAttempts)
+				"Pod %s is unhealthy (%s), rescheduling run for retry (attempt %d/%d, backoff %s)",
+				podName, reason, nextAttempt, policy.MaxAttempts, runretry.Backoff(policy, nextAttempt))
 		}
 	} else {
 		now := metav1.Now()
 		run.Status.Phase = v1alpha1.RunFailed
 		run.Status.Message = msg
 		run.Status.CompletionTime = &now
-		if run.Status.Attempt == 0 {
-			run.Status.Attempt = 1
-		}
+		run.Status.Attempt = curAttempt
 		if r.Recorder != nil {
 			r.Recorder.Eventf(run, corev1.EventTypeWarning, "StaleRunFailed",
 				"Pod %s is unhealthy, marking run as failed: %s", podName, reason)

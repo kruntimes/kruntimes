@@ -152,3 +152,34 @@ func TestIsPodSchedulableRequiresReadyRunningPod(t *testing.T) {
 		})
 	}
 }
+
+func TestPendingRetryDelay(t *testing.T) {
+	run := &v1alpha1.Run{
+		Spec: v1alpha1.RunSpec{
+			RetryPolicy: &v1alpha1.RetryPolicy{
+				Backoff: metav1.Duration{Duration: time.Minute},
+			},
+		},
+		Status: v1alpha1.RunStatus{
+			Phase:   v1alpha1.RunPending,
+			Attempt: 2,
+			Conditions: []metav1.Condition{
+				{
+					Type:               "Running",
+					Status:             metav1.ConditionFalse,
+					Reason:             "PodGone",
+					LastTransitionTime: metav1.Now(),
+				},
+			},
+		},
+	}
+
+	if delay := pendingRetryDelay(run); delay <= 0 {
+		t.Fatalf("pendingRetryDelay() = %s, want positive delay", delay)
+	}
+
+	run.Status.Conditions[0].LastTransitionTime = metav1.NewTime(time.Now().Add(-2 * time.Minute))
+	if delay := pendingRetryDelay(run); delay > 0 {
+		t.Fatalf("pendingRetryDelay() = %s, want no delay after backoff expires", delay)
+	}
+}

@@ -30,6 +30,7 @@ import (
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	runretry "github.com/kruntimes/kruntimes/internal/retry"
 	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
 )
 
@@ -190,11 +191,11 @@ func (c *Controller) reconcileScheduled(ctx context.Context, run *v1alpha1.Run) 
 
 	workDir, err := prepareSource(run)
 	if err != nil {
-		return c.applyFailure(ctx, ar, reasonPrepareSource, fmt.Sprintf("prepare source: %v", err))
+		return c.applyFailure(ctx, ar, runretry.ReasonPrepareSource, fmt.Sprintf("prepare source: %v", err))
 	}
 	ar.workDir = workDir
 	if err := c.startExecution(ctx, ar); err != nil {
-		return c.applyFailure(ctx, ar, reasonRuntimeExecute, fmt.Sprintf("runtime Execute: %v", err))
+		return c.applyFailure(ctx, ar, runretry.ReasonRuntimeExecute, fmt.Sprintf("runtime Execute: %v", err))
 	}
 	c.rleg.AddRun(run)
 	return ctrl.Result{}, nil
@@ -234,7 +235,7 @@ func (c *Controller) applyCancel(ctx context.Context, ar *activeRun) (ctrl.Resul
 	run := ar.run
 	uid := string(run.UID)
 	_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
-	return c.applyTerminal(ctx, ar, v1alpha1.RunCancelled, reasonCancelled, "cancelled by user")
+	return c.applyTerminal(ctx, ar, v1alpha1.RunCancelled, runretry.ReasonCancelled, "cancelled by user")
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +246,7 @@ func (c *Controller) handleTimeout(ctx context.Context, ar *activeRun) (ctrl.Res
 	uid := string(ar.run.UID)
 	_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
 	msg := fmt.Sprintf("timeout after %s", ar.run.Spec.Timeout.Duration)
-	return c.applyFailure(ctx, ar, reasonTimeout, msg)
+	return c.applyFailure(ctx, ar, runretry.ReasonTimeout, msg)
 }
 
 // ===========================================================================
@@ -282,8 +283,8 @@ func (c *Controller) reconcileRunningActive(ctx context.Context, ar *activeRun) 
 
 func (c *Controller) reconcileRetryBackoff(ctx context.Context, ar *activeRun) (ctrl.Result, error) {
 	run := ar.run
-	policy := withRetryDefaults(run.Spec.RetryPolicy)
-	backoff := calcBackoff(policy, run.Status.Attempt)
+	policy := runretry.WithDefaults(run.Spec.RetryPolicy)
+	backoff := runretry.Backoff(policy, run.Status.Attempt)
 
 	cond := meta.FindStatusCondition(run.Status.Conditions, "Running")
 	if cond == nil {
@@ -304,7 +305,7 @@ func (c *Controller) reconcileRetryBackoff(ctx context.Context, ar *activeRun) (
 	c.recordEvent(run, corev1.EventTypeNormal, "RunRetrying",
 		"Retry attempt %d/%d starting", run.Status.Attempt+1, policy.MaxAttempts)
 	if err := c.startExecution(ctx, ar); err != nil {
-		return c.applyFailure(ctx, ar, reasonRuntimeExecute, fmt.Sprintf("runtime Execute: %v", err))
+		return c.applyFailure(ctx, ar, runretry.ReasonRuntimeExecute, fmt.Sprintf("runtime Execute: %v", err))
 	}
 	c.rleg.AddRun(run)
 	return ctrl.Result{}, nil
@@ -349,14 +350,11 @@ func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, stdout str
 
 func (c *Controller) applyFailure(ctx context.Context, ar *activeRun, reason, msg string) (ctrl.Result, error) {
 	run := ar.run
-	policy := withRetryDefaults(run.Spec.RetryPolicy)
+	policy := runretry.WithDefaults(run.Spec.RetryPolicy)
 
-	curAttempt := run.Status.Attempt
-	if curAttempt == 0 {
-		curAttempt = 1
-	}
+	curAttempt := runretry.CurrentAttempt(run.Status.Attempt)
 
-	if !shouldRetry(policy, curAttempt, reason) {
+	if !runretry.ShouldRetry(policy, curAttempt, reason) {
 		return c.applyTerminal(ctx, ar, terminalPhaseForFailure(reason), reason, msg)
 	}
 
@@ -365,7 +363,7 @@ func (c *Controller) applyFailure(ctx context.Context, ar *activeRun, reason, ms
 }
 
 func terminalPhaseForFailure(reason string) v1alpha1.RunPhase {
-	if reason == reasonTimeout {
+	if reason == runretry.ReasonTimeout {
 		return v1alpha1.RunTimeout
 	}
 	return v1alpha1.RunFailed
@@ -374,7 +372,7 @@ func terminalPhaseForFailure(reason string) v1alpha1.RunPhase {
 func (c *Controller) scheduleRetry(ctx context.Context, ar *activeRun, curAttempt int32, policy *v1alpha1.RetryPolicy, reason, msg string) (ctrl.Result, error) {
 	run := ar.run
 	nextAttempt := curAttempt + 1
-	backoff := calcBackoff(policy, nextAttempt)
+	backoff := runretry.Backoff(policy, nextAttempt)
 
 	run.Status.Attempt = nextAttempt
 	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{

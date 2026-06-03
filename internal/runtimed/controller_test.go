@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	runretry "github.com/kruntimes/kruntimes/internal/retry"
 )
 
 func TestPrepareSource_NoSource(t *testing.T) {
@@ -138,9 +139,9 @@ func TestTerminalPhaseForFailure(t *testing.T) {
 		reason   string
 		expected v1alpha1.RunPhase
 	}{
-		{"timeout", reasonTimeout, v1alpha1.RunTimeout},
-		{"runtime_error", reasonRuntimeError, v1alpha1.RunFailed},
-		{"prepare_source", reasonPrepareSource, v1alpha1.RunFailed},
+		{"timeout", runretry.ReasonTimeout, v1alpha1.RunTimeout},
+		{"runtime_error", runretry.ReasonRuntimeError, v1alpha1.RunFailed},
+		{"prepare_source", runretry.ReasonPrepareSource, v1alpha1.RunFailed},
 	}
 
 	for _, tt := range tests {
@@ -155,37 +156,37 @@ func TestTerminalPhaseForFailure(t *testing.T) {
 func TestHandleFailure_NoRetry(t *testing.T) {
 	// When maxAttempts=1 (default), handleFailure should call finishRun directly.
 	// This test verifies the logic through shouldRetry.
-	p := withRetryDefaults(nil) // maxAttempts=1
+	p := runretry.WithDefaults(nil) // maxAttempts=1
 	// First execution (attempt=0 → curAttempt=1)
-	if shouldRetry(p, 1, reasonRuntimeError) {
+	if runretry.ShouldRetry(p, 1, runretry.ReasonRuntimeError) {
 		t.Error("should not retry when maxAttempts=1")
 	}
 }
 
 func TestHandleFailure_RetryAndBackoff(t *testing.T) {
-	p := withRetryDefaults(&v1alpha1.RetryPolicy{
+	p := runretry.WithDefaults(&v1alpha1.RetryPolicy{
 		MaxAttempts: 3,
 		Backoff:     metav1.Duration{Duration: time.Second},
 	})
 
 	// First execution fails (attempt 1)
-	if !shouldRetry(p, 1, reasonRuntimeError) {
+	if !runretry.ShouldRetry(p, 1, runretry.ReasonRuntimeError) {
 		t.Error("should retry on attempt 1 of 3")
 	}
 	// Second execution fails (attempt 2)
-	if !shouldRetry(p, 2, reasonRuntimeError) {
+	if !runretry.ShouldRetry(p, 2, runretry.ReasonRuntimeError) {
 		t.Error("should retry on attempt 2 of 3")
 	}
 	// Third execution fails (attempt 3) — maxAttempts reached
-	if shouldRetry(p, 3, reasonRuntimeError) {
+	if runretry.ShouldRetry(p, 3, runretry.ReasonRuntimeError) {
 		t.Error("should not retry on attempt 3 of 3")
 	}
 
 	// Verify backoff for each attempt
-	if d := calcBackoff(p, 2); d != time.Second {
+	if d := runretry.Backoff(p, 2); d != time.Second {
 		t.Errorf("attempt 2 backoff: expected 1s, got %v", d)
 	}
-	if d := calcBackoff(p, 3); d != 2*time.Second {
+	if d := runretry.Backoff(p, 3); d != 2*time.Second {
 		t.Errorf("attempt 3 backoff: expected 2s, got %v", d)
 	}
 }
