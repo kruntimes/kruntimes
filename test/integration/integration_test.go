@@ -207,7 +207,7 @@ func TestRuntimedClaimAndExecute(t *testing.T) {
 	t.Errorf("expected Failed due to no runtime, got phase=%s msg=%s", final.Status.Phase, final.Status.Message)
 }
 
-func TestSchedulerNoMatchingPod(t *testing.T) {
+func TestSchedulerKeepsPendingWhenNoMatchingPod(t *testing.T) {
 	ns := &corev1.Namespace{}
 	ns.GenerateName = "test-"
 	if err := k8sClient.Create(context.Background(), ns); err != nil {
@@ -229,7 +229,7 @@ func TestSchedulerNoMatchingPod(t *testing.T) {
 		t.Fatalf("create run: %v", err)
 	}
 
-	// Wait for scheduler to fail the run (no matching pods).
+	// Wait for scheduler to observe the run without failing it.
 	var updated v1alpha1.Run
 	for i := 0; i < 50; i++ {
 		time.Sleep(100 * time.Millisecond)
@@ -237,11 +237,16 @@ func TestSchedulerNoMatchingPod(t *testing.T) {
 			t.Fatalf("get run: %v", err)
 		}
 		if updated.Status.Phase == v1alpha1.RunFailed {
-			t.Logf("Task correctly failed: %s", updated.Status.Message)
+			t.Fatalf("expected Pending when no matching pod, got Failed: %s", updated.Status.Message)
+		}
+		if updated.Status.Phase == v1alpha1.RunPending && updated.Status.Message != "" {
+			if updated.Status.AssignedPod != "" {
+				t.Fatalf("expected no assigned pod, got %s", updated.Status.AssignedPod)
+			}
 			return
 		}
 	}
-	t.Errorf("expected Failed when no matching pod, got %s: %s", updated.Status.Phase, updated.Status.Message)
+	t.Errorf("expected Pending when no matching pod, got %s: %s", updated.Status.Phase, updated.Status.Message)
 }
 
 func TestRuntimedRetry(t *testing.T) {

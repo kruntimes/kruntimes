@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -207,6 +208,53 @@ func TestSchedulerResponsiveness(t *testing.T) {
 		select {
 		case <-ctx.Done():
 			t.Fatal("timed out waiting for scheduler to pick up run")
+		default:
+		}
+	}
+}
+
+func TestSchedulerKeepsRunPendingWithoutRuntimePod(t *testing.T) {
+	runtimeName := fmt.Sprintf("missing-runtime-%d", time.Now().UnixNano())
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-no-runtime-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Args:    []string{"echo hello"},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	defer func() { _ = k8sClient.Delete(context.Background(), run) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+
+		switch run.Status.Phase {
+		case v1alpha1.RunFailed, v1alpha1.RunScheduled, v1alpha1.RunRunning, v1alpha1.RunSucceeded:
+			t.Fatalf("expected run to stay Pending without runtime pods, got phase=%s pod=%s msg=%s",
+				run.Status.Phase, run.Status.AssignedPod, run.Status.Message)
+		}
+
+		if run.Status.Phase == v1alpha1.RunPending &&
+			run.Status.AssignedPod == "" &&
+			strings.Contains(run.Status.Message, "waiting for available runtime pods") {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for pending run observation, phase=%s pod=%s msg=%s",
+				run.Status.Phase, run.Status.AssignedPod, run.Status.Message)
 		default:
 		}
 	}

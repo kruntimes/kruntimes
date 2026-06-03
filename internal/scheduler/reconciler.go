@@ -110,10 +110,13 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
 		log.Info("No available runtime pods", "runtime", run.Spec.Runtime)
 
-		run.Status.Phase = v1alpha1.RunFailed
-		run.Status.Message = fmt.Sprintf("no available runtime pods for runtime %q", run.Spec.Runtime)
-		if err := r.Status().Update(ctx, &run); err != nil {
-			return ctrl.Result{}, fmt.Errorf("update run status: %w", err)
+		message := fmt.Sprintf("waiting for available runtime pods for runtime %q", run.Spec.Runtime)
+		if run.Status.Phase != v1alpha1.RunPending || run.Status.Message != message {
+			run.Status.Phase = v1alpha1.RunPending
+			run.Status.Message = message
+			if err := r.Status().Update(ctx, &run); err != nil {
+				return ctrl.Result{}, fmt.Errorf("update run status: %w", err)
+			}
 		}
 		runsScheduled.WithLabelValues(run.Spec.Runtime, "no_pods").Inc()
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
