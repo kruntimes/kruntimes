@@ -230,6 +230,45 @@ Scheduling and execution are separate steps:
 
 This prevents stale Runtime Pods from overwriting newer scheduling decisions.
 
+### Execution Semantics
+
+kruntimes provides **at-least-once** Run execution. A Run may be executed more than once when a retry is configured or when a stale Runtime Pod is detected and the Run is rescheduled. Runtime implementations and user code should be safe to retry or should use external idempotency keys when side effects matter.
+
+`status.attempt` is 1-based and counts execution attempts, including the initial attempt. If `spec.retryPolicy` is omitted, the default is `maxAttempts: 1`, which means no retry. When retries are enabled:
+
+- `maxAttempts` is the total number of attempts, not the number of retries.
+- `backoff` is the initial retry delay. Delay doubles per retry and is capped at 60 seconds.
+- `retryableReasons` limits which failure reasons can retry. If empty, all reasons except `Cancelled` are retryable.
+- During backoff, the Run remains `Running` with a `Running=False` condition that records the retry reason and message.
+
+Failure reasons are stable machine-readable strings used by retry policy and conditions:
+
+| Reason | Meaning |
+|--------|---------|
+| `RuntimeError` | The runtime executed the Run but the workload failed. |
+| `RuntimeExecute` | Runtimed could not call Runtime Server `Execute`. |
+| `PrepareSource` | Runtimed could not prepare inline or repository source. |
+| `Timeout` | The Run exceeded `spec.timeout` or the Runtime Server reported a timeout. |
+| `Cancelled` | The user requested cancellation. |
+| `PodGone` | The assigned Runtime Pod disappeared before the Run completed. |
+| `PodTerminating` | The assigned Runtime Pod is terminating. |
+| `PodUnhealthy` | The assigned Runtime Pod is no longer ready. |
+
+Timeouts are enforced by runtimed using `spec.timeout` and also passed to the Runtime Server. On timeout, runtimed sends best-effort `Cancel` to the Runtime Server. If retries remain and `Timeout` is retryable, the Run is retried; otherwise it terminates with phase `Timeout`, not generic `Failed`.
+
+Cancellation is user initiated by setting `spec.cancelRequested: true`, usually through `krt cancel <run>`. Cancellation takes priority over normal running-state polling, calls Runtime Server `Cancel` best-effort, does not retry, and terminates the Run with phase `Cancelled`.
+
+When an assigned Runtime Pod is deleted, terminating, or unhealthy, the stale Run reaper classifies the Run with a pod-related reason. If retry policy allows retry, it clears `status.assignedPod`, resets scheduling state to `Pending`, and the Scheduler assigns a new Runtime Pod. If retry is exhausted or not allowed, the Run terminates as `Failed`.
+
+Terminal phases are:
+
+| Phase | Semantics |
+|-------|-----------|
+| `Succeeded` | The Runtime Server reported success. `$OUTPUTS` is read into bounded `status.outputs`. |
+| `Failed` | The Run exhausted retries for a non-timeout failure reason. |
+| `Timeout` | The Run exhausted retries for `Timeout` or timed out with no retry configured. |
+| `Cancelled` | Cancellation was requested and processed. |
+
 ### Runtime Server API
 
 The Runtime Server API is local to a Runtime Pod:
@@ -331,7 +370,7 @@ make e2e-cleanup  # tears down kind cluster
 - [ ] Result and artifact references outside etcd
 - [ ] TTL-based garbage collection for completed Runs
 - [x] Standard metrics: queue time, dispatch latency, execution time, retries, failures, active Runs
-- [ ] Documented execution semantics: at-least-once, retry, timeout, cancellation
+- [x] Documented execution semantics: at-least-once, retry, timeout, cancellation
 - [ ] E2E coverage for timeout behavior
 - [x] E2E coverage for no-capacity scheduling behavior
 - [x] E2E coverage for stale-pod retry behavior
