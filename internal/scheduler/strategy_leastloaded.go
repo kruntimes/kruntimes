@@ -9,6 +9,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
 // LeastLoaded selects the pod with the fewest Running tasks.
@@ -22,8 +23,9 @@ func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []
 	}
 
 	type podLoad struct {
-		pod  *corev1.Pod
-		load int
+		pod       *corev1.Pod
+		load      int
+		available int32
 	}
 
 	pods := make([]podLoad, 0, len(candidates))
@@ -42,11 +44,15 @@ func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []
 
 		count := 0
 		for _, t := range tasks.Items {
-			if t.Status.AssignedPod == pod.Name && t.Status.Phase == v1alpha1.RunRunning {
+			if t.Status.AssignedPod != pod.Name {
+				continue
+			}
+			if t.Status.Phase == v1alpha1.RunScheduled || t.Status.Phase == v1alpha1.RunRunning {
 				count++
 			}
 		}
-		pods = append(pods, podLoad{pod: pod, load: count})
+		capacity := runtimepod.RunsCapacity(pod, v1alpha1.RuntimeDefaultRunsCapacity)
+		pods = append(pods, podLoad{pod: pod, load: count, available: capacity - int32(count)})
 	}
 
 	if len(pods) == 0 {
@@ -54,6 +60,9 @@ func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []
 	}
 
 	sort.Slice(pods, func(i, j int) bool {
+		if pods[i].available != pods[j].available {
+			return pods[i].available > pods[j].available
+		}
 		if pods[i].load != pods[j].load {
 			return pods[i].load < pods[j].load
 		}

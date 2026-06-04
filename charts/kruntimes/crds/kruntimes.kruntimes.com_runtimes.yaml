@@ -54,6 +54,21 @@ spec:
           spec:
             description: RuntimeSpec defines the desired state of Runtime.
             properties:
+              capacity:
+                description: Capacity declares the per-pod capacity for this runtime.
+                properties:
+                  resources:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Resources maps logical resource names to their per-pod capacity.
+                      The built-in "runs" resource limits concurrent Run executions per pod.
+                    type: object
+                type: object
               command:
                 description: Command is the entrypoint for the runtime container.
                 items:

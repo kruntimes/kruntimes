@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
 func TestReconcileKeepsRunPendingWhenNoRuntimePodAvailable(t *testing.T) {
@@ -181,5 +182,50 @@ func TestPendingRetryDelay(t *testing.T) {
 	run.Status.Conditions[0].LastTransitionTime = metav1.NewTime(time.Now().Add(-2 * time.Minute))
 	if delay := pendingRetryDelay(run); delay > 0 {
 		t.Fatalf("pendingRetryDelay() = %s, want no delay after backoff expires", delay)
+	}
+}
+
+func TestIsRuntimePodAvailableRequiresRuntimedReadyAndCapacity(t *testing.T) {
+	now := metav1.Now()
+	reconciler := &RunReconciler{
+		RuntimedHeartbeatStaleAfter: time.Minute,
+	}
+
+	basePod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				runtimepod.CapacityAnnotation(v1alpha1.RuntimeResourceRuns): "2",
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+				{
+					Type:          v1alpha1.RuntimePodRuntimedReadyCondition,
+					Status:        corev1.ConditionTrue,
+					LastProbeTime: now,
+				},
+			},
+		},
+	}
+
+	if !reconciler.isRuntimePodAvailable(basePod.DeepCopy(), now.Time, 1) {
+		t.Fatal("expected runtime pod with fresh heartbeat and capacity to be available")
+	}
+	if reconciler.isRuntimePodAvailable(basePod.DeepCopy(), now.Time, 2) {
+		t.Fatal("expected runtime pod at capacity to be unavailable")
+	}
+
+	missingHeartbeat := basePod.DeepCopy()
+	missingHeartbeat.Status.Conditions = missingHeartbeat.Status.Conditions[:1]
+	if reconciler.isRuntimePodAvailable(missingHeartbeat, now.Time, 0) {
+		t.Fatal("expected runtime pod without runtimed heartbeat to be unavailable")
+	}
+
+	staleHeartbeat := basePod.DeepCopy()
+	staleHeartbeat.Status.Conditions[1].LastProbeTime = metav1.NewTime(now.Add(-2 * time.Minute))
+	if reconciler.isRuntimePodAvailable(staleHeartbeat, now.Time, 0) {
+		t.Fatal("expected runtime pod with stale runtimed heartbeat to be unavailable")
 	}
 }

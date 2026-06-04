@@ -89,6 +89,7 @@ e2e-setup: manifests ## Create kind cluster, load images, and deploy chart.
 	kind load docker-image $(E2E_IMG_RUNTIMED) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_BASH_RUNTIME) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_PYTHON_RUNTIME) --name $(KIND_CLUSTER_NAME)
+	kubectl apply -f charts/kruntimes/crds
 	$(HELM) upgrade --install kruntimes ./charts/kruntimes \
 		--set scheduler.image=$(E2E_IMG_SCHEDULER) \
 		--set controller.image=$(E2E_IMG_CONTROLLER) \

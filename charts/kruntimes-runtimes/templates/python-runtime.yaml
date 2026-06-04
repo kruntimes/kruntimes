@@ -9,6 +9,8 @@ spec:
   image: {{ .Values.python.image }}
   port: {{ .Values.python.port }}
   replicas: {{ .Values.python.replicas }}
+  capacity:
+    {{- toYaml .Values.python.capacity | nindent 4 }}
   resources:
     {{- toYaml .Values.python.resources | nindent 4 }}
   command:

@@ -19,6 +19,7 @@ import (
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/runtimed"
+	"github.com/kruntimes/kruntimes/internal/runtimepod"
 	"github.com/kruntimes/kruntimes/internal/scheduler"
 )
 
@@ -74,6 +75,7 @@ func TestMain(m *testing.M) {
 		Log:             ctrl.Log.WithName("runtimed"),
 		Hostname:        "test-runtimed-pod",
 		RuntimeEndpoint: "localhost:19091",
+		Workers:         1,
 	}).SetupWithManager(testMgr); err != nil {
 		panic("failed to setup runtimed: " + err.Error())
 	}
@@ -110,6 +112,9 @@ func TestSchedulerReconcile(t *testing.T) {
 			GenerateName: "bash-pod-",
 			Namespace:    ns.Name,
 			Labels:       map[string]string{"runtime": "bash"},
+			Annotations: map[string]string{
+				runtimepod.CapacityAnnotation(v1alpha1.RuntimeResourceRuns): "1",
+			},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -123,6 +128,12 @@ func TestSchedulerReconcile(t *testing.T) {
 	pod.Status.Phase = corev1.PodRunning
 	pod.Status.Conditions = []corev1.PodCondition{
 		{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.Now()},
+		{
+			Type:               v1alpha1.RuntimePodRuntimedReadyCondition,
+			Status:             corev1.ConditionTrue,
+			LastProbeTime:      metav1.Now(),
+			LastTransitionTime: metav1.Now(),
+		},
 	}
 	if err := k8sClient.Status().Update(context.Background(), pod); err != nil {
 		t.Fatalf("update pod status: %v", err)

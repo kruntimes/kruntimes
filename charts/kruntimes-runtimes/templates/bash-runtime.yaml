@@ -9,6 +9,8 @@ spec:
   image: {{ .Values.bash.image }}
   port: {{ .Values.bash.port }}
   replicas: {{ .Values.bash.replicas }}
+  capacity:
+    {{- toYaml .Values.bash.capacity | nindent 4 }}
   resources:
     {{- toYaml .Values.bash.resources | nindent 4 }}
   command:

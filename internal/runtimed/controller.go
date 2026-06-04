@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -32,9 +33,12 @@ import (
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
 	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
+	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
 var workspacePath = "/workspace" //nolint:gochecknoglobals
+
+const defaultHeartbeatInterval = 5 * time.Second
 
 var (
 	runsCompleted = promauto.NewCounterVec(
@@ -64,9 +68,13 @@ type activeRun struct {
 // Controller reconciles Runs assigned to this pod.
 type Controller struct {
 	client.Client
+	PodReader       client.Reader
 	Log             logr.Logger
 	Hostname        string
 	RuntimeEndpoint string
+	Workers         int
+
+	HeartbeatInterval time.Duration
 
 	activeRuns sync.Map // uid → *activeRun
 	rlegCh     chan event.GenericEvent
@@ -105,8 +113,9 @@ func (c *Controller) Start(ctx context.Context) error {
 	c.rleg = rlegpkg.NewGenericRLEG(&statusAdapter{cli: c.runtimeCli}, rlegpkg.DefaultRelistInterval)
 	go c.rleg.Start(ctx)
 	go c.forwardRLEGEvents(ctx)
+	go c.heartbeat(ctx)
 
-	klog.Infof("runtimed controller started, hostname=%s, runtime=%s", c.Hostname, c.RuntimeEndpoint)
+	klog.Infof("runtimed controller started, hostname=%s, runtime=%s, workers=%d", c.Hostname, c.RuntimeEndpoint, c.capacity())
 	return nil
 }
 
@@ -170,6 +179,9 @@ func (c *Controller) reconcileScheduled(ctx context.Context, run *v1alpha1.Run) 
 	if _, exists := c.activeRuns.Load(uid); exists {
 		return ctrl.Result{}, nil
 	}
+	if c.activeRunCount() >= c.capacity() {
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
 
 	run.Status.Phase = v1alpha1.RunRunning
 	run.Status.StartTime = &metav1.Time{Time: time.Now()}
@@ -199,6 +211,68 @@ func (c *Controller) reconcileScheduled(ctx context.Context, run *v1alpha1.Run) 
 	}
 	c.rleg.AddRun(run)
 	return ctrl.Result{}, nil
+}
+
+func (c *Controller) heartbeat(ctx context.Context) {
+	interval := c.HeartbeatInterval
+	if interval <= 0 {
+		interval = defaultHeartbeatInterval
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	c.patchRuntimedReady(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.patchRuntimedReady(ctx)
+		}
+	}
+}
+
+func (c *Controller) patchRuntimedReady(ctx context.Context) {
+	if c.Hostname == "" {
+		return
+	}
+
+	var pod corev1.Pod
+	key := types.NamespacedName{Name: c.Hostname, Namespace: os.Getenv("POD_NAMESPACE")}
+	if key.Namespace == "" {
+		key.Namespace = "default"
+	}
+	reader := c.PodReader
+	if reader == nil {
+		reader = c.Client
+	}
+	if err := reader.Get(ctx, key, &pod); err != nil {
+		c.Log.Error(err, "failed to get own pod for runtimed heartbeat", "pod", key)
+		return
+	}
+
+	before := pod.DeepCopy()
+	runtimepod.SetRuntimedReadyCondition(&pod, corev1.ConditionTrue, "Heartbeat", "runtimed heartbeat is fresh", metav1.Now())
+	if err := c.Status().Patch(ctx, &pod, client.MergeFrom(before)); err != nil {
+		c.Log.Error(err, "failed to patch runtimed heartbeat", "pod", key)
+	}
+}
+
+func (c *Controller) capacity() int {
+	if c.Workers <= 0 {
+		return 1
+	}
+	return c.Workers
+}
+
+func (c *Controller) activeRunCount() int {
+	count := 0
+	c.activeRuns.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	return count
 }
 
 // ---------------------------------------------------------------------------

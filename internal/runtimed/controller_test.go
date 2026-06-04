@@ -190,3 +190,27 @@ func TestHandleFailure_RetryAndBackoff(t *testing.T) {
 		t.Errorf("attempt 3 backoff: expected 2s, got %v", d)
 	}
 }
+
+func TestReconcileScheduledRespectsLocalCapacity(t *testing.T) {
+	c := &Controller{Workers: 1}
+	c.activeRuns.Store("existing", &activeRun{})
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "queued",
+			UID:  "queued-uid",
+		},
+		Status: v1alpha1.RunStatus{Phase: v1alpha1.RunScheduled},
+	}
+
+	result, err := c.reconcileScheduled(t.Context(), run)
+	if err != nil {
+		t.Fatalf("reconcileScheduled: %v", err)
+	}
+	if result.RequeueAfter != time.Second {
+		t.Fatalf("RequeueAfter = %s, want 1s", result.RequeueAfter)
+	}
+	if run.Status.Phase != v1alpha1.RunScheduled {
+		t.Fatalf("phase = %s, want Scheduled", run.Status.Phase)
+	}
+}

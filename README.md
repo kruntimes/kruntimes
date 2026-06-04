@@ -260,6 +260,8 @@ Cancellation is user initiated by setting `spec.cancelRequested: true`, usually 
 
 When an assigned Runtime Pod is deleted, terminating, or unhealthy, the stale Run reaper classifies the Run with a pod-related reason. If retry policy allows retry, it clears `status.assignedPod`, resets scheduling state to `Pending`, and the Scheduler assigns a new Runtime Pod. If retry is exhausted or not allowed, the Run terminates as `Failed`.
 
+Runtime Pods report runtimed liveness through the Pod condition `kruntimes.kruntimes.com/RuntimedReady`. Static per-pod capacity is declared on `Runtime.spec.capacity.resources`; the built-in `runs` resource controls concurrent Run executions per Runtime Pod and is copied to the Pod annotation `kruntimes.kruntimes.com/capacity.runs`. The Scheduler derives fast-changing usage from its Run cache and only assigns to Runtime Pods that are Kubernetes Ready, runtimed-ready, and below capacity. Runtimed also enforces the same local capacity before claiming a Scheduled Run.
+
 Terminal phases are:
 
 | Phase | Semantics |
@@ -364,7 +366,7 @@ make e2e-cleanup  # tears down kind cluster
 - [x] Scheduler assignment checks Pod readiness, not only Pod existence
 - [x] Unified retry engine shared by runtimed and stale reaper
 - [x] Deterministic attempt counting and retry exhaustion behavior
-- [ ] Runtime Pod heartbeat and capacity reporting
+- [x] Runtime Pod heartbeat and capacity reporting
 - [ ] Runtimed recovery after restart using Runtime Server `List`
 - [x] Log streaming via `krt logs`
 - [ ] Result and artifact references outside etcd

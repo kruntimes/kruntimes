@@ -10,6 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
 func TestLeastLoaded_Select(t *testing.T) {
@@ -53,6 +54,31 @@ func TestLeastLoaded_Select(t *testing.T) {
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "run-2", Namespace: "default"},
 					Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "pod-a"},
+				},
+			},
+			run:     &v1alpha1.Run{},
+			wantPod: "pod-b",
+		},
+		{
+			name: "most available capacity selected",
+			pods: []corev1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod-a",
+						Namespace: "default",
+						Annotations: map[string]string{
+							runtimepod.CapacityAnnotation(v1alpha1.RuntimeResourceRuns): "1",
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod-b",
+						Namespace: "default",
+						Annotations: map[string]string{
+							runtimepod.CapacityAnnotation(v1alpha1.RuntimeResourceRuns): "4",
+						},
+					},
 				},
 			},
 			run:     &v1alpha1.Run{},

@@ -10,6 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -18,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
 const testNamespace = "default"
@@ -65,6 +67,11 @@ func TestMain(m *testing.M) {
 
 func ensureRuntime(t *testing.T, name, image string, port int32) {
 	t.Helper()
+	ensureRuntimeWithRunsCapacity(t, name, image, port, 0)
+}
+
+func ensureRuntimeWithRunsCapacity(t *testing.T, name, image string, port int32, runsCapacity int32) {
+	t.Helper()
 
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{
@@ -78,6 +85,13 @@ func ensureRuntime(t *testing.T, name, image string, port int32) {
 			Command:  []string{fmt.Sprintf("--port=%d", port), "--work-dir=/workspace"},
 		},
 	}
+	if runsCapacity > 0 {
+		rt.Spec.Capacity = &v1alpha1.RuntimeCapacity{
+			Resources: corev1.ResourceList{
+				corev1.ResourceName(v1alpha1.RuntimeResourceRuns): *resource.NewQuantity(int64(runsCapacity), resource.DecimalSI),
+			},
+		}
+	}
 	if err := k8sClient.Create(context.Background(), rt); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create runtime: %v", err)
 	} else if apierrors.IsAlreadyExists(err) {
@@ -89,6 +103,9 @@ func ensureRuntime(t *testing.T, name, image string, port int32) {
 		existing.Spec.Port = port
 		existing.Spec.Replicas = 1
 		existing.Spec.Command = []string{fmt.Sprintf("--port=%d", port), "--work-dir=/workspace"}
+		if runsCapacity > 0 {
+			existing.Spec.Capacity = rt.Spec.Capacity
+		}
 		if updateErr := k8sClient.Update(context.Background(), existing); updateErr != nil {
 			t.Fatalf("update runtime: %v", updateErr)
 		}
@@ -104,7 +121,7 @@ func ensureRuntime(t *testing.T, name, image string, port int32) {
 			client.MatchingLabels{"runtime": name},
 		); err == nil {
 			for _, p := range pods.Items {
-				if isRuntimePodReady(&p, image, runtimedImage()) {
+				if isRuntimePodReady(&p, image, runtimedImage(), runsCapacity) {
 					return
 				}
 			}
@@ -117,19 +134,26 @@ func ensureRuntime(t *testing.T, name, image string, port int32) {
 	}
 }
 
-func isRuntimePodReady(pod *corev1.Pod, runtimeImage, daemonImage string) bool {
+func isRuntimePodReady(pod *corev1.Pod, runtimeImage, daemonImage string, runsCapacity int32) bool {
 	if pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil {
 		return false
 	}
 	if containerImage(pod, "runtime") != runtimeImage || containerImage(pod, "runtimed") != daemonImage {
 		return false
 	}
-	for _, cond := range pod.Status.Conditions {
-		if cond.Type == corev1.PodReady {
-			return cond.Status == corev1.ConditionTrue
+	if runsCapacity > 0 {
+		if runtimepod.RunsCapacity(pod, 0) != runsCapacity {
+			return false
 		}
 	}
-	return false
+	podReady := false
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady {
+			podReady = cond.Status == corev1.ConditionTrue
+			break
+		}
+	}
+	return podReady && runtimepod.FreshRuntimedReady(pod, time.Now(), 30*time.Second)
 }
 
 func containerImage(pod *corev1.Pod, name string) string {
@@ -315,6 +339,83 @@ func TestSchedulerKeepsRunPendingWithoutRuntimePod(t *testing.T) {
 		default:
 		}
 	}
+}
+
+func TestSchedulerKeepsRunPendingWhenRuntimeAtCapacity(t *testing.T) {
+	runtimeName := "bash-capacity"
+	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
+
+	first := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-capacity-first-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Args:    []string{"sleep 10; echo first"},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), first); err != nil {
+		t.Fatalf("create first run: %v", err)
+	}
+	defer func() { _ = k8sClient.Delete(context.Background(), first) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(first), first); err != nil {
+			t.Fatalf("get first run: %v", err)
+		}
+		if first.Status.Phase == v1alpha1.RunRunning {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for first run to start, phase=%s msg=%s", first.Status.Phase, first.Status.Message)
+		default:
+		}
+	}
+
+	second := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-capacity-second-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Args:    []string{"echo second"},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), second); err != nil {
+		t.Fatalf("create second run: %v", err)
+	}
+	defer func() { _ = k8sClient.Delete(context.Background(), second) }()
+
+	pendingCtx, pendingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer pendingCancel()
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(second), second); err != nil {
+			t.Fatalf("get second run: %v", err)
+		}
+		if second.Status.Phase != "" && second.Status.Phase != v1alpha1.RunPending {
+			t.Fatalf("expected second run to stay Pending while capacity is full, got phase=%s pod=%s msg=%s",
+				second.Status.Phase, second.Status.AssignedPod, second.Status.Message)
+		}
+		if second.Status.AssignedPod != "" {
+			t.Fatalf("expected second run to remain unassigned while capacity is full, got pod=%s", second.Status.AssignedPod)
+		}
+		select {
+		case <-pendingCtx.Done():
+			goto capacityObserved
+		default:
+		}
+	}
+
+capacityObserved:
+	waitForRun(t, first, 20*time.Second)
+	waitForRun(t, second, 30*time.Second)
 }
 
 func TestPythonInlineRun(t *testing.T) {

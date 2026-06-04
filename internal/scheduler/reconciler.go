@@ -21,7 +21,10 @@ import (
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
+	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
+
+const defaultRuntimedHeartbeatStaleAfter = 15 * time.Second
 
 var (
 	runsScheduled = prometheus.NewCounterVec(
@@ -55,8 +58,9 @@ func init() {
 // RunReconciler watches Pending Tasks and assigns them to Runtime Pods.
 type RunReconciler struct {
 	client.Client
-	Log      logr.Logger
-	Strategy Strategy
+	Log                         logr.Logger
+	Strategy                    Strategy
+	RuntimedHeartbeatStaleAfter time.Duration
 }
 
 // +kubebuilder:rbac:groups=kruntimes.kruntimes.com,resources=runs,verbs=get;list;watch;update;patch
@@ -106,9 +110,15 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, fmt.Errorf("list runtime pods: %w", err)
 	}
 
+	usageByPod, err := r.assignedRunUsage(ctx, req.Namespace)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("list assigned runs: %w", err)
+	}
+
+	now := time.Now()
 	var candidates []corev1.Pod
 	for _, pod := range pods.Items {
-		if isPodSchedulable(&pod) {
+		if r.isRuntimePodAvailable(&pod, now, usageByPod[pod.Name]) {
 			candidates = append(candidates, pod)
 		}
 	}
@@ -166,6 +176,40 @@ func isPodSchedulable(pod *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+func (r *RunReconciler) isRuntimePodAvailable(pod *corev1.Pod, now time.Time, usage int32) bool {
+	if !isPodSchedulable(pod) {
+		return false
+	}
+	staleAfter := r.RuntimedHeartbeatStaleAfter
+	if staleAfter <= 0 {
+		staleAfter = defaultRuntimedHeartbeatStaleAfter
+	}
+	if !runtimepod.FreshRuntimedReady(pod, now, staleAfter) {
+		return false
+	}
+	capacity := runtimepod.RunsCapacity(pod, v1alpha1.RuntimeDefaultRunsCapacity)
+	return usage < capacity
+}
+
+func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) (map[string]int32, error) {
+	var runs v1alpha1.RunList
+	if err := r.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
+		return nil, err
+	}
+
+	usage := make(map[string]int32)
+	for _, run := range runs.Items {
+		if run.Status.AssignedPod == "" {
+			continue
+		}
+		switch run.Status.Phase {
+		case v1alpha1.RunScheduled, v1alpha1.RunRunning:
+			usage[run.Status.AssignedPod]++
+		}
+	}
+	return usage, nil
 }
 
 func pendingRetryDelay(run *v1alpha1.Run) time.Duration {

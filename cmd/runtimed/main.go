@@ -42,7 +42,7 @@ func main() {
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":9094", "Health probe endpoint.")
 	flag.StringVar(&statusAddr, "status-addr", ":9093", "gRPC address for the status proxy (for krt logs).")
 	flag.StringVar(&runtimeEndpoint, "runtime-endpoint", "localhost:9091", "gRPC endpoint of the runtime server.")
-	flag.IntVar(&workers, "workers", 2, "Max concurrent run executions.")
+	flag.IntVar(&workers, "workers", int(v1alpha1.RuntimeDefaultRunsCapacity), "Max concurrent run executions.")
 	klog.InitFlags(nil)
 	flag.Parse()
 
@@ -75,9 +75,11 @@ func main() {
 
 	runtimedCtrl := &runtimed.Controller{
 		Client:          mgr.GetClient(),
+		PodReader:       mgr.GetAPIReader(),
 		Log:             ctrl.Log.WithName("controllers").WithName("Runtimed"),
 		Hostname:        hostname,
 		RuntimeEndpoint: runtimeEndpoint,
+		Workers:         workers,
 		Recorder:        mgr.GetEventRecorderFor("runtimed"),
 	}
 

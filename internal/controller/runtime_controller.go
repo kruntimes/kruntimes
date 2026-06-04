@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
 const (
@@ -120,6 +121,8 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		runtimeLabel: runtimeLabelVal,
 		"app":        "kruntimes-" + name,
 	}
+	annotations := runtimepod.CapacityAnnotations(rt)
+	runsCapacity := runtimepod.RunsCapacityFromRuntime(rt, 0)
 
 	runtimeContainer := corev1.Container{
 		Name:            "runtime",
@@ -180,6 +183,12 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 					FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
 				},
 			},
+			{
+				Name: "POD_NAMESPACE",
+				ValueFrom: &corev1.EnvVarSource{
+					FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
+				},
+			},
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: workspaceVolume, MountPath: workspacePath},
@@ -200,6 +209,9 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			},
 		},
 	}
+	if runsCapacity > 0 {
+		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--workers=%d", runsCapacity))
+	}
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -211,7 +223,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "kruntimes-runtimed",
 					Containers:         []corev1.Container{runtimeContainer, daemonContainer},

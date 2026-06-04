@@ -5,6 +5,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	// RuntimePodAnnotationPrefix is the annotation prefix used for Runtime Pod metadata.
+	RuntimePodAnnotationPrefix = "kruntimes.kruntimes.com/"
+
+	// RuntimePodCapacityAnnotationPrefix prefixes per-pod runtime capacity annotations.
+	RuntimePodCapacityAnnotationPrefix = RuntimePodAnnotationPrefix + "capacity."
+
+	// RuntimeResourceRuns is the built-in capacity resource for concurrent Run executions.
+	RuntimeResourceRuns = "runs"
+
+	// RuntimeDefaultRunsCapacity is the default concurrent Run capacity per Runtime Pod.
+	RuntimeDefaultRunsCapacity int32 = 2
+
+	// RuntimePodRuntimedReadyCondition reports whether the runtimed daemon is heartbeating.
+	RuntimePodRuntimedReadyCondition corev1.PodConditionType = "kruntimes.kruntimes.com/RuntimedReady"
+)
+
 // +kubebuilder:object:generate=true
 // RuntimeSpec defines the desired state of Runtime.
 type RuntimeSpec struct {
@@ -37,6 +54,19 @@ type RuntimeSpec struct {
 	// DaemonImage overrides the runtimed daemon image.
 	// +optional
 	DaemonImage string `json:"daemonImage,omitempty"`
+
+	// Capacity declares the per-pod capacity for this runtime.
+	// +optional
+	Capacity *RuntimeCapacity `json:"capacity,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// RuntimeCapacity declares resource capacities exposed by each Runtime Pod.
+type RuntimeCapacity struct {
+	// Resources maps logical resource names to their per-pod capacity.
+	// The built-in "runs" resource limits concurrent Run executions per pod.
+	// +optional
+	Resources corev1.ResourceList `json:"resources,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
