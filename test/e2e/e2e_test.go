@@ -167,6 +167,11 @@ func containerImage(pod *corev1.Pod, name string) string {
 
 func waitForRun(t *testing.T, run *v1alpha1.Run, timeout time.Duration) {
 	t.Helper()
+	waitForRunPhase(t, run, timeout, v1alpha1.RunSucceeded)
+}
+
+func waitForRunPhase(t *testing.T, run *v1alpha1.Run, timeout time.Duration, expected v1alpha1.RunPhase) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -195,12 +200,21 @@ func waitForRun(t *testing.T, run *v1alpha1.Run, timeout time.Duration) {
 		}
 
 		switch run.Status.Phase {
-		case v1alpha1.RunSucceeded:
+		case expected:
 			return
-		case v1alpha1.RunFailed, v1alpha1.RunTimeout, v1alpha1.RunCancelled:
-			t.Fatalf("Run failed: phase=%s, msg=%s (attempt=%d)", run.Status.Phase, run.Status.Message, run.Status.Attempt)
+		case v1alpha1.RunSucceeded, v1alpha1.RunFailed, v1alpha1.RunTimeout, v1alpha1.RunCancelled:
+			t.Fatalf("expected phase=%s, got phase=%s, msg=%s (attempt=%d)", expected, run.Status.Phase, run.Status.Message, run.Status.Attempt)
 		}
 	}
+}
+
+func findRunCondition(run *v1alpha1.Run, typ string) *metav1.Condition {
+	for i := range run.Status.Conditions {
+		if run.Status.Conditions[i].Type == typ {
+			return &run.Status.Conditions[i]
+		}
+	}
+	return nil
 }
 
 func waitForWorkflow(t *testing.T, wf *v1alpha1.Workflow, timeout time.Duration) {
@@ -249,6 +263,57 @@ func TestFullRunLifecycle(t *testing.T) {
 	t.Logf("Created Run %s (runtime=bash)", run.Name)
 	waitForRun(t, run, 30*time.Second)
 	t.Logf("Run completed successfully: %s", run.Status.Message)
+}
+
+func TestRunTimeout(t *testing.T) {
+	runtimeName := "bash-timeout"
+	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-timeout-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Args:    []string{"sleep 10; echo should_not_print"},
+			Timeout: &metav1.Duration{Duration: time.Second},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	t.Logf("Created Run %s (timeout)", run.Name)
+
+	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunTimeout)
+
+	if run.Status.Attempt != 1 {
+		t.Fatalf("expected one attempt, got %d", run.Status.Attempt)
+	}
+	if !strings.Contains(run.Status.Message, "timeout") {
+		t.Fatalf("expected timeout message, got %q", run.Status.Message)
+	}
+	if run.Status.CompletionTime == nil {
+		t.Fatal("expected completion time for timed out run")
+	}
+
+	running := findRunCondition(run, "Running")
+	if running == nil {
+		t.Fatal("expected Running condition")
+	}
+	if running.Status != metav1.ConditionFalse || running.Reason != "Timeout" {
+		t.Fatalf("expected Running=False reason=Timeout, got status=%s reason=%s", running.Status, running.Reason)
+	}
+
+	completed := findRunCondition(run, "Completed")
+	if completed == nil {
+		t.Fatal("expected Completed condition")
+	}
+	if completed.Status != metav1.ConditionFalse || completed.Reason != "Timeout" {
+		t.Fatalf("expected Completed=False reason=Timeout, got status=%s reason=%s", completed.Status, completed.Reason)
+	}
+
+	t.Logf("Run timed out correctly: %s", run.Status.Message)
 }
 
 func TestSchedulerResponsiveness(t *testing.T) {

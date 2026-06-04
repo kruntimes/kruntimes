@@ -373,7 +373,7 @@ make e2e-cleanup  # tears down kind cluster
 - [ ] TTL-based garbage collection for completed Runs
 - [x] Standard metrics: queue time, dispatch latency, execution time, retries, failures, active Runs
 - [x] Documented execution semantics: at-least-once, retry, timeout, cancellation
-- [ ] E2E coverage for timeout behavior
+- [x] E2E coverage for timeout behavior
 - [x] E2E coverage for no-capacity scheduling behavior
 - [x] E2E coverage for stale-pod retry behavior
 - [ ] E2E coverage for cancellation races
