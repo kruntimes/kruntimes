@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.3
-  name: workflows.kruntimes.kruntimes.com
+  name: workflows.runtimes.kruntimes.io
 spec:
-  group: kruntimes.kruntimes.com
+  group: runtimes.kruntimes.io
   names:
     kind: Workflow
     listKind: WorkflowList

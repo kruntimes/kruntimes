@@ -63,8 +63,8 @@ type RunReconciler struct {
 	RuntimedHeartbeatStaleAfter time.Duration
 }
 
-// +kubebuilder:rbac:groups=kruntimes.kruntimes.com,resources=runs,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=kruntimes.kruntimes.com,resources=runs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=runtimes.kruntimes.io,resources=runs,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=runtimes.kruntimes.io,resources=runs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 
 func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

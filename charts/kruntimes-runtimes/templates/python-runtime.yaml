@@ -1,4 +1,4 @@
-apiVersion: kruntimes.kruntimes.com/v1alpha1
+apiVersion: runtimes.kruntimes.io/v1alpha1
 kind: Runtime
 metadata:
   name: python

@@ -24,9 +24,9 @@ type WorkflowReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=kruntimes.kruntimes.com,resources=workflows,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=kruntimes.kruntimes.com,resources=workflows/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=kruntimes.kruntimes.com,resources=runs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=runtimes.kruntimes.io,resources=workflows,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=runtimes.kruntimes.io,resources=workflows/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=runtimes.kruntimes.io,resources=runs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

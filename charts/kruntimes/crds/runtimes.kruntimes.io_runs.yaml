@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.3
-  name: runs.kruntimes.kruntimes.com
+  name: runs.runtimes.kruntimes.io
 spec:
-  group: kruntimes.kruntimes.com
+  group: runtimes.kruntimes.io
   names:
     kind: Run
     listKind: RunList
