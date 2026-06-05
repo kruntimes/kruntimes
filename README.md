@@ -260,7 +260,7 @@ Cancellation is user initiated by setting `spec.cancelRequested: true`, usually 
 
 When an assigned Runtime Pod is deleted, terminating, or unhealthy, the stale Run reaper classifies the Run with a pod-related reason. If retry policy allows retry, it clears `status.assignedPod`, resets scheduling state to `Pending`, and the Scheduler assigns a new Runtime Pod. If retry is exhausted or not allowed, the Run terminates as `Failed`.
 
-Runtime Pods report runtimed liveness through the Pod condition `runtimes.kruntimes.io/RuntimedReady`. Static per-pod capacity is declared on `Runtime.spec.capacity.resources`; the built-in `runs` resource controls concurrent Run executions per Runtime Pod and is copied to the Pod annotation `runtimes.kruntimes.io/capacity.runs`. The Scheduler derives fast-changing usage from its Run cache and only assigns to Runtime Pods that are Kubernetes Ready, runtimed-ready, and below capacity. Runtimed also enforces the same local capacity before claiming a Scheduled Run.
+Runtime Pods report runtimed liveness through the Pod condition `kruntimes.io/RuntimedReady`. Static per-pod capacity is declared on `Runtime.spec.capacity.resources`; the built-in `runs` resource controls concurrent Run executions per Runtime Pod and is copied to the Pod annotation `kruntimes.io/capacity.runs`. The Scheduler derives fast-changing usage from its Run cache and only assigns to Runtime Pods that are Kubernetes Ready, runtimed-ready, and below capacity. Runtimed also enforces the same local capacity before claiming a Scheduled Run.
 
 Terminal phases are:
 
@@ -510,7 +510,7 @@ service Runtime {
 Deploy with a Runtime CR:
 
 ```yaml
-apiVersion: runtimes.kruntimes.io/v1alpha1
+apiVersion: kruntimes.io/v1alpha1
 kind: Runtime
 metadata:
   name: my-python
