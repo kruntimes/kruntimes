@@ -76,6 +76,7 @@ func main() {
 	runtimedCtrl := &runtimed.Controller{
 		Client:          mgr.GetClient(),
 		PodReader:       mgr.GetAPIReader(),
+		RunReader:       mgr.GetAPIReader(),
 		Log:             ctrl.Log.WithName("controllers").WithName("Runtimed"),
 		Hostname:        hostname,
 		RuntimeEndpoint: runtimeEndpoint,

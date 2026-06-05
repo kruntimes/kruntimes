@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -316,6 +317,53 @@ func TestRunTimeout(t *testing.T) {
 	t.Logf("Run timed out correctly: %s", run.Status.Message)
 }
 
+func TestRuntimedRecoversRunningRunAfterRestart(t *testing.T) {
+	runtimeName := "bash-recovery"
+	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-recovery-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Args:    []string{"sleep 20; echo recovered"},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	t.Logf("Created Run %s (runtimed recovery)", run.Name)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if run.Status.Phase == v1alpha1.RunRunning && run.Status.AssignedPod != "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for run to start, phase=%s pod=%s msg=%s",
+				run.Status.Phase, run.Status.AssignedPod, run.Status.Message)
+		default:
+		}
+	}
+
+	beforeRestart := runtimedRestartCount(t, run.Status.AssignedPod)
+	killRuntimed(t, run.Status.AssignedPod)
+	waitForRuntimedRestart(t, run.Status.AssignedPod, beforeRestart)
+
+	waitForRun(t, run, 60*time.Second)
+	if !strings.Contains(run.Status.Message, "recovered") {
+		t.Fatalf("expected recovered stdout, got %q", run.Status.Message)
+	}
+}
+
 func TestSchedulerResponsiveness(t *testing.T) {
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
@@ -481,6 +529,47 @@ func TestSchedulerKeepsRunPendingWhenRuntimeAtCapacity(t *testing.T) {
 capacityObserved:
 	waitForRun(t, first, 20*time.Second)
 	waitForRun(t, second, 30*time.Second)
+}
+
+func killRuntimed(t *testing.T, podName string) {
+	t.Helper()
+	cmd := exec.Command("kubectl", "exec", podName, "-n", testNamespace, "-c", "runtimed", "--", "/bin/sh", "-c", "kill 1")
+	if err := cmd.Run(); err != nil {
+		t.Logf("kill runtimed returned expected process termination error: %v", err)
+	}
+}
+
+func runtimedRestartCount(t *testing.T, podName string) int32 {
+	t.Helper()
+
+	var pod corev1.Pod
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: podName, Namespace: testNamespace}, &pod); err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name == "runtimed" {
+			return status.RestartCount
+		}
+	}
+	t.Fatalf("pod %s has no runtimed container status", podName)
+	return 0
+}
+
+func waitForRuntimedRestart(t *testing.T, podName string, previousRestartCount int32) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	for {
+		if runtimedRestartCount(t, podName) > previousRestartCount {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for runtimed container restart in pod %s", podName)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 func TestPythonInlineRun(t *testing.T) {

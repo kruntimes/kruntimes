@@ -1,12 +1,20 @@
 package runtimed
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
@@ -213,4 +221,191 @@ func TestReconcileScheduledRespectsLocalCapacity(t *testing.T) {
 	if run.Status.Phase != v1alpha1.RunScheduled {
 		t.Fatalf("phase = %s, want Scheduled", run.Status.Phase)
 	}
+}
+
+func TestReconcileRunningRecoversMissingActiveRun(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "running",
+			Namespace: "default",
+			UID:       "run-uid",
+		},
+		Spec: v1alpha1.RunSpec{Runtime: "bash"},
+		Status: v1alpha1.RunStatus{
+			Phase:       v1alpha1.RunRunning,
+			AssignedPod: "pod-a",
+			StartTime:   &metav1.Time{Time: time.Now().Add(-time.Second)},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run).
+		Build()
+	c := &Controller{
+		Client:     k8sClient,
+		Hostname:   "pod-a",
+		runtimeCli: &fakeRuntimeClient{status: &pb.StatusResponse{Id: "run-uid", State: pb.ExecutionState_EXECUTION_STATE_SUCCEEDED, Stdout: "done"}},
+	}
+
+	result, err := c.reconcileRunning(t.Context(), run)
+	if err != nil {
+		t.Fatalf("reconcileRunning: %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Fatalf("unexpected requeue: %s", result.RequeueAfter)
+	}
+
+	var updated v1alpha1.Run
+	if err := k8sClient.Get(t.Context(), types.NamespacedName{Name: run.Name, Namespace: run.Namespace}, &updated); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.RunSucceeded {
+		t.Fatalf("phase = %s, want Succeeded", updated.Status.Phase)
+	}
+	if updated.Status.Message != "done" {
+		t.Fatalf("message = %q, want done", updated.Status.Message)
+	}
+}
+
+func TestReconcileRunningFailsWhenRecoveredExecutionMissing(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "missing",
+			Namespace: "default",
+			UID:       "missing-uid",
+		},
+		Spec: v1alpha1.RunSpec{Runtime: "bash"},
+		Status: v1alpha1.RunStatus{
+			Phase:       v1alpha1.RunRunning,
+			AssignedPod: "pod-a",
+			StartTime:   &metav1.Time{Time: time.Now().Add(-time.Second)},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run).
+		Build()
+	c := &Controller{
+		Client:     k8sClient,
+		Hostname:   "pod-a",
+		runtimeCli: &fakeRuntimeClient{statusErr: status.Error(codes.NotFound, "execution not found")},
+	}
+
+	if _, err := c.reconcileRunning(t.Context(), run); err != nil {
+		t.Fatalf("reconcileRunning: %v", err)
+	}
+
+	var updated v1alpha1.Run
+	if err := k8sClient.Get(t.Context(), types.NamespacedName{Name: run.Name, Namespace: run.Namespace}, &updated); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.RunFailed {
+		t.Fatalf("phase = %s, want Failed", updated.Status.Phase)
+	}
+	if updated.Status.Attempt != 1 {
+		t.Fatalf("attempt = %d, want 1", updated.Status.Attempt)
+	}
+}
+
+func TestRecoverActiveRunsOnceAddsRuntimeExecutions(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "default")
+
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "recover",
+			Namespace: "default",
+			UID:       "recover-uid",
+		},
+		Spec: v1alpha1.RunSpec{Runtime: "bash"},
+		Status: v1alpha1.RunStatus{
+			Phase:       v1alpha1.RunRunning,
+			AssignedPod: "pod-a",
+			StartTime:   &metav1.Time{Time: time.Now().Add(-time.Second)},
+		},
+	}
+	otherPodRun := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "default", UID: "other-uid"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "pod-b"},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(run, otherPodRun).
+		Build()
+	c := &Controller{
+		Client:   k8sClient,
+		Hostname: "pod-a",
+		runtimeCli: &fakeRuntimeClient{list: &pb.ListResponse{Entries: []*pb.StatusResponse{
+			{Id: "recover-uid", State: pb.ExecutionState_EXECUTION_STATE_RUNNING},
+			{Id: "orphan-runtime-execution", State: pb.ExecutionState_EXECUTION_STATE_RUNNING},
+		}}},
+	}
+
+	c.recoverActiveRunsOnce(t.Context())
+
+	if c.activeRunCount() != 1 {
+		t.Fatalf("activeRunCount = %d, want 1", c.activeRunCount())
+	}
+	if _, ok := c.activeRuns.Load("recover-uid"); !ok {
+		t.Fatal("expected recover-uid to be active")
+	}
+	if _, ok := c.activeRuns.Load("other-uid"); ok {
+		t.Fatal("did not expect other pod run to be active")
+	}
+}
+
+type fakeRuntimeClient struct {
+	pb.RuntimeClient
+	status    *pb.StatusResponse
+	statusErr error
+	list      *pb.ListResponse
+	listErr   error
+}
+
+func (f *fakeRuntimeClient) Execute(context.Context, *pb.ExecuteRequest, ...grpc.CallOption) (*pb.ExecuteResponse, error) {
+	return &pb.ExecuteResponse{}, nil
+}
+
+func (f *fakeRuntimeClient) Status(context.Context, *pb.StatusRequest, ...grpc.CallOption) (*pb.StatusResponse, error) {
+	if f.statusErr != nil {
+		return nil, f.statusErr
+	}
+	return f.status, nil
+}
+
+func (f *fakeRuntimeClient) List(context.Context, *pb.ListRequest, ...grpc.CallOption) (*pb.ListResponse, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	if f.list != nil {
+		return f.list, nil
+	}
+	return &pb.ListResponse{}, nil
+}
+
+func (f *fakeRuntimeClient) Cancel(context.Context, *pb.CancelRequest, ...grpc.CallOption) (*pb.CancelResponse, error) {
+	return &pb.CancelResponse{}, nil
+}
+
+func (f *fakeRuntimeClient) Health(context.Context, *pb.HealthRequest, ...grpc.CallOption) (*pb.HealthResponse, error) {
+	return &pb.HealthResponse{Healthy: true}, nil
 }

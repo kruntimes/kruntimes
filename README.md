@@ -283,7 +283,7 @@ Cancel(ExecutionID) -> CancelResult
 Health() -> HealthStatus
 ```
 
-`List` is used by Runtimed to recover local execution state after restart. `Cancel` is best-effort and should eventually result in `Cancelled`, `Failed`, or `Timeout`. `Health` is used for Kubernetes pod liveness probes and runtime health checks.
+`List` is used by Runtimed to recover local execution state after restart. On startup, runtimed compares Runtime Server executions with Runs assigned to its Pod, rebuilds its in-memory active Run set, and resumes status polling. If a Running Run is no longer present in the Runtime Server, runtimed routes it through the normal retry or terminal failure path. `Cancel` is best-effort and should eventually result in `Cancelled`, `Failed`, or `Timeout`. `Health` is used for Kubernetes pod liveness probes and runtime health checks.
 
 ### Data Plane vs Control Plane
 
@@ -367,7 +367,7 @@ make e2e-cleanup  # tears down kind cluster
 - [x] Unified retry engine shared by runtimed and stale reaper
 - [x] Deterministic attempt counting and retry exhaustion behavior
 - [x] Runtime Pod heartbeat and capacity reporting
-- [ ] Runtimed recovery after restart using Runtime Server `List`
+- [x] Runtimed recovery after restart using Runtime Server `List`
 - [x] Log streaming via `krt logs`
 - [ ] Result and artifact references outside etcd
 - [ ] TTL-based garbage collection for completed Runs

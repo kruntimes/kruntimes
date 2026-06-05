@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,7 @@ type activeRun struct {
 type Controller struct {
 	client.Client
 	PodReader       client.Reader
+	RunReader       client.Reader
 	Log             logr.Logger
 	Hostname        string
 	RuntimeEndpoint string
@@ -114,6 +116,7 @@ func (c *Controller) Start(ctx context.Context) error {
 	go c.rleg.Start(ctx)
 	go c.forwardRLEGEvents(ctx)
 	go c.heartbeat(ctx)
+	go c.recoverActiveRuns(ctx)
 
 	klog.Infof("runtimed controller started, hostname=%s, runtime=%s, workers=%d", c.Hostname, c.RuntimeEndpoint, c.capacity())
 	return nil
@@ -239,10 +242,7 @@ func (c *Controller) patchRuntimedReady(ctx context.Context) {
 	}
 
 	var pod corev1.Pod
-	key := types.NamespacedName{Name: c.Hostname, Namespace: os.Getenv("POD_NAMESPACE")}
-	if key.Namespace == "" {
-		key.Namespace = "default"
-	}
+	key := types.NamespacedName{Name: c.Hostname, Namespace: podNamespace()}
 	reader := c.PodReader
 	if reader == nil {
 		reader = c.Client
@@ -283,7 +283,7 @@ func (c *Controller) reconcileRunning(ctx context.Context, run *v1alpha1.Run) (c
 	uid := string(run.UID)
 	val, exists := c.activeRuns.Load(uid)
 	if !exists {
-		return ctrl.Result{}, nil
+		return c.reconcileRunningRecovered(ctx, run)
 	}
 	ar := val.(*activeRun)
 	ar.run = run
@@ -299,6 +299,29 @@ func (c *Controller) reconcileRunning(ctx context.Context, run *v1alpha1.Run) (c
 		return c.reconcileRetryBackoff(ctx, ar)
 	}
 	return c.reconcileRunningActive(ctx, ar)
+}
+
+func (c *Controller) reconcileRunningRecovered(ctx context.Context, run *v1alpha1.Run) (ctrl.Result, error) {
+	resp, err := c.pollStatus(ctx, string(run.UID))
+	if err != nil {
+		ar := c.buildActiveRun(run)
+		return c.applyFailure(ctx, ar, runretry.ReasonRuntimeExecute, fmt.Sprintf("runtime Status after runtimed restart: %v", err))
+	}
+
+	ar := c.addRecoveredRun(run)
+	switch resp.State {
+	case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
+		return c.applySuccess(ctx, ar, resp.Stdout)
+	case pb.ExecutionState_EXECUTION_STATE_FAILED:
+		reason := classifyFailureReason(resp, nil)
+		msg := resp.ErrorMessage
+		if msg == "" {
+			msg = resp.Stderr
+		}
+		return c.applyFailure(ctx, ar, reason, msg)
+	default:
+		return ctrl.Result{}, nil
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -501,7 +524,9 @@ func (c *Controller) applyTerminal(ctx context.Context, ar *activeRun, phase v1a
 // ===========================================================================
 
 func (c *Controller) cleanup(_ context.Context, ar *activeRun, phase v1alpha1.RunPhase) {
-	c.rleg.RemoveRun(string(ar.run.UID))
+	if c.rleg != nil {
+		c.rleg.RemoveRun(string(ar.run.UID))
+	}
 	c.activeRuns.Delete(string(ar.run.UID))
 	runDuration.WithLabelValues(ar.run.Spec.Runtime).Observe(time.Since(ar.start).Seconds())
 	runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(phase)).Inc()
@@ -569,6 +594,126 @@ func (c *Controller) scheduleRetryReconcile(run *v1alpha1.Run, backoff time.Dura
 }
 
 // ===========================================================================
+// Startup recovery
+// ===========================================================================
+
+func (c *Controller) recoverActiveRuns(ctx context.Context) {
+	c.recoverActiveRunsOnce(ctx)
+}
+
+func (c *Controller) recoverActiveRunsOnce(ctx context.Context) {
+	entries, err := c.listRuntimeExecutionsWithRetry(ctx)
+	if err != nil {
+		c.Log.Error(err, "failed to list runtime executions for recovery")
+		return
+	}
+	executionIDs := make([]string, 0, len(entries))
+	for id := range entries {
+		executionIDs = append(executionIDs, id)
+	}
+	slices.Sort(executionIDs)
+
+	var runs v1alpha1.RunList
+	reader := c.RunReader
+	if reader == nil {
+		reader = c.Client
+	}
+	if err := reader.List(ctx, &runs, client.InNamespace(podNamespace())); err != nil {
+		c.Log.Error(err, "failed to list assigned runs for recovery")
+		return
+	}
+
+	recovered := 0
+	for i := range runs.Items {
+		run := &runs.Items[i]
+		if run.Status.AssignedPod != c.Hostname || run.Status.Phase != v1alpha1.RunRunning {
+			continue
+		}
+		if _, ok := entries[string(run.UID)]; !ok {
+			if _, err := c.reconcileRunningRecovered(ctx, run); err != nil {
+				c.Log.Error(err, "failed to reconcile missing runtime execution during recovery", "run", run.Name)
+			}
+			continue
+		}
+		c.addRecoveredRun(run)
+		recovered++
+	}
+	if recovered > 0 {
+		c.Log.Info("recovered active runs from runtime server", "count", recovered, "executions", executionIDs)
+	}
+}
+
+func (c *Controller) listRuntimeExecutionsWithRetry(ctx context.Context) (map[string]*pb.StatusResponse, error) {
+	var lastErr error
+	for {
+		entries, err := c.listRuntimeExecutions(ctx)
+		if err == nil {
+			return entries, nil
+		}
+		lastErr = err
+
+		select {
+		case <-ctx.Done():
+			return nil, lastErr
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func (c *Controller) listRuntimeExecutions(ctx context.Context) (map[string]*pb.StatusResponse, error) {
+	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := c.runtimeCli.List(rctx, &pb.ListRequest{})
+	if err != nil {
+		return nil, err
+	}
+	entries := make(map[string]*pb.StatusResponse, len(resp.Entries))
+	for _, entry := range resp.Entries {
+		if entry == nil || entry.Id == "" {
+			continue
+		}
+		entries[entry.Id] = entry
+	}
+	return entries, nil
+}
+
+func (c *Controller) addRecoveredRun(run *v1alpha1.Run) *activeRun {
+	uid := string(run.UID)
+	if val, ok := c.activeRuns.Load(uid); ok {
+		ar := val.(*activeRun)
+		ar.run = run
+		if c.rleg != nil {
+			c.rleg.UpdateRun(run)
+		}
+		return ar
+	}
+
+	ar := c.buildActiveRun(run)
+	c.activeRuns.Store(uid, ar)
+	if c.rleg != nil {
+		c.rleg.AddRun(run)
+	}
+	return ar
+}
+
+func (c *Controller) buildActiveRun(run *v1alpha1.Run) *activeRun {
+	start := time.Now()
+	if run.Status.StartTime != nil {
+		start = run.Status.StartTime.Time
+	}
+	ar := &activeRun{
+		run:     run,
+		start:   start,
+		workDir: workDirForRun(run),
+	}
+	if run.Spec.Timeout != nil && run.Status.StartTime != nil {
+		ar.deadline = run.Status.StartTime.Add(run.Spec.Timeout.Duration)
+	}
+	return ar
+}
+
+// ===========================================================================
 // Helper functions
 // ===========================================================================
 
@@ -614,6 +759,21 @@ func prepareSource(run *v1alpha1.Run) (string, error) {
 		return cloneDir, nil
 	}
 	return "", nil
+}
+
+func workDirForRun(run *v1alpha1.Run) string {
+	runDir := filepath.Join(workspacePath, string(run.UID))
+	if run.Spec.Source != nil && run.Spec.Source.RepoURL != "" {
+		return filepath.Join(runDir, "repo")
+	}
+	return runDir
+}
+
+func podNamespace() string {
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		return ns
+	}
+	return "default"
 }
 
 func readOutputs(workingDir string) map[string]string {
