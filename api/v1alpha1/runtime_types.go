@@ -7,7 +7,7 @@ import (
 
 const (
 	// RuntimePodAnnotationPrefix is the annotation prefix used for Runtime Pod metadata.
-	RuntimePodAnnotationPrefix = "runtimes.kruntimes.io/"
+	RuntimePodAnnotationPrefix = "kruntimes.io/"
 
 	// RuntimePodCapacityAnnotationPrefix prefixes per-pod runtime capacity annotations.
 	RuntimePodCapacityAnnotationPrefix = RuntimePodAnnotationPrefix + "capacity."
@@ -19,7 +19,7 @@ const (
 	RuntimeDefaultRunsCapacity int32 = 2
 
 	// RuntimePodRuntimedReadyCondition reports whether the runtimed daemon is heartbeating.
-	RuntimePodRuntimedReadyCondition corev1.PodConditionType = "runtimes.kruntimes.io/RuntimedReady"
+	RuntimePodRuntimedReadyCondition corev1.PodConditionType = "kruntimes.io/RuntimedReady"
 )
 
 // +kubebuilder:object:generate=true
