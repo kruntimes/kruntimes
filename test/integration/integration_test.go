@@ -326,7 +326,3 @@ func TestSchedulerSkipsNotReadyPod(t *testing.T) {
 	}
 	t.Errorf("expected Pending when matching pod is not ready, got %s: %s", updated.Status.Phase, updated.Status.Message)
 }
-
-func TestRuntimedRetry(t *testing.T) {
-	t.Skip("Retry logic tested in unit tests (retry_test.go) and e2e (TestRunRetry)")
-}
