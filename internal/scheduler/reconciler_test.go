@@ -77,6 +77,57 @@ func TestReconcileKeepsRunPendingWhenNoRuntimePodAvailable(t *testing.T) {
 	}
 }
 
+func TestReconcileCancelsPendingRun(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add kruntimes scheme: %v", err)
+	}
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "run-cancel",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime:         "missing",
+			CancelRequested: true,
+		},
+		Status: v1alpha1.RunStatus{Phase: v1alpha1.RunPending},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run).
+		Build()
+
+	reconciler := &RunReconciler{
+		Client:   client,
+		Log:      logr.Discard(),
+		Strategy: &LeastLoaded{},
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: run.Name, Namespace: run.Namespace},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	var updated v1alpha1.Run
+	if err := client.Get(context.Background(), types.NamespacedName{Name: run.Name, Namespace: run.Namespace}, &updated); err != nil {
+		t.Fatalf("get updated run: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.RunCancelled {
+		t.Fatalf("phase = %s, want Cancelled", updated.Status.Phase)
+	}
+	if updated.Status.CompletionTime == nil {
+		t.Fatal("expected completion time")
+	}
+}
+
 func TestIsPodSchedulableRequiresReadyRunningPod(t *testing.T) {
 	now := metav1.Now()
 	tests := []struct {

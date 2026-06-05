@@ -182,6 +182,9 @@ func (c *Controller) reconcileScheduled(ctx context.Context, run *v1alpha1.Run) 
 	if _, exists := c.activeRuns.Load(uid); exists {
 		return ctrl.Result{}, nil
 	}
+	if run.Spec.CancelRequested {
+		return c.applyTerminal(ctx, c.buildActiveRun(run), v1alpha1.RunCancelled, runretry.ReasonCancelled, "cancelled by user")
+	}
 	if c.activeRunCount() >= c.capacity() {
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}

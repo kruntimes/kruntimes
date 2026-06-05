@@ -223,6 +223,56 @@ func TestReconcileScheduledRespectsLocalCapacity(t *testing.T) {
 	}
 }
 
+func TestReconcileScheduledCancelBeforeClaim(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "scheduled-cancel",
+			Namespace: "default",
+			UID:       "scheduled-cancel-uid",
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime:         "bash",
+			CancelRequested: true,
+		},
+		Status: v1alpha1.RunStatus{
+			Phase:       v1alpha1.RunScheduled,
+			AssignedPod: "pod-a",
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run).
+		Build()
+	c := &Controller{
+		Client:     k8sClient,
+		Hostname:   "pod-a",
+		Recorder:   nil,
+		runtimeCli: &fakeRuntimeClient{},
+	}
+
+	if _, err := c.reconcileScheduled(t.Context(), run); err != nil {
+		t.Fatalf("reconcileScheduled: %v", err)
+	}
+
+	var updated v1alpha1.Run
+	if err := k8sClient.Get(t.Context(), types.NamespacedName{Name: run.Name, Namespace: run.Namespace}, &updated); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.RunCancelled {
+		t.Fatalf("phase = %s, want Cancelled", updated.Status.Phase)
+	}
+	if c.activeRunCount() != 0 {
+		t.Fatalf("activeRunCount = %d, want 0", c.activeRunCount())
+	}
+}
+
 func TestReconcileRunningRecoversMissingActiveRun(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {

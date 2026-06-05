@@ -209,6 +209,29 @@ func waitForRunPhase(t *testing.T, run *v1alpha1.Run, timeout time.Duration, exp
 	}
 }
 
+func waitForAnyTerminalRunPhase(t *testing.T, run *v1alpha1.Run, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for terminal run %s, last phase=%s msg=%s", run.Name, run.Status.Phase, run.Status.Message)
+		default:
+		}
+
+		time.Sleep(500 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		switch run.Status.Phase {
+		case v1alpha1.RunSucceeded, v1alpha1.RunFailed, v1alpha1.RunTimeout, v1alpha1.RunCancelled:
+			return
+		}
+	}
+}
+
 func findRunCondition(run *v1alpha1.Run, typ string) *metav1.Condition {
 	for i := range run.Status.Conditions {
 		if run.Status.Conditions[i].Type == typ {
@@ -216,6 +239,45 @@ func findRunCondition(run *v1alpha1.Run, typ string) *metav1.Condition {
 		}
 	}
 	return nil
+}
+
+func assertCancelledRun(t *testing.T, run *v1alpha1.Run) {
+	t.Helper()
+	if run.Status.Phase != v1alpha1.RunCancelled {
+		t.Fatalf("phase = %s, want Cancelled", run.Status.Phase)
+	}
+	if run.Status.CompletionTime == nil {
+		t.Fatal("expected completion time for cancelled run")
+	}
+	running := findRunCondition(run, "Running")
+	if running == nil {
+		t.Fatal("expected Running condition")
+	}
+	if running.Status != metav1.ConditionFalse || running.Reason != "Cancelled" {
+		t.Fatalf("expected Running=False reason=Cancelled, got status=%s reason=%s", running.Status, running.Reason)
+	}
+	completed := findRunCondition(run, "Completed")
+	if completed == nil {
+		t.Fatal("expected Completed condition")
+	}
+	if completed.Status != metav1.ConditionFalse || completed.Reason != "Cancelled" {
+		t.Fatalf("expected Completed=False reason=Cancelled, got status=%s reason=%s", completed.Status, completed.Reason)
+	}
+}
+
+func requestRunCancel(t *testing.T, run *v1alpha1.Run) {
+	t.Helper()
+	for i := 0; i < 10; i++ {
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run for cancel: %v", err)
+		}
+		run.Spec.CancelRequested = true
+		if err := k8sClient.Update(context.Background(), run); err == nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("failed to request cancellation for run %s", run.Name)
 }
 
 func waitForWorkflow(t *testing.T, wf *v1alpha1.Workflow, timeout time.Duration) {
@@ -361,6 +423,151 @@ func TestRuntimedRecoversRunningRunAfterRestart(t *testing.T) {
 	waitForRun(t, run, 60*time.Second)
 	if !strings.Contains(run.Status.Message, "recovered") {
 		t.Fatalf("expected recovered stdout, got %q", run.Status.Message)
+	}
+}
+
+func TestCancelPendingRunWithoutRuntimePod(t *testing.T) {
+	runtimeName := fmt.Sprintf("missing-cancel-runtime-%d", time.Now().UnixNano())
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-cancel-pending-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Args:    []string{"sleep 10"},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	t.Logf("Created Run %s (pending cancel)", run.Name)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if run.Status.Phase == v1alpha1.RunPending && run.Status.Message != "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for pending run, phase=%s msg=%s", run.Status.Phase, run.Status.Message)
+		default:
+		}
+	}
+
+	requestRunCancel(t, run)
+	waitForRunPhase(t, run, 20*time.Second, v1alpha1.RunCancelled)
+	assertCancelledRun(t, run)
+}
+
+func TestCancelRunningRunDoesNotRetry(t *testing.T) {
+	runtimeName := "bash-cancel-running"
+	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-cancel-running-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Args:    []string{"sleep 30; echo should_not_finish"},
+			RetryPolicy: &v1alpha1.RetryPolicy{
+				MaxAttempts: 3,
+				Backoff:     metav1.Duration{Duration: time.Second},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	t.Logf("Created Run %s (running cancel)", run.Name)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if run.Status.Phase == v1alpha1.RunRunning {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for running run, phase=%s msg=%s", run.Status.Phase, run.Status.Message)
+		default:
+		}
+	}
+
+	requestRunCancel(t, run)
+	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunCancelled)
+	assertCancelledRun(t, run)
+	if run.Status.Attempt != 1 {
+		t.Fatalf("cancelled run attempt = %d, want 1", run.Status.Attempt)
+	}
+}
+
+func TestCancelNearCompletionHasStableTerminalPhase(t *testing.T) {
+	runtimeName := "bash-cancel-boundary"
+	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-cancel-boundary-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Args:    []string{"sleep 1; echo boundary_done"},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	t.Logf("Created Run %s (completion-boundary cancel)", run.Name)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	for {
+		time.Sleep(100 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if run.Status.Phase == v1alpha1.RunRunning {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for running run, phase=%s msg=%s", run.Status.Phase, run.Status.Message)
+		default:
+		}
+	}
+
+	time.Sleep(900 * time.Millisecond)
+	requestRunCancel(t, run)
+
+	waitForAnyTerminalRunPhase(t, run, 30*time.Second)
+	terminal := run.Status.Phase
+	switch terminal {
+	case v1alpha1.RunSucceeded:
+	case v1alpha1.RunCancelled:
+		assertCancelledRun(t, run)
+	default:
+		t.Fatalf("unexpected terminal phase after boundary cancel: %s msg=%s", terminal, run.Status.Message)
+	}
+
+	time.Sleep(2 * time.Second)
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+		t.Fatalf("get run after terminal: %v", err)
+	}
+	if run.Status.Phase != terminal {
+		t.Fatalf("terminal phase changed from %s to %s", terminal, run.Status.Phase)
 	}
 }
 

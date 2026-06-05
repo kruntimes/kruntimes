@@ -376,7 +376,7 @@ make e2e-cleanup  # tears down kind cluster
 - [x] E2E coverage for timeout behavior
 - [x] E2E coverage for no-capacity scheduling behavior
 - [x] E2E coverage for stale-pod retry behavior
-- [ ] E2E coverage for cancellation races
+- [x] E2E coverage for cancellation races
 
 ### v0.3 — Workflow
 

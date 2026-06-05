@@ -85,6 +85,9 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if run.Spec.Runtime == "" {
 		return ctrl.Result{}, nil
 	}
+	if run.Spec.CancelRequested {
+		return r.applyCancelled(ctx, &run)
+	}
 
 	log.Info("Scheduling run", "runtime", run.Spec.Runtime)
 	start := time.Now()
@@ -163,6 +166,26 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	log.Info("Run scheduled", "pod", selected.Name)
 	runsScheduled.WithLabelValues(run.Spec.Runtime, "scheduled").Inc()
+	return ctrl.Result{}, nil
+}
+
+func (r *RunReconciler) applyCancelled(ctx context.Context, run *v1alpha1.Run) (ctrl.Result, error) {
+	now := metav1.Now()
+	run.Status.Phase = v1alpha1.RunCancelled
+	run.Status.Message = "cancelled by user"
+	run.Status.CompletionTime = &now
+	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+		Type: "Running", Status: metav1.ConditionFalse, Reason: runretry.ReasonCancelled, Message: "cancelled by user",
+	})
+	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+		Type: "Completed", Status: metav1.ConditionFalse, Reason: runretry.ReasonCancelled, Message: "cancelled by user",
+	})
+	if err := r.Status().Update(ctx, run); err != nil {
+		if apierrors.IsConflict(err) {
+			return ctrl.Result{Requeue: true}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("update run status: %w", err)
+	}
 	return ctrl.Result{}, nil
 }
 
