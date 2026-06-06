@@ -19,7 +19,8 @@ def main():
     runtime_pb2_grpc.add_RuntimeServicer_to_server(
         PythonRuntime(work_dir=args.work_dir), server
     )
-    server.add_insecure_port(f"[::]:{args.port}")
+    if server.add_insecure_port(f"0.0.0.0:{args.port}") == 0:
+        raise RuntimeError(f"failed to bind Python runtime to port {args.port}")
     server.start()
     print(f"Python runtime listening on port {args.port}", flush=True)
 

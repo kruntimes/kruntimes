@@ -173,7 +173,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		Image:           daemonImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: []string{
-			fmt.Sprintf("--runtime-endpoint=localhost:%d", port),
+			fmt.Sprintf("--runtime-endpoint=127.0.0.1:%d", port),
 			"--status-addr=:9093",
 		},
 		Env: []corev1.EnvVar{

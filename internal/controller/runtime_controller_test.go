@@ -39,4 +39,7 @@ func TestBuildDeploymentAddsCapacityAnnotationsAndWorkers(t *testing.T) {
 	if !slices.Contains(daemon.Args, "--workers=3") {
 		t.Fatalf("daemon args = %v, want --workers=3", daemon.Args)
 	}
+	if !slices.Contains(daemon.Args, "--runtime-endpoint=127.0.0.1:9091") {
+		t.Fatalf("daemon args = %v, want IPv4 loopback runtime endpoint", daemon.Args)
+	}
 }

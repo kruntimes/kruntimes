@@ -423,15 +423,36 @@ func TestRecoverActiveRunsOnceAddsRuntimeExecutions(t *testing.T) {
 	}
 }
 
-type fakeRuntimeClient struct {
-	pb.RuntimeClient
-	status    *pb.StatusResponse
-	statusErr error
-	list      *pb.ListResponse
-	listErr   error
+func TestStartExecutionWaitsForRuntimeReady(t *testing.T) {
+	runtimeClient := &fakeRuntimeClient{}
+	c := &Controller{runtimeCli: runtimeClient}
+	ar := &activeRun{
+		run: &v1alpha1.Run{
+			ObjectMeta: metav1.ObjectMeta{UID: "run-uid"},
+			Spec:       v1alpha1.RunSpec{Runtime: "python"},
+		},
+		workDir: t.TempDir(),
+	}
+
+	if err := c.startExecution(t.Context(), ar); err != nil {
+		t.Fatalf("startExecution: %v", err)
+	}
+	if runtimeClient.executeOptions == 0 {
+		t.Fatal("expected Execute to wait for the runtime connection to become ready")
+	}
 }
 
-func (f *fakeRuntimeClient) Execute(context.Context, *pb.ExecuteRequest, ...grpc.CallOption) (*pb.ExecuteResponse, error) {
+type fakeRuntimeClient struct {
+	pb.RuntimeClient
+	status         *pb.StatusResponse
+	statusErr      error
+	list           *pb.ListResponse
+	listErr        error
+	executeOptions int
+}
+
+func (f *fakeRuntimeClient) Execute(_ context.Context, _ *pb.ExecuteRequest, opts ...grpc.CallOption) (*pb.ExecuteResponse, error) {
+	f.executeOptions = len(opts)
 	return &pb.ExecuteResponse{}, nil
 }
 

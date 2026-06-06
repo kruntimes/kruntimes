@@ -172,7 +172,7 @@ docker-build-bash-runtime: ## Build bash-runtime Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_BASH_RUNTIME) -f Dockerfile.bash-runtime .
 
 .PHONY: docker-build-python-runtime
-docker-build-python-runtime: proto-python ## Build python-runtime Docker image.
+docker-build-python-runtime: ## Build python-runtime Docker image from committed protobuf stubs.
 	$(CONTAINER_TOOL) build -t $(IMG_PYTHON_RUNTIME) -f Dockerfile.python-runtime .
 
 .PHONY: docker-push
