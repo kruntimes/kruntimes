@@ -253,11 +253,22 @@ protoc-gen-go: ## Install protoc-gen-go if not present.
 protoc-gen-go-grpc: ## Install protoc-gen-go-grpc if not present.
 	@test -x $(PROTOC_GEN_GO_GRPC) || go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
+UV = $(GOBIN)/uv
+.PHONY: uv
+uv: ## Install uv locally if not present.
+	@test -x "$(UV)" || ( \
+		mkdir -p "$(GOBIN)"; \
+		installer=$$(mktemp); \
+		trap 'rm -f "$$installer"' 0; \
+		curl -LsSf https://astral.sh/uv/install.sh -o "$$installer"; \
+		env UV_INSTALL_DIR="$(GOBIN)" UV_NO_MODIFY_PATH=1 sh "$$installer" \
+	)
+
 .PHONY: proto-python
-proto-python: ## Generate Python gRPC stubs from proto.
+proto-python: uv ## Generate Python gRPC stubs from proto.
 	@mkdir -p runtimes/python/pb
 	@touch runtimes/python/pb/__init__.py
-	@cd runtimes/python && uv run python -m grpc_tools.protoc \
+	@cd runtimes/python && $(UV) run python -m grpc_tools.protoc \
 		--proto_path=../../api/runtime/v1 \
 		--python_out=pb \
 		--grpc_python_out=pb \
