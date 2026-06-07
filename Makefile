@@ -48,7 +48,7 @@ fmt: ## Run go fmt against code.
 	go fmt ./...
 
 .PHONY: vet
-vet: ## Run go vet against code.
+vet: generate proto ## Run go vet against code.
 	go vet ./...
 
 .PHONY: lint
@@ -56,7 +56,7 @@ lint: fmt vet golangci-lint ## Run go fmt, go vet, and golangci-lint.
 	$(GOLANGCI_LINT) run ./...
 
 .PHONY: test
-test: generate manifests fmt vet ## Run unit tests.
+test: generate manifests proto fmt vet ## Run unit tests.
 	go test $$(go list ./... | grep -v /test/integration | grep -v /test/e2e) -coverprofile cover.out
 
 .PHONY: test-integration
@@ -76,13 +76,12 @@ E2E_IMG_BASH_RUNTIME ?= kruntimes-bash-runtime:$(E2E_IMAGE_TAG)
 E2E_IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:$(E2E_IMAGE_TAG)
 
 .PHONY: e2e-setup
-e2e-setup: manifests ## Create kind cluster, load images, and deploy chart.
-	$(MAKE) docker-build \
-		IMG_SCHEDULER=$(E2E_IMG_SCHEDULER) \
-		IMG_CONTROLLER=$(E2E_IMG_CONTROLLER) \
-		IMG_RUNTIMED=$(E2E_IMG_RUNTIMED) \
-		IMG_BASH_RUNTIME=$(E2E_IMG_BASH_RUNTIME) \
-		IMG_PYTHON_RUNTIME=$(E2E_IMG_PYTHON_RUNTIME)
+e2e-setup: IMG_SCHEDULER = $(E2E_IMG_SCHEDULER)
+e2e-setup: IMG_CONTROLLER = $(E2E_IMG_CONTROLLER)
+e2e-setup: IMG_RUNTIMED = $(E2E_IMG_RUNTIMED)
+e2e-setup: IMG_BASH_RUNTIME = $(E2E_IMG_BASH_RUNTIME)
+e2e-setup: IMG_PYTHON_RUNTIME = $(E2E_IMG_PYTHON_RUNTIME)
+e2e-setup: manifests docker-build ## Create kind cluster, load images, and deploy chart.
 	kind get clusters | grep $(KIND_CLUSTER_NAME) || kind create cluster --name $(KIND_CLUSTER_NAME) --wait 120s
 	kind load docker-image $(E2E_IMG_SCHEDULER) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_CONTROLLER) --name $(KIND_CLUSTER_NAME)
@@ -97,16 +96,18 @@ e2e-setup: manifests ## Create kind cluster, load images, and deploy chart.
 		--namespace $(NAMESPACE) --create-namespace --wait --timeout 120s
 
 .PHONY: e2e-test
-e2e-test: ## Run E2E tests against the kind cluster.
+e2e-test: generate ## Run E2E tests against the kind cluster.
 	KRUNTIMES_BASH_RUNTIME_IMAGE=$(E2E_IMG_BASH_RUNTIME) \
 	KRUNTIMES_PYTHON_RUNTIME_IMAGE=$(E2E_IMG_PYTHON_RUNTIME) \
 	KRUNTIMES_RUNTIMED_IMAGE=$(E2E_IMG_RUNTIMED) \
 	go test ./test/e2e/... -v -count=1 -failfast
 
 .PHONY: e2e
-e2e: ## Full E2E: setup cluster, deploy, run tests.
-	$(MAKE) e2e-setup E2E_IMAGE_TAG=$(E2E_RUN_IMAGE_TAG)
-	$(MAKE) e2e-test E2E_IMAGE_TAG=$(E2E_RUN_IMAGE_TAG)
+e2e: E2E_IMAGE_TAG := $(E2E_RUN_IMAGE_TAG)
+e2e: e2e-setup e2e-test ## Full E2E: setup cluster, deploy, run tests.
+
+# Preserve setup-before-test ordering even when make is invoked with -j.
+.NOTPARALLEL: e2e-setup e2e
 
 .PHONY: e2e-cleanup
 e2e-cleanup: ## Delete the kind cluster.
@@ -115,7 +116,7 @@ e2e-cleanup: ## Delete the kind cluster.
 ##@ Build
 
 .PHONY: build
-build: generate ## Build all binaries.
+build: generate proto ## Build all binaries.
 	go build -o bin/scheduler ./cmd/scheduler
 	go build -o bin/runtimed ./cmd/runtimed
 	go build -o bin/controller ./cmd/controller
@@ -127,7 +128,7 @@ build-scheduler: generate ## Build scheduler binary.
 	go build -o bin/scheduler ./cmd/scheduler
 
 .PHONY: build-runtimed
-build-runtimed: generate ## Build runtimed binary.
+build-runtimed: generate proto ## Build runtimed binary.
 	go build -o bin/runtimed ./cmd/runtimed
 
 .PHONY: build-controller
@@ -139,7 +140,7 @@ build-cli: generate ## Build krt binary.
 	go build -o bin/krt ./cmd/krt
 
 .PHONY: build-bash-runtime
-build-bash-runtime: generate ## Build bash-runtime binary.
+build-bash-runtime: proto ## Build bash-runtime binary.
 	go build -o bin/bash-runtime ./runtimes/bash/cmd
 
 .PHONY: run-scheduler
@@ -147,7 +148,7 @@ run-scheduler: generate manifests ## Run scheduler locally (requires kubeconfig)
 	go run ./cmd/scheduler --kubeconfig=$(HOME)/.kube/config
 
 .PHONY: run-runtimed
-run-runtimed: generate manifests ## Run runtimed locally (requires kubeconfig).
+run-runtimed: generate manifests proto ## Run runtimed locally (requires kubeconfig).
 	go run ./cmd/runtimed --kubeconfig=$(HOME)/.kube/config
 
 ##@ Docker
@@ -156,23 +157,23 @@ run-runtimed: generate manifests ## Run runtimed locally (requires kubeconfig).
 docker-build: docker-build-scheduler docker-build-controller docker-build-runtimed docker-build-bash-runtime docker-build-python-runtime ## Build all Docker images.
 
 .PHONY: docker-build-scheduler
-docker-build-scheduler: ## Build scheduler Docker image.
+docker-build-scheduler: generate ## Build scheduler Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_SCHEDULER) -f Dockerfile.scheduler .
 
 .PHONY: docker-build-controller
-docker-build-controller: ## Build controller Docker image.
+docker-build-controller: generate ## Build controller Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_CONTROLLER) -f Dockerfile.controller .
 
 .PHONY: docker-build-runtimed
-docker-build-runtimed: ## Build runtimed Docker image.
+docker-build-runtimed: generate proto ## Build runtimed Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_RUNTIMED) -f Dockerfile.runtimed .
 
 .PHONY: docker-build-bash-runtime
-docker-build-bash-runtime: ## Build bash-runtime Docker image.
+docker-build-bash-runtime: proto ## Build bash-runtime Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_BASH_RUNTIME) -f Dockerfile.bash-runtime .
 
 .PHONY: docker-build-python-runtime
-docker-build-python-runtime: ## Build python-runtime Docker image from committed protobuf stubs.
+docker-build-python-runtime: proto-python ## Build python-runtime Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_PYTHON_RUNTIME) -f Dockerfile.python-runtime .
 
 .PHONY: docker-push
