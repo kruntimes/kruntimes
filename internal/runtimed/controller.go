@@ -563,7 +563,7 @@ func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
 		WorkingDir:     ar.workDir,
 		Entrypoint:     entrypoint,
 		Handler:        run.Spec.Handler,
-	})
+	}, grpc.WaitForReady(true))
 	return err
 }
 
