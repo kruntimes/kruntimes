@@ -97,6 +97,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	completedRunGC := &controller.CompletedRunGC{
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("CompletedRunGC"),
+	}
+	if err := completedRunGC.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "CompletedRunGC")
+		os.Exit(1)
+	}
+
 	setupLog.Info("starting controller manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")

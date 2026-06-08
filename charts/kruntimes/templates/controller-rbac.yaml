@@ -46,6 +46,7 @@ rules:
       - list
       - watch
       - create
+      - delete
   - apiGroups:
       - kruntimes.io
     resources:

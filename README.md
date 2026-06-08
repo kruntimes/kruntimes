@@ -271,6 +271,8 @@ Terminal phases are:
 | `Timeout` | The Run exhausted retries for `Timeout` or timed out with no retry configured. |
 | `Cancelled` | Cancellation was requested and processed. |
 
+Completed Runs are retained by default. Set `spec.ttlSecondsAfterFinished` to a positive number of seconds to have the controller delete a terminal Run after `status.completionTime` plus that TTL.
+
 ### Runtime Server API
 
 The Runtime Server API is local to a Runtime Pod:
@@ -370,7 +372,7 @@ make e2e-cleanup  # tears down kind cluster
 - [x] Runtimed recovery after restart using Runtime Server `List`
 - [x] Log streaming via `krt logs`
 - [ ] Result and artifact references outside etcd
-- [ ] TTL-based garbage collection for completed Runs
+- [x] TTL-based garbage collection for completed Runs
 - [x] Standard metrics: queue time, dispatch latency, execution time, retries, failures, active Runs
 - [x] Documented execution semantics: at-least-once, retry, timeout, cancellation
 - [x] E2E coverage for timeout behavior

@@ -279,6 +279,14 @@ spec:
                   Timeout is the maximum duration the run is allowed to run.
                   If not set, the run runs with no time limit.
                 type: string
+              ttlSecondsAfterFinished:
+                description: |-
+                  TTLSecondsAfterFinished limits the lifetime of a finished Run.
+                  If set to a positive value, the controller deletes the Run after this many seconds
+                  from status.completionTime. If unset or zero, the Run is retained.
+                format: int32
+                minimum: 0
+                type: integer
             required:
             - runtime
             type: object

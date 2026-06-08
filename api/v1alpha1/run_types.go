@@ -97,6 +97,13 @@ type RunSpec struct {
 	// RetryPolicy is the retry strategy for the Run. If nil, no retries are attempted.
 	// +optional
 	RetryPolicy *RetryPolicy `json:"retryPolicy,omitempty"`
+
+	// TTLSecondsAfterFinished limits the lifetime of a finished Run.
+	// If set to a positive value, the controller deletes the Run after this many seconds
+	// from status.completionTime. If unset or zero, the Run is retained.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
 }
 
 // +kubebuilder:object:generate=true

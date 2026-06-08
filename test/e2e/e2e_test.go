@@ -280,6 +280,28 @@ func requestRunCancel(t *testing.T, run *v1alpha1.Run) {
 	t.Fatalf("failed to request cancellation for run %s", run.Name)
 }
 
+func waitForRunDeleted(t *testing.T, run *v1alpha1.Run, timeout time.Duration) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for {
+		var current v1alpha1.Run
+		err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &current)
+		if apierrors.IsNotFound(err) {
+			return
+		}
+		if err != nil {
+			t.Fatalf("get run while waiting for delete: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for run %s to be deleted, phase=%s completion=%v", run.Name, current.Status.Phase, current.Status.CompletionTime)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
 func waitForWorkflow(t *testing.T, wf *v1alpha1.Workflow, timeout time.Duration) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -377,6 +399,34 @@ func TestRunTimeout(t *testing.T) {
 	}
 
 	t.Logf("Run timed out correctly: %s", run.Status.Message)
+}
+
+func TestCompletedRunTTLGCDeletesFinishedRun(t *testing.T) {
+	runtimeName := "bash-ttl-gc"
+	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
+	ttlSeconds := int32(2)
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-ttl-gc-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime:                 runtimeName,
+			Args:                    []string{"echo ttl-gc"},
+			TTLSecondsAfterFinished: &ttlSeconds,
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	t.Logf("Created Run %s (ttl gc)", run.Name)
+
+	waitForRun(t, run, 30*time.Second)
+	if run.Status.CompletionTime == nil {
+		t.Fatal("expected completion time before TTL GC")
+	}
+	waitForRunDeleted(t, run, 30*time.Second)
 }
 
 func TestRuntimedRecoversRunningRunAfterRestart(t *testing.T) {
