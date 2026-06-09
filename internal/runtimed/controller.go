@@ -1,14 +1,13 @@
 package runtimed
 
 import (
-	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +31,7 @@ import (
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/artifact"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
 	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
@@ -76,10 +76,12 @@ type Controller struct {
 	RuntimeEndpoint string
 	Workers         int
 
-	HeartbeatInterval time.Duration
+	HeartbeatInterval  time.Duration
+	ExecutionLogWriter io.Writer
 
 	activeRuns sync.Map // uid → *activeRun
 	rlegCh     chan event.GenericEvent
+	logMu      sync.Mutex
 
 	runtimeCli pb.RuntimeClient
 	rleg       rlegpkg.RunLifecycleEventGenerator
@@ -314,14 +316,11 @@ func (c *Controller) reconcileRunningRecovered(ctx context.Context, run *v1alpha
 	ar := c.addRecoveredRun(run)
 	switch resp.State {
 	case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
-		return c.applySuccess(ctx, ar, resp.Stdout)
+		return c.applySuccess(ctx, ar, resp)
 	case pb.ExecutionState_EXECUTION_STATE_FAILED:
 		reason := classifyFailureReason(resp, nil)
-		msg := resp.ErrorMessage
-		if msg == "" {
-			msg = resp.Stderr
-		}
-		return c.applyFailure(ctx, ar, reason, msg)
+		msg := summarizeRuntimeFailure(resp)
+		return c.applyFailureWithOutput(ctx, ar, reason, msg, outputFromStatus(resp))
 	default:
 		return ctrl.Result{}, nil
 	}
@@ -365,14 +364,11 @@ func (c *Controller) reconcileRunningActive(ctx context.Context, ar *activeRun) 
 
 	switch resp.State {
 	case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
-		return c.applySuccess(ctx, ar, resp.Stdout)
+		return c.applySuccess(ctx, ar, resp)
 	case pb.ExecutionState_EXECUTION_STATE_FAILED:
 		reason := classifyFailureReason(resp, nil)
-		msg := resp.ErrorMessage
-		if msg == "" {
-			msg = resp.Stderr
-		}
-		return c.applyFailure(ctx, ar, reason, msg)
+		msg := summarizeRuntimeFailure(resp)
+		return c.applyFailureWithOutput(ctx, ar, reason, msg, outputFromStatus(resp))
 	}
 	return ctrl.Result{}, nil
 }
@@ -415,16 +411,25 @@ func (c *Controller) reconcileRetryBackoff(ctx context.Context, ar *activeRun) (
 // applySuccess — terminal success, no retry
 // ===========================================================================
 
-func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, stdout string) (ctrl.Result, error) {
+func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, resp *pb.StatusResponse) (ctrl.Result, error) {
 	run := ar.run
+	outputs, err := readOutputs(outputsPath(ar.workDir))
+	if err != nil {
+		reason := reasonOutputsInvalid
+		if isOutputsTooLarge(err) {
+			reason = reasonOutputsTooLarge
+		}
+		return c.applyTerminalWithOutput(ctx, ar, v1alpha1.RunFailed, reason, err.Error(), outputFromStatus(resp))
+	}
+
 	now := metav1.Now()
 	if run.Status.Attempt == 0 {
 		run.Status.Attempt = 1
 	}
 	run.Status.Phase = v1alpha1.RunSucceeded
-	run.Status.Message = stdout
+	run.Status.Message = "execution completed"
 	run.Status.CompletionTime = &now
-	run.Status.Outputs = readOutputs(ar.workDir)
+	run.Status.Outputs = outputs
 	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
 		Type: "Running", Status: metav1.ConditionFalse, Reason: "Completed", Message: "",
 	})
@@ -436,6 +441,7 @@ func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, stdout str
 		return ctrl.Result{}, err
 	}
 
+	c.emitExecutionOutput(run, outputFromStatus(resp))
 	c.cleanup(ctx, ar, v1alpha1.RunSucceeded)
 	if run.Status.Attempt > 1 {
 		c.recordEvent(run, corev1.EventTypeNormal, "RunSucceeded",
@@ -449,13 +455,23 @@ func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, stdout str
 // ===========================================================================
 
 func (c *Controller) applyFailure(ctx context.Context, ar *activeRun, reason, msg string) (ctrl.Result, error) {
+	return c.applyFailureWithOutput(ctx, ar, reason, msg, executionOutput{})
+}
+
+func (c *Controller) applyFailureWithOutput(
+	ctx context.Context,
+	ar *activeRun,
+	reason, msg string,
+	output executionOutput,
+) (ctrl.Result, error) {
 	run := ar.run
 	policy := runretry.WithDefaults(run.Spec.RetryPolicy)
+	msg = boundedStatusMessage(msg)
 
 	curAttempt := runretry.CurrentAttempt(run.Status.Attempt)
 
 	if !runretry.ShouldRetry(policy, curAttempt, reason) {
-		return c.applyTerminal(ctx, ar, terminalPhaseForFailure(reason), reason, msg)
+		return c.applyTerminalWithOutput(ctx, ar, terminalPhaseForFailure(reason), reason, msg, output)
 	}
 
 	// Schedule retry.
@@ -496,7 +512,18 @@ func (c *Controller) scheduleRetry(ctx context.Context, ar *activeRun, curAttemp
 // ===========================================================================
 
 func (c *Controller) applyTerminal(ctx context.Context, ar *activeRun, phase v1alpha1.RunPhase, reason, msg string) (ctrl.Result, error) {
+	return c.applyTerminalWithOutput(ctx, ar, phase, reason, msg, executionOutput{})
+}
+
+func (c *Controller) applyTerminalWithOutput(
+	ctx context.Context,
+	ar *activeRun,
+	phase v1alpha1.RunPhase,
+	reason, msg string,
+	output executionOutput,
+) (ctrl.Result, error) {
 	run := ar.run
+	msg = boundedStatusMessage(msg)
 	if run.Status.Attempt == 0 {
 		run.Status.Attempt = 1
 	}
@@ -516,6 +543,7 @@ func (c *Controller) applyTerminal(ctx context.Context, ar *activeRun, phase v1a
 		return ctrl.Result{}, err
 	}
 
+	c.emitExecutionOutput(run, output)
 	c.cleanup(ctx, ar, phase)
 	c.recordEvent(run, corev1.EventTypeWarning, "RunRetriesExhausted",
 		"Run failed after %d attempts: %s: %s", run.Status.Attempt, reason, msg)
@@ -545,6 +573,11 @@ func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
 	for _, e := range run.Spec.Env {
 		env[e.Name] = e.Value
 	}
+	outputPath := outputsPath(ar.workDir)
+	if err := os.Remove(outputPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reset outputs file: %w", err)
+	}
+	env[artifact.OutputsEnv] = outputPath
 	var timeoutSec int64
 	if run.Spec.Timeout != nil {
 		timeoutSec = int64(run.Spec.Timeout.Duration.Seconds())
@@ -777,34 +810,6 @@ func podNamespace() string {
 		return ns
 	}
 	return "default"
-}
-
-func readOutputs(workingDir string) map[string]string {
-	if workingDir == "" {
-		return nil
-	}
-	f, err := os.Open(filepath.Join(workingDir, "outputs"))
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
-	outputs := make(map[string]string)
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			outputs[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		klog.Warningf("error reading outputs file %s: %v", workingDir, err)
-	}
-	return outputs
 }
 
 // statusAdapter adapts the gRPC client to rlegpkg.StatusProvider.

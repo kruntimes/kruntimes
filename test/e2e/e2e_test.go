@@ -332,6 +332,7 @@ func waitForWorkflow(t *testing.T, wf *v1alpha1.Workflow, timeout time.Duration)
 func TestFullRunLifecycle(t *testing.T) {
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
+	const stdout = "hello-not-in-run-status"
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "e2e-",
@@ -339,7 +340,7 @@ func TestFullRunLifecycle(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: "bash",
-			Args:    []string{"echo hello"},
+			Args:    []string{"echo " + stdout},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -347,6 +348,12 @@ func TestFullRunLifecycle(t *testing.T) {
 	}
 	t.Logf("Created Run %s (runtime=bash)", run.Name)
 	waitForRun(t, run, 30*time.Second)
+	if run.Status.Message != "execution completed" {
+		t.Fatalf("success message = %q, want stable summary", run.Status.Message)
+	}
+	if strings.Contains(run.Status.Message, stdout) {
+		t.Fatalf("success message contains stdout: %q", run.Status.Message)
+	}
 	t.Logf("Run completed successfully: %s", run.Status.Message)
 }
 
@@ -471,8 +478,8 @@ func TestRuntimedRecoversRunningRunAfterRestart(t *testing.T) {
 	waitForRuntimedRestart(t, run.Status.AssignedPod, beforeRestart)
 
 	waitForRun(t, run, 60*time.Second)
-	if !strings.Contains(run.Status.Message, "recovered") {
-		t.Fatalf("expected recovered stdout, got %q", run.Status.Message)
+	if run.Status.Message != "execution completed" {
+		t.Fatalf("success message = %q, want stable summary", run.Status.Message)
 	}
 }
 
@@ -894,11 +901,11 @@ func TestWorkflowStepOutputs(t *testing.T) {
 					Steps: []v1alpha1.StepSpec{
 						{
 							Name: "gen-version",
-							Run:  "echo version=v1.0 >> outputs",
+							Run:  `echo version=v1.0 >> "$KRUNTIME_OUTPUTS"`,
 						},
 						{
 							Name: "build-image",
-							Run:  "echo image=app:${{ steps.gen-version.outputs.version }} >> outputs",
+							Run:  `echo image=app:${{ steps.gen-version.outputs.version }} >> "$KRUNTIME_OUTPUTS"`,
 						},
 					},
 					Outputs: map[string]string{
@@ -927,6 +934,76 @@ func TestWorkflowStepOutputs(t *testing.T) {
 		t.Fatalf("build-image outputs mismatch: got %v", buildStep.Outputs)
 	}
 	t.Logf("All outputs verified")
+}
+
+func TestRunInvalidOutputsDoesNotRetry(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-invalid-outputs-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Args:    []string{`printf 'invalid\n' > "$KRUNTIME_OUTPUTS"`},
+			RetryPolicy: &v1alpha1.RetryPolicy{
+				MaxAttempts: 3,
+				Backoff:     metav1.Duration{Duration: time.Second},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunFailed)
+	assertOutputsFailure(t, run, "OutputsInvalid")
+}
+
+func TestRunOversizedOutputsDoesNotRetry(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-oversized-outputs-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Args: []string{
+				`printf 'value=' > "$KRUNTIME_OUTPUTS"; head -c 8193 /dev/zero | tr '\0' x >> "$KRUNTIME_OUTPUTS"`,
+			},
+			RetryPolicy: &v1alpha1.RetryPolicy{
+				MaxAttempts: 3,
+				Backoff:     metav1.Duration{Duration: time.Second},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunFailed)
+	assertOutputsFailure(t, run, "OutputsTooLarge")
+}
+
+func assertOutputsFailure(t *testing.T, run *v1alpha1.Run, reason string) {
+	t.Helper()
+	if run.Status.Attempt != 1 {
+		t.Fatalf("attempt = %d, want 1 for non-retryable outputs failure", run.Status.Attempt)
+	}
+	if run.Status.CompletionTime == nil {
+		t.Fatal("expected completion time")
+	}
+	running := findRunCondition(run, "Running")
+	if running == nil || running.Status != metav1.ConditionFalse || running.Reason != reason {
+		t.Fatalf("Running condition = %#v, want False/%s", running, reason)
+	}
+	completed := findRunCondition(run, "Completed")
+	if completed == nil || completed.Status != metav1.ConditionFalse || completed.Reason != reason {
+		t.Fatalf("Completed condition = %#v, want False/%s", completed, reason)
+	}
 }
 
 func TestRunRetry(t *testing.T) {
@@ -990,7 +1067,7 @@ func TestWorkflowTopoOrder(t *testing.T) {
 					RunsOn: "bash",
 					Steps: []v1alpha1.StepSpec{{
 						Name: "generate",
-						Run:  "echo version=v2.0 >> outputs",
+						Run:  `echo version=v2.0 >> "$KRUNTIME_OUTPUTS"`,
 					}},
 				},
 				// lint also has no needs, runs in parallel with prep.
@@ -998,7 +1075,7 @@ func TestWorkflowTopoOrder(t *testing.T) {
 					RunsOn: "bash",
 					Steps: []v1alpha1.StepSpec{{
 						Name: "check",
-						Run:  "echo lint=ok >> outputs",
+						Run:  `echo lint=ok >> "$KRUNTIME_OUTPUTS"`,
 					}},
 				},
 				// build needs prep explicitly, and references lint's output implicitly.
