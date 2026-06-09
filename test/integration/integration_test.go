@@ -326,3 +326,48 @@ func TestSchedulerSkipsNotReadyPod(t *testing.T) {
 	}
 	t.Errorf("expected Pending when matching pod is not ready, got %s: %s", updated.Status.Phase, updated.Status.Message)
 }
+
+func TestRunArtifactRefValidation(t *testing.T) {
+	ctx := context.Background()
+	ns := &corev1.Namespace{}
+	ns.GenerateName = "test-artifact-ref-"
+	if err := k8sClient.Create(ctx, ns); err != nil {
+		t.Fatalf("create namespace: %v", err)
+	}
+	defer func() { _ = k8sClient.Delete(ctx, ns) }()
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "artifact-ref", Namespace: ns.Name},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+	}
+	if err := k8sClient.Create(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	run.Status.ArtifactRefs = []v1alpha1.ArtifactRef{
+		{
+			Name:   "report",
+			Driver: v1alpha1.ArtifactDriverFilesystem,
+			Type:   v1alpha1.ArtifactTypeFile,
+			Location: v1alpha1.ArtifactLocation{
+				Filesystem: &v1alpha1.FilesystemArtifactLocation{
+					Path:            "namespaces/default/runs/uid/report",
+					VolumeClaimName: "artifacts",
+				},
+			},
+			CreatedAt: metav1.Now(),
+		},
+	}
+	run.Status.Phase = v1alpha1.RunPending
+	if err := k8sClient.Status().Update(ctx, run); err != nil {
+		t.Fatalf("update valid artifact ref: %v", err)
+	}
+
+	run.Status.ArtifactRefs[0].Location.S3 = &v1alpha1.S3ArtifactLocation{
+		Bucket: "artifacts",
+		Key:    "report",
+	}
+	if err := k8sClient.Status().Update(ctx, run); err == nil {
+		t.Fatal("expected invalid mixed artifact locations to be rejected")
+	}
+}
