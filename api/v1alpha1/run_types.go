@@ -19,6 +19,93 @@ const (
 	RunCancelled RunPhase = "Cancelled"
 )
 
+// ArtifactType describes how an artifact is represented in storage.
+// +kubebuilder:validation:Enum=file;directory;archive;blob
+type ArtifactType string
+
+const (
+	ArtifactTypeFile      ArtifactType = "file"
+	ArtifactTypeDirectory ArtifactType = "directory"
+	ArtifactTypeArchive   ArtifactType = "archive"
+	ArtifactTypeBlob      ArtifactType = "blob"
+)
+
+// ArtifactDriver identifies the storage backend for an artifact.
+// +kubebuilder:validation:Enum=filesystem;s3
+type ArtifactDriver string
+
+const (
+	ArtifactDriverFilesystem ArtifactDriver = "filesystem"
+	ArtifactDriverS3         ArtifactDriver = "s3"
+)
+
+// +kubebuilder:object:generate=true
+// FilesystemArtifactLocation identifies an artifact in a configured filesystem store.
+type FilesystemArtifactLocation struct {
+	// Path is relative to the artifact store root.
+	Path string `json:"path"`
+
+	// VolumeClaimName identifies the PVC backing the filesystem store.
+	// +optional
+	VolumeClaimName string `json:"volumeClaimName,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// S3ArtifactLocation identifies an artifact in an S3-compatible object store.
+type S3ArtifactLocation struct {
+	// Bucket is the object store bucket.
+	Bucket string `json:"bucket"`
+
+	// Key is the object key within the bucket.
+	Key string `json:"key"`
+}
+
+// +kubebuilder:object:generate=true
+// ArtifactLocation contains driver-specific artifact coordinates.
+// Exactly one location must be populated for the selected driver.
+// +kubebuilder:validation:XValidation:rule="has(self.filesystem) != has(self.s3)",message="exactly one artifact location must be set"
+type ArtifactLocation struct {
+	// Filesystem identifies an artifact in a filesystem store.
+	// +optional
+	Filesystem *FilesystemArtifactLocation `json:"filesystem,omitempty"`
+
+	// S3 identifies an artifact in an S3-compatible object store.
+	// +optional
+	S3 *S3ArtifactLocation `json:"s3,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// ArtifactRef is compact metadata that points to artifact content stored outside etcd.
+// +kubebuilder:validation:XValidation:rule="(self.driver == 'filesystem' && has(self.location.filesystem)) || (self.driver == 's3' && has(self.location.s3))",message="artifact location must match driver"
+type ArtifactRef struct {
+	// Name is the logical artifact name exposed by the Run.
+	Name string `json:"name"`
+
+	// Driver identifies the ArtifactStore implementation.
+	Driver ArtifactDriver `json:"driver"`
+
+	// Type describes how the artifact content is represented.
+	Type ArtifactType `json:"type"`
+
+	// Location contains driver-specific storage coordinates.
+	Location ArtifactLocation `json:"location"`
+
+	// SizeBytes is the stored artifact size.
+	// +kubebuilder:validation:Minimum=0
+	SizeBytes int64 `json:"sizeBytes"`
+
+	// Digest is the content digest, including its algorithm prefix.
+	// +optional
+	Digest string `json:"digest,omitempty"`
+
+	// ContentType is the detected media type.
+	// +optional
+	ContentType string `json:"contentType,omitempty"`
+
+	// CreatedAt records when the artifact was stored.
+	CreatedAt metav1.Time `json:"createdAt"`
+}
+
 // +kubebuilder:object:generate=true
 // RetryPolicy specifies the retry strategy for a Run.
 type RetryPolicy struct {
@@ -132,6 +219,11 @@ type RunStatus struct {
 	// Outputs is the key-value pairs exposed by this Run (from $OUTPUTS file).
 	// +optional
 	Outputs map[string]string `json:"outputs,omitempty"`
+
+	// ArtifactRefs point to artifacts stored outside etcd.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	ArtifactRefs []ArtifactRef `json:"artifactRefs,omitempty"`
 
 	// Attempt is the current execution attempt number (1-based).
 	// +optional

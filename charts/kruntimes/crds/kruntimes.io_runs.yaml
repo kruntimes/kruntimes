@@ -293,6 +293,96 @@ spec:
           status:
             description: RunStatus defines the observed state of Run.
             properties:
+              artifactRefs:
+                description: ArtifactRefs point to artifacts stored outside etcd.
+                items:
+                  description: ArtifactRef is compact metadata that points to artifact
+                    content stored outside etcd.
+                  properties:
+                    contentType:
+                      description: ContentType is the detected media type.
+                      type: string
+                    createdAt:
+                      description: CreatedAt records when the artifact was stored.
+                      format: date-time
+                      type: string
+                    digest:
+                      description: Digest is the content digest, including its algorithm
+                        prefix.
+                      type: string
+                    driver:
+                      description: Driver identifies the ArtifactStore implementation.
+                      enum:
+                      - filesystem
+                      - s3
+                      type: string
+                    location:
+                      description: Location contains driver-specific storage coordinates.
+                      properties:
+                        filesystem:
+                          description: Filesystem identifies an artifact in a filesystem
+                            store.
+                          properties:
+                            path:
+                              description: Path is relative to the artifact store
+                                root.
+                              type: string
+                            volumeClaimName:
+                              description: VolumeClaimName identifies the PVC backing
+                                the filesystem store.
+                              type: string
+                          required:
+                          - path
+                          type: object
+                        s3:
+                          description: S3 identifies an artifact in an S3-compatible
+                            object store.
+                          properties:
+                            bucket:
+                              description: Bucket is the object store bucket.
+                              type: string
+                            key:
+                              description: Key is the object key within the bucket.
+                              type: string
+                          required:
+                          - bucket
+                          - key
+                          type: object
+                      type: object
+                      x-kubernetes-validations:
+                      - message: exactly one artifact location must be set
+                        rule: has(self.filesystem) != has(self.s3)
+                    name:
+                      description: Name is the logical artifact name exposed by the
+                        Run.
+                      type: string
+                    sizeBytes:
+                      description: SizeBytes is the stored artifact size.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    type:
+                      description: Type describes how the artifact content is represented.
+                      enum:
+                      - file
+                      - directory
+                      - archive
+                      - blob
+                      type: string
+                  required:
+                  - createdAt
+                  - driver
+                  - location
+                  - name
+                  - sizeBytes
+                  - type
+                  type: object
+                  x-kubernetes-validations:
+                  - message: artifact location must match driver
+                    rule: (self.driver == 'filesystem' && has(self.location.filesystem))
+                      || (self.driver == 's3' && has(self.location.s3))
+                maxItems: 32
+                type: array
               assignedPod:
                 description: AssignedPod is the name of the Runtime Pod assigned by
                   the scheduler.
