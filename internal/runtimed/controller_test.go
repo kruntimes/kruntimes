@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -701,6 +702,34 @@ func TestStartExecutionWaitsForRuntimeReady(t *testing.T) {
 	}
 	if got := runtimeClient.executeRequest.Env[artifact.OutputsEnv]; got != outputsPath(ar.workDir) {
 		t.Fatalf("%s = %q, want %q", artifact.OutputsEnv, got, outputsPath(ar.workDir))
+	}
+}
+
+func TestStartExecutionInjectsReservedArtifactDirectory(t *testing.T) {
+	setTestWorkspace(t)
+	runtimeClient := &fakeRuntimeClient{}
+	c := &Controller{
+		runtimeCli:    runtimeClient,
+		ArtifactStore: &fakeArtifactStore{},
+	}
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{UID: "run-uid"},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "python",
+			Env: []corev1.EnvVar{{
+				Name:  artifact.ArtifactsDirEnv,
+				Value: "/user/override",
+			}},
+		},
+	}
+	ar := &activeRun{run: run, workDir: filepath.Join(workspacePath, "run-uid")}
+
+	if err := c.startExecution(t.Context(), ar); err != nil {
+		t.Fatalf("startExecution: %v", err)
+	}
+	want := filepath.Join(workspacePath, "run-uid", "artifacts")
+	if got := runtimeClient.executeRequest.Env[artifact.ArtifactsDirEnv]; got != want {
+		t.Fatalf("%s = %q, want %q", artifact.ArtifactsDirEnv, got, want)
 	}
 }
 

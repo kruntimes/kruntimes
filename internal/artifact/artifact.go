@@ -22,6 +22,9 @@ const (
 
 	MaxArtifactRefs      = 32
 	MaxArtifactNameBytes = 255
+
+	DefaultMaxArtifactBytes  int64 = 1 << 30
+	DefaultMaxArtifactsBytes int64 = 10 << 30
 )
 
 // PutOptions describes metadata applied while storing an artifact.

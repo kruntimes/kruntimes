@@ -54,6 +54,38 @@ spec:
           spec:
             description: RuntimeSpec defines the desired state of Runtime.
             properties:
+              artifactStore:
+                description: ArtifactStore configures durable artifact storage for
+                  Runs executed by this Runtime.
+                properties:
+                  driver:
+                    allOf:
+                    - enum:
+                      - filesystem
+                      - s3
+                    - enum:
+                      - filesystem
+                    description: Driver identifies the configured artifact storage
+                      backend.
+                    type: string
+                  filesystem:
+                    description: Filesystem configures a PVC-backed filesystem artifact
+                      store.
+                    properties:
+                      volumeClaimName:
+                        description: VolumeClaimName is the PVC mounted into runtimed
+                          for durable artifact storage.
+                        minLength: 1
+                        type: string
+                    required:
+                    - volumeClaimName
+                    type: object
+                required:
+                - driver
+                type: object
+                x-kubernetes-validations:
+                - message: filesystem driver requires filesystem configuration
+                  rule: self.driver == 'filesystem' && has(self.filesystem)
               capacity:
                 description: Capacity declares the per-pod capacity for this runtime.
                 properties:

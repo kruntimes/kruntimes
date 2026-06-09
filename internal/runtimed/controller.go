@@ -69,12 +69,15 @@ type activeRun struct {
 // Controller reconciles Runs assigned to this pod.
 type Controller struct {
 	client.Client
-	PodReader       client.Reader
-	RunReader       client.Reader
-	Log             logr.Logger
-	Hostname        string
-	RuntimeEndpoint string
-	Workers         int
+	PodReader         client.Reader
+	RunReader         client.Reader
+	Log               logr.Logger
+	Hostname          string
+	RuntimeEndpoint   string
+	Workers           int
+	ArtifactStore     artifact.Store
+	MaxArtifactBytes  int64
+	MaxArtifactsBytes int64
 
 	HeartbeatInterval  time.Duration
 	ExecutionLogWriter io.Writer
@@ -422,6 +425,21 @@ func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, resp *pb.S
 		return c.applyTerminalWithOutput(ctx, ar, v1alpha1.RunFailed, reason, err.Error(), outputFromStatus(resp))
 	}
 
+	artifactRefs, err := c.collectArtifacts(ctx, run)
+	if err != nil {
+		if isArtifactInvalid(err) {
+			return c.applyTerminalWithOutput(
+				ctx,
+				ar,
+				v1alpha1.RunFailed,
+				"ArtifactInvalid",
+				err.Error(),
+				outputFromStatus(resp),
+			)
+		}
+		c.Log.Error(err, "artifact collection failed; retrying", "run", client.ObjectKeyFromObject(run))
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
 	now := metav1.Now()
 	if run.Status.Attempt == 0 {
 		run.Status.Attempt = 1
@@ -430,6 +448,7 @@ func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, resp *pb.S
 	run.Status.Message = "execution completed"
 	run.Status.CompletionTime = &now
 	run.Status.Outputs = outputs
+	run.Status.ArtifactRefs = artifactRefs
 	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
 		Type: "Running", Status: metav1.ConditionFalse, Reason: "Completed", Message: "",
 	})
@@ -578,6 +597,13 @@ func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
 		return fmt.Errorf("reset outputs file: %w", err)
 	}
 	env[artifact.OutputsEnv] = outputPath
+	artifactsDir, err := c.prepareArtifactStaging(run)
+	if err != nil {
+		return err
+	}
+	if artifactsDir != "" {
+		env[artifact.ArtifactsDirEnv] = artifactsDir
+	}
 	var timeoutSec int64
 	if run.Spec.Timeout != nil {
 		timeoutSec = int64(run.Spec.Timeout.Duration.Seconds())
@@ -588,7 +614,7 @@ func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
 	}
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	_, err := c.runtimeCli.Execute(rctx, &pb.ExecuteRequest{
+	_, err = c.runtimeCli.Execute(rctx, &pb.ExecuteRequest{
 		Id:             string(run.UID),
 		Args:           run.Spec.Args,
 		Env:            env,
