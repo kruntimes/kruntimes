@@ -1,9 +1,12 @@
 package runtimed
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,12 +14,14 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/artifact"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
 )
 
@@ -91,14 +96,20 @@ func TestPrepareSource_InlineDefaultEntrypoint(t *testing.T) {
 }
 
 func TestReadOutputs_Empty(t *testing.T) {
-	outputs := readOutputs("")
+	outputs, err := readOutputs("")
+	if err != nil {
+		t.Fatalf("readOutputs: %v", err)
+	}
 	if outputs != nil {
 		t.Error("expected nil for empty workingDir")
 	}
 }
 
 func TestReadOutputs_Nonexistent(t *testing.T) {
-	outputs := readOutputs("/nonexistent/path")
+	outputs, err := readOutputs(filepath.Join(t.TempDir(), "missing"))
+	if err != nil {
+		t.Fatalf("readOutputs: %v", err)
+	}
 	if outputs != nil {
 		t.Error("expected nil for nonexistent file")
 	}
@@ -107,9 +118,13 @@ func TestReadOutputs_Nonexistent(t *testing.T) {
 func TestReadOutputs_Valid(t *testing.T) {
 	dir := t.TempDir()
 	content := "key1=val1\nkey2=val2\n# comment\nkey3 = val3\n"
-	_ = os.WriteFile(filepath.Join(dir, "outputs"), []byte(content), 0o644)
+	path := filepath.Join(dir, "outputs")
+	_ = os.WriteFile(path, []byte(content), 0o644)
 
-	outputs := readOutputs(dir)
+	outputs, err := readOutputs(path)
+	if err != nil {
+		t.Fatalf("readOutputs: %v", err)
+	}
 	if len(outputs) != 3 {
 		t.Fatalf("expected 3 outputs, got %d: %v", len(outputs), outputs)
 	}
@@ -124,16 +139,92 @@ func TestReadOutputs_Valid(t *testing.T) {
 	}
 }
 
-func TestReadOutputs_SkipsMalformed(t *testing.T) {
+func TestReadOutputs_RejectsMalformed(t *testing.T) {
 	dir := t.TempDir()
-	content := "no_equal_sign\n=empty_key\nb=\n  \n"
-	_ = os.WriteFile(filepath.Join(dir, "outputs"), []byte(content), 0o644)
+	path := filepath.Join(dir, "outputs")
+	_ = os.WriteFile(path, []byte("no_equal_sign\n"), 0o644)
 
-	outputs := readOutputs(dir)
-	// "no_equal_sign" has no "=", skipped. "=empty_key" yields key="" value="empty_key".
-	// "b=" yields key="b" value="". Whitespace-only lines are skipped.
-	if _, ok := outputs["b"]; !ok {
-		t.Errorf("expected key 'b', got %v", outputs)
+	if _, err := readOutputs(path); err == nil || isOutputsTooLarge(err) {
+		t.Fatalf("readOutputs error = %v, want invalid outputs error", err)
+	}
+}
+
+func TestReadOutputs_DuplicateKeyLastWins(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "outputs")
+	_ = os.WriteFile(path, []byte("version=v1\nversion=v2\n"), 0o644)
+
+	outputs, err := readOutputs(path)
+	if err != nil {
+		t.Fatalf("readOutputs: %v", err)
+	}
+	if got := outputs["version"]; got != "v2" {
+		t.Fatalf("version = %q, want v2", got)
+	}
+}
+
+func TestReadOutputs_Limits(t *testing.T) {
+	tests := []struct {
+		name    string
+		content []byte
+	}{
+		{
+			name:    "invalid utf8",
+			content: []byte{'k', '=', 0xff, '\n'},
+		},
+		{
+			name:    "key too large",
+			content: []byte(strings.Repeat("k", artifact.MaxOutputKeyBytes+1) + "=v\n"),
+		},
+		{
+			name:    "value too large",
+			content: []byte("k=" + strings.Repeat("v", artifact.MaxOutputValueBytes+1) + "\n"),
+		},
+		{
+			name: "too many keys",
+			content: []byte(func() string {
+				var b strings.Builder
+				for i := 0; i <= artifact.MaxOutputKeys; i++ {
+					b.WriteString("key")
+					b.WriteString(strings.Repeat("x", i))
+					b.WriteString("=v\n")
+				}
+				return b.String()
+			}()),
+		},
+		{
+			name: "total too large",
+			content: []byte(func() string {
+				var b strings.Builder
+				for i := 0; i < 9; i++ {
+					b.WriteString("key")
+					b.WriteByte(byte('a' + i))
+					b.WriteByte('=')
+					b.WriteString(strings.Repeat("v", artifact.MaxOutputValueBytes))
+					b.WriteByte('\n')
+				}
+				return b.String()
+			}()),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "outputs")
+			if err := os.WriteFile(path, tt.content, 0o644); err != nil {
+				t.Fatalf("write outputs: %v", err)
+			}
+			_, err := readOutputs(path)
+			if err == nil {
+				t.Fatal("readOutputs succeeded, want error")
+			}
+			if tt.name == "invalid utf8" {
+				if isOutputsTooLarge(err) {
+					t.Fatalf("error = %v, want invalid outputs", err)
+				}
+			} else if !isOutputsTooLarge(err) {
+				t.Fatalf("error = %v, want outputs too large", err)
+			}
+		})
 	}
 }
 
@@ -319,8 +410,176 @@ func TestReconcileRunningRecoversMissingActiveRun(t *testing.T) {
 	if updated.Status.Phase != v1alpha1.RunSucceeded {
 		t.Fatalf("phase = %s, want Succeeded", updated.Status.Phase)
 	}
-	if updated.Status.Message != "done" {
-		t.Fatalf("message = %q, want done", updated.Status.Message)
+	if updated.Status.Message != "execution completed" {
+		t.Fatalf("message = %q, want execution completed", updated.Status.Message)
+	}
+}
+
+func TestApplySuccessRejectsInvalidOutputsWithoutRetry(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	workDir := t.TempDir()
+	if err := os.WriteFile(outputsPath(workDir), []byte("invalid\n"), 0o644); err != nil {
+		t.Fatalf("write outputs: %v", err)
+	}
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-outputs", Namespace: "default", UID: "invalid-outputs-uid"},
+		Spec: v1alpha1.RunSpec{
+			Runtime:     "bash",
+			RetryPolicy: &v1alpha1.RetryPolicy{MaxAttempts: 3},
+		},
+		Status: v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "pod-a"},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run).
+		Build()
+	c := &Controller{Client: k8sClient, Hostname: "pod-a"}
+	ar := &activeRun{run: run, workDir: workDir, start: time.Now()}
+	c.activeRuns.Store(string(run.UID), ar)
+
+	if _, err := c.applySuccess(t.Context(), ar, &pb.StatusResponse{Stdout: "done"}); err != nil {
+		t.Fatalf("applySuccess: %v", err)
+	}
+
+	var updated v1alpha1.Run
+	if err := k8sClient.Get(t.Context(), types.NamespacedName{Name: run.Name, Namespace: run.Namespace}, &updated); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.RunFailed {
+		t.Fatalf("phase = %s, want Failed", updated.Status.Phase)
+	}
+	if updated.Status.Attempt != 1 {
+		t.Fatalf("attempt = %d, want 1", updated.Status.Attempt)
+	}
+	completed := meta.FindStatusCondition(updated.Status.Conditions, "Completed")
+	if completed == nil || completed.Reason != reasonOutputsInvalid {
+		t.Fatalf("Completed condition = %#v, want reason %s", completed, reasonOutputsInvalid)
+	}
+	if c.activeRunCount() != 0 {
+		t.Fatalf("active runs = %d, want 0", c.activeRunCount())
+	}
+}
+
+func TestApplySuccessEmitsStructuredOutputAfterStatusUpdate(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "logged", Namespace: "team-a", UID: "logged-uid"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "pod-a"},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run).
+		Build()
+	var output bytes.Buffer
+	c := &Controller{Client: k8sClient, Hostname: "pod-a", ExecutionLogWriter: &output}
+	ar := &activeRun{run: run, workDir: t.TempDir(), start: time.Now()}
+	largeStdout := "stdout-secret-" + strings.Repeat("x", maxStatusMessageBytes*2)
+
+	if _, err := c.applySuccess(t.Context(), ar, &pb.StatusResponse{
+		Stdout: largeStdout + "\nworld\n",
+		Stderr: "warning\n",
+	}); err != nil {
+		t.Fatalf("applySuccess: %v", err)
+	}
+
+	var updated v1alpha1.Run
+	if err := k8sClient.Get(t.Context(), types.NamespacedName{Name: run.Name, Namespace: run.Namespace}, &updated); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if updated.Status.Message != "execution completed" || strings.Contains(updated.Status.Message, "stdout-secret") {
+		t.Fatalf("status message contains stdout: %q", updated.Status.Message)
+	}
+
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("log lines = %d, want 3: %q", len(lines), output.String())
+	}
+	for i, line := range lines {
+		var entry executionLogLine
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("unmarshal line %d: %v", i, err)
+		}
+		if entry.RunUID != "logged-uid" || entry.RunName != "logged" || entry.Namespace != "team-a" ||
+			entry.Runtime != "bash" || entry.Pod != "pod-a" {
+			t.Fatalf("unexpected metadata on line %d: %#v", i, entry)
+		}
+	}
+}
+
+func TestApplyFailureBoundsStatusMessageAndLogsFullStderr(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "failed", Namespace: "team-a", UID: "failed-uid"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "pod-a"},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run).
+		Build()
+	var output bytes.Buffer
+	c := &Controller{Client: k8sClient, Hostname: "pod-a", ExecutionLogWriter: &output}
+	ar := &activeRun{run: run, workDir: t.TempDir(), start: time.Now()}
+	stderr := strings.Repeat("early-", 400) + "useful-tail"
+	resp := &pb.StatusResponse{Stderr: stderr}
+
+	if _, err := c.applyFailureWithOutput(
+		t.Context(),
+		ar,
+		runretry.ReasonRuntimeError,
+		summarizeRuntimeFailure(resp),
+		outputFromStatus(resp),
+	); err != nil {
+		t.Fatalf("applyFailureWithOutput: %v", err)
+	}
+
+	var updated v1alpha1.Run
+	if err := k8sClient.Get(t.Context(), types.NamespacedName{Name: run.Name, Namespace: run.Namespace}, &updated); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if len(updated.Status.Message) > maxStatusMessageBytes {
+		t.Fatalf("status message is %d bytes, want <= %d", len(updated.Status.Message), maxStatusMessageBytes)
+	}
+	if !strings.HasPrefix(updated.Status.Message, "runtime stderr: ... ") ||
+		!strings.HasSuffix(updated.Status.Message, "useful-tail") {
+		t.Fatalf("status message does not contain bounded stderr tail: %q", updated.Status.Message)
+	}
+	if strings.Contains(updated.Status.Message, strings.Repeat("early-", 200)) {
+		t.Fatal("status message contains unbounded stderr")
+	}
+	if !strings.Contains(output.String(), stderr) {
+		t.Fatal("structured log does not contain full stderr")
+	}
+}
+
+func TestSummarizeRuntimeFailureCapsErrorMessage(t *testing.T) {
+	message := "runtime-error-" + strings.Repeat("x", maxStatusMessageBytes*2)
+	got := summarizeRuntimeFailure(&pb.StatusResponse{
+		ErrorMessage: message,
+		Stderr:       strings.Repeat("stderr", maxStatusMessageBytes),
+	})
+	if len(got) > maxStatusMessageBytes {
+		t.Fatalf("message is %d bytes, want <= %d", len(got), maxStatusMessageBytes)
+	}
+	if !strings.HasPrefix(got, "runtime-error-") || !strings.HasSuffix(got, "...") {
+		t.Fatalf("unexpected bounded error message: %q", got)
+	}
+	if strings.Contains(got, "stderr") {
+		t.Fatalf("error message unexpectedly contains stderr: %q", got)
 	}
 }
 
@@ -440,6 +699,9 @@ func TestStartExecutionWaitsForRuntimeReady(t *testing.T) {
 	if runtimeClient.executeOptions == 0 {
 		t.Fatal("expected Execute to wait for the runtime connection to become ready")
 	}
+	if got := runtimeClient.executeRequest.Env[artifact.OutputsEnv]; got != outputsPath(ar.workDir) {
+		t.Fatalf("%s = %q, want %q", artifact.OutputsEnv, got, outputsPath(ar.workDir))
+	}
 }
 
 type fakeRuntimeClient struct {
@@ -449,10 +711,12 @@ type fakeRuntimeClient struct {
 	list           *pb.ListResponse
 	listErr        error
 	executeOptions int
+	executeRequest *pb.ExecuteRequest
 }
 
-func (f *fakeRuntimeClient) Execute(_ context.Context, _ *pb.ExecuteRequest, opts ...grpc.CallOption) (*pb.ExecuteResponse, error) {
+func (f *fakeRuntimeClient) Execute(_ context.Context, req *pb.ExecuteRequest, opts ...grpc.CallOption) (*pb.ExecuteResponse, error) {
 	f.executeOptions = len(opts)
+	f.executeRequest = req
 	return &pb.ExecuteResponse{}, nil
 }
 
