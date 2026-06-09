@@ -64,6 +64,10 @@ test-integration: generate manifests setup-envtest ## Run integration tests (req
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" \
 	go test ./test/integration/... -v -count=1 -failfast
 
+.PHONY: test-s3-integration
+test-s3-integration: ## Run S3 ArtifactStore integration tests against MinIO.
+	CONTAINER_TOOL=$(CONTAINER_TOOL) ./hack/test-s3-integration.sh
+
 ##@ E2E
 
 KIND_CLUSTER_NAME ?= kruntimes-e2e
