@@ -223,29 +223,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			},
 		},
 	}
-	var podSecurityContext *corev1.PodSecurityContext
-	if store := rt.Spec.ArtifactStore; store != nil && store.Driver == v1alpha1.ArtifactDriverFilesystem && store.Filesystem != nil {
-		daemonContainer.Args = append(daemonContainer.Args,
-			fmt.Sprintf("--artifact-store-root=%s", artifactStorePath),
-			fmt.Sprintf("--artifact-volume-claim=%s", store.Filesystem.VolumeClaimName),
-		)
-		daemonContainer.VolumeMounts = append(daemonContainer.VolumeMounts, corev1.VolumeMount{
-			Name:      artifactStoreVolume,
-			MountPath: artifactStorePath,
-		})
-		volumes = append(volumes, corev1.Volume{
-			Name: artifactStoreVolume,
-			VolumeSource: corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: store.Filesystem.VolumeClaimName,
-				},
-			},
-		})
-		podSecurityContext = &corev1.PodSecurityContext{
-			FSGroup:             ptr[int64](65532),
-			FSGroupChangePolicy: ptr(corev1.FSGroupChangeOnRootMismatch),
-		}
-	}
+	podSecurityContext := configureArtifactStore(rt.Spec.ArtifactStore, &daemonContainer, &volumes)
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -266,6 +244,78 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 				},
 			},
 		},
+	}
+}
+
+func configureArtifactStore(store *v1alpha1.RuntimeArtifactStoreSpec, daemon *corev1.Container, volumes *[]corev1.Volume) *corev1.PodSecurityContext {
+	if store == nil {
+		return nil
+	}
+
+	switch store.Driver {
+	case v1alpha1.ArtifactDriverFilesystem:
+		if store.Filesystem == nil {
+			return nil
+		}
+		daemon.Args = append(daemon.Args,
+			fmt.Sprintf("--artifact-store-root=%s", artifactStorePath),
+			fmt.Sprintf("--artifact-volume-claim=%s", store.Filesystem.VolumeClaimName),
+		)
+		daemon.VolumeMounts = append(daemon.VolumeMounts, corev1.VolumeMount{
+			Name:      artifactStoreVolume,
+			MountPath: artifactStorePath,
+		})
+		*volumes = append(*volumes, corev1.Volume{
+			Name: artifactStoreVolume,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: store.Filesystem.VolumeClaimName,
+				},
+			},
+		})
+		return &corev1.PodSecurityContext{
+			FSGroup:             ptr[int64](65532),
+			FSGroupChangePolicy: ptr(corev1.FSGroupChangeOnRootMismatch),
+		}
+	case v1alpha1.ArtifactDriverS3:
+		if store.S3 == nil {
+			return nil
+		}
+		configureS3ArtifactStore(store.S3, daemon)
+	}
+
+	return nil
+}
+
+func configureS3ArtifactStore(store *v1alpha1.S3ArtifactStoreSpec, daemon *corev1.Container) {
+	daemon.Args = append(daemon.Args,
+		"--artifact-store-driver=s3",
+		fmt.Sprintf("--artifact-s3-bucket=%s", store.Bucket),
+	)
+	if store.Prefix != "" {
+		daemon.Args = append(daemon.Args, fmt.Sprintf("--artifact-s3-prefix=%s", store.Prefix))
+	}
+	if store.Region != "" {
+		daemon.Args = append(daemon.Args, fmt.Sprintf("--artifact-s3-region=%s", store.Region))
+	}
+	if store.Endpoint != "" {
+		daemon.Args = append(daemon.Args, fmt.Sprintf("--artifact-s3-endpoint=%s", store.Endpoint))
+	}
+	if store.ForcePathStyle {
+		daemon.Args = append(daemon.Args, "--artifact-s3-force-path-style=true")
+	}
+	if store.UploadPartSize > 0 {
+		daemon.Args = append(daemon.Args, fmt.Sprintf("--artifact-s3-upload-part-size=%d", store.UploadPartSize))
+	}
+	if store.UploadConcurrency > 0 {
+		daemon.Args = append(daemon.Args, fmt.Sprintf("--artifact-s3-upload-concurrency=%d", store.UploadConcurrency))
+	}
+	if store.CredentialsSecretName != "" {
+		daemon.EnvFrom = append(daemon.EnvFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: store.CredentialsSecretName},
+			},
+		})
 	}
 }
 

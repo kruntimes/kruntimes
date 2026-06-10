@@ -52,6 +52,7 @@ func main() {
 	root.AddCommand(krt.NewListCmd(c))
 	root.AddCommand(krt.NewLogsCmd(c))
 	root.AddCommand(krt.NewCancelCmd(c))
+	root.AddCommand(krt.NewArtifactCmd(c))
 	root.AddCommand(runtimeCmd)
 	root.AddCommand(workflowCmd)
 
