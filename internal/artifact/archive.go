@@ -38,7 +38,8 @@ func ArchiveDirectory(ctx context.Context, source string) (*TemporaryArchive, er
 		return nil, fmt.Errorf("source is not a directory")
 	}
 
-	file, err := os.CreateTemp("", "kruntime-artifact-*.tar.gz")
+	archiveDir := filepath.Dir(source)
+	file, err := os.CreateTemp(archiveDir, ".kruntime-artifact-*.tar.gz")
 	if err != nil {
 		return nil, fmt.Errorf("create directory archive: %w", err)
 	}

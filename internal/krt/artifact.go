@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	artifactv1 "github.com/kruntimes/kruntimes/api/artifact/v1"
@@ -40,8 +41,7 @@ type artifactDownloader func(
 	localPort int,
 ) (*artifactv1.ArtifactMetadata, error)
 
-func NewArtifactCmd(k8sClient client.Client) *cobra.Command {
-	forwarder := kubectlPortForwarder{}
+func NewArtifactCmd(k8sClient client.Client, restConfig *rest.Config) *cobra.Command {
 	return newArtifactCmd(k8sClient, func(
 		ctx context.Context,
 		podName string,
@@ -49,15 +49,7 @@ func NewArtifactCmd(k8sClient client.Client) *cobra.Command {
 		artifactName, outputPath string,
 		localPort int,
 	) (*artifactv1.ArtifactMetadata, error) {
-		return downloadArtifact(
-			ctx,
-			forwarder,
-			podName,
-			run,
-			artifactName,
-			outputPath,
-			localPort,
-		)
+		return DownloadArtifact(ctx, k8sClient, restConfig, run.Namespace, run.Name, artifactName, outputPath, localPort)
 	})
 }
 
@@ -247,6 +239,28 @@ func downloadArtifact(
 		artifactName,
 		outputPath,
 	)
+}
+
+func DownloadArtifact(
+	ctx context.Context,
+	k8sClient client.Client,
+	restConfig *rest.Config,
+	namespace, runName, artifactName, outputPath string,
+	localPort int,
+) (*artifactv1.ArtifactMetadata, error) {
+	run, err := getRun(ctx, k8sClient, namespace, runName)
+	if err != nil {
+		return nil, err
+	}
+	pod, err := selectRuntimePod(ctx, k8sClient, run)
+	if err != nil {
+		return nil, err
+	}
+	forwarder, err := newPortForwarder(restConfig)
+	if err != nil {
+		return nil, err
+	}
+	return downloadArtifact(ctx, forwarder, pod.Name, run, artifactName, outputPath, localPort)
 }
 
 func receiveArtifact(

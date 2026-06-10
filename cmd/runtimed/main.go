@@ -131,7 +131,7 @@ func main() {
 
 	// Start status proxy for krt logs.
 	go func() {
-		if err := runtimed.StartStatusProxy(
+		if err := runtimed.StartRuntimeServices(
 			ctx,
 			runtimeEndpoint,
 			statusAddr,

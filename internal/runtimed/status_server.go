@@ -13,11 +13,11 @@ import (
 	"github.com/kruntimes/kruntimes/internal/artifact"
 )
 
-// StartStatusProxy starts a gRPC server on addr that forwards to the runtime
-// server on runtimeEndpoint (typically localhost:9091). It only serves runs
-// executing on this pod; krt logs is responsible for port-forwarding to the
-// correct pod.
-func StartStatusProxy(
+// StartRuntimeServices starts the gRPC services exposed by runtimed on addr.
+// It proxies runtime status calls to runtimeEndpoint (typically localhost:9091)
+// and, when configured, also serves artifact download requests for runs
+// executing on this pod.
+func StartRuntimeServices(
 	ctx context.Context,
 	runtimeEndpoint, addr string,
 	reader client.Reader,
@@ -48,7 +48,7 @@ func StartStatusProxy(
 	if err != nil {
 		return err
 	}
-	klog.Infof("Status proxy listening on %s", addr)
+	klog.Infof("Runtime services listening on %s", addr)
 	return srv.Serve(lis)
 }
 
