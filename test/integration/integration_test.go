@@ -8,10 +8,12 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/config"
@@ -344,7 +346,7 @@ func TestRunArtifactRefValidation(t *testing.T) {
 		t.Fatalf("create run: %v", err)
 	}
 
-	run.Status.ArtifactRefs = []v1alpha1.ArtifactRef{
+	artifactRefs := []v1alpha1.ArtifactRef{
 		{
 			Name:   "report",
 			Driver: v1alpha1.ArtifactDriverFilesystem,
@@ -358,16 +360,25 @@ func TestRunArtifactRefValidation(t *testing.T) {
 			CreatedAt: metav1.Now(),
 		},
 	}
-	run.Status.Phase = v1alpha1.RunPending
-	if err := k8sClient.Status().Update(ctx, run); err != nil {
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			return err
+		}
+		run.Status.ArtifactRefs = artifactRefs
+		run.Status.Phase = v1alpha1.RunPending
+		return k8sClient.Status().Update(ctx, run)
+	}); err != nil {
 		t.Fatalf("update valid artifact ref: %v", err)
 	}
 
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+		t.Fatalf("get run before invalid update: %v", err)
+	}
 	run.Status.ArtifactRefs[0].Location.S3 = &v1alpha1.S3ArtifactLocation{
 		Bucket: "artifacts",
 		Key:    "report",
 	}
-	if err := k8sClient.Status().Update(ctx, run); err == nil {
-		t.Fatal("expected invalid mixed artifact locations to be rejected")
+	if err := k8sClient.Status().Update(ctx, run); !apierrors.IsInvalid(err) {
+		t.Fatalf("invalid mixed artifact locations error = %v, want Invalid", err)
 	}
 }

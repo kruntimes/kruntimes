@@ -27,6 +27,8 @@ const (
 	runtimedDefaultImage = "kruntimes-runtimed:latest"
 	workspaceVolume      = "workspace"
 	workspacePath        = "/workspace"
+	artifactStoreVolume  = "artifact-store"
+	artifactStorePath    = "/var/lib/kruntimes/artifacts"
 )
 
 // RuntimeReconciler watches Runtime CRs and creates Deployments with runtimed sidecar.
@@ -213,6 +215,38 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--workers=%d", runsCapacity))
 	}
 
+	volumes := []corev1.Volume{
+		{
+			Name: workspaceVolume,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	}
+	var podSecurityContext *corev1.PodSecurityContext
+	if store := rt.Spec.ArtifactStore; store != nil && store.Driver == v1alpha1.ArtifactDriverFilesystem && store.Filesystem != nil {
+		daemonContainer.Args = append(daemonContainer.Args,
+			fmt.Sprintf("--artifact-store-root=%s", artifactStorePath),
+			fmt.Sprintf("--artifact-volume-claim=%s", store.Filesystem.VolumeClaimName),
+		)
+		daemonContainer.VolumeMounts = append(daemonContainer.VolumeMounts, corev1.VolumeMount{
+			Name:      artifactStoreVolume,
+			MountPath: artifactStorePath,
+		})
+		volumes = append(volumes, corev1.Volume{
+			Name: artifactStoreVolume,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: store.Filesystem.VolumeClaimName,
+				},
+			},
+		})
+		podSecurityContext = &corev1.PodSecurityContext{
+			FSGroup:             ptr[int64](65532),
+			FSGroupChangePolicy: ptr(corev1.FSGroupChangeOnRootMismatch),
+		}
+	}
+
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "runtime-" + name,
@@ -226,15 +260,9 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "kruntimes-runtimed",
+					SecurityContext:    podSecurityContext,
 					Containers:         []corev1.Container{runtimeContainer, daemonContainer},
-					Volumes: []corev1.Volume{
-						{
-							Name: workspaceVolume,
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-					},
+					Volumes:            volumes,
 				},
 			},
 		},

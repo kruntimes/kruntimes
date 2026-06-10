@@ -58,6 +58,31 @@ type RuntimeSpec struct {
 	// Capacity declares the per-pod capacity for this runtime.
 	// +optional
 	Capacity *RuntimeCapacity `json:"capacity,omitempty"`
+
+	// ArtifactStore configures durable artifact storage for Runs executed by this Runtime.
+	// +optional
+	ArtifactStore *RuntimeArtifactStoreSpec `json:"artifactStore,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// RuntimeArtifactStoreSpec configures the artifact store available to runtimed.
+// +kubebuilder:validation:XValidation:rule="self.driver == 'filesystem' && has(self.filesystem)",message="filesystem driver requires filesystem configuration"
+type RuntimeArtifactStoreSpec struct {
+	// Driver identifies the configured artifact storage backend.
+	// +kubebuilder:validation:Enum=filesystem
+	Driver ArtifactDriver `json:"driver"`
+
+	// Filesystem configures a PVC-backed filesystem artifact store.
+	// +optional
+	Filesystem *FilesystemArtifactStoreSpec `json:"filesystem,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// FilesystemArtifactStoreSpec configures a PVC-backed artifact store.
+type FilesystemArtifactStoreSpec struct {
+	// VolumeClaimName is the PVC mounted into runtimed for durable artifact storage.
+	// +kubebuilder:validation:MinLength=1
+	VolumeClaimName string `json:"volumeClaimName"`
 }
 
 // +kubebuilder:object:generate=true

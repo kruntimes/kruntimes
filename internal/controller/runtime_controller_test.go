@@ -43,3 +43,53 @@ func TestBuildDeploymentAddsCapacityAnnotationsAndWorkers(t *testing.T) {
 		t.Fatalf("daemon args = %v, want IPv4 loopback runtime endpoint", daemon.Args)
 	}
 }
+
+func TestBuildDeploymentMountsFilesystemArtifactStoreOnlyIntoRuntimed(t *testing.T) {
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
+		Spec: v1alpha1.RuntimeSpec{
+			Image: "bash-runtime:latest",
+			ArtifactStore: &v1alpha1.RuntimeArtifactStoreSpec{
+				Driver: v1alpha1.ArtifactDriverFilesystem,
+				Filesystem: &v1alpha1.FilesystemArtifactStoreSpec{
+					VolumeClaimName: "runtime-artifacts",
+				},
+			},
+		},
+	}
+
+	deploy := (&RuntimeReconciler{}).buildDeployment(rt)
+	podSpec := deploy.Spec.Template.Spec
+	if podSpec.SecurityContext == nil || podSpec.SecurityContext.FSGroup == nil || *podSpec.SecurityContext.FSGroup != 65532 {
+		t.Fatalf("pod fsGroup = %v, want 65532", podSpec.SecurityContext)
+	}
+	if len(podSpec.Volumes) != 2 {
+		t.Fatalf("volumes = %v, want workspace and artifact-store", podSpec.Volumes)
+	}
+	artifactVolume := podSpec.Volumes[1]
+	if artifactVolume.Name != artifactStoreVolume ||
+		artifactVolume.PersistentVolumeClaim == nil ||
+		artifactVolume.PersistentVolumeClaim.ClaimName != "runtime-artifacts" {
+		t.Fatalf("artifact volume = %#v", artifactVolume)
+	}
+
+	runtimeContainer := podSpec.Containers[0]
+	if slices.ContainsFunc(runtimeContainer.VolumeMounts, func(m corev1.VolumeMount) bool {
+		return m.Name == artifactStoreVolume
+	}) {
+		t.Fatal("runtime container must not mount the artifact PVC")
+	}
+
+	daemon := podSpec.Containers[1]
+	if !slices.Contains(daemon.Args, "--artifact-store-root="+artifactStorePath) {
+		t.Fatalf("daemon args = %v, missing artifact store root", daemon.Args)
+	}
+	if !slices.Contains(daemon.Args, "--artifact-volume-claim=runtime-artifacts") {
+		t.Fatalf("daemon args = %v, missing artifact PVC name", daemon.Args)
+	}
+	if !slices.ContainsFunc(daemon.VolumeMounts, func(m corev1.VolumeMount) bool {
+		return m.Name == artifactStoreVolume && m.MountPath == artifactStorePath
+	}) {
+		t.Fatalf("daemon mounts = %v, missing artifact store", daemon.VolumeMounts)
+	}
+}

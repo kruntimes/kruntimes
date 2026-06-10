@@ -135,6 +135,74 @@ func ensureRuntimeWithRunsCapacity(t *testing.T, name, image string, port int32,
 	}
 }
 
+func ensureFilesystemRuntime(t *testing.T, name, claimName string) {
+	t.Helper()
+	claim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: claimName, Namespace: testNamespace},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse("1Gi"),
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), claim); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("create artifact PVC: %v", err)
+	}
+
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
+		Spec: v1alpha1.RuntimeSpec{
+			Image:    bashRuntimeImage(),
+			Port:     9091,
+			Replicas: 1,
+			Command:  []string{"--port=9091", "--work-dir=/workspace"},
+			ArtifactStore: &v1alpha1.RuntimeArtifactStoreSpec{
+				Driver: v1alpha1.ArtifactDriverFilesystem,
+				Filesystem: &v1alpha1.FilesystemArtifactStoreSpec{
+					VolumeClaimName: claimName,
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), rt); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			t.Fatalf("create filesystem runtime: %v", err)
+		}
+		existing := &v1alpha1.Runtime{}
+		if getErr := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(rt), existing); getErr != nil {
+			t.Fatalf("get filesystem runtime: %v", getErr)
+		}
+		existing.Spec = rt.Spec
+		if updateErr := k8sClient.Update(context.Background(), existing); updateErr != nil {
+			t.Fatalf("update filesystem runtime: %v", updateErr)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	for {
+		var pods corev1.PodList
+		if err := k8sClient.List(ctx, &pods,
+			client.InNamespace(testNamespace),
+			client.MatchingLabels{"runtime": name},
+		); err == nil {
+			for _, pod := range pods.Items {
+				if isRuntimePodReady(&pod, bashRuntimeImage(), runtimedImage(), 0) {
+					return
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for filesystem runtime pod")
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
 func isRuntimePodReady(pod *corev1.Pod, runtimeImage, daemonImage string, runsCapacity int32) bool {
 	if pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil {
 		return false
@@ -355,6 +423,58 @@ func TestFullRunLifecycle(t *testing.T) {
 		t.Fatalf("success message contains stdout: %q", run.Status.Message)
 	}
 	t.Logf("Run completed successfully: %s", run.Status.Message)
+}
+
+func TestFilesystemArtifacts(t *testing.T) {
+	runtimeName := "bash-filesystem-artifacts"
+	claimName := "e2e-filesystem-artifacts"
+	ensureFilesystemRuntime(t, runtimeName, claimName)
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-artifacts-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Args: []string{
+				`mkdir -p "$KRUNTIME_ARTIFACTS_DIR/bundle"; printf report > "$KRUNTIME_ARTIFACTS_DIR/report.txt"; printf nested > "$KRUNTIME_ARTIFACTS_DIR/bundle/data.txt"`,
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create artifact run: %v", err)
+	}
+	waitForRun(t, run, 30*time.Second)
+
+	if len(run.Status.ArtifactRefs) != 2 {
+		t.Fatalf("artifact refs = %#v, want 2", run.Status.ArtifactRefs)
+	}
+	var report *v1alpha1.ArtifactRef
+	for i := range run.Status.ArtifactRefs {
+		ref := &run.Status.ArtifactRefs[i]
+		if ref.Driver != v1alpha1.ArtifactDriverFilesystem ||
+			ref.Location.Filesystem == nil ||
+			ref.Location.Filesystem.VolumeClaimName != claimName {
+			t.Fatalf("invalid filesystem artifact ref: %#v", ref)
+		}
+		if ref.Name == "report.txt" {
+			report = ref
+		}
+	}
+	if report == nil || report.SizeBytes != int64(len("report")) || !strings.HasPrefix(report.Digest, "sha256:") {
+		t.Fatalf("report ref = %#v", report)
+	}
+
+	cmd := exec.Command("kubectl", "exec", "-n", testNamespace, run.Status.AssignedPod, "-c", "runtimed", "--",
+		"cat", "/var/lib/kruntimes/artifacts/"+report.Location.Filesystem.Path)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("read persisted artifact: %v: %s", err, output)
+	}
+	if string(output) != "report" {
+		t.Fatalf("persisted artifact = %q, want report", output)
+	}
 }
 
 func TestRunTimeout(t *testing.T) {
