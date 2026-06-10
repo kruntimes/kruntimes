@@ -29,7 +29,7 @@ func TestArtifactServerDownload(t *testing.T) {
 		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
 		Status:     v1alpha1.RunStatus{ArtifactRefs: []v1alpha1.ArtifactRef{ref}},
 	}
-	client := newArtifactTestClient(t, run, &artifactReadStore{content: payload}, "bash")
+	client := newArtifactTestClient(t, run, &artifactReadStore{content: payload}, "team-a", "bash")
 
 	stream, err := client.Download(t.Context(), &artifactv1.DownloadRequest{
 		Namespace: "team-a", RunName: "run-1", ArtifactName: "report.txt",
@@ -86,10 +86,32 @@ func TestArtifactServerRejectsRuntimeMismatch(t *testing.T) {
 			ArtifactRefs: []v1alpha1.ArtifactRef{testArtifactRef("result", 1)},
 		},
 	}
-	client := newArtifactTestClient(t, run, &artifactReadStore{content: []byte("x")}, "bash")
+	client := newArtifactTestClient(t, run, &artifactReadStore{content: []byte("x")}, "team-a", "bash")
 
 	stream, err := client.Download(t.Context(), &artifactv1.DownloadRequest{
 		Namespace: "team-a", RunName: "run-1", ArtifactName: "result",
+	})
+	if err != nil {
+		t.Fatalf("Download() setup error = %v", err)
+	}
+	_, err = stream.Recv()
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("Recv() code = %v, want %v; error = %v", status.Code(err), codes.PermissionDenied, err)
+	}
+}
+
+func TestArtifactServerRejectsNamespaceMismatch(t *testing.T) {
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "run-1", Namespace: "other-team"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status: v1alpha1.RunStatus{
+			ArtifactRefs: []v1alpha1.ArtifactRef{testArtifactRef("result", 1)},
+		},
+	}
+	client := newArtifactTestClient(t, run, &artifactReadStore{content: []byte("x")}, "team-a", "bash")
+
+	stream, err := client.Download(t.Context(), &artifactv1.DownloadRequest{
+		Namespace: "other-team", RunName: "run-1", ArtifactName: "result",
 	})
 	if err != nil {
 		t.Fatalf("Download() setup error = %v", err)
@@ -106,7 +128,7 @@ func TestArtifactServerDoesNotOpenUnknownArtifact(t *testing.T) {
 		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
 	}
 	store := &artifactReadStore{content: []byte("secret")}
-	client := newArtifactTestClient(t, run, store, "bash")
+	client := newArtifactTestClient(t, run, store, "team-a", "bash")
 
 	stream, err := client.Download(t.Context(), &artifactv1.DownloadRequest{
 		Namespace: "team-a", RunName: "run-1", ArtifactName: "missing",
@@ -127,6 +149,7 @@ func newArtifactTestClient(
 	t *testing.T,
 	run *v1alpha1.Run,
 	store artifact.Store,
+	namespace,
 	runtimeName string,
 ) artifactv1.ArtifactServiceClient {
 	t.Helper()
@@ -138,7 +161,7 @@ func newArtifactTestClient(
 
 	listener := bufconn.Listen(1024 * 1024)
 	server := grpc.NewServer()
-	RegisterArtifactService(server, k8sClient, store, runtimeName)
+	RegisterArtifactService(server, k8sClient, store, namespace, runtimeName)
 	go func() {
 		_ = server.Serve(listener)
 	}()

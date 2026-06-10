@@ -117,7 +117,8 @@ func newArtifactDownloadCmd(k8sClient client.Client, downloader artifactDownload
 			if err != nil {
 				return err
 			}
-			if _, found := findRunArtifact(run, args[1]); !found {
+			ref, found := findRunArtifact(run, args[1])
+			if !found {
 				return fmt.Errorf("artifact %q not found on Run %s/%s", args[1], run.Namespace, run.Name)
 			}
 
@@ -128,6 +129,9 @@ func newArtifactDownloadCmd(k8sClient client.Client, downloader artifactDownload
 			outputPath := output
 			if outputPath == "" {
 				outputPath = args[1]
+				if ref.Type == v1alpha1.ArtifactTypeDirectory {
+					outputPath += ".tar.gz"
+				}
 			}
 			metadata, err := downloader(
 				cmd.Context(),

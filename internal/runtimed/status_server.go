@@ -7,15 +7,24 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
+	"github.com/kruntimes/kruntimes/internal/artifact"
 )
 
 // StartStatusProxy starts a gRPC server on addr that forwards to the runtime
 // server on runtimeEndpoint (typically localhost:9091). It only serves runs
 // executing on this pod; krt logs is responsible for port-forwarding to the
 // correct pod.
-func StartStatusProxy(ctx context.Context, runtimeEndpoint, addr string) error {
+func StartStatusProxy(
+	ctx context.Context,
+	runtimeEndpoint, addr string,
+	reader client.Reader,
+	store artifact.Store,
+	runtimeNamespace,
+	runtimeName string,
+) error {
 	conn, err := grpc.NewClient(runtimeEndpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
@@ -26,6 +35,9 @@ func StartStatusProxy(ctx context.Context, runtimeEndpoint, addr string) error {
 
 	srv := grpc.NewServer()
 	pb.RegisterRuntimeServer(srv, &statusProxy{runtimeCli: pb.NewRuntimeClient(conn)})
+	if store != nil {
+		RegisterArtifactService(srv, reader, store, runtimeNamespace, runtimeName)
+	}
 
 	go func() {
 		<-ctx.Done()

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -30,6 +31,7 @@ type uploadClient interface {
 type objectClient interface {
 	GetObject(context.Context, *awss3.GetObjectInput, ...func(*awss3.Options)) (*awss3.GetObjectOutput, error)
 	DeleteObject(context.Context, *awss3.DeleteObjectInput, ...func(*awss3.Options)) (*awss3.DeleteObjectOutput, error)
+	ListObjectsV2(context.Context, *awss3.ListObjectsV2Input, ...func(*awss3.Options)) (*awss3.ListObjectsV2Output, error)
 }
 
 // Store persists artifacts in an S3-compatible object store.
@@ -67,24 +69,44 @@ func (s *Store) Put(ctx context.Context, run *v1alpha1.Run, localPath string, op
 		return v1alpha1.ArtifactRef{}, fmt.Errorf("unsupported artifact type %q", opts.Type)
 	}
 
-	file, err := os.Open(localPath)
+	uploadPath := localPath
+	contentTypeOverride := opts.ContentType
+	var archive *artifact.TemporaryArchive
+	sourceInfo, err := os.Lstat(localPath)
+	if err != nil {
+		return v1alpha1.ArtifactRef{}, fmt.Errorf("stat artifact %q: %w", localPath, err)
+	}
+	if sourceInfo.IsDir() {
+		if opts.Type != v1alpha1.ArtifactTypeDirectory {
+			return v1alpha1.ArtifactRef{}, fmt.Errorf("artifact %q type %q does not match directory source", opts.Name, opts.Type)
+		}
+		archive, err = artifact.ArchiveDirectory(ctx, localPath)
+		if err != nil {
+			return v1alpha1.ArtifactRef{}, err
+		}
+		defer archive.Close()
+		uploadPath = archive.Name()
+		contentTypeOverride = artifact.DirectoryArchiveContentType
+	} else if sourceInfo.Mode()&os.ModeSymlink != 0 || !sourceInfo.Mode().IsRegular() {
+		return v1alpha1.ArtifactRef{}, fmt.Errorf("artifact %q must be a regular file or directory", localPath)
+	}
+
+	fd, err := syscall.Open(uploadPath, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return v1alpha1.ArtifactRef{}, fmt.Errorf("open artifact %q: %w", localPath, err)
 	}
+	file := os.NewFile(uintptr(fd), uploadPath)
 	defer file.Close()
 
 	info, err := file.Stat()
 	if err != nil {
 		return v1alpha1.ArtifactRef{}, fmt.Errorf("stat artifact %q: %w", localPath, err)
 	}
-	if info.IsDir() {
-		return v1alpha1.ArtifactRef{}, fmt.Errorf("artifact %q is a directory; the s3 backend requires directories to be archived before upload", localPath)
-	}
 	if !info.Mode().IsRegular() {
 		return v1alpha1.ArtifactRef{}, fmt.Errorf("artifact %q must be a regular file", localPath)
 	}
 
-	contentType, digest, err := inspectFile(file, localPath, opts.ContentType)
+	contentType, digest, err := inspectFile(file, uploadPath, contentTypeOverride)
 	if err != nil {
 		return v1alpha1.ArtifactRef{}, fmt.Errorf("inspect artifact %q: %w", localPath, err)
 	}
@@ -136,6 +158,45 @@ func (s *Store) Put(ctx context.Context, run *v1alpha1.Run, localPath string, op
 	return ref, nil
 }
 
+// DeleteRun removes all objects stored below the Run's deterministic prefix.
+func (s *Store) DeleteRun(ctx context.Context, run *v1alpha1.Run) error {
+	if run == nil {
+		return fmt.Errorf("run is required")
+	}
+	runPrefix, err := objectKey(s.prefix, run.Namespace, run.UID, "artifact")
+	if err != nil {
+		return fmt.Errorf("build Run artifact prefix: %w", err)
+	}
+	runPrefix = strings.TrimSuffix(runPrefix, "artifact")
+
+	var continuationToken *string
+	for {
+		output, err := s.objects.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
+			Bucket:            aws.String(s.bucket),
+			Prefix:            aws.String(runPrefix),
+			ContinuationToken: continuationToken,
+		})
+		if err != nil {
+			return fmt.Errorf("list Run artifacts in s3://%s/%s: %w", s.bucket, runPrefix, err)
+		}
+		for _, object := range output.Contents {
+			if object.Key == nil {
+				continue
+			}
+			if _, err := s.objects.DeleteObject(ctx, &awss3.DeleteObjectInput{
+				Bucket: aws.String(s.bucket),
+				Key:    object.Key,
+			}); err != nil {
+				return fmt.Errorf("delete Run artifact s3://%s/%s: %w", s.bucket, aws.ToString(object.Key), err)
+			}
+		}
+		if !aws.ToBool(output.IsTruncated) || output.NextContinuationToken == nil {
+			return nil
+		}
+		continuationToken = output.NextContinuationToken
+	}
+}
+
 // Open returns a streaming reader for an artifact owned by this store.
 func (s *Store) Open(ctx context.Context, ref v1alpha1.ArtifactRef) (io.ReadCloser, error) {
 	location, err := s.validateRef(ref)
@@ -151,6 +212,8 @@ func (s *Store) Open(ctx context.Context, ref v1alpha1.ArtifactRef) (io.ReadClos
 	}
 	return output.Body, nil
 }
+
+var _ artifact.RunStore = (*Store)(nil)
 
 // Delete removes an artifact owned by this store.
 func (s *Store) Delete(ctx context.Context, ref v1alpha1.ArtifactRef) error {

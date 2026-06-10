@@ -1,7 +1,9 @@
 package s3
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -13,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -37,9 +40,13 @@ func (m *mockUploader) Upload(_ context.Context, input *awss3.PutObjectInput, _ 
 type mockObjectClient struct {
 	getInput    *awss3.GetObjectInput
 	deleteInput *awss3.DeleteObjectInput
+	listInput   *awss3.ListObjectsV2Input
 	body        string
 	getErr      error
 	deleteErr   error
+	listErr     error
+	listOutput  *awss3.ListObjectsV2Output
+	deletedKeys []string
 }
 
 func (m *mockObjectClient) GetObject(_ context.Context, input *awss3.GetObjectInput, _ ...func(*awss3.Options)) (*awss3.GetObjectOutput, error) {
@@ -52,7 +59,19 @@ func (m *mockObjectClient) GetObject(_ context.Context, input *awss3.GetObjectIn
 
 func (m *mockObjectClient) DeleteObject(_ context.Context, input *awss3.DeleteObjectInput, _ ...func(*awss3.Options)) (*awss3.DeleteObjectOutput, error) {
 	m.deleteInput = input
+	m.deletedKeys = append(m.deletedKeys, aws.ToString(input.Key))
 	return &awss3.DeleteObjectOutput{}, m.deleteErr
+}
+
+func (m *mockObjectClient) ListObjectsV2(_ context.Context, input *awss3.ListObjectsV2Input, _ ...func(*awss3.Options)) (*awss3.ListObjectsV2Output, error) {
+	m.listInput = input
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	if m.listOutput != nil {
+		return m.listOutput, nil
+	}
+	return &awss3.ListObjectsV2Output{}, nil
 }
 
 func TestConfigValidate(t *testing.T) {
@@ -178,14 +197,66 @@ func TestPutDetectsContentTypeAndRejectsInvalidInputs(t *testing.T) {
 		t.Errorf("detected content type = %q", ref.ContentType)
 	}
 
-	if _, err := store.Put(context.Background(), run, dir, artifact.PutOptions{Name: "directory", Type: v1alpha1.ArtifactTypeDirectory}); err == nil {
-		t.Error("Put() accepted a directory")
-	}
 	if _, err := store.Put(context.Background(), run, localPath, artifact.PutOptions{Name: "../bad", Type: v1alpha1.ArtifactTypeFile}); err == nil {
 		t.Error("Put() accepted an unsafe name")
 	}
 	if _, err := store.Put(context.Background(), run, localPath, artifact.PutOptions{Name: "bad-type"}); err == nil {
 		t.Error("Put() accepted an empty artifact type")
+	}
+	symlink := filepath.Join(dir, "link")
+	if err := os.Symlink(localPath, symlink); err == nil {
+		if _, err := store.Put(context.Background(), run, symlink, artifact.PutOptions{Name: "link", Type: v1alpha1.ArtifactTypeFile}); err == nil {
+			t.Error("Put() accepted a symbolic link")
+		}
+	}
+}
+
+func TestPutArchivesDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "nested"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "nested", "result.txt"), []byte("result"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	uploader := &mockUploader{}
+	store := newStore(Config{Bucket: "artifacts"}, uploader, &mockObjectClient{})
+	run := &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{Namespace: "default", UID: "uid"}}
+
+	ref, err := store.Put(t.Context(), run, dir, artifact.PutOptions{
+		Name: "bundle",
+		Type: v1alpha1.ArtifactTypeDirectory,
+	})
+	if err != nil {
+		t.Fatalf("Put() directory: %v", err)
+	}
+	if ref.Type != v1alpha1.ArtifactTypeDirectory || ref.ContentType != artifact.DirectoryArchiveContentType {
+		t.Fatalf("directory ref = %#v", ref)
+	}
+	gzipReader, err := gzip.NewReader(bytes.NewReader(uploader.body))
+	if err != nil {
+		t.Fatalf("open gzip: %v", err)
+	}
+	tarReader := tar.NewReader(gzipReader)
+	found := false
+	for {
+		header, err := tarReader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read tar: %v", err)
+		}
+		if header.Name == "nested/result.txt" {
+			content, err := io.ReadAll(tarReader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found = string(content) == "result"
+		}
+	}
+	if !found {
+		t.Fatal("directory archive missing nested/result.txt")
 	}
 }
 
@@ -252,6 +323,28 @@ func TestStorePropagatesClientErrors(t *testing.T) {
 	}
 	if err := store.Delete(context.Background(), ref); !errors.Is(err, wantErr) {
 		t.Fatalf("Delete() error = %v, want wrapped client error", err)
+	}
+}
+
+func TestDeleteRunDeletesObjectsUnderRunPrefix(t *testing.T) {
+	objects := &mockObjectClient{
+		listOutput: &awss3.ListObjectsV2Output{
+			Contents: []s3types.Object{
+				{Key: aws.String("prod/namespaces/default/runs/uid/a")},
+				{Key: aws.String("prod/namespaces/default/runs/uid/b")},
+			},
+		},
+	}
+	store := newStore(Config{Bucket: "artifacts", Prefix: "prod"}, &mockUploader{}, objects)
+	run := &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{Namespace: "default", UID: "uid"}}
+	if err := store.DeleteRun(t.Context(), run); err != nil {
+		t.Fatalf("DeleteRun: %v", err)
+	}
+	if got := aws.ToString(objects.listInput.Prefix); got != "prod/namespaces/default/runs/uid/" {
+		t.Fatalf("prefix = %q", got)
+	}
+	if len(objects.deletedKeys) != 2 {
+		t.Fatalf("deleted keys = %v", objects.deletedKeys)
 	}
 }
 

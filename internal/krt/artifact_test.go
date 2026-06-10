@@ -84,6 +84,35 @@ func TestArtifactDownloadPrefersReadyAssignedPod(t *testing.T) {
 	}
 }
 
+func TestArtifactDownloadUsesTarGzDefaultForDirectory(t *testing.T) {
+	run := artifactTestRun()
+	run.Status.ArtifactRefs[0].Name = "bundle"
+	run.Status.ArtifactRefs[0].Type = v1alpha1.ArtifactTypeDirectory
+	run.Status.AssignedPod = "runtime-a"
+	k8sClient := newKRTTestClient(t, run, readyRuntimePod("runtime-a", "team-a", "bash"))
+	var selectedPath string
+	downloader := func(
+		_ context.Context,
+		_ string,
+		_ *v1alpha1.Run,
+		_ string,
+		outputPath string,
+		_ int,
+	) (*artifactv1.ArtifactMetadata, error) {
+		selectedPath = outputPath
+		return &artifactv1.ArtifactMetadata{Name: "bundle", Type: "directory"}, nil
+	}
+	command := newArtifactCmd(k8sClient, downloader)
+	command.SetOut(&bytes.Buffer{})
+	command.SetArgs([]string{"download", "run-1", "bundle", "-n", "team-a"})
+	if err := command.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("ExecuteContext() error = %v", err)
+	}
+	if selectedPath != "bundle.tar.gz" {
+		t.Fatalf("output path = %q, want bundle.tar.gz", selectedPath)
+	}
+}
+
 func TestSelectRuntimePodFallsBackToReadyPod(t *testing.T) {
 	run := artifactTestRun()
 	run.Status.AssignedPod = "runtime-old"

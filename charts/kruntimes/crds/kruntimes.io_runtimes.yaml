@@ -83,6 +83,7 @@ spec:
                       bucket:
                         description: Bucket is the S3 bucket used to store artifacts.
                         minLength: 1
+                        pattern: ^[^/]+$
                         type: string
                       credentialsSecretName:
                         description: |-
@@ -114,7 +115,7 @@ spec:
                         description: UploadPartSize overrides the multipart upload
                           part size in bytes.
                         format: int64
-                        minimum: 1
+                        minimum: 5242880
                         type: integer
                     required:
                     - bucket

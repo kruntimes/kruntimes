@@ -43,6 +43,9 @@ func TestBuildDeploymentAddsCapacityAnnotationsAndWorkers(t *testing.T) {
 	if !slices.Contains(daemon.Args, "--runtime-endpoint=127.0.0.1:9091") {
 		t.Fatalf("daemon args = %v, want IPv4 loopback runtime endpoint", daemon.Args)
 	}
+	if !slices.Contains(daemon.Args, "--runtime-name=bash") {
+		t.Fatalf("daemon args = %v, want runtime name", daemon.Args)
+	}
 }
 
 func TestBuildDeploymentMountsFilesystemArtifactStoreOnlyIntoRuntimed(t *testing.T) {
@@ -82,6 +85,9 @@ func TestBuildDeploymentMountsFilesystemArtifactStoreOnlyIntoRuntimed(t *testing
 	}
 
 	daemon := podSpec.Containers[1]
+	if !slices.Contains(daemon.Args, "--artifact-store-driver=filesystem") {
+		t.Fatalf("daemon args = %v, missing filesystem artifact driver", daemon.Args)
+	}
 	if !slices.Contains(daemon.Args, "--artifact-store-root="+artifactStorePath) {
 		t.Fatalf("daemon args = %v, missing artifact store root", daemon.Args)
 	}

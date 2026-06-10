@@ -24,11 +24,12 @@ func RegisterArtifactService(
 	registrar grpc.ServiceRegistrar,
 	reader client.Reader,
 	store artifact.Store,
-	runtimeName string,
+	runtimeNamespace, runtimeName string,
 ) {
 	artifactv1.RegisterArtifactServiceServer(registrar, &artifactServer{
 		reader:      reader,
 		store:       store,
+		namespace:   runtimeNamespace,
 		runtimeName: runtimeName,
 	})
 }
@@ -37,6 +38,7 @@ type artifactServer struct {
 	artifactv1.UnimplementedArtifactServiceServer
 	reader      client.Reader
 	store       artifact.Store
+	namespace   string
 	runtimeName string
 }
 
@@ -47,8 +49,11 @@ func (s *artifactServer) Download(
 	if req.GetNamespace() == "" || req.GetRunName() == "" || req.GetArtifactName() == "" {
 		return status.Error(codes.InvalidArgument, "namespace, run_name, and artifact_name are required")
 	}
-	if s.reader == nil || s.store == nil || s.runtimeName == "" {
+	if s.reader == nil || s.store == nil || s.namespace == "" || s.runtimeName == "" {
 		return status.Error(codes.FailedPrecondition, "artifact service is not configured")
+	}
+	if req.GetNamespace() != s.namespace {
+		return status.Errorf(codes.PermissionDenied, "Run namespace %q is not served by this runtimed", req.GetNamespace())
 	}
 
 	run := &v1alpha1.Run{}

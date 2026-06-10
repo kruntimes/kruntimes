@@ -211,6 +211,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			},
 		},
 	}
+	daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--runtime-name=%s", name))
 	if runsCapacity > 0 {
 		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--workers=%d", runsCapacity))
 	}
@@ -258,6 +259,7 @@ func configureArtifactStore(store *v1alpha1.RuntimeArtifactStoreSpec, daemon *co
 			return nil
 		}
 		daemon.Args = append(daemon.Args,
+			"--artifact-store-driver=filesystem",
 			fmt.Sprintf("--artifact-store-root=%s", artifactStorePath),
 			fmt.Sprintf("--artifact-volume-claim=%s", store.Filesystem.VolumeClaimName),
 		)

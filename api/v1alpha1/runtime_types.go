@@ -93,6 +93,7 @@ type FilesystemArtifactStoreSpec struct {
 type S3ArtifactStoreSpec struct {
 	// Bucket is the S3 bucket used to store artifacts.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[^/]+$`
 	Bucket string `json:"bucket"`
 
 	// Prefix is prepended to generated artifact object keys.
@@ -118,7 +119,7 @@ type S3ArtifactStoreSpec struct {
 	CredentialsSecretName string `json:"credentialsSecretName,omitempty"`
 
 	// UploadPartSize overrides the multipart upload part size in bytes.
-	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Minimum=5242880
 	// +optional
 	UploadPartSize int64 `json:"uploadPartSize,omitempty"`
 

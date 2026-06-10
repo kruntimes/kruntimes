@@ -1,10 +1,14 @@
 package e2e
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -450,7 +454,7 @@ func TestFilesystemArtifacts(t *testing.T) {
 	if len(run.Status.ArtifactRefs) != 2 {
 		t.Fatalf("artifact refs = %#v, want 2", run.Status.ArtifactRefs)
 	}
-	var report *v1alpha1.ArtifactRef
+	var report, bundle *v1alpha1.ArtifactRef
 	for i := range run.Status.ArtifactRefs {
 		ref := &run.Status.ArtifactRefs[i]
 		if ref.Driver != v1alpha1.ArtifactDriverFilesystem ||
@@ -461,19 +465,100 @@ func TestFilesystemArtifacts(t *testing.T) {
 		if ref.Name == "report.txt" {
 			report = ref
 		}
+		if ref.Name == "bundle" {
+			bundle = ref
+		}
 	}
 	if report == nil || report.SizeBytes != int64(len("report")) || !strings.HasPrefix(report.Digest, "sha256:") {
 		t.Fatalf("report ref = %#v", report)
 	}
+	if bundle == nil || bundle.Type != v1alpha1.ArtifactTypeDirectory ||
+		bundle.ContentType != "application/gzip" ||
+		!strings.HasPrefix(bundle.Digest, "sha256:") {
+		t.Fatalf("bundle ref = %#v", bundle)
+	}
 
-	cmd := exec.Command("kubectl", "exec", "-n", testNamespace, run.Status.AssignedPod, "-c", "runtimed", "--",
-		"cat", "/var/lib/kruntimes/artifacts/"+report.Location.Filesystem.Path)
+	downloadDir := t.TempDir()
+	reportPath := filepath.Join(downloadDir, "report.txt")
+	cmd := exec.Command("go", "run", "../../cmd/krt", "artifact", "download",
+		run.Name, report.Name, "-n", testNamespace, "-o", reportPath, "--status-port", "19093")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("read persisted artifact: %v: %s", err, output)
+		t.Fatalf("download report artifact: %v: %s", err, output)
 	}
-	if string(output) != "report" {
-		t.Fatalf("persisted artifact = %q, want report", output)
+	reportContent, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(reportContent) != "report" {
+		t.Fatalf("downloaded report = %q, want report", reportContent)
+	}
+
+	bundlePath := filepath.Join(downloadDir, "bundle.tar.gz")
+	cmd = exec.Command("go", "run", "../../cmd/krt", "artifact", "download",
+		run.Name, bundle.Name, "-n", testNamespace, "-o", bundlePath, "--status-port", "19094")
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("download directory artifact: %v: %s", err, output)
+	}
+	assertTarGzFile(t, bundlePath, "data.txt", "nested")
+
+	artifactPath := "/var/lib/kruntimes/artifacts/" + report.Location.Filesystem.Path
+	ttlSeconds := int32(1)
+	for i := 0; i < 10; i++ {
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get artifact run for TTL: %v", err)
+		}
+		run.Spec.TTLSecondsAfterFinished = &ttlSeconds
+		if err := k8sClient.Update(context.Background(), run); err == nil {
+			break
+		}
+		if i == 9 {
+			t.Fatal("failed to set artifact Run TTL")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	waitForRunDeleted(t, run, 30*time.Second)
+
+	cmd = exec.Command("kubectl", "exec", "-n", testNamespace, run.Status.AssignedPod, "-c", "runtimed", "--",
+		"test", "!", "-e", artifactPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("artifact remained after Run deletion: %v: %s", err, output)
+	}
+}
+
+func assertTarGzFile(t *testing.T, path, name, wantContent string) {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gzipReader.Close()
+	tarReader := tar.NewReader(gzipReader)
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			t.Fatalf("archive does not contain %s", name)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Name != name {
+			continue
+		}
+		content, err := io.ReadAll(tarReader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(content) != wantContent {
+			t.Fatalf("archive %s = %q, want %q", name, content, wantContent)
+		}
+		return
 	}
 }
 
