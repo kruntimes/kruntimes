@@ -2,10 +2,14 @@ package bash
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -16,10 +20,14 @@ import (
 )
 
 func startTestServer(t *testing.T) (pb.RuntimeClient, func()) {
+	return startTestServerWithOutputLimit(t, defaultOutputLimitBytes)
+}
+
+func startTestServerWithOutputLimit(t *testing.T, outputLimit int) (pb.RuntimeClient, func()) {
 	t.Helper()
 
 	srv := grpc.NewServer()
-	pb.RegisterRuntimeServer(srv, NewServer(t.TempDir()))
+	pb.RegisterRuntimeServer(srv, NewServerWithOutputLimit(t.TempDir(), outputLimit))
 
 	lis, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
@@ -256,4 +264,91 @@ func TestHealth(t *testing.T) {
 	if !resp.Healthy {
 		t.Error("expected healthy=true")
 	}
+}
+
+func TestOutputIsBounded(t *testing.T) {
+	const outputLimit = 128
+	client, cleanup := startTestServerWithOutputLimit(t, outputLimit)
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := client.Execute(ctx, &pb.ExecuteRequest{
+		Id:   "bounded-output",
+		Args: []string{"head -c 4096 /dev/zero | tr '\\0' x"},
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	resp := waitForTerminalStatus(t, client, "bounded-output")
+	if resp.State != pb.ExecutionState_EXECUTION_STATE_SUCCEEDED {
+		t.Fatalf("state = %v, want succeeded: %s", resp.State, resp.ErrorMessage)
+	}
+	if !strings.HasSuffix(resp.Stdout, outputTruncatedMarker) {
+		t.Fatalf("stdout does not contain truncation marker: %q", resp.Stdout)
+	}
+	if got, want := len(strings.TrimSuffix(resp.Stdout, outputTruncatedMarker)), outputLimit; got != want {
+		t.Fatalf("retained stdout bytes = %d, want %d", got, want)
+	}
+}
+
+func TestCancelTerminatesProcessGroup(t *testing.T) {
+	client, cleanup := startTestServer(t)
+	defer cleanup()
+
+	workDir := t.TempDir()
+	ctx := context.Background()
+	if _, err := client.Execute(ctx, &pb.ExecuteRequest{
+		Id:         "cancel-process-group",
+		WorkingDir: workDir,
+		Args:       []string{"sleep 30 & echo $! > child.pid; wait"},
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	pidPath := filepath.Join(workDir, "child.pid")
+	var childPID int
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		content, err := os.ReadFile(pidPath)
+		if err == nil {
+			childPID, err = strconv.Atoi(strings.TrimSpace(string(content)))
+			if err != nil {
+				t.Fatalf("parse child pid: %v", err)
+			}
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if childPID == 0 {
+		t.Fatal("child process pid was not written")
+	}
+
+	if _, err := client.Cancel(ctx, &pb.CancelRequest{Id: "cancel-process-group"}); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		err := syscall.Kill(childPID, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("child process %d still exists after cancellation", childPID)
+}
+
+func waitForTerminalStatus(t *testing.T, client pb.RuntimeClient, id string) *pb.StatusResponse {
+	t.Helper()
+	ctx := context.Background()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		resp, err := client.Status(ctx, &pb.StatusRequest{Id: id})
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		switch resp.State {
+		case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED, pb.ExecutionState_EXECUTION_STATE_FAILED:
+			return resp
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for execution %s", id)
+	return nil
 }
