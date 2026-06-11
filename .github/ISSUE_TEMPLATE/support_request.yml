@@ -1,0 +1,47 @@
+name: Support request
+description: Ask for help using or operating kruntimes
+title: "[Support]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please review SUPPORT.md first. Do not include credentials or report
+        security vulnerabilities in this form.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: kruntimes release, image tag, or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Kubernetes version, Helm version, and installation method
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Describe the goal, current behavior, and what you have tried
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Relevant configuration and logs
+      description: Remove credentials, tokens, source code, and other sensitive data
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I reviewed SUPPORT.md and searched existing issues.
+          required: true
+        - label: This request does not contain a security vulnerability.
+          required: true

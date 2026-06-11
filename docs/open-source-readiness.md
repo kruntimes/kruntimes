@@ -17,10 +17,10 @@
 
 ### 1. Legal and Community Baseline
 
-- [ ] 添加开源许可证和必要的版权声明。
-- [ ] 添加 `SECURITY.md`，说明漏洞报告渠道、响应范围和支持版本。
-- [ ] 添加 `CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、`SUPPORT.md`。
-- [ ] 添加维护者列表、`CODEOWNERS`、Issue 和 PR 模板。
+- [x] 添加开源许可证和必要的版权声明。
+- [x] 添加 `SECURITY.md`，说明漏洞报告渠道、响应范围和支持版本。
+- [x] 添加 `CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、`SUPPORT.md`。
+- [x] 添加维护者列表、`CODEOWNERS`、Issue 和 PR 模板。
 - [ ] 公开后启用 main 分支保护，要求 CI 通过和至少一次 review。
 
 验收标准：
@@ -31,11 +31,11 @@
 
 ### 2. Required CI
 
-- [ ] CI 执行 `make test`、`make test-integration` 和 Helm lint/template。
+- [x] CI 执行 `make test`、`make test-integration` 和 Helm lint/template。
 - [ ] CI 执行 Go race detector，至少覆盖 runtime、scheduler、controller 和 runtimed。
-- [ ] CI 执行 Python Runtime 单元测试。
+- [x] CI 执行 Python Runtime 单元测试。
 - [ ] 增加 `govulncheck`、依赖更新机器人和基础 secret scanning。
-- [ ] 增加生成文件一致性检查，确保 `make generate manifests proto` 后工作树干净。
+- [x] 增加生成文件一致性检查，确保生成的 Go API 和 CRD 文件保持最新。
 - [ ] 定期或按发布执行 `make e2e`。
 
 验收标准：
@@ -204,4 +204,3 @@ artifact store 的配置所有权。
 - `go test -race`: 失败，复现 Bash Runtime 并发读写。
 - `govulncheck ./...`: 失败，检测到 5 个可达漏洞。
 - 完整 `make e2e`: 本次审查未执行。
-

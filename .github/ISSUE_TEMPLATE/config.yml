@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/kruntimes/kruntimes/security/advisories/new
+    about: Report vulnerabilities privately
+  - name: Support guidance
+    url: https://github.com/kruntimes/kruntimes/blob/main/SUPPORT.md
+    about: Review the information needed for support requests

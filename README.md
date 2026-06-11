@@ -627,4 +627,8 @@ test/
 
 ## License
 
-Apache 2.0
+kruntimes is licensed under the [Apache License 2.0](LICENSE).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and contribution
+guidelines, [SUPPORT.md](SUPPORT.md) for support expectations, and
+[SECURITY.md](SECURITY.md) for private vulnerability reporting.

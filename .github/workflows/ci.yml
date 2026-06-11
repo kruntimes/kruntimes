@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Go unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make test
+      - name: Verify tests did not modify tracked files
+        run: git diff --exit-code
+
+  integration:
+    name: Go integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make test-integration
+
+  python:
+    name: Python Runtime tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runtimes/python
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          working-directory: runtimes/python
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run --frozen python -m unittest server_test -v
+
+  helm:
+    name: Helm charts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: azure/setup-helm@v4.3.1
+      - run: helm lint ./charts/kruntimes ./charts/kruntimes-runtimes
+      - run: helm template kruntimes ./charts/kruntimes --namespace kruntimes-system
+      - run: helm template kruntimes-runtimes ./charts/kruntimes-runtimes --namespace default
+
+  generated:
+    name: Generated files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make generate manifests
+      - name: Verify generated files are current
+        run: git diff --exit-code
