@@ -13,6 +13,8 @@ rules:
       - get
       - list
       - watch
+      - update
+      - patch
   - apiGroups:
       - kruntimes.io
     resources:

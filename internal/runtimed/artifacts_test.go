@@ -6,11 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -134,6 +136,9 @@ func TestApplySuccessWritesArtifactRefsOnlyAfterAllUploadsSucceed(t *testing.T) 
 	}
 	if completed.Status.Message != "execution completed" {
 		t.Fatalf("message = %q, want stable success summary", completed.Status.Message)
+	}
+	if !slices.Contains(completed.Finalizers, artifact.RunArtifactFinalizer) {
+		t.Fatalf("finalizers = %v, missing artifact cleanup finalizer", completed.Finalizers)
 	}
 }
 
@@ -275,7 +280,8 @@ func TestApplySuccessInvalidArtifactTerminatesWithoutRetry(t *testing.T) {
 		WithStatusSubresource(&v1alpha1.Run{}).
 		WithObjects(run).
 		Build()
-	c := &Controller{Client: k8sClient, ArtifactStore: &fakeArtifactStore{}}
+	store := &fakeArtifactStore{}
+	c := &Controller{Client: k8sClient, ArtifactStore: store}
 	ar := &activeRun{run: run, workDir: filepath.Join(workspacePath, string(run.UID))}
 
 	if _, err := c.applySuccess(t.Context(), ar, &pb.StatusResponse{Stdout: "stdout"}); err != nil {
@@ -292,11 +298,49 @@ func TestApplySuccessInvalidArtifactTerminatesWithoutRetry(t *testing.T) {
 	if completed == nil || completed.Reason != "ArtifactInvalid" {
 		t.Fatalf("Completed condition = %#v, want ArtifactInvalid", completed)
 	}
+	if store.deleteRuns != 1 {
+		t.Fatalf("DeleteRun calls = %d, want 1", store.deleteRuns)
+	}
+}
+
+func TestReconcileArtifactDeletionDeletesRunObjectsAndRemovesFinalizer(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	now := metav1.Now()
+	run := artifactTestRun()
+	run.Finalizers = []string{artifact.RunArtifactFinalizer}
+	run.DeletionTimestamp = &now
+	store := &fakeArtifactStore{}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(run).
+		Build()
+	c := &Controller{
+		Client:        k8sClient,
+		RuntimeName:   run.Spec.Runtime,
+		ArtifactStore: store,
+	}
+
+	if _, err := c.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+		t.Fatalf("Reconcile deletion: %v", err)
+	}
+	if store.deleteRuns != 1 {
+		t.Fatalf("DeleteRun calls = %d, want 1", store.deleteRuns)
+	}
+	var current v1alpha1.Run
+	err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), &current)
+	if err == nil && slices.Contains(current.Finalizers, artifact.RunArtifactFinalizer) {
+		t.Fatalf("finalizer was not removed: %v", current.Finalizers)
+	}
 }
 
 type fakeArtifactStore struct {
-	puts   []fakeArtifactPut
-	failAt int
+	puts       []fakeArtifactPut
+	failAt     int
+	deleteRuns int
+	deleteErr  error
 }
 
 type fakeArtifactPut struct {
@@ -309,11 +353,15 @@ func (s *fakeArtifactStore) Put(_ context.Context, run *v1alpha1.Run, localPath 
 	if s.failAt > 0 && len(s.puts) == s.failAt {
 		return v1alpha1.ArtifactRef{}, errors.New("store unavailable")
 	}
+	size, _, err := inspectArtifact(localPath, artifact.DefaultMaxArtifactsBytes)
+	if err != nil {
+		return v1alpha1.ArtifactRef{}, err
+	}
 	return v1alpha1.ArtifactRef{
 		Name:      opts.Name,
 		Driver:    v1alpha1.ArtifactDriverFilesystem,
 		Type:      opts.Type,
-		SizeBytes: 1,
+		SizeBytes: size,
 		CreatedAt: metav1.Now(),
 		Location: v1alpha1.ArtifactLocation{
 			Filesystem: &v1alpha1.FilesystemArtifactLocation{
@@ -330,6 +378,11 @@ func (s *fakeArtifactStore) Open(context.Context, v1alpha1.ArtifactRef) (io.Read
 
 func (s *fakeArtifactStore) Delete(context.Context, v1alpha1.ArtifactRef) error {
 	return nil
+}
+
+func (s *fakeArtifactStore) DeleteRun(context.Context, *v1alpha1.Run) error {
+	s.deleteRuns++
+	return s.deleteErr
 }
 
 func artifactTestRun() *v1alpha1.Run {

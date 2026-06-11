@@ -25,6 +25,8 @@ const (
 
 	DefaultMaxArtifactBytes  int64 = 1 << 30
 	DefaultMaxArtifactsBytes int64 = 10 << 30
+
+	RunArtifactFinalizer = "kruntimes.io/artifact-cleanup"
 )
 
 // PutOptions describes metadata applied while storing an artifact.
@@ -40,4 +42,11 @@ type Store interface {
 	Put(ctx context.Context, run *v1alpha1.Run, localPath string, opts PutOptions) (v1alpha1.ArtifactRef, error)
 	Open(ctx context.Context, ref v1alpha1.ArtifactRef) (io.ReadCloser, error)
 	Delete(ctx context.Context, ref v1alpha1.ArtifactRef) error
+}
+
+// RunStore can remove every object owned by a Run, including unpublished
+// objects left behind by an interrupted multi-artifact upload.
+type RunStore interface {
+	Store
+	DeleteRun(ctx context.Context, run *v1alpha1.Run) error
 }

@@ -21,7 +21,7 @@ import (
 	"github.com/kruntimes/kruntimes/internal/artifact"
 )
 
-const directoryContentType = "application/x-directory"
+const directoryContentType = artifact.DirectoryArchiveContentType
 
 // Store persists artifacts below a PVC-backed filesystem root.
 type Store struct {
@@ -115,10 +115,14 @@ func (s *Store) Put(ctx context.Context, run *v1alpha1.Run, localPath string, op
 	case v1alpha1.ArtifactTypeFile:
 		size, contentType, err = copyRegularFile(ctx, localPath, tempPath, info.Mode().Perm(), digest, contentType, budget)
 	case v1alpha1.ArtifactTypeDirectory:
-		if contentType == "" {
-			contentType = directoryContentType
+		archive, archiveErr := artifact.ArchiveDirectory(ctx, localPath)
+		if archiveErr != nil {
+			err = archiveErr
+			break
 		}
-		size, err = copyDirectory(ctx, localPath, tempPath, digest, budget)
+		defer archive.Close()
+		contentType = directoryContentType
+		size, _, err = copyRegularFile(ctx, archive.Name(), tempPath, 0o600, digest, contentType, budget)
 	default:
 		err = fmt.Errorf("unsupported filesystem artifact type %q", actualType)
 	}
@@ -169,9 +173,6 @@ func (s *Store) Open(_ context.Context, ref v1alpha1.ArtifactRef) (io.ReadCloser
 	if err != nil {
 		return nil, err
 	}
-	if ref.Type == v1alpha1.ArtifactTypeDirectory {
-		return nil, fmt.Errorf("opening directory artifacts is not supported")
-	}
 	if err := s.ensureNoSymlinkPath(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
@@ -203,6 +204,30 @@ func (s *Store) Delete(_ context.Context, ref v1alpha1.ArtifactRef) error {
 	}
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("delete artifact %q: %w", ref.Name, err)
+	}
+	return nil
+}
+
+// DeleteRun removes all artifacts stored for a Run.
+func (s *Store) DeleteRun(_ context.Context, run *v1alpha1.Run) error {
+	if run == nil {
+		return fmt.Errorf("run is required")
+	}
+	if err := validatePathComponent(run.Namespace, "run namespace"); err != nil {
+		return err
+	}
+	if err := validatePathComponent(string(run.UID), "run UID"); err != nil {
+		return err
+	}
+	path, err := s.resolve(filepath.Join("namespaces", run.Namespace, "runs", string(run.UID)))
+	if err != nil {
+		return err
+	}
+	if err := s.ensureNoSymlinkPath(filepath.Dir(path)); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("delete Run artifacts: %w", err)
 	}
 	return nil
 }
@@ -310,67 +335,6 @@ func artifactType(info os.FileInfo) (v1alpha1.ArtifactType, error) {
 	default:
 		return "", fmt.Errorf("special files are not allowed")
 	}
-}
-
-func copyDirectory(ctx context.Context, source, destination string, digest hash.Hash, budget *copyBudget) (int64, error) {
-	info, err := os.Lstat(source)
-	if err != nil {
-		return 0, err
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return 0, invalidArtifactError{err: fmt.Errorf("source is not a directory")}
-	}
-	if err := os.Mkdir(destination, info.Mode().Perm()); err != nil {
-		return 0, err
-	}
-	return copyDirectoryContents(ctx, source, destination, "", digest, budget)
-}
-
-func copyDirectoryContents(ctx context.Context, source, destination, relative string, digest hash.Hash, budget *copyBudget) (int64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-	entries, err := os.ReadDir(source)
-	if err != nil {
-		return 0, err
-	}
-	var total int64
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return 0, err
-		}
-		sourcePath := filepath.Join(source, entry.Name())
-		destinationPath := filepath.Join(destination, entry.Name())
-		entryRelative := filepath.Join(relative, entry.Name())
-		info, err := os.Lstat(sourcePath)
-		if err != nil {
-			return 0, err
-		}
-		entryType, err := artifactType(info)
-		if err != nil {
-			return 0, invalidArtifactError{err: fmt.Errorf("%s: %w", entryRelative, err)}
-		}
-		switch entryType {
-		case v1alpha1.ArtifactTypeDirectory:
-			_, _ = digest.Write([]byte("dir\x00" + filepath.ToSlash(entryRelative) + "\x00"))
-			if err := os.Mkdir(destinationPath, info.Mode().Perm()); err != nil {
-				return 0, err
-			}
-			size, err := copyDirectoryContents(ctx, sourcePath, destinationPath, entryRelative, digest, budget)
-			if err != nil {
-				return 0, err
-			}
-			total += size
-		case v1alpha1.ArtifactTypeFile:
-			_, _ = digest.Write([]byte("file\x00" + filepath.ToSlash(entryRelative) + "\x00"))
-			size, _, err := copyRegularFile(ctx, sourcePath, destinationPath, info.Mode().Perm(), digest, "", budget)
-			if err != nil {
-				return 0, err
-			}
-			total += size
-		}
-	}
-	return total, nil
 }
 
 func copyRegularFile(ctx context.Context, source, destination string, mode os.FileMode, digest hash.Hash, contentType string, budget *copyBudget) (int64, string, error) {
@@ -481,3 +445,4 @@ func (r *contextReader) Read(p []byte) (int, error) {
 }
 
 var _ artifact.Store = (*Store)(nil)
+var _ artifact.RunStore = (*Store)(nil)

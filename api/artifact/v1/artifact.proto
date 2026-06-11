@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package artifact.v1;
+
+option go_package = "github.com/kruntimes/kruntimes/api/artifact/v1;artifactv1";
+
+// ArtifactService exposes stored Run artifacts through the runtimed pod that
+// has access to the configured ArtifactStore.
+service ArtifactService {
+    rpc Download(DownloadRequest) returns (stream DownloadResponse);
+}
+
+message DownloadRequest {
+    string namespace = 1;
+    string run_name = 2;
+    string artifact_name = 3;
+}
+
+message ArtifactMetadata {
+    string name = 1;
+    string type = 2;
+    string content_type = 3;
+    int64 size_bytes = 4;
+    string digest = 5;
+}
+
+message DownloadResponse {
+    // metadata is set on the first response only.
+    ArtifactMetadata metadata = 1;
+    // data contains at most 64 KiB and is set on responses after metadata.
+    bytes data = 2;
+}

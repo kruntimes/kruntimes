@@ -4,20 +4,20 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
-func NewLogsCmd(k8sClient client.Client) *cobra.Command {
+func NewLogsCmd(k8sClient client.Client, restConfig *rest.Config) *cobra.Command {
 	var (
 		namespace  string
 		follow     bool
@@ -40,25 +40,17 @@ func NewLogsCmd(k8sClient client.Client) *cobra.Command {
 				return fmt.Errorf("run %s not yet assigned", runName)
 			}
 
-			// Start port-forward.
-			localPort := fmt.Sprintf("%d", statusPort)
-			remotePort := fmt.Sprintf("%d:9093", statusPort)
-			pfCtx, pfCancel := context.WithCancel(cmd.Context())
-			defer pfCancel()
-
-			pfCmd := exec.CommandContext(pfCtx, "kubectl",
-				"port-forward", run.Status.AssignedPod, remotePort,
-				"--namespace", run.Namespace,
-			)
-			pfCmd.Stderr = os.Stderr
-			if err := pfCmd.Start(); err != nil {
-				return fmt.Errorf("start port-forward: %w", err)
+			forwarder, err := newPortForwarder(restConfig)
+			if err != nil {
+				return err
 			}
-			defer func() { _ = pfCmd.Process.Kill() }()
+			forward, err := forwarder.Forward(cmd.Context(), run.Namespace, run.Status.AssignedPod, statusPort, artifactRemotePort)
+			if err != nil {
+				return err
+			}
+			defer forward.Close()
 
-			time.Sleep(500 * time.Millisecond)
-
-			target := fmt.Sprintf("localhost:%s", localPort)
+			target := fmt.Sprintf("127.0.0.1:%d", statusPort)
 			conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
 				return fmt.Errorf("dial %s: %w", target, err)

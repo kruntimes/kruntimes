@@ -66,15 +66,18 @@ type RuntimeSpec struct {
 
 // +kubebuilder:object:generate=true
 // RuntimeArtifactStoreSpec configures the artifact store available to runtimed.
-// +kubebuilder:validation:XValidation:rule="self.driver == 'filesystem' && has(self.filesystem)",message="filesystem driver requires filesystem configuration"
+// +kubebuilder:validation:XValidation:rule="(self.driver == 'filesystem' && has(self.filesystem) && !has(self.s3)) || (self.driver == 's3' && has(self.s3) && !has(self.filesystem))",message="exactly one artifact store configuration matching driver must be set"
 type RuntimeArtifactStoreSpec struct {
 	// Driver identifies the configured artifact storage backend.
-	// +kubebuilder:validation:Enum=filesystem
 	Driver ArtifactDriver `json:"driver"`
 
 	// Filesystem configures a PVC-backed filesystem artifact store.
 	// +optional
 	Filesystem *FilesystemArtifactStoreSpec `json:"filesystem,omitempty"`
+
+	// S3 configures an S3-compatible object artifact store.
+	// +optional
+	S3 *S3ArtifactStoreSpec `json:"s3,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
@@ -83,6 +86,47 @@ type FilesystemArtifactStoreSpec struct {
 	// VolumeClaimName is the PVC mounted into runtimed for durable artifact storage.
 	// +kubebuilder:validation:MinLength=1
 	VolumeClaimName string `json:"volumeClaimName"`
+}
+
+// +kubebuilder:object:generate=true
+// S3ArtifactStoreSpec configures an S3-compatible artifact store.
+type S3ArtifactStoreSpec struct {
+	// Bucket is the S3 bucket used to store artifacts.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[^/]+$`
+	Bucket string `json:"bucket"`
+
+	// Prefix is prepended to generated artifact object keys.
+	// +optional
+	Prefix string `json:"prefix,omitempty"`
+
+	// Region overrides the AWS SDK region.
+	// +optional
+	Region string `json:"region,omitempty"`
+
+	// Endpoint configures a custom S3-compatible service endpoint.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// ForcePathStyle enables path-style S3 addressing.
+	// +optional
+	ForcePathStyle bool `json:"forcePathStyle,omitempty"`
+
+	// CredentialsSecretName names a Secret whose keys are exposed to runtimed
+	// as environment variables for the AWS SDK credential chain.
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	CredentialsSecretName string `json:"credentialsSecretName,omitempty"`
+
+	// UploadPartSize overrides the multipart upload part size in bytes.
+	// +kubebuilder:validation:Minimum=5242880
+	// +optional
+	UploadPartSize int64 `json:"uploadPartSize,omitempty"`
+
+	// UploadConcurrency overrides the number of concurrent multipart upload workers.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	UploadConcurrency int32 `json:"uploadConcurrency,omitempty"`
 }
 
 // +kubebuilder:object:generate=true

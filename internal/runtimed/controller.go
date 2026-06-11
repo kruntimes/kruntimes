@@ -24,6 +24,7 @@ import (
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -73,6 +74,8 @@ type Controller struct {
 	RunReader         client.Reader
 	Log               logr.Logger
 	Hostname          string
+	RuntimeName       string
+	RuntimeNamespace  string
 	RuntimeEndpoint   string
 	Workers           int
 	ArtifactStore     artifact.Store
@@ -150,15 +153,20 @@ func (c *Controller) runFilter() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			run, ok := e.Object.(*v1alpha1.Run)
-			return ok && run.Status.AssignedPod == c.Hostname
+			return ok && c.matchesRuntimeNamespace(run) && run.Status.AssignedPod == c.Hostname
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			run, ok := e.ObjectNew.(*v1alpha1.Run)
-			return ok && run.Status.AssignedPod == c.Hostname
+			return ok && c.matchesRuntimeNamespace(run) &&
+				(run.Status.AssignedPod == c.Hostname || c.shouldCleanupArtifacts(run))
 		},
 		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
 		GenericFunc: func(e event.GenericEvent) bool { return false },
 	}
+}
+
+func (c *Controller) matchesRuntimeNamespace(run *v1alpha1.Run) bool {
+	return run != nil && (c.RuntimeNamespace == "" || run.Namespace == c.RuntimeNamespace)
 }
 
 // Reconcile reads the Run spec+status, dispatches to the appropriate
@@ -167,6 +175,9 @@ func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	var run v1alpha1.Run
 	if err := c.Get(ctx, req.NamespacedName, &run); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if !run.DeletionTimestamp.IsZero() {
+		return c.reconcileArtifactDeletion(ctx, &run)
 	}
 
 	switch run.Status.Phase {
@@ -428,6 +439,9 @@ func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, resp *pb.S
 	artifactRefs, err := c.collectArtifacts(ctx, run)
 	if err != nil {
 		if isArtifactInvalid(err) {
+			if cleanupErr := c.deleteRunArtifacts(ctx, run); cleanupErr != nil {
+				return ctrl.Result{}, cleanupErr
+			}
 			return c.applyTerminalWithOutput(
 				ctx,
 				ar,
@@ -467,6 +481,17 @@ func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, resp *pb.S
 			"Run succeeded after %d attempts", run.Status.Attempt)
 	}
 	return ctrl.Result{}, nil
+}
+
+func (c *Controller) shouldCleanupArtifacts(run *v1alpha1.Run) bool {
+	if run == nil || run.DeletionTimestamp.IsZero() ||
+		!controllerutil.ContainsFinalizer(run, artifact.RunArtifactFinalizer) {
+		return false
+	}
+	if c.RuntimeName != "" {
+		return run.Spec.Runtime == c.RuntimeName
+	}
+	return run.Status.AssignedPod == c.Hostname
 }
 
 // ===========================================================================

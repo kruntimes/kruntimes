@@ -1,6 +1,8 @@
 package filesystem
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -88,8 +90,8 @@ func TestStorePutDirectoryRecursively(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if ref.SizeBytes != 7 {
-		t.Fatalf("size = %d, want 7", ref.SizeBytes)
+	if ref.SizeBytes <= 0 {
+		t.Fatalf("size = %d, want positive archive size", ref.SizeBytes)
 	}
 	if ref.ContentType != directoryContentType {
 		t.Fatalf("content type = %q", ref.ContentType)
@@ -97,13 +99,40 @@ func TestStorePutDirectoryRecursively(t *testing.T) {
 	if !strings.HasPrefix(ref.Digest, "sha256:") {
 		t.Fatalf("digest = %q", ref.Digest)
 	}
-	stored := filepath.Join(store.root, filepath.FromSlash(ref.Location.Filesystem.Path), "nested", "b.bin")
+	stored := filepath.Join(store.root, filepath.FromSlash(ref.Location.Filesystem.Path))
 	data, err := os.ReadFile(stored)
 	if err != nil {
-		t.Fatalf("read stored nested file: %v", err)
+		t.Fatalf("read stored archive: %v", err)
 	}
-	if len(data) != 4 {
-		t.Fatalf("nested data = %v", data)
+	if int64(len(data)) != ref.SizeBytes {
+		t.Fatalf("stored archive size = %d, ref size = %d", len(data), ref.SizeBytes)
+	}
+
+	reader, err := store.Open(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("Open directory: %v", err)
+	}
+	defer reader.Close()
+	gzipReader, err := gzip.NewReader(reader)
+	if err != nil {
+		t.Fatalf("open directory gzip: %v", err)
+	}
+	tarReader := tar.NewReader(gzipReader)
+	found := false
+	for {
+		header, err := tarReader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read directory tar: %v", err)
+		}
+		if header.Name == "nested/b.bin" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("directory stream missing nested/b.bin")
 	}
 }
 
@@ -227,6 +256,25 @@ func TestStoreRejectsEscapingAndForeignReferences(t *testing.T) {
 		if _, err := store.Open(t.Context(), ref); err == nil {
 			t.Fatalf("Open accepted invalid ref %q", ref.Name)
 		}
+	}
+}
+
+func TestStoreDeleteRun(t *testing.T) {
+	store := newTestStore(t)
+	run := testRun()
+	source := filepath.Join(t.TempDir(), "result")
+	if err := os.WriteFile(source, []byte("result"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Put(t.Context(), run, source, artifact.PutOptions{Name: "result", Type: v1alpha1.ArtifactTypeFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteRun(t.Context(), run); err != nil {
+		t.Fatalf("DeleteRun: %v", err)
+	}
+	if _, err := store.Open(t.Context(), ref); err == nil {
+		t.Fatal("artifact still exists after DeleteRun")
 	}
 }
 

@@ -99,6 +99,13 @@ Control-plane coordination happens through CRD state transitions:
 
 The CRD stores compact lifecycle state and references to outputs. High-volume data such as logs, artifacts, streaming output, and fine-grained heartbeats should be stored outside etcd.
 
+Run outputs are written as `KEY=VALUE` lines to `$KRUNTIME_OUTPUTS` and stored
+in bounded `Run.status.outputs`. Artifact files and directories are written
+below `$KRUNTIME_ARTIFACTS_DIR`; runtimed persists them outside etcd and records
+only compact metadata in `Run.status.artifactRefs`. Full stdout and stderr are
+emitted as structured runtimed logs keyed by Run UID and are not copied into
+`status.message`.
+
 No request-time Pod creation. No per-run Kubernetes scheduling. No global connection pool or direct pod-to-pod routing requirement. Kubernetes remains the coarse-grained resource substrate; kruntimes owns the fine-grained serverless control plane.
 
 ## Architecture
@@ -371,7 +378,7 @@ make e2e-cleanup  # tears down kind cluster
 - [x] Runtime Pod heartbeat and capacity reporting
 - [x] Runtimed recovery after restart using Runtime Server `List`
 - [x] Log streaming via `krt logs`
-- [ ] Result and artifact references outside etcd
+- [x] Bounded result outputs and artifact references outside etcd
 - [x] TTL-based garbage collection for completed Runs
 - [x] Standard metrics: queue time, dispatch latency, execution time, retries, failures, active Runs
 - [x] Documented execution semantics: at-least-once, retry, timeout, cancellation
@@ -387,7 +394,57 @@ make e2e-cleanup  # tears down kind cluster
 - [x] Workflow status aggregation from child Runs
 - [ ] Workflow cancellation, timeout, and retry propagation
 - [x] Minimal `${{ }}` expression resolution for inputs and previous step outputs
-- [x] `$OUTPUTS` file → bounded `Run.Status.Outputs`
+- [x] `$KRUNTIME_OUTPUTS` file → bounded `Run.Status.Outputs`
+
+## Artifacts
+
+Configure durable artifact storage on each `Runtime`. A filesystem store mounts
+an existing PVC only into runtimed:
+
+```yaml
+spec:
+  artifactStore:
+    driver: filesystem
+    filesystem:
+      volumeClaimName: runtime-artifacts
+```
+
+An S3-compatible store uses the AWS SDK default credential chain. When
+`credentialsSecretName` is set, Secret keys such as `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY` are exposed only to the runtimed container:
+
+```yaml
+spec:
+  artifactStore:
+    driver: s3
+    s3:
+      bucket: kruntimes-artifacts
+      prefix: production
+      region: us-east-1
+      endpoint: http://minio.storage.svc:9000
+      forcePathStyle: true
+      credentialsSecretName: artifact-s3-credentials
+```
+
+Runtime code writes top-level files or directories below
+`$KRUNTIME_ARTIFACTS_DIR`. Each Run may publish at most 32 artifacts; runtimed
+enforces bounded per-artifact and per-Run sizes. Directories are stored and
+downloaded as deterministic `tar.gz` streams while retaining artifact type
+`directory`.
+
+```bash
+krt artifact list <run> -n <namespace>
+krt artifact download <run> <artifact> -n <namespace> -o <path>
+```
+
+The CLI port-forwards to a ready Pod for the Run's Runtime. Runtimed resolves
+the reference from the Run and streams content from its configured store, so
+the CLI does not need PVC mounts or S3 credentials. Downloads use a temporary
+file, verify size and SHA-256, then atomically rename into place.
+
+Runs that publish artifacts carry an artifact cleanup finalizer. Manual
+deletion and `ttlSecondsAfterFinished` garbage collection remove all external
+objects for the Run before the Run is deleted.
 - [x] CLI: `krt workflow create/list/get`
 - [x] CLI: `krt cancel <run>`
 - [x] CLI: `krt logs` with `-f`/`--follow` and `--tail`

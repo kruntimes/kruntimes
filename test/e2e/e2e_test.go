@@ -1,10 +1,14 @@
 package e2e
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,17 +19,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/krt"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
 const testNamespace = "default"
 
 var k8sClient client.Client
+var restConfig *rest.Config
+var coreClientset *kubernetes.Clientset
 
 func bashRuntimeImage() string {
 	if image := os.Getenv("KRUNTIMES_BASH_RUNTIME_IMAGE"); image != "" {
@@ -53,12 +63,16 @@ func TestMain(m *testing.M) {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(v1alpha1.AddToScheme(scheme))
 
-	cfg := config.GetConfigOrDie()
-	cfg.QPS = 50
-	cfg.Burst = 100
+	restConfig = config.GetConfigOrDie()
+	restConfig.QPS = 50
+	restConfig.Burst = 100
 
 	var err error
-	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme})
+	k8sClient, err = client.New(restConfig, client.Options{Scheme: scheme})
+	if err != nil {
+		os.Exit(1)
+	}
+	coreClientset, err = kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -450,7 +464,7 @@ func TestFilesystemArtifacts(t *testing.T) {
 	if len(run.Status.ArtifactRefs) != 2 {
 		t.Fatalf("artifact refs = %#v, want 2", run.Status.ArtifactRefs)
 	}
-	var report *v1alpha1.ArtifactRef
+	var report, bundle *v1alpha1.ArtifactRef
 	for i := range run.Status.ArtifactRefs {
 		ref := &run.Status.ArtifactRefs[i]
 		if ref.Driver != v1alpha1.ArtifactDriverFilesystem ||
@@ -461,19 +475,92 @@ func TestFilesystemArtifacts(t *testing.T) {
 		if ref.Name == "report.txt" {
 			report = ref
 		}
+		if ref.Name == "bundle" {
+			bundle = ref
+		}
 	}
 	if report == nil || report.SizeBytes != int64(len("report")) || !strings.HasPrefix(report.Digest, "sha256:") {
 		t.Fatalf("report ref = %#v", report)
 	}
-
-	cmd := exec.Command("kubectl", "exec", "-n", testNamespace, run.Status.AssignedPod, "-c", "runtimed", "--",
-		"cat", "/var/lib/kruntimes/artifacts/"+report.Location.Filesystem.Path)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("read persisted artifact: %v: %s", err, output)
+	if bundle == nil || bundle.Type != v1alpha1.ArtifactTypeDirectory ||
+		bundle.ContentType != "application/gzip" ||
+		!strings.HasPrefix(bundle.Digest, "sha256:") {
+		t.Fatalf("bundle ref = %#v", bundle)
 	}
-	if string(output) != "report" {
-		t.Fatalf("persisted artifact = %q, want report", output)
+
+	downloadDir := t.TempDir()
+	reportPath := filepath.Join(downloadDir, "report.txt")
+	if _, err := krt.DownloadArtifact(context.Background(), k8sClient, restConfig, testNamespace, run.Name, report.Name, reportPath, 19093); err != nil {
+		t.Fatalf("download report artifact: %v", err)
+	}
+	reportContent, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(reportContent) != "report" {
+		t.Fatalf("downloaded report = %q, want report", reportContent)
+	}
+
+	bundlePath := filepath.Join(downloadDir, "bundle.tar.gz")
+	if _, err := krt.DownloadArtifact(context.Background(), k8sClient, restConfig, testNamespace, run.Name, bundle.Name, bundlePath, 19094); err != nil {
+		t.Fatalf("download directory artifact: %v", err)
+	}
+	assertTarGzFile(t, bundlePath, "data.txt", "nested")
+
+	artifactPath := "/var/lib/kruntimes/artifacts/" + report.Location.Filesystem.Path
+	ttlSeconds := int32(1)
+	for i := 0; i < 10; i++ {
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get artifact run for TTL: %v", err)
+		}
+		run.Spec.TTLSecondsAfterFinished = &ttlSeconds
+		if err := k8sClient.Update(context.Background(), run); err == nil {
+			break
+		}
+		if i == 9 {
+			t.Fatal("failed to set artifact Run TTL")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	waitForRunDeleted(t, run, 30*time.Second)
+
+	if _, stderr, err := execInPod(context.Background(), run.Status.AssignedPod, "runtimed", []string{"test", "!", "-e", artifactPath}); err != nil {
+		t.Fatalf("artifact remained after Run deletion: %v: %s", err, stderr)
+	}
+}
+
+func assertTarGzFile(t *testing.T, path, name, wantContent string) {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gzipReader.Close()
+	tarReader := tar.NewReader(gzipReader)
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			t.Fatalf("archive does not contain %s", name)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Name != name {
+			continue
+		}
+		content, err := io.ReadAll(tarReader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(content) != wantContent {
+			t.Fatalf("archive %s = %q, want %q", name, content, wantContent)
+		}
+		return
 	}
 }
 
@@ -917,10 +1004,38 @@ capacityObserved:
 
 func killRuntimed(t *testing.T, podName string) {
 	t.Helper()
-	cmd := exec.Command("kubectl", "exec", podName, "-n", testNamespace, "-c", "runtimed", "--", "/bin/sh", "-c", "kill 1")
-	if err := cmd.Run(); err != nil {
+	if _, stderr, err := execInPod(context.Background(), podName, "runtimed", []string{"/bin/sh", "-c", "kill 1"}); err != nil {
 		t.Logf("kill runtimed returned expected process termination error: %v", err)
+		if stderr != "" {
+			t.Logf("kill runtimed stderr: %s", stderr)
+		}
 	}
+}
+
+func execInPod(ctx context.Context, podName, containerName string, command []string) (string, string, error) {
+	req := coreClientset.CoreV1().RESTClient().Post().
+		Namespace(testNamespace).
+		Resource("pods").
+		Name(podName).
+		SubResource("exec")
+	req.VersionedParams(&corev1.PodExecOptions{
+		Container: containerName,
+		Command:   command,
+		Stdout:    true,
+		Stderr:    true,
+	}, clientgoscheme.ParameterCodec)
+
+	executor, err := remotecommand.NewSPDYExecutor(restConfig, "POST", req.URL())
+	if err != nil {
+		return "", "", fmt.Errorf("create executor: %w", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	return stdout.String(), stderr.String(), err
 }
 
 func runtimedRestartCount(t *testing.T, podName string) int32 {

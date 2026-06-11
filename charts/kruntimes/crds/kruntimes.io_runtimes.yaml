@@ -59,14 +59,11 @@ spec:
                   Runs executed by this Runtime.
                 properties:
                   driver:
-                    allOf:
-                    - enum:
-                      - filesystem
-                      - s3
-                    - enum:
-                      - filesystem
                     description: Driver identifies the configured artifact storage
                       backend.
+                    enum:
+                    - filesystem
+                    - s3
                     type: string
                   filesystem:
                     description: Filesystem configures a PVC-backed filesystem artifact
@@ -80,12 +77,57 @@ spec:
                     required:
                     - volumeClaimName
                     type: object
+                  s3:
+                    description: S3 configures an S3-compatible object artifact store.
+                    properties:
+                      bucket:
+                        description: Bucket is the S3 bucket used to store artifacts.
+                        minLength: 1
+                        pattern: ^[^/]+$
+                        type: string
+                      credentialsSecretName:
+                        description: |-
+                          CredentialsSecretName names a Secret whose keys are exposed to runtimed
+                          as environment variables for the AWS SDK credential chain.
+                        minLength: 1
+                        type: string
+                      endpoint:
+                        description: Endpoint configures a custom S3-compatible service
+                          endpoint.
+                        type: string
+                      forcePathStyle:
+                        description: ForcePathStyle enables path-style S3 addressing.
+                        type: boolean
+                      prefix:
+                        description: Prefix is prepended to generated artifact object
+                          keys.
+                        type: string
+                      region:
+                        description: Region overrides the AWS SDK region.
+                        type: string
+                      uploadConcurrency:
+                        description: UploadConcurrency overrides the number of concurrent
+                          multipart upload workers.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      uploadPartSize:
+                        description: UploadPartSize overrides the multipart upload
+                          part size in bytes.
+                        format: int64
+                        minimum: 5242880
+                        type: integer
+                    required:
+                    - bucket
+                    type: object
                 required:
                 - driver
                 type: object
                 x-kubernetes-validations:
-                - message: filesystem driver requires filesystem configuration
-                  rule: self.driver == 'filesystem' && has(self.filesystem)
+                - message: exactly one artifact store configuration matching driver
+                    must be set
+                  rule: (self.driver == 'filesystem' && has(self.filesystem) && !has(self.s3))
+                    || (self.driver == 's3' && has(self.s3) && !has(self.filesystem))
               capacity:
                 description: Capacity declares the per-pod capacity for this runtime.
                 properties:
