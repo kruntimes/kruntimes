@@ -309,6 +309,56 @@ Large or high-frequency data should not be stored directly in etcd:
 
 Instead, the Run status should store references to external storage or streaming channels.
 
+## Artifacts
+
+Configure durable artifact storage on each `Runtime`. A filesystem store mounts
+an existing PVC only into runtimed:
+
+```yaml
+spec:
+  artifactStore:
+    driver: filesystem
+    filesystem:
+      volumeClaimName: runtime-artifacts
+```
+
+An S3-compatible store uses the AWS SDK default credential chain. When
+`credentialsSecretName` is set, Secret keys such as `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY` are exposed only to the runtimed container:
+
+```yaml
+spec:
+  artifactStore:
+    driver: s3
+    s3:
+      bucket: kruntimes-artifacts
+      prefix: production
+      region: us-east-1
+      endpoint: http://minio.storage.svc:9000
+      forcePathStyle: true
+      credentialsSecretName: artifact-s3-credentials
+```
+
+Runtime code writes top-level files or directories below
+`$KRUNTIME_ARTIFACTS_DIR`. Each Run may publish at most 32 artifacts; runtimed
+enforces bounded per-artifact and per-Run sizes. Directories are stored and
+downloaded as deterministic `tar.gz` streams while retaining artifact type
+`directory`.
+
+```bash
+krt artifact list <run> -n <namespace>
+krt artifact download <run> <artifact> -n <namespace> -o <path>
+```
+
+The CLI port-forwards to a ready Pod for the Run's Runtime. Runtimed resolves
+the reference from the Run and streams content from its configured store, so
+the CLI does not need PVC mounts or S3 credentials. Downloads use a temporary
+file, verify size and SHA-256, then atomically rename into place.
+
+Runs that publish artifacts carry an artifact cleanup finalizer. Manual
+deletion and `ttlSecondsAfterFinished` garbage collection remove all external
+objects for the Run before the Run is deleted.
+
 ## Quick Start
 
 ### Prerequisites
@@ -386,6 +436,9 @@ make e2e-cleanup  # tears down kind cluster
 - [x] E2E coverage for no-capacity scheduling behavior
 - [x] E2E coverage for stale-pod retry behavior
 - [x] E2E coverage for cancellation races
+- [x] CLI: `krt workflow create/list/get`
+- [x] CLI: `krt cancel <run>`
+- [x] CLI: `krt logs` with `-f`/`--follow` and `--tail`
 
 ### v0.3 — Workflow
 
@@ -395,59 +448,6 @@ make e2e-cleanup  # tears down kind cluster
 - [ ] Workflow cancellation, timeout, and retry propagation
 - [x] Minimal `${{ }}` expression resolution for inputs and previous step outputs
 - [x] `$KRUNTIME_OUTPUTS` file → bounded `Run.Status.Outputs`
-
-## Artifacts
-
-Configure durable artifact storage on each `Runtime`. A filesystem store mounts
-an existing PVC only into runtimed:
-
-```yaml
-spec:
-  artifactStore:
-    driver: filesystem
-    filesystem:
-      volumeClaimName: runtime-artifacts
-```
-
-An S3-compatible store uses the AWS SDK default credential chain. When
-`credentialsSecretName` is set, Secret keys such as `AWS_ACCESS_KEY_ID` and
-`AWS_SECRET_ACCESS_KEY` are exposed only to the runtimed container:
-
-```yaml
-spec:
-  artifactStore:
-    driver: s3
-    s3:
-      bucket: kruntimes-artifacts
-      prefix: production
-      region: us-east-1
-      endpoint: http://minio.storage.svc:9000
-      forcePathStyle: true
-      credentialsSecretName: artifact-s3-credentials
-```
-
-Runtime code writes top-level files or directories below
-`$KRUNTIME_ARTIFACTS_DIR`. Each Run may publish at most 32 artifacts; runtimed
-enforces bounded per-artifact and per-Run sizes. Directories are stored and
-downloaded as deterministic `tar.gz` streams while retaining artifact type
-`directory`.
-
-```bash
-krt artifact list <run> -n <namespace>
-krt artifact download <run> <artifact> -n <namespace> -o <path>
-```
-
-The CLI port-forwards to a ready Pod for the Run's Runtime. Runtimed resolves
-the reference from the Run and streams content from its configured store, so
-the CLI does not need PVC mounts or S3 credentials. Downloads use a temporary
-file, verify size and SHA-256, then atomically rename into place.
-
-Runs that publish artifacts carry an artifact cleanup finalizer. Manual
-deletion and `ttlSecondsAfterFinished` garbage collection remove all external
-objects for the Run before the Run is deleted.
-- [x] CLI: `krt workflow create/list/get`
-- [x] CLI: `krt cancel <run>`
-- [x] CLI: `krt logs` with `-f`/`--follow` and `--tail`
 
 ### v0.4 — Reuse & Developer Experience
 
