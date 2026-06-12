@@ -64,6 +64,10 @@ test-integration: generate manifests setup-envtest ## Run integration tests (req
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" \
 	go test ./test/integration/... -v -count=1 -failfast
 
+.PHONY: test-race
+test-race: generate manifests proto ## Run focused Go race-detector coverage for runtime and control-plane packages.
+	go test -race ./internal/controller ./internal/scheduler ./internal/runtimed ./runtimes/bash -count=1
+
 .PHONY: test-s3-integration
 test-s3-integration: ## Run S3 ArtifactStore integration tests against MinIO.
 	CONTAINER_TOOL=$(CONTAINER_TOOL) ./hack/test-s3-integration.sh
