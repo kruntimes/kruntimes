@@ -3,7 +3,7 @@ package krt
 import (
 	"context"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 	"time"
 
@@ -61,9 +61,9 @@ func NewLogsCmd(k8sClient client.Client, restConfig *rest.Config) *cobra.Command
 			uid := string(run.UID)
 
 			if !follow {
-				return showLogsOnce(cmd.Context(), cli, uid, tailLines)
+				return showLogsOnce(cmd.Context(), cli, uid, tailLines, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
-			return followLogs(cmd.Context(), cli, uid, tailLines)
+			return followLogs(cmd.Context(), cli, uid, tailLines, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
@@ -74,21 +74,36 @@ func NewLogsCmd(k8sClient client.Client, restConfig *rest.Config) *cobra.Command
 	return cmd
 }
 
-func showLogsOnce(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines int) error {
+func showLogsOnce(
+	ctx context.Context,
+	cli pb.RuntimeClient,
+	uid string,
+	tailLines int,
+	stdout,
+	stderr io.Writer,
+) error {
 	resp, err := cli.Status(ctx, &pb.StatusRequest{Id: uid})
 	if err != nil {
 		return fmt.Errorf("status: %w", err)
 	}
-	output := resp.Stdout
-	if output == "" {
-		output = resp.Stderr
+	if err := writeLogOutput(stdout, tailOutput(resp.Stdout, tailLines)); err != nil {
+		return fmt.Errorf("write stdout: %w", err)
 	}
-	out := tailOutput(output, tailLines)
-	if out != "" && !strings.HasSuffix(out, "\n") {
-		out += "\n"
+	if err := writeLogOutput(stderr, tailOutput(resp.Stderr, tailLines)); err != nil {
+		return fmt.Errorf("write stderr: %w", err)
 	}
-	fmt.Print(out)
 	return nil
+}
+
+func writeLogOutput(w io.Writer, output string) error {
+	if output == "" {
+		return nil
+	}
+	if !strings.HasSuffix(output, "\n") {
+		output += "\n"
+	}
+	_, err := io.WriteString(w, output)
+	return err
 }
 
 func tailOutput(output string, n int) string {
@@ -106,19 +121,28 @@ func tailOutput(output string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines int) error {
-	// Where to start slicing: 0 = from beginning, or skip first N bytes for tail.
-	seen := 0
+func followLogs(
+	ctx context.Context,
+	cli pb.RuntimeClient,
+	uid string,
+	tailLines int,
+	stdout,
+	stderr io.Writer,
+) error {
+	stdoutOffset := 0
+	stderrOffset := 0
 
 	if tailLines > 0 {
 		resp, err := cli.Status(ctx, &pb.StatusRequest{Id: uid})
 		if err == nil {
-			tail := tailOutput(resp.Stdout, tailLines)
-			if tail != "" && !strings.HasSuffix(tail, "\n") {
-				tail += "\n"
+			if err := writeLogOutput(stdout, tailOutput(resp.Stdout, tailLines)); err != nil {
+				return fmt.Errorf("write stdout: %w", err)
 			}
-			fmt.Print(tail)
-			seen = len(resp.Stdout)
+			if err := writeLogOutput(stderr, tailOutput(resp.Stderr, tailLines)); err != nil {
+				return fmt.Errorf("write stderr: %w", err)
+			}
+			stdoutOffset = len(resp.Stdout)
+			stderrOffset = len(resp.Stderr)
 		}
 	}
 
@@ -135,13 +159,17 @@ func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines
 			continue
 		}
 
-		if newOut := resp.Stdout[seen:]; newOut != "" {
-			fmt.Print(newOut)
-			seen = len(resp.Stdout)
+		newStdout, nextStdoutOffset := logOutputSince(resp.Stdout, stdoutOffset)
+		if _, err := io.WriteString(stdout, newStdout); err != nil {
+			return fmt.Errorf("write stdout: %w", err)
 		}
-		if resp.Stderr != "" {
-			fmt.Fprint(os.Stderr, resp.Stderr)
+		stdoutOffset = nextStdoutOffset
+
+		newStderr, nextStderrOffset := logOutputSince(resp.Stderr, stderrOffset)
+		if _, err := io.WriteString(stderr, newStderr); err != nil {
+			return fmt.Errorf("write stderr: %w", err)
 		}
+		stderrOffset = nextStderrOffset
 
 		if resp.State == pb.ExecutionState_EXECUTION_STATE_SUCCEEDED ||
 			resp.State == pb.ExecutionState_EXECUTION_STATE_FAILED {
@@ -150,4 +178,11 @@ func followLogs(ctx context.Context, cli pb.RuntimeClient, uid string, tailLines
 
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+func logOutputSince(output string, offset int) (string, int) {
+	if offset < 0 || offset > len(output) {
+		offset = 0
+	}
+	return output[offset:], len(output)
 }
