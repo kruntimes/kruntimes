@@ -15,7 +15,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,7 +42,11 @@ import (
 
 var workspacePath = "/workspace" //nolint:gochecknoglobals
 
-const defaultHeartbeatInterval = 5 * time.Second
+const (
+	defaultHeartbeatInterval = 5 * time.Second
+	executionCleanupTimeout  = 5 * time.Second
+	executionCleanupRetry    = 100 * time.Millisecond
+)
 
 var (
 	runsCompleted = promauto.NewCounterVec(
@@ -595,16 +601,41 @@ func (c *Controller) applyTerminalWithOutput(
 }
 
 // ===========================================================================
-// cleanup — in-memory bookkeeping after a successful status update
+// cleanup — release runtime and workspace state after a successful status update
 // ===========================================================================
 
-func (c *Controller) cleanup(_ context.Context, ar *activeRun, phase v1alpha1.RunPhase) {
+func (c *Controller) cleanup(ctx context.Context, ar *activeRun, phase v1alpha1.RunPhase) {
 	if c.rleg != nil {
 		c.rleg.RemoveRun(string(ar.run.UID))
 	}
 	c.activeRuns.Delete(string(ar.run.UID))
+	c.releaseExecution(ctx, string(ar.run.UID))
+	if err := os.RemoveAll(workspaceForRun(ar.run)); err != nil {
+		c.Log.Error(err, "failed to remove Run workspace", "run", client.ObjectKeyFromObject(ar.run))
+	}
 	runDuration.WithLabelValues(ar.run.Spec.Runtime).Observe(time.Since(ar.start).Seconds())
 	runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(phase)).Inc()
+}
+
+func (c *Controller) releaseExecution(ctx context.Context, uid string) {
+	if c.runtimeCli == nil || uid == "" {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(ctx, executionCleanupTimeout)
+	defer cancel()
+
+	for {
+		_, err := c.runtimeCli.Forget(cleanupCtx, &pb.ForgetRequest{Id: uid})
+		if err == nil || status.Code(err) == codes.NotFound || status.Code(err) == codes.Unimplemented {
+			return
+		}
+		select {
+		case <-cleanupCtx.Done():
+			c.Log.Error(err, "failed to forget terminal runtime execution", "runUID", uid)
+			return
+		case <-time.After(executionCleanupRetry):
+		}
+	}
 }
 
 // ===========================================================================
@@ -854,6 +885,10 @@ func workDirForRun(run *v1alpha1.Run) string {
 		return filepath.Join(runDir, "repo")
 	}
 	return runDir
+}
+
+func workspaceForRun(run *v1alpha1.Run) string {
+	return filepath.Join(workspacePath, string(run.UID))
 }
 
 func podNamespace() string {

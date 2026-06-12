@@ -89,6 +89,27 @@ def handler(event):
         lst = self.stub.List(runtime_pb2.ListRequest())
         self.assertGreaterEqual(len(lst.entries), 1)
         self.stub.Cancel(runtime_pb2.CancelRequest(id="test4"))
+        with self.assertRaises(grpc.RpcError) as ctx:
+            self.stub.Status(runtime_pb2.StatusRequest(id="test4"))
+        self.assertEqual(ctx.exception.code(), grpc.StatusCode.NOT_FOUND)
+
+    def test_cancel_terminates_handler(self):
+        wd = self._prepare_inline("""
+import time
+
+def handler(event):
+    time.sleep(30)
+    return {"status": "late"}
+""", filename="app.py")
+        self.stub.Execute(runtime_pb2.ExecuteRequest(
+            id="cancel-handler",
+            working_dir=wd,
+            handler="app.handler",
+        ))
+        self.stub.Cancel(runtime_pb2.CancelRequest(id="cancel-handler"))
+        with self.assertRaises(grpc.RpcError) as ctx:
+            self.stub.Status(runtime_pb2.StatusRequest(id="cancel-handler"))
+        self.assertEqual(ctx.exception.code(), grpc.StatusCode.NOT_FOUND)
 
     def test_duplicate_id(self):
         wd = self._prepare_inline("print(1)")
@@ -102,6 +123,29 @@ def handler(event):
                 working_dir=wd,
             ))
         self.assertEqual(ctx.exception.code(), grpc.StatusCode.ALREADY_EXISTS)
+
+    def test_forget_terminal_execution(self):
+        wd = self._prepare_inline("print(1)")
+        self.stub.Execute(runtime_pb2.ExecuteRequest(
+            id="forget-terminal",
+            working_dir=wd,
+        ))
+        self._wait("forget-terminal")
+        self.stub.Forget(runtime_pb2.ForgetRequest(id="forget-terminal"))
+        with self.assertRaises(grpc.RpcError) as ctx:
+            self.stub.Status(runtime_pb2.StatusRequest(id="forget-terminal"))
+        self.assertEqual(ctx.exception.code(), grpc.StatusCode.NOT_FOUND)
+
+    def test_forget_rejects_running_execution(self):
+        wd = self._prepare_inline("import time; time.sleep(30)")
+        self.stub.Execute(runtime_pb2.ExecuteRequest(
+            id="forget-running",
+            working_dir=wd,
+        ))
+        with self.assertRaises(grpc.RpcError) as ctx:
+            self.stub.Forget(runtime_pb2.ForgetRequest(id="forget-running"))
+        self.assertEqual(ctx.exception.code(), grpc.StatusCode.FAILED_PRECONDITION)
+        self.stub.Cancel(runtime_pb2.CancelRequest(id="forget-running"))
 
 
 if __name__ == "__main__":

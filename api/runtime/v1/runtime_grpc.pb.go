@@ -23,6 +23,7 @@ const (
 	Runtime_Status_FullMethodName  = "/executor.v1.Runtime/Status"
 	Runtime_List_FullMethodName    = "/executor.v1.Runtime/List"
 	Runtime_Cancel_FullMethodName  = "/executor.v1.Runtime/Cancel"
+	Runtime_Forget_FullMethodName  = "/executor.v1.Runtime/Forget"
 	Runtime_Health_FullMethodName  = "/executor.v1.Runtime/Health"
 )
 
@@ -37,6 +38,9 @@ type RuntimeClient interface {
 	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
 	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error)
 	Cancel(ctx context.Context, in *CancelRequest, opts ...grpc.CallOption) (*CancelResponse, error)
+	// Forget releases a terminal execution and its retained output.
+	// Running executions must be cancelled before they can be forgotten.
+	Forget(ctx context.Context, in *ForgetRequest, opts ...grpc.CallOption) (*ForgetResponse, error)
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
 }
 
@@ -88,6 +92,16 @@ func (c *runtimeClient) Cancel(ctx context.Context, in *CancelRequest, opts ...g
 	return out, nil
 }
 
+func (c *runtimeClient) Forget(ctx context.Context, in *ForgetRequest, opts ...grpc.CallOption) (*ForgetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ForgetResponse)
+	err := c.cc.Invoke(ctx, Runtime_Forget_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *runtimeClient) Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthResponse)
@@ -109,6 +123,9 @@ type RuntimeServer interface {
 	Status(context.Context, *StatusRequest) (*StatusResponse, error)
 	List(context.Context, *ListRequest) (*ListResponse, error)
 	Cancel(context.Context, *CancelRequest) (*CancelResponse, error)
+	// Forget releases a terminal execution and its retained output.
+	// Running executions must be cancelled before they can be forgotten.
+	Forget(context.Context, *ForgetRequest) (*ForgetResponse, error)
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
 	mustEmbedUnimplementedRuntimeServer()
 }
@@ -131,6 +148,9 @@ func (UnimplementedRuntimeServer) List(context.Context, *ListRequest) (*ListResp
 }
 func (UnimplementedRuntimeServer) Cancel(context.Context, *CancelRequest) (*CancelResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Cancel not implemented")
+}
+func (UnimplementedRuntimeServer) Forget(context.Context, *ForgetRequest) (*ForgetResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Forget not implemented")
 }
 func (UnimplementedRuntimeServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
@@ -228,6 +248,24 @@ func _Runtime_Cancel_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Runtime_Forget_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ForgetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RuntimeServer).Forget(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Runtime_Forget_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RuntimeServer).Forget(ctx, req.(*ForgetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Runtime_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HealthRequest)
 	if err := dec(in); err != nil {
@@ -268,6 +306,10 @@ var Runtime_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Cancel",
 			Handler:    _Runtime_Cancel_Handler,
+		},
+		{
+			MethodName: "Forget",
+			Handler:    _Runtime_Forget_Handler,
 		},
 		{
 			MethodName: "Health",

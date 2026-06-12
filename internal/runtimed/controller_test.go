@@ -733,12 +733,46 @@ func TestStartExecutionInjectsReservedArtifactDirectory(t *testing.T) {
 	}
 }
 
+func TestCleanupForgetsExecutionAndRemovesWorkspace(t *testing.T) {
+	setTestWorkspace(t)
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "cleanup", Namespace: "default", UID: "cleanup-uid"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+	}
+	runWorkspace := workspaceForRun(run)
+	if err := os.MkdirAll(runWorkspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runWorkspace, "retained"), []byte("data"), 0o600); err != nil {
+		t.Fatalf("write workspace file: %v", err)
+	}
+
+	runtimeClient := &fakeRuntimeClient{}
+	c := &Controller{runtimeCli: runtimeClient}
+	ar := &activeRun{run: run, workDir: runWorkspace, start: time.Now()}
+	c.activeRuns.Store(string(run.UID), ar)
+
+	c.cleanup(t.Context(), ar, v1alpha1.RunSucceeded)
+
+	if len(runtimeClient.forgetRequests) != 1 || runtimeClient.forgetRequests[0].Id != string(run.UID) {
+		t.Fatalf("Forget requests = %#v, want cleanup-uid", runtimeClient.forgetRequests)
+	}
+	if _, err := os.Stat(runWorkspace); !os.IsNotExist(err) {
+		t.Fatalf("workspace still exists or stat failed unexpectedly: %v", err)
+	}
+	if c.activeRunCount() != 0 {
+		t.Fatalf("active runs = %d, want 0", c.activeRunCount())
+	}
+}
+
 type fakeRuntimeClient struct {
 	pb.RuntimeClient
 	status         *pb.StatusResponse
 	statusErr      error
 	list           *pb.ListResponse
 	listErr        error
+	forgetErr      error
+	forgetRequests []*pb.ForgetRequest
 	executeOptions int
 	executeRequest *pb.ExecuteRequest
 }
@@ -768,6 +802,14 @@ func (f *fakeRuntimeClient) List(context.Context, *pb.ListRequest, ...grpc.CallO
 
 func (f *fakeRuntimeClient) Cancel(context.Context, *pb.CancelRequest, ...grpc.CallOption) (*pb.CancelResponse, error) {
 	return &pb.CancelResponse{}, nil
+}
+
+func (f *fakeRuntimeClient) Forget(_ context.Context, req *pb.ForgetRequest, _ ...grpc.CallOption) (*pb.ForgetResponse, error) {
+	f.forgetRequests = append(f.forgetRequests, req)
+	if f.forgetErr != nil {
+		return nil, f.forgetErr
+	}
+	return &pb.ForgetResponse{}, nil
 }
 
 func (f *fakeRuntimeClient) Health(context.Context, *pb.HealthRequest, ...grpc.CallOption) (*pb.HealthResponse, error) {
