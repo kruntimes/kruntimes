@@ -220,7 +220,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		{
 			Name: workspaceVolume,
 			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
+				EmptyDir: workspaceVolumeSource(rt.Spec.Workspace),
 			},
 		},
 	}
@@ -246,6 +246,16 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			},
 		},
 	}
+}
+
+func workspaceVolumeSource(workspace *v1alpha1.RuntimeWorkspaceSpec) *corev1.EmptyDirVolumeSource {
+	emptyDir := &corev1.EmptyDirVolumeSource{}
+	if workspace == nil || workspace.SizeLimit == nil {
+		return emptyDir
+	}
+	sizeLimit := workspace.SizeLimit.DeepCopy()
+	emptyDir.SizeLimit = &sizeLimit
+	return emptyDir
 }
 
 func configureArtifactStore(store *v1alpha1.RuntimeArtifactStoreSpec, daemon *corev1.Container, volumes *[]corev1.Volume) *corev1.PodSecurityContext {

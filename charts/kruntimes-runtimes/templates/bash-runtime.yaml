@@ -13,6 +13,8 @@ spec:
     {{- toYaml .Values.bash.capacity | nindent 4 }}
   resources:
     {{- toYaml .Values.bash.resources | nindent 4 }}
+  workspace:
+    sizeLimit: {{ .Values.workspace.sizeLimit | quote }}
   command:
     - --port={{ .Values.bash.port }}
     - --work-dir=/workspace
