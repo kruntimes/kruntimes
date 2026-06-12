@@ -21,6 +21,7 @@ import (
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
+	"github.com/kruntimes/kruntimes/internal/runstatus"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
@@ -171,15 +172,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 func (r *RunReconciler) applyCancelled(ctx context.Context, run *v1alpha1.Run) (ctrl.Result, error) {
 	now := metav1.Now()
-	run.Status.Phase = v1alpha1.RunCancelled
-	run.Status.Message = "cancelled by user"
-	run.Status.CompletionTime = &now
-	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
-		Type: "Running", Status: metav1.ConditionFalse, Reason: runretry.ReasonCancelled, Message: "cancelled by user",
-	})
-	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
-		Type: "Completed", Status: metav1.ConditionFalse, Reason: runretry.ReasonCancelled, Message: "cancelled by user",
-	})
+	runstatus.SetTerminal(run, v1alpha1.RunCancelled, runretry.ReasonCancelled, "cancelled by user", now)
 	if err := r.Status().Update(ctx, run); err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{Requeue: true}, nil
