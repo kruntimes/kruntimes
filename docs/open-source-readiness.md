@@ -54,7 +54,7 @@
 - [x] Run 完成后清理 `/workspace/<runUID>`，同时保留制品上传所需顺序。
 - [ ] 对 Bash/Python 的取消和超时终止整个进程组，并等待退出。
 - [ ] 修复 Python Runtime 中共享 task 状态的并发访问。
-- [ ] 明确 Python handler 模式的隔离方案；在未隔离前标记为 trusted-code only。
+- [x] 明确 Python handler 模式的隔离方案；在未隔离前标记为 trusted-code only。
 - [ ] 将 `workspace.sizeLimit` 实际应用到 Runtime Pod 的 `emptyDir`。
 
 验收标准：
@@ -87,7 +87,7 @@
 - [ ] 禁止默认 privilege escalation，启用 seccomp，按容器能力设置只读根文件系统。
 - [ ] 编写 threat model，明确同一 Runtime Pod 内多个 Run 共享进程、网络和 workspace
   所带来的限制。
-- [ ] 修正 README 中“per-Run resource limits”和“clean workspace”等超出当前实现的声明。
+- [x] 修正 README 中“per-Run resource limits”和“clean workspace”等超出当前实现的声明。
 
 验收标准：
 
