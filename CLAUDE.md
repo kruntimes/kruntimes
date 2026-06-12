@@ -104,6 +104,6 @@ cd runtimes/python && uv sync                      # install deps (grpcio, grpci
 
 **Code generation:** `make proto-python` generates gRPC stubs in `runtimes/python/pb/` from `api/runtime/v1/runtime.proto`.
 
-**Tests:** `uv run python -m unittest server_test -v` (5 tests covering inline, handler, duplicate, cancel, failure).
+**Tests:** `uv run python -m unittest server_test -v`
 
-**How it works:** The runtimed daemon prepares user code on the shared `/workspace` volume (inline → dump to the `entrypoint` file, default `script`; repo → git clone), then sends `working_dir` + `entrypoint` + `handler` to the Python gRPC server. The server runs `python <working_dir>/<entrypoint>` or calls `handler(event)` in FaaS mode.
+**How it works:** The runtimed daemon prepares user code in a per-Run directory on the shared `/workspace` volume (inline → dump to the `entrypoint` file, default `script`; repo → git clone), then sends `working_dir` + `entrypoint` + `handler` to the Python gRPC server. The server runs `python <working_dir>/<entrypoint>` or executes `handler(event)` in FaaS mode. The built-in Python runtime is for trusted code only; handler mode is not a security boundary.

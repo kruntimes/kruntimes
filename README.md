@@ -65,7 +65,13 @@ Instead of creating a new Pod for every request, kruntimes maintains pools of pr
 
 This removes the slowest parts of the critical path — Kubernetes scheduling, image pulling, and container startup — from request time. For lightweight Runs, dispatch latency can drop from seconds or minutes to milliseconds.
 
-Each Run executes in a clean workspace with explicit setup, teardown, timeout, cancellation, and resource cleanup. For untrusted workloads, Runtime implementations can add stronger isolation boundaries such as per-run containers, gVisor, Firecracker, nsjail, or other sandboxing mechanisms.
+Each Run executes in a per-Run workspace directory under the shared Runtime Pod
+workspace, with explicit setup, teardown, timeout, cancellation, and terminal
+state cleanup. The built-in bash and Python runtimes are intended for trusted
+code within a trusted namespace. They do not provide per-Run filesystem,
+process, or network isolation. For untrusted workloads, Runtime implementations
+must add stronger isolation boundaries such as per-run containers, gVisor,
+Firecracker, nsjail, or other sandboxing mechanisms.
 
 ### Two-layer scheduling
 
@@ -78,13 +84,21 @@ This separation lets kruntimes implement application-level queuing, prioritizati
 
 Runtime Pods continuously report health, capacity, supported Runtime labels, active Run count, and load. The application scheduler uses this information to place Runs onto hot pods without relying on Kubernetes scheduling for every execution.
 
-Because multiple Runs may share a Runtime Pod, kruntimes enforces per-Run concurrency, timeout, cancellation, and resource limits at the runtime layer.
+Because multiple Runs may share a Runtime Pod, kruntimes enforces scheduling
+capacity, timeout, cancellation, and retry behavior at the runtime layer.
+Per-Run CPU and memory isolation are not currently enforced by the built-in
+runtimes.
 
 ### Runtime abstraction
 
 Different execution environments — such as language runtimes like Go, Python, and Node.js, or specialized executors like BuildKit — are modeled as distinct **Runtime** types.
 
-Each Runtime is backed by an independent Deployment pool with a specific container image, toolchain, resource profile, and security policy. This provides natural environment isolation, guarantees consistency across Runs, and makes adding new environments an operational workflow: build a new Runtime image, deploy a pool, and register its labels and capabilities.
+Each Runtime is backed by an independent Deployment pool with a specific
+container image, toolchain, resource profile, and security policy. This
+provides environment separation between Runtime pools and keeps execution
+toolchains consistent across Runs. Multiple Runs assigned to the same Runtime
+Pod still share that pod's process, filesystem, and network namespaces unless a
+custom Runtime adds stronger isolation.
 
 ### Declarative CRDs, not P2P
 
@@ -539,7 +553,8 @@ The Python runtime is a standalone gRPC server (Python 3.13) deployed alongside 
 **Execution flow:**
 1. Runtimed prepares source on `/workspace/<uid>/` — inline code dumped to the `entrypoint` file (default `"script"`), or git clone to `repo/`
 2. Runtimed calls gRPC `Execute` with `working_dir` set to the prepared directory, `entrypoint` to the script name, and `handler` (if FaaS mode)
-3. If `handler` is set (e.g. `"app.handler"`), the Python runtime imports the module and calls `handler(event)` with `args` as the event payload
+3. If `handler` is set (e.g. `"app.handler"`), the Python runtime executes that handler within the prepared workspace and passes `args` as the event payload
+4. Python handler mode is for trusted code only. It is an execution convenience, not a security boundary
 4. Otherwise, it runs `python <working_dir>/<entrypoint> <args>` as a script
 
 | Mode | Example |
