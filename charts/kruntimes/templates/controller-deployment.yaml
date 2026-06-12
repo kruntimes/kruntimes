@@ -17,10 +17,20 @@ spec:
         app: kruntimes-controller
     spec:
       serviceAccountName: kruntimes-controller
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: controller
           image: {{ .Values.controller.image }}
           imagePullPolicy: {{ .Values.controller.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           args:
             - --leader-elect=true
             - --metrics-bind-address=:8082

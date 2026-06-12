@@ -47,6 +47,27 @@ func TestBuildDeploymentAddsCapacityAnnotationsAndWorkers(t *testing.T) {
 	if !slices.Contains(daemon.Args, "--runtime-name=bash") {
 		t.Fatalf("daemon args = %v, want runtime name", daemon.Args)
 	}
+
+	for _, container := range deploy.Spec.Template.Spec.Containers {
+		if container.SecurityContext == nil {
+			t.Fatalf("container %s missing security context", container.Name)
+		}
+		if container.SecurityContext.RunAsNonRoot == nil || !*container.SecurityContext.RunAsNonRoot {
+			t.Fatalf("container %s runAsNonRoot = %#v, want true", container.Name, container.SecurityContext.RunAsNonRoot)
+		}
+		if container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation {
+			t.Fatalf("container %s allowPrivilegeEscalation = %#v, want false", container.Name, container.SecurityContext.AllowPrivilegeEscalation)
+		}
+		if container.SecurityContext.ReadOnlyRootFilesystem == nil || !*container.SecurityContext.ReadOnlyRootFilesystem {
+			t.Fatalf("container %s readOnlyRootFilesystem = %#v, want true", container.Name, container.SecurityContext.ReadOnlyRootFilesystem)
+		}
+		if container.SecurityContext.SeccompProfile == nil || container.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+			t.Fatalf("container %s seccomp = %#v, want RuntimeDefault", container.Name, container.SecurityContext.SeccompProfile)
+		}
+		if container.SecurityContext.Capabilities == nil || len(container.SecurityContext.Capabilities.Drop) != 1 || container.SecurityContext.Capabilities.Drop[0] != corev1.Capability("ALL") {
+			t.Fatalf("container %s capabilities = %#v, want drop ALL", container.Name, container.SecurityContext.Capabilities)
+		}
+	}
 }
 
 func TestBuildDeploymentAppliesWorkspaceSizeLimit(t *testing.T) {

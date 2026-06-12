@@ -16,10 +16,20 @@ spec:
         app: kruntimes-scheduler
     spec:
       serviceAccountName: kruntimes-scheduler
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: scheduler
           image: {{ .Values.scheduler.image }}
           imagePullPolicy: {{ .Values.scheduler.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           args:
             - --leader-elect={{ .Values.scheduler.leaderElect }}
             - --metrics-bind-address={{ .Values.scheduler.metricsBindAddress }}
