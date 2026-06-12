@@ -147,6 +147,17 @@ def handler(event):
         self.assertEqual(ctx.exception.code(), grpc.StatusCode.FAILED_PRECONDITION)
         self.stub.Cancel(runtime_pb2.CancelRequest(id="forget-running"))
 
+    def test_rejects_escaping_entrypoint(self):
+        wd = self._prepare_inline("print(1)")
+        self.stub.Execute(runtime_pb2.ExecuteRequest(
+            id="bad-entrypoint",
+            working_dir=wd,
+            entrypoint="../escape.py",
+        ))
+        status = self._wait("bad-entrypoint")
+        self.assertEqual(status.state, runtime_pb2.EXECUTION_STATE_FAILED)
+        self.assertIn("entrypoint", status.error_message)
+
 
 if __name__ == "__main__":
     unittest.main()

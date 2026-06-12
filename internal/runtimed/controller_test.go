@@ -96,6 +96,27 @@ func TestPrepareSource_InlineDefaultEntrypoint(t *testing.T) {
 	}
 }
 
+func TestPrepareSource_RejectsEscapingEntrypoint(t *testing.T) {
+	dir := t.TempDir()
+	workspacePath = dir
+
+	inline := "echo escape"
+	run := &v1alpha1.Run{
+		Spec: v1alpha1.RunSpec{
+			Entrypoint: "../escape.sh",
+			Source:     &v1alpha1.CodeSource{Inline: &inline},
+		},
+	}
+	run.UID = "test-uid"
+
+	if _, err := prepareSource(run); err == nil || !strings.Contains(err.Error(), "entrypoint") {
+		t.Fatalf("prepareSource error = %v, want entrypoint validation error", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "escape.sh")); !os.IsNotExist(err) {
+		t.Fatalf("escape target should not exist, stat err = %v", err)
+	}
+}
+
 func TestReadOutputs_Empty(t *testing.T) {
 	outputs, err := readOutputs("")
 	if err != nil {

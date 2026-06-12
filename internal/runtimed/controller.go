@@ -35,6 +35,7 @@ import (
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/artifact"
+	"github.com/kruntimes/kruntimes/internal/execpath"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
 	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
@@ -664,9 +665,9 @@ func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
 	if run.Spec.Timeout != nil {
 		timeoutSec = int64(run.Spec.Timeout.Duration.Seconds())
 	}
-	entrypoint := run.Spec.Entrypoint
-	if entrypoint == "" {
-		entrypoint = "script"
+	entrypoint, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script")
+	if err != nil {
+		return err
 	}
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -840,13 +841,16 @@ func prepareSource(run *v1alpha1.Run) (string, error) {
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir %s: %w", runDir, err)
 	}
+	if _, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script"); err != nil {
+		return "", err
+	}
 	if run.Spec.Source == nil {
 		return runDir, nil
 	}
 	if run.Spec.Source.Inline != nil {
-		fileName := run.Spec.Entrypoint
-		if fileName == "" {
-			fileName = "script"
+		fileName, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script")
+		if err != nil {
+			return "", err
 		}
 		scriptPath := filepath.Join(runDir, fileName)
 		if err := os.WriteFile(scriptPath, []byte(*run.Spec.Source.Inline), 0o644); err != nil {
