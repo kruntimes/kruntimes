@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -859,26 +858,7 @@ func prepareSource(run *v1alpha1.Run) (string, error) {
 		return runDir, nil
 	}
 	if run.Spec.Source.RepoURL != "" {
-		cloneDir := filepath.Join(runDir, "repo")
-		args := []string{"clone", run.Spec.Source.RepoURL, cloneDir}
-		if run.Spec.Source.CommitSHA == "" {
-			args = append(args, "--depth=1")
-		}
-		cmd := exec.Command("git", args...)
-		cmd.Dir = runDir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return "", fmt.Errorf("git clone: %w\n%s", err, string(out))
-		}
-		if run.Spec.Source.CommitSHA != "" {
-			cmd := exec.Command("git", "checkout", run.Spec.Source.CommitSHA)
-			cmd.Dir = cloneDir
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				return "", fmt.Errorf("git checkout: %w\n%s", err, string(out))
-			}
-		}
-		return cloneDir, nil
+		return prepareGitSource(runDir, run.Spec.Source.RepoURL, run.Spec.Source.CommitSHA)
 	}
 	return "", nil
 }
