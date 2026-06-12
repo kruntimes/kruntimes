@@ -7,6 +7,7 @@ import (
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -43,6 +44,7 @@ type RuntimeReconciler struct {
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runtimes,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runtimes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -57,38 +59,27 @@ func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	deploy := r.buildDeployment(&rt)
+	networkPolicy := r.buildNetworkPolicy(&rt)
 
-	var existing appsv1.Deployment
-	err := r.Get(ctx, types.NamespacedName{Name: deploy.Name, Namespace: deploy.Namespace}, &existing)
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, fmt.Errorf("get deployment: %w", err)
-		}
-		if err := controllerutil.SetControllerReference(&rt, deploy, r.Scheme); err != nil {
-			return ctrl.Result{}, fmt.Errorf("set owner ref: %w", err)
-		}
-		if err := r.Create(ctx, deploy); err != nil {
-			return ctrl.Result{}, fmt.Errorf("create deployment: %w", err)
-		}
-		log.Info("Created Deployment", "deployment", deploy.Name)
+	if changed, err := r.reconcileDeployment(ctx, &rt, deploy); err != nil {
+		return ctrl.Result{}, err
+	} else if changed {
+		log.Info("Reconciled Deployment", "deployment", deploy.Name)
 		return ctrl.Result{}, nil
 	}
-
-	if !equality.Semantic.DeepEqual(existing.Labels, deploy.Labels) ||
-		!equality.Semantic.DeepEqual(existing.Spec, deploy.Spec) {
-		existing.Labels = deploy.Labels
-		existing.Spec = deploy.Spec
-		if err := controllerutil.SetControllerReference(&rt, &existing, r.Scheme); err != nil {
-			return ctrl.Result{}, fmt.Errorf("set owner ref: %w", err)
-		}
-		if err := r.Update(ctx, &existing); err != nil {
-			return ctrl.Result{}, fmt.Errorf("update deployment: %w", err)
-		}
-		log.Info("Updated Deployment", "deployment", existing.Name)
+	if changed, err := r.reconcileNetworkPolicy(ctx, &rt, networkPolicy); err != nil {
+		return ctrl.Result{}, err
+	} else if changed {
+		log.Info("Reconciled NetworkPolicy", "networkPolicy", networkPolicy.Name)
 		return ctrl.Result{}, nil
 	}
 
 	// Propagate Deployment status back to Runtime.
+	var existing appsv1.Deployment
+	err := r.Get(ctx, types.NamespacedName{Name: deploy.Name, Namespace: deploy.Namespace}, &existing)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("get deployment for status: %w", err)
+	}
 	if rt.Status.ReadyReplicas != existing.Status.ReadyReplicas {
 		rt.Status.ReadyReplicas = existing.Status.ReadyReplicas
 		if err := r.Status().Update(ctx, &rt); err != nil {
@@ -248,6 +239,28 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 	}
 }
 
+func (r *RuntimeReconciler) buildNetworkPolicy(rt *v1alpha1.Runtime) *networkingv1.NetworkPolicy {
+	labels := map[string]string{
+		runtimeLabel: rt.Name,
+		"app":        "kruntimes-" + rt.Name,
+	}
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-" + rt.Name,
+			Namespace: rt.Namespace,
+			Labels:    labels,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: labels,
+			},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+			},
+		},
+	}
+}
+
 func workspaceVolumeSource(workspace *v1alpha1.RuntimeWorkspaceSpec) *corev1.EmptyDirVolumeSource {
 	emptyDir := &corev1.EmptyDirVolumeSource{}
 	if workspace == nil || workspace.SizeLimit == nil {
@@ -336,7 +349,74 @@ func (r *RuntimeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Runtime{}).
 		Owns(&appsv1.Deployment{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Complete(r)
+}
+
+func (r *RuntimeReconciler) reconcileDeployment(
+	ctx context.Context,
+	rt *v1alpha1.Runtime,
+	desired *appsv1.Deployment,
+) (bool, error) {
+	var existing appsv1.Deployment
+	if err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, &existing); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("get deployment: %w", err)
+		}
+		if err := controllerutil.SetControllerReference(rt, desired, r.Scheme); err != nil {
+			return false, fmt.Errorf("set deployment owner ref: %w", err)
+		}
+		if err := r.Create(ctx, desired); err != nil {
+			return false, fmt.Errorf("create deployment: %w", err)
+		}
+		return true, nil
+	}
+	if equality.Semantic.DeepEqual(existing.Labels, desired.Labels) &&
+		equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
+		return false, nil
+	}
+	existing.Labels = desired.Labels
+	existing.Spec = desired.Spec
+	if err := controllerutil.SetControllerReference(rt, &existing, r.Scheme); err != nil {
+		return false, fmt.Errorf("set deployment owner ref: %w", err)
+	}
+	if err := r.Update(ctx, &existing); err != nil {
+		return false, fmt.Errorf("update deployment: %w", err)
+	}
+	return true, nil
+}
+
+func (r *RuntimeReconciler) reconcileNetworkPolicy(
+	ctx context.Context,
+	rt *v1alpha1.Runtime,
+	desired *networkingv1.NetworkPolicy,
+) (bool, error) {
+	var existing networkingv1.NetworkPolicy
+	if err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, &existing); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("get networkpolicy: %w", err)
+		}
+		if err := controllerutil.SetControllerReference(rt, desired, r.Scheme); err != nil {
+			return false, fmt.Errorf("set networkpolicy owner ref: %w", err)
+		}
+		if err := r.Create(ctx, desired); err != nil {
+			return false, fmt.Errorf("create networkpolicy: %w", err)
+		}
+		return true, nil
+	}
+	if equality.Semantic.DeepEqual(existing.Labels, desired.Labels) &&
+		equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
+		return false, nil
+	}
+	existing.Labels = desired.Labels
+	existing.Spec = desired.Spec
+	if err := controllerutil.SetControllerReference(rt, &existing, r.Scheme); err != nil {
+		return false, fmt.Errorf("set networkpolicy owner ref: %w", err)
+	}
+	if err := r.Update(ctx, &existing); err != nil {
+		return false, fmt.Errorf("update networkpolicy: %w", err)
+	}
+	return true, nil
 }
 
 func ptr[T any](v T) *T { return &v }
