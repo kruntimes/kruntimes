@@ -47,10 +47,16 @@ func main() {
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "kruntimes-scheduler.kruntimes.com",
 	})
-	_ = mgr.AddHealthzCheck("healthz", func(_ *http.Request) error { return nil })
-	_ = mgr.AddReadyzCheck("readyz", func(_ *http.Request) error { return nil })
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
+	}
+	if err := mgr.AddHealthzCheck("healthz", func(_ *http.Request) error { return nil }); err != nil {
+		setupLog.Error(err, "unable to register health check")
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck("readyz", func(_ *http.Request) error { return nil }); err != nil {
+		setupLog.Error(err, "unable to register readiness check")
 		os.Exit(1)
 	}
 
