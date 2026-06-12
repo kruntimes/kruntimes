@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 )
@@ -158,6 +160,46 @@ func TestGetTask_NotFound(t *testing.T) {
 	_, err := client.Status(ctx, &pb.StatusRequest{Id: "nonexistent"})
 	if err == nil {
 		t.Error("expected error for nonexistent request")
+	}
+}
+
+func TestForgetTerminalExecution(t *testing.T) {
+	client, cleanup := startTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := client.Execute(ctx, &pb.ExecuteRequest{
+		Id:   "forget-terminal",
+		Args: []string{"echo done"},
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	waitForTerminalStatus(t, client, "forget-terminal")
+
+	if _, err := client.Forget(ctx, &pb.ForgetRequest{Id: "forget-terminal"}); err != nil {
+		t.Fatalf("Forget: %v", err)
+	}
+	if _, err := client.Status(ctx, &pb.StatusRequest{Id: "forget-terminal"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("Status error = %v, want NotFound", err)
+	}
+}
+
+func TestForgetRejectsRunningExecution(t *testing.T) {
+	client, cleanup := startTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := client.Execute(ctx, &pb.ExecuteRequest{
+		Id:   "forget-running",
+		Args: []string{"sleep 30"},
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if _, err := client.Forget(ctx, &pb.ForgetRequest{Id: "forget-running"}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("Forget error = %v, want FailedPrecondition", err)
+	}
+	if _, err := client.Cancel(ctx, &pb.CancelRequest{Id: "forget-running"}); err != nil {
+		t.Fatalf("Cancel: %v", err)
 	}
 }
 

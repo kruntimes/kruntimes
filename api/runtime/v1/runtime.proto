@@ -11,6 +11,9 @@ service Runtime {
     rpc Status(StatusRequest) returns (StatusResponse);
     rpc List(ListRequest) returns (ListResponse);
     rpc Cancel(CancelRequest) returns (CancelResponse);
+    // Forget releases a terminal execution and its retained output.
+    // Running executions must be cancelled before they can be forgotten.
+    rpc Forget(ForgetRequest) returns (ForgetResponse);
     rpc Health(HealthRequest) returns (HealthResponse);
 }
 
@@ -63,6 +66,12 @@ message CancelRequest {
 }
 
 message CancelResponse {}
+
+message ForgetRequest {
+    string id = 1;
+}
+
+message ForgetResponse {}
 
 message HealthRequest {}
 

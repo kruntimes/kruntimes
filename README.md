@@ -289,10 +289,17 @@ Execute(RunSpec) -> ExecutionID
 Status(ExecutionID) -> ExecutionStatus
 List() -> repeated Execution
 Cancel(ExecutionID) -> CancelResult
+Forget(ExecutionID) -> ForgetResult
 Health() -> HealthStatus
 ```
 
 `List` is used by Runtimed to recover local execution state after restart. On startup, runtimed compares Runtime Server executions with Runs assigned to its Pod, rebuilds its in-memory active Run set, and resumes status polling. If a Running Run is no longer present in the Runtime Server, runtimed routes it through the normal retry or terminal failure path. `Cancel` is best-effort and should eventually result in `Cancelled`, `Failed`, or `Timeout`. `Health` is used for Kubernetes pod liveness probes and runtime health checks.
+
+After a terminal Run status is persisted, runtimed calls `Forget` to release the
+Runtime Server's retained execution state and output, then removes the Run's
+workspace. `Forget` is idempotent from runtimed's perspective: `NotFound` is
+treated as already released. Runtime Servers should reject forgetting an active
+execution.
 
 ### Data Plane vs Control Plane
 
@@ -562,6 +569,7 @@ service Runtime {
     rpc Status(StatusRequest) returns (StatusResponse);
     rpc List(ListRequest) returns (ListResponse);
     rpc Cancel(CancelRequest) returns (CancelResponse);
+    rpc Forget(ForgetRequest) returns (ForgetResponse);
     rpc Health(HealthRequest) returns (HealthResponse);
 }
 ```

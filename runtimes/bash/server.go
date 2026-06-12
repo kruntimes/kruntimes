@@ -209,6 +209,28 @@ func (s *Server) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.CancelR
 	return &pb.CancelResponse{}, nil
 }
 
+func (s *Server) Forget(_ context.Context, req *pb.ForgetRequest) (*pb.ForgetResponse, error) {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
+	entry := s.execution(req.Id)
+	if entry == nil {
+		return nil, status.Errorf(codes.NotFound, "request %s not found", req.Id)
+	}
+	select {
+	case <-entry.done:
+	default:
+		return nil, status.Errorf(codes.FailedPrecondition, "request %s is still running", req.Id)
+	}
+
+	s.mu.Lock()
+	if s.executions[req.Id] == entry {
+		delete(s.executions, req.Id)
+	}
+	s.mu.Unlock()
+	return &pb.ForgetResponse{}, nil
+}
+
 func (s *Server) Health(context.Context, *pb.HealthRequest) (*pb.HealthResponse, error) {
 	return &pb.HealthResponse{Healthy: true}, nil
 }

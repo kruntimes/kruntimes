@@ -54,7 +54,7 @@ Run CRD (Pending) → Scheduler → Run (Scheduled, assignedPod)
 
 - **Runtime CRD** (`api/v1alpha1/runtime_types.go`): defines a runtime type (image, port, replicas). The Runtime controller creates a Deployment with **two containers** — the runtime server + runtimed daemon — sharing an emptyDir `/workspace`. Pod label `runtime: <cr-name>` is used by the scheduler for pod selection.
 
-- **gRPC Runtime service** (`api/runtime/v1/runtime.proto`): `Execute / Status / List / Cancel`. The runtimed daemon calls this on `localhost:<port>` to delegate command execution. Import as `pb "github.com/kruntimes/kruntimes/api/runtime/v1"`.
+- **gRPC Runtime service** (`api/runtime/v1/runtime.proto`): `Execute / Status / List / Cancel / Forget`. The runtimed daemon calls this on `localhost:<port>` to delegate command execution. `Forget` releases terminal execution state after the Run status is persisted. Import as `pb "github.com/kruntimes/kruntimes/api/runtime/v1"`.
 
 ### Controllers
 
