@@ -7,6 +7,8 @@ import (
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -204,19 +206,44 @@ func TestRelist_NoChange(t *testing.T) {
 	}
 }
 
-func TestRelist_StatusError(t *testing.T) {
+func TestRelist_TransientStatusErrorDoesNotEmitEvent(t *testing.T) {
 	provider := &mockStatusProvider{
-		errors: map[string]error{"uid-1": context.DeadlineExceeded},
+		errors: map[string]error{"uid-1": status.Error(codes.Unavailable, "runtime unavailable")},
 	}
 	g := NewGenericRLEG(provider, 0)
 	run := newRun("test-run", "uid-1", 0)
 	g.AddRun(run)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
+	g.relist(t.Context())
 
-	// Should not panic on error.
-	g.relist(ctx)
+	select {
+	case ev := <-g.Events():
+		t.Fatalf("unexpected event for transient Status error: %#v", ev)
+	default:
+	}
+}
+
+func TestRelist_NotFoundEmitsExecutionLost(t *testing.T) {
+	provider := &mockStatusProvider{
+		errors: map[string]error{"uid-1": status.Error(codes.NotFound, "execution not found")},
+	}
+	g := NewGenericRLEG(provider, 0)
+	run := newRun("test-run", "uid-1", 0)
+	g.AddRun(run)
+
+	g.relist(t.Context())
+
+	select {
+	case ev := <-g.Events():
+		if ev.EventType != RunExecutionLost {
+			t.Fatalf("event type = %s, want %s", ev.EventType, RunExecutionLost)
+		}
+		if ev.Run != run {
+			t.Fatalf("event run = %p, want %p", ev.Run, run)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected execution-lost event")
+	}
 }
 
 func TestHealthy(t *testing.T) {

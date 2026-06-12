@@ -7,6 +7,8 @@ import (
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 )
 
@@ -151,6 +153,13 @@ func (g *GenericRLEG) relist(ctx context.Context) {
 		resp, err := g.statusProvider.Status(rctx, uid)
 		cancel()
 		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				g.emit(&RunEvent{
+					Run:       rec.run,
+					EventType: RunExecutionLost,
+					OldState:  rec.lastState,
+				})
+			}
 			klog.V(4).Infof("RLEG Status(%s): %v", uid, err)
 			continue
 		}
