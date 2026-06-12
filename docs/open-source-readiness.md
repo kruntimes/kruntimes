@@ -151,9 +151,9 @@
 
 ## P1: Correctness and Operability
 
-- [ ] Stale reaper 同时检查 Kubernetes `PodReady` 和
+- [x] Stale reaper 同时检查 Kubernetes `PodReady` 和
   `kruntimes.io/RuntimedReady` heartbeat。
-- [ ] Stale reaper 返回 status update 错误，并统一 terminal condition 更新。
+- [x] Stale reaper 返回 status update 错误，并统一 terminal condition 更新。
 - [x] 修复 scheduler 在检查 `NewManager` 错误前使用 `mgr` 的初始化顺序。
 - [x] runtimed 主动区分 transient Status 错误和 execution `NotFound`。
 - [x] `krt run --wait` 正确处理 `Timeout` 和 `Cancelled`。
