@@ -155,7 +155,7 @@
   `kruntimes.io/RuntimedReady` heartbeat。
 - [ ] Stale reaper 返回 status update 错误，并统一 terminal condition 更新。
 - [x] 修复 scheduler 在检查 `NewManager` 错误前使用 `mgr` 的初始化顺序。
-- [ ] runtimed 主动区分 transient Status 错误和 execution `NotFound`。
+- [x] runtimed 主动区分 transient Status 错误和 execution `NotFound`。
 - [x] `krt run --wait` 正确处理 `Timeout` 和 `Cancelled`。
 - [ ] `krt logs` 同时处理 stdout/stderr，避免 stderr 重复和 offset 越界。
 - [ ] CLI 使用 Cobra command context，支持 kubeconfig/context、当前 namespace 和
