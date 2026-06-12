@@ -147,6 +147,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: workspaceVolume, MountPath: workspacePath},
 		},
+		SecurityContext: defaultContainerSecurityContext(),
 	}
 	if runtimeContainer.Resources.Requests == nil {
 		runtimeContainer.Resources.Requests = corev1.ResourceList{
@@ -186,11 +187,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: workspaceVolume, MountPath: workspacePath},
 		},
-		SecurityContext: &corev1.SecurityContext{
-			ReadOnlyRootFilesystem:   ptr(true),
-			RunAsNonRoot:             ptr(true),
-			AllowPrivilegeEscalation: ptr(false),
-		},
+		SecurityContext: defaultContainerSecurityContext(),
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("100m"),
@@ -257,6 +254,20 @@ func (r *RuntimeReconciler) buildNetworkPolicy(rt *v1alpha1.Runtime) *networking
 			PolicyTypes: []networkingv1.PolicyType{
 				networkingv1.PolicyTypeIngress,
 			},
+		},
+	}
+}
+
+func defaultContainerSecurityContext() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		ReadOnlyRootFilesystem:   ptr(true),
+		RunAsNonRoot:             ptr(true),
+		AllowPrivilegeEscalation: ptr(false),
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{"ALL"},
+		},
+		SeccompProfile: &corev1.SeccompProfile{
+			Type: corev1.SeccompProfileTypeRuntimeDefault,
 		},
 	}
 }
