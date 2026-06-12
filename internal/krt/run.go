@@ -126,13 +126,12 @@ func NewRunCmd(c client.Client) *cobra.Command {
 					return fmt.Errorf("get run: %w", err)
 				}
 
+				if done, err := runTerminalResult(latest.Status.Phase); done {
+					fmt.Println(latest.Status.Message)
+					return err
+				}
+
 				switch latest.Status.Phase {
-				case v1alpha1.RunSucceeded:
-					fmt.Println(latest.Status.Message)
-					return nil
-				case v1alpha1.RunFailed:
-					fmt.Println(latest.Status.Message)
-					return fmt.Errorf("run failed")
 				case v1alpha1.RunRunning:
 					fmt.Printf("\rRunning on %s...", latest.Status.AssignedPod)
 				case v1alpha1.RunScheduled:
@@ -156,4 +155,19 @@ func NewRunCmd(c client.Client) *cobra.Command {
 	cmd.Flags().StringVarP(&opts.Namespace, "namespace", "n", "default", "Kubernetes namespace")
 
 	return cmd
+}
+
+func runTerminalResult(phase v1alpha1.RunPhase) (bool, error) {
+	switch phase {
+	case v1alpha1.RunSucceeded:
+		return true, nil
+	case v1alpha1.RunFailed:
+		return true, fmt.Errorf("run failed")
+	case v1alpha1.RunTimeout:
+		return true, fmt.Errorf("run timed out")
+	case v1alpha1.RunCancelled:
+		return true, fmt.Errorf("run cancelled")
+	default:
+		return false, nil
+	}
 }
