@@ -1,6 +1,9 @@
 # Built-in runtimes installed by this chart.
 # Each creates a Runtime CR that the controller turns into a Deployment.
 
+workspace:
+  sizeLimit: 10Gi
+
 bash:
   image: kruntimes-bash-runtime:latest
   port: 9091

@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -62,6 +63,10 @@ type RuntimeSpec struct {
 	// ArtifactStore configures durable artifact storage for Runs executed by this Runtime.
 	// +optional
 	ArtifactStore *RuntimeArtifactStoreSpec `json:"artifactStore,omitempty"`
+
+	// Workspace configures the shared workspace volume mounted into the runtime pod.
+	// +optional
+	Workspace *RuntimeWorkspaceSpec `json:"workspace,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
@@ -136,6 +141,14 @@ type RuntimeCapacity struct {
 	// The built-in "runs" resource limits concurrent Run executions per pod.
 	// +optional
 	Resources corev1.ResourceList `json:"resources,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// RuntimeWorkspaceSpec configures the shared workspace volume used by Runs.
+type RuntimeWorkspaceSpec struct {
+	// SizeLimit applies an EmptyDir size limit to the shared workspace volume.
+	// +optional
+	SizeLimit *resource.Quantity `json:"sizeLimit,omitempty"`
 }
 
 // +kubebuilder:object:generate=true

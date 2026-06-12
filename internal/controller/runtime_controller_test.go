@@ -48,6 +48,45 @@ func TestBuildDeploymentAddsCapacityAnnotationsAndWorkers(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentAppliesWorkspaceSizeLimit(t *testing.T) {
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
+		Spec: v1alpha1.RuntimeSpec{
+			Image: "bash-runtime:latest",
+			Workspace: &v1alpha1.RuntimeWorkspaceSpec{
+				SizeLimit: quantityPtr(resource.MustParse("10Gi")),
+			},
+		},
+	}
+
+	deploy := (&RuntimeReconciler{}).buildDeployment(rt)
+	workspace := deploy.Spec.Template.Spec.Volumes[0]
+	if workspace.EmptyDir == nil || workspace.EmptyDir.SizeLimit == nil {
+		t.Fatalf("workspace emptyDir = %#v, want size limit", workspace.EmptyDir)
+	}
+	if got := workspace.EmptyDir.SizeLimit.String(); got != "10Gi" {
+		t.Fatalf("workspace sizeLimit = %q, want 10Gi", got)
+	}
+}
+
+func TestBuildDeploymentLeavesWorkspaceSizeLimitUnsetByDefault(t *testing.T) {
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
+		Spec: v1alpha1.RuntimeSpec{
+			Image: "bash-runtime:latest",
+		},
+	}
+
+	deploy := (&RuntimeReconciler{}).buildDeployment(rt)
+	workspace := deploy.Spec.Template.Spec.Volumes[0]
+	if workspace.EmptyDir == nil {
+		t.Fatalf("workspace emptyDir = nil, want emptyDir volume")
+	}
+	if workspace.EmptyDir.SizeLimit != nil {
+		t.Fatalf("workspace sizeLimit = %v, want nil by default", workspace.EmptyDir.SizeLimit)
+	}
+}
+
 func TestBuildDeploymentMountsFilesystemArtifactStoreOnlyIntoRuntimed(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
@@ -208,4 +247,8 @@ func TestBuildDeploymentOmitsUnsetS3ArtifactStoreOptions(t *testing.T) {
 	if len(daemon.EnvFrom) != 0 {
 		t.Fatalf("daemon envFrom = %v, want none", daemon.EnvFrom)
 	}
+}
+
+func quantityPtr(q resource.Quantity) *resource.Quantity {
+	return &q
 }
