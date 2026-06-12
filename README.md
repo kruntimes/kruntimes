@@ -403,6 +403,11 @@ make deploy           # platform (CRDs, scheduler, controller, RBAC)
 make deploy-runtimes  # built-in runtimes (bash, python)
 ```
 
+Before granting user access, read [Security and Authorization](docs/security.md).
+Creating a `Run` grants code-execution capability inside the selected Runtime
+Pod's trust boundary. Creating or updating a `Runtime` grants control over the
+images and storage used by that Runtime pool.
+
 ### Create a Run
 
 ```bash
