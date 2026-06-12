@@ -34,7 +34,7 @@
 - [x] CI 执行 `make test`、`make test-integration` 和 Helm lint/template。
 - [x] CI 执行 Go race detector，至少覆盖 runtime、scheduler、controller 和 runtimed。
 - [x] CI 执行 Python Runtime 单元测试。
-- [ ] 增加 `govulncheck`、依赖更新机器人和基础 secret scanning。
+- [x] 增加 `govulncheck`、依赖更新机器人和基础 secret scanning。
 - [x] 增加生成文件一致性检查，确保生成的 Go API 和 CRD 文件保持最新。
 - [x] 定期或按发布执行 `make e2e`。
 
