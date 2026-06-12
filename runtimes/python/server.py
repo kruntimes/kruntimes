@@ -133,6 +133,16 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
         except ProcessLookupError:
             pass
 
+    @staticmethod
+    def _resolve_entrypoint(entrypoint, fallback="script"):
+        candidate = Path(entrypoint or fallback)
+        if candidate.is_absolute():
+            raise ValueError("entrypoint must be a relative path within the workspace")
+        cleaned = Path(os.path.normpath(str(candidate)))
+        if cleaned == Path(".") or ".." in cleaned.parts:
+            raise ValueError("entrypoint must be a relative path within the workspace")
+        return cleaned
+
     def _execute(self, task_id, task_dir, request):
         try:
             if request.handler:
@@ -173,7 +183,7 @@ if result is not None:
         self._run_process(task_id, task_dir, request, cmd)
 
     def _run_entrypoint(self, task_id, task_dir, request):
-        entrypoint = request.entrypoint or "script"
+        entrypoint = self._resolve_entrypoint(request.entrypoint)
         script = task_dir / entrypoint
         if script.exists():
             cmd = [sys.executable, str(script)] + list(request.args)

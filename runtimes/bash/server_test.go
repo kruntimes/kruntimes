@@ -377,6 +377,32 @@ func TestCancelTerminatesProcessGroup(t *testing.T) {
 	t.Fatalf("child process %d still exists after cancellation", childPID)
 }
 
+func TestRejectsEscapingEntrypoint(t *testing.T) {
+	client, cleanup := startTestServer(t)
+	defer cleanup()
+
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, "script"), []byte("echo ok\n"), 0o644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	if _, err := client.Execute(context.Background(), &pb.ExecuteRequest{
+		Id:         "bad-entrypoint",
+		WorkingDir: workDir,
+		Entrypoint: "../escape.sh",
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	resp := waitForTerminalStatus(t, client, "bad-entrypoint")
+	if resp.State != pb.ExecutionState_EXECUTION_STATE_FAILED {
+		t.Fatalf("state = %v, want failed", resp.State)
+	}
+	if !strings.Contains(resp.ErrorMessage, "entrypoint") {
+		t.Fatalf("error message = %q, want entrypoint validation", resp.ErrorMessage)
+	}
+}
+
 func waitForTerminalStatus(t *testing.T, client pb.RuntimeClient, id string) *pb.StatusResponse {
 	t.Helper()
 	ctx := context.Background()

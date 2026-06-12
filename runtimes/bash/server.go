@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kruntimes/kruntimes/internal/execpath"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
@@ -310,9 +311,9 @@ func (s *Server) execute(ctx context.Context, req *pb.ExecuteRequest, entry *exe
 }
 
 func buildCommand(req *pb.ExecuteRequest, workDir string) (*exec.Cmd, error) {
-	entrypoint := req.Entrypoint
-	if entrypoint == "" {
-		entrypoint = "script"
+	entrypoint, err := execpath.ResolveEntrypoint(req.Entrypoint, "script")
+	if err != nil {
+		return nil, err
 	}
 	scriptPath := filepath.Join(workDir, entrypoint)
 	if _, err := os.Stat(scriptPath); err == nil {

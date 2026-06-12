@@ -79,7 +79,7 @@
 
 ### 5. Security and Trust Boundary
 
-- [ ] 拒绝绝对路径和包含 `..` 的 entrypoint，确保源码写入不逃逸 Run workspace。
+- [x] 拒绝绝对路径和包含 `..` 的 entrypoint，确保源码写入不逃逸 Run workspace。
 - [ ] 限制 Git source 协议，增加 clone/checkout 超时、大小和输出限制。
 - [ ] 明确 Runtime、Run 创建权限及其安全含义。
 - [ ] 为 runtimed status/artifact gRPC 增加网络访问控制；至少提供默认 NetworkPolicy。
