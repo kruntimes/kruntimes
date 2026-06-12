@@ -17,6 +17,7 @@ const (
 	ReasonPrepareSource  = "PrepareSource"
 	ReasonRuntimeExecute = "RuntimeExecute"
 	ReasonRuntimeError   = "RuntimeError"
+	ReasonExecutionLost  = "ExecutionLost"
 	ReasonCancelled      = "Cancelled"
 	ReasonPodGone        = "PodGone"
 	ReasonPodTerminating = "PodTerminating"

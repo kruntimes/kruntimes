@@ -101,6 +101,7 @@ func TestShouldRetry(t *testing.T) {
 		{3, ReasonRuntimeError, false},
 		{1, ReasonCancelled, false},
 		{1, ReasonTimeout, true},
+		{1, ReasonExecutionLost, true},
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%s_attempt=%d", tt.reason, tt.attempt), func(t *testing.T) {

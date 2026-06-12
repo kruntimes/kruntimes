@@ -268,6 +268,7 @@ Failure reasons are stable machine-readable strings used by retry policy and con
 |--------|---------|
 | `RuntimeError` | The runtime executed the Run but the workload failed. |
 | `RuntimeExecute` | Runtimed could not call Runtime Server `Execute`. |
+| `ExecutionLost` | Runtime Server no longer has the execution while the Run is still `Running`. |
 | `PrepareSource` | Runtimed could not prepare inline or repository source. |
 | `Timeout` | The Run exceeded `spec.timeout` or the Runtime Server reported a timeout. |
 | `Cancelled` | The user requested cancellation. |

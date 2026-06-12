@@ -19,6 +19,8 @@ const (
 	RunStateTransition RunEventType = "StateTransition"
 	// RunTimeout indicates a run exceeded its deadline.
 	RunTimeout RunEventType = "RunTimeout"
+	// RunExecutionLost indicates the runtime no longer knows the execution.
+	RunExecutionLost RunEventType = "ExecutionLost"
 )
 
 // RunEvent is emitted when a run's lifecycle state changes.

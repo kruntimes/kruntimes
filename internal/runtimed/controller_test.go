@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
@@ -649,6 +650,121 @@ func TestReconcileRunningFailsWhenRecoveredExecutionMissing(t *testing.T) {
 	}
 	if updated.Status.Attempt != 1 {
 		t.Fatalf("attempt = %d, want 1", updated.Status.Attempt)
+	}
+	condition := meta.FindStatusCondition(updated.Status.Conditions, "Running")
+	if condition == nil || condition.Reason != runretry.ReasonExecutionLost {
+		t.Fatalf("Running condition = %#v, want reason %s", condition, runretry.ReasonExecutionLost)
+	}
+}
+
+func TestReconcileRunningRecoveredKeepsRunActiveOnTransientStatusError(t *testing.T) {
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "transient",
+			Namespace: "default",
+			UID:       "transient-uid",
+		},
+		Spec: v1alpha1.RunSpec{Runtime: "bash"},
+		Status: v1alpha1.RunStatus{
+			Phase:       v1alpha1.RunRunning,
+			AssignedPod: "pod-a",
+			StartTime:   &metav1.Time{Time: time.Now().Add(-time.Second)},
+		},
+	}
+	c := &Controller{
+		Hostname:   "pod-a",
+		runtimeCli: &fakeRuntimeClient{statusErr: status.Error(codes.Unavailable, "runtime unavailable")},
+	}
+
+	if _, err := c.reconcileRunningRecovered(t.Context(), run); status.Code(err) != codes.Unavailable {
+		t.Fatalf("reconcileRunningRecovered error = %v, want Unavailable", err)
+	}
+	if run.Status.Phase != v1alpha1.RunRunning {
+		t.Fatalf("phase = %s, want Running", run.Status.Phase)
+	}
+	if run.Status.Attempt != 0 {
+		t.Fatalf("attempt = %d, want unchanged", run.Status.Attempt)
+	}
+	if _, ok := c.activeRuns.Load(string(run.UID)); !ok {
+		t.Fatal("transient Status error should keep the recovered Run under active monitoring")
+	}
+}
+
+func TestReconcileRunningActiveDistinguishesStatusErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusErr  error
+		wantErr    codes.Code
+		wantPhase  v1alpha1.RunPhase
+		wantReason string
+	}{
+		{
+			name:      "transient",
+			statusErr: status.Error(codes.Unavailable, "runtime unavailable"),
+			wantErr:   codes.Unavailable,
+			wantPhase: v1alpha1.RunRunning,
+		},
+		{
+			name:       "execution lost",
+			statusErr:  status.Error(codes.NotFound, "execution not found"),
+			wantErr:    codes.OK,
+			wantPhase:  v1alpha1.RunFailed,
+			wantReason: runretry.ReasonExecutionLost,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := v1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatalf("add scheme: %v", err)
+			}
+			run := &v1alpha1.Run{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "active",
+					Namespace: "default",
+					UID:       "active-uid",
+				},
+				Spec: v1alpha1.RunSpec{Runtime: "bash"},
+				Status: v1alpha1.RunStatus{
+					Phase:       v1alpha1.RunRunning,
+					AssignedPod: "pod-a",
+					StartTime:   &metav1.Time{Time: time.Now().Add(-time.Second)},
+				},
+			}
+			k8sClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithStatusSubresource(&v1alpha1.Run{}).
+				WithObjects(run).
+				Build()
+			c := &Controller{
+				Client:     k8sClient,
+				Hostname:   "pod-a",
+				runtimeCli: &fakeRuntimeClient{statusErr: tt.statusErr},
+			}
+			ar := c.addRecoveredRun(run)
+
+			_, err := c.reconcileRunningActive(t.Context(), ar)
+			if status.Code(err) != tt.wantErr {
+				t.Fatalf("error = %v, want code %s", err, tt.wantErr)
+			}
+
+			var updated v1alpha1.Run
+			if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), &updated); err != nil {
+				t.Fatalf("get run: %v", err)
+			}
+			if updated.Status.Phase != tt.wantPhase {
+				t.Fatalf("phase = %s, want %s", updated.Status.Phase, tt.wantPhase)
+			}
+			condition := meta.FindStatusCondition(updated.Status.Conditions, "Running")
+			if tt.wantReason == "" {
+				if condition != nil {
+					t.Fatalf("Running condition changed on transient error: %#v", condition)
+				}
+			} else if condition == nil || condition.Reason != tt.wantReason {
+				t.Fatalf("Running condition = %#v, want reason %s", condition, tt.wantReason)
+			}
+		})
 	}
 }
 

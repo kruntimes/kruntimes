@@ -330,7 +330,11 @@ func (c *Controller) reconcileRunningRecovered(ctx context.Context, run *v1alpha
 	resp, err := c.pollStatus(ctx, string(run.UID))
 	if err != nil {
 		ar := c.buildActiveRun(run)
-		return c.applyFailure(ctx, ar, runretry.ReasonRuntimeExecute, fmt.Sprintf("runtime Status after runtimed restart: %v", err))
+		if status.Code(err) == codes.NotFound {
+			return c.applyFailure(ctx, ar, runretry.ReasonExecutionLost, "runtime execution not found after runtimed restart")
+		}
+		c.addRecoveredRun(run)
+		return ctrl.Result{}, fmt.Errorf("runtime Status after runtimed restart: %w", err)
 	}
 
 	ar := c.addRecoveredRun(run)
@@ -379,7 +383,10 @@ func (c *Controller) reconcileRunningActive(ctx context.Context, ar *activeRun) 
 
 	resp, err := c.pollStatus(ctx, string(ar.run.UID))
 	if err != nil {
-		return ctrl.Result{}, nil
+		if status.Code(err) == codes.NotFound {
+			return c.applyFailure(ctx, ar, runretry.ReasonExecutionLost, "runtime execution not found")
+		}
+		return ctrl.Result{}, fmt.Errorf("runtime Status: %w", err)
 	}
 
 	switch resp.State {
