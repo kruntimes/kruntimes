@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -84,6 +85,32 @@ func TestBuildDeploymentLeavesWorkspaceSizeLimitUnsetByDefault(t *testing.T) {
 	}
 	if workspace.EmptyDir.SizeLimit != nil {
 		t.Fatalf("workspace sizeLimit = %v, want nil by default", workspace.EmptyDir.SizeLimit)
+	}
+}
+
+func TestBuildNetworkPolicyDeniesRuntimePodIngressByDefault(t *testing.T) {
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
+		Spec: v1alpha1.RuntimeSpec{
+			Image: "bash-runtime:latest",
+		},
+	}
+
+	networkPolicy := (&RuntimeReconciler{}).buildNetworkPolicy(rt)
+	if networkPolicy.Name != "runtime-bash" || networkPolicy.Namespace != "default" {
+		t.Fatalf("networkPolicy metadata = %s/%s, want default/runtime-bash", networkPolicy.Namespace, networkPolicy.Name)
+	}
+	if len(networkPolicy.Spec.Ingress) != 0 {
+		t.Fatalf("networkPolicy ingress = %v, want default deny ingress", networkPolicy.Spec.Ingress)
+	}
+	if !slices.Equal(networkPolicy.Spec.PolicyTypes, []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}) {
+		t.Fatalf("networkPolicy policyTypes = %v, want ingress only", networkPolicy.Spec.PolicyTypes)
+	}
+	if networkPolicy.Spec.PodSelector.MatchLabels[runtimeLabel] != "bash" {
+		t.Fatalf("networkPolicy selector = %v, want runtime=bash", networkPolicy.Spec.PodSelector.MatchLabels)
+	}
+	if networkPolicy.Spec.PodSelector.MatchLabels["app"] != "kruntimes-bash" {
+		t.Fatalf("networkPolicy selector = %v, want app=kruntimes-bash", networkPolicy.Spec.PodSelector.MatchLabels)
 	}
 }
 
