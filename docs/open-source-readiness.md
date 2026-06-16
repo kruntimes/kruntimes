@@ -48,11 +48,14 @@
 当前 Bash Runtime 在执行 goroutine 与 `Status`、`List`、`Cancel`、重复
 `Execute` 之间存在真实数据竞争，已由 `go test -race` 复现。
 
-- [ ] 为每个 execution 建立完整的并发保护和不可变状态快照。
-- [ ] 为 stdout/stderr 设置有界缓冲，禁止无限内存增长。
+- [x] 为 Bash Runtime 每个 execution 建立完整的并发保护和不可变状态快照。
+- [ ] 为 Python Runtime 每个 execution 建立完整的并发保护和不可变状态快照。
+- [x] 为 Bash Runtime stdout/stderr 设置有界缓冲，禁止无限内存增长。
+- [ ] 为 Python Runtime stdout/stderr 设置有界缓冲，禁止无限内存增长。
 - [x] 为 Runtime API 增加 execution `Forget` 生命周期。
 - [x] Run 完成后清理 `/workspace/<runUID>`，同时保留制品上传所需顺序。
-- [ ] 对 Bash/Python 的取消和超时终止整个进程组，并等待退出。
+- [x] 对 Bash Runtime 的取消和超时终止整个进程组，并等待退出。
+- [ ] 对 Python Runtime 的取消和超时终止整个进程组，并等待退出。
 - [ ] 修复 Python Runtime 中共享 task 状态的并发访问。
 - [x] 明确 Python handler 模式的隔离方案；在未隔离前标记为 trusted-code only。
 - [x] 将 `workspace.sizeLimit` 实际应用到 Runtime Pod 的 `emptyDir`。
