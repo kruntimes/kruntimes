@@ -73,13 +73,13 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
             task["_cancelled"] = True
             proc = task.get("_proc")
             done = task["_done"]
-            if proc is not None and proc.poll() is None:
+            if proc is not None:
                 self._signal_process_group(proc, signal.SIGTERM)
 
         if not done.wait(timeout=2):
             with self._lock:
                 proc = task.get("_proc")
-                if proc is not None and proc.poll() is None:
+                if proc is not None:
                     self._signal_process_group(proc, signal.SIGKILL)
             done.wait()
 
@@ -120,11 +120,13 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
             error_message=task["error_message"],
         )
 
-    def _update_task(self, task_id, **updates):
+    def _finish_task(self, task_id, **updates):
         with self._lock:
             task = self._tasks.get(task_id)
             if task is not None:
                 task.update(updates)
+                task["_proc"] = None
+                task["_done"].set()
 
     @staticmethod
     def _signal_process_group(proc, sig):
@@ -146,20 +148,15 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
     def _execute(self, task_id, task_dir, request):
         try:
             if request.handler:
-                self._run_handler(task_id, task_dir, request)
+                result = self._run_handler(task_id, task_dir, request)
             else:
-                self._run_entrypoint(task_id, task_dir, request)
+                result = self._run_entrypoint(task_id, task_dir, request)
         except Exception as e:
-            self._update_task(
-                task_id,
-                state=runtime_pb2.EXECUTION_STATE_FAILED,
-                error_message=str(e),
-            )
-        finally:
-            with self._lock:
-                task = self._tasks.get(task_id)
-                if task is not None:
-                    task["_done"].set()
+            result = {
+                "state": runtime_pb2.EXECUTION_STATE_FAILED,
+                "error_message": str(e),
+            }
+        self._finish_task(task_id, **(result or {}))
 
     def _run_handler(self, task_id, task_dir, request):
         handler_script = """
@@ -180,7 +177,7 @@ if result is not None:
             request.handler,
             json.dumps({"args": list(request.args)}),
         ]
-        self._run_process(task_id, task_dir, request, cmd)
+        return self._run_process(task_id, task_dir, request, cmd)
 
     def _run_entrypoint(self, task_id, task_dir, request):
         entrypoint = self._resolve_entrypoint(request.entrypoint)
@@ -190,14 +187,12 @@ if result is not None:
         elif request.args:
             cmd = [sys.executable] + list(request.args)
         else:
-            self._update_task(
-                task_id,
-                state=runtime_pb2.EXECUTION_STATE_FAILED,
-                error_message="no script or args provided",
-            )
-            return
+            return {
+                "state": runtime_pb2.EXECUTION_STATE_FAILED,
+                "error_message": "no script or args provided",
+            }
 
-        self._run_process(task_id, task_dir, request, cmd)
+        return self._run_process(task_id, task_dir, request, cmd)
 
     def _run_process(self, task_id, task_dir, request, cmd):
         env = os.environ.copy()
@@ -216,24 +211,22 @@ if result is not None:
                 )
                 task["_proc"] = proc
             stdout, stderr = proc.communicate(timeout=timeout)
-            self._update_task(
-                task_id,
-                stdout=stdout,
-                stderr=stderr,
-                exit_code=proc.returncode,
-                state=(
+            return {
+                "stdout": stdout,
+                "stderr": stderr,
+                "exit_code": proc.returncode,
+                "state": (
                     runtime_pb2.EXECUTION_STATE_SUCCEEDED
                     if proc.returncode == 0
                     else runtime_pb2.EXECUTION_STATE_FAILED
                 ),
-            )
+            }
         except subprocess.TimeoutExpired:
             self._signal_process_group(proc, signal.SIGKILL)
             stdout, stderr = proc.communicate()
-            self._update_task(
-                task_id,
-                stdout=stdout or "",
-                stderr=stderr or "",
-                state=runtime_pb2.EXECUTION_STATE_FAILED,
-                error_message="timeout",
-            )
+            return {
+                "stdout": stdout or "",
+                "stderr": stderr or "",
+                "state": runtime_pb2.EXECUTION_STATE_FAILED,
+                "error_message": "timeout",
+            }

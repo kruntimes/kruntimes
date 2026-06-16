@@ -44,6 +44,47 @@ class TestPythonRuntime(unittest.TestCase):
         (td / filename).write_text(code)
         return str(td)
 
+    def _prepare_process_tree(self, child_pid_file):
+        child_code = f"""
+import os
+import signal
+import time
+from pathlib import Path
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+Path({str(child_pid_file)!r}).write_text(str(os.getpid()))
+time.sleep(30)
+"""
+        return self._prepare_inline(f"""
+import subprocess
+import sys
+import time
+
+subprocess.Popen([sys.executable, "-c", {child_code!r}])
+time.sleep(30)
+""")
+
+    def _wait_for_file(self, path, timeout=5):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if path.exists():
+                return
+            time.sleep(0.05)
+        self.fail(f"timed out waiting for {path}")
+
+    def _assert_process_exits(self, pid, timeout=5):
+        deadline = time.time() + timeout
+        stat_path = Path(f"/proc/{pid}/stat")
+        while time.time() < deadline:
+            try:
+                stat = stat_path.read_text()
+            except FileNotFoundError:
+                return
+            if stat.rsplit(")", 1)[1].split()[0] == "Z":
+                return
+            time.sleep(0.05)
+        self.fail(f"process {pid} is still running")
+
     def test_inline_success(self):
         wd = self._prepare_inline("print(42)")
         resp = self.stub.Execute(runtime_pb2.ExecuteRequest(
@@ -110,6 +151,80 @@ def handler(event):
         with self.assertRaises(grpc.RpcError) as ctx:
             self.stub.Status(runtime_pb2.StatusRequest(id="cancel-handler"))
         self.assertEqual(ctx.exception.code(), grpc.StatusCode.NOT_FOUND)
+
+    def test_cancel_terminates_process_tree_and_waits(self):
+        child_pid_file = self.work_dir / "cancel-child.pid"
+        wd = self._prepare_process_tree(child_pid_file)
+        self.stub.Execute(runtime_pb2.ExecuteRequest(
+            id="cancel-process-tree",
+            working_dir=wd,
+        ))
+        self._wait_for_file(child_pid_file)
+        child_pid = int(child_pid_file.read_text())
+
+        self.stub.Cancel(
+            runtime_pb2.CancelRequest(id="cancel-process-tree"),
+            timeout=5,
+        )
+
+        self._assert_process_exits(child_pid)
+        with self.assertRaises(grpc.RpcError) as ctx:
+            self.stub.Status(runtime_pb2.StatusRequest(id="cancel-process-tree"))
+        self.assertEqual(ctx.exception.code(), grpc.StatusCode.NOT_FOUND)
+
+    def test_timeout_terminates_process_tree_and_waits(self):
+        child_pid_file = self.work_dir / "timeout-child.pid"
+        wd = self._prepare_process_tree(child_pid_file)
+        self.stub.Execute(runtime_pb2.ExecuteRequest(
+            id="timeout-process-tree",
+            working_dir=wd,
+            timeout_seconds=1,
+        ))
+        self._wait_for_file(child_pid_file)
+        child_pid = int(child_pid_file.read_text())
+
+        status = self._wait("timeout-process-tree")
+
+        self.assertEqual(status.state, runtime_pb2.EXECUTION_STATE_FAILED)
+        self.assertEqual(status.error_message, "timeout")
+        self._assert_process_exits(child_pid)
+
+    def test_concurrent_status_and_list_observe_consistent_results(self):
+        task_count = 20
+        for index in range(task_count):
+            wd = self._prepare_inline(f"print('result-{index}')")
+            self.stub.Execute(runtime_pb2.ExecuteRequest(
+                id=f"concurrent-{index}",
+                working_dir=wd,
+            ))
+
+        def read_status(index):
+            status = self._wait(f"concurrent-{index}")
+            return index, status
+
+        def read_list():
+            while True:
+                entries = self.stub.List(runtime_pb2.ListRequest()).entries
+                if all(
+                    entry.state != runtime_pb2.EXECUTION_STATE_RUNNING
+                    for entry in entries
+                ):
+                    return entries
+                time.sleep(0.01)
+
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            list_future = executor.submit(read_list)
+            results = list(executor.map(read_status, range(task_count)))
+            listed = list_future.result(timeout=10)
+
+        self.assertEqual(len(listed), task_count)
+        for index, status in results:
+            self.assertEqual(
+                status.state,
+                runtime_pb2.EXECUTION_STATE_SUCCEEDED,
+            )
+            self.assertEqual(status.stdout, f"result-{index}\n")
+            self.assertEqual(status.stderr, "")
 
     def test_duplicate_id(self):
         wd = self._prepare_inline("print(1)")
