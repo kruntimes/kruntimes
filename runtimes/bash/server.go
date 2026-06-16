@@ -28,7 +28,6 @@ const (
 )
 
 type boundedBuffer struct {
-	mu        sync.RWMutex
 	buffer    bytes.Buffer
 	limit     int
 	truncated bool
@@ -39,9 +38,6 @@ func newBoundedBuffer(limit int) boundedBuffer {
 }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	if b.limit <= 0 {
 		b.truncated = b.truncated || len(p) > 0
 		return len(p), nil
@@ -58,9 +54,6 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 }
 
 func (b *boundedBuffer) String() string {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	output := b.buffer.String()
 	if b.truncated {
 		output += outputTruncatedMarker
@@ -77,6 +70,20 @@ type executionEntry struct {
 	stderr   boundedBuffer
 	cancel   context.CancelFunc
 	done     chan struct{}
+}
+
+type executionOutput struct {
+	entry  *executionEntry
+	stderr bool
+}
+
+func (w executionOutput) Write(p []byte) (int, error) {
+	w.entry.mu.Lock()
+	defer w.entry.mu.Unlock()
+	if w.stderr {
+		return w.entry.stderr.Write(p)
+	}
+	return w.entry.stdout.Write(p)
 }
 
 func newExecutionEntry(cancel context.CancelFunc, outputLimit int) *executionEntry {
@@ -99,18 +106,15 @@ func (e *executionEntry) complete(state pb.ExecutionState, exitCode int32, errMs
 
 func (e *executionEntry) snapshot(id string) *pb.StatusResponse {
 	e.mu.RLock()
-	state := e.state
-	exitCode := e.exitCode
-	errMsg := e.errMsg
-	e.mu.RUnlock()
+	defer e.mu.RUnlock()
 
 	return &pb.StatusResponse{
 		Id:           id,
-		State:        state,
-		ExitCode:     exitCode,
+		State:        e.state,
+		ExitCode:     e.exitCode,
 		Stdout:       e.stdout.String(),
 		Stderr:       e.stderr.String(),
-		ErrorMessage: errMsg,
+		ErrorMessage: e.errMsg,
 	}
 }
 
@@ -261,8 +265,8 @@ func (s *Server) execute(ctx context.Context, req *pb.ExecuteRequest, entry *exe
 		return
 	}
 	cmd.Dir = workDir
-	cmd.Stdout = &entry.stdout
-	cmd.Stderr = &entry.stderr
+	cmd.Stdout = executionOutput{entry: entry}
+	cmd.Stderr = executionOutput{entry: entry, stderr: true}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
@@ -288,21 +292,7 @@ func (s *Server) execute(ctx context.Context, req *pb.ExecuteRequest, entry *exe
 	case runErr = <-waitCh:
 		entry.complete(commandResult(runErr))
 	case <-ctx.Done():
-		terminateProcessGroup(cmd.Process.Pid, syscall.SIGTERM)
-		timer := time.NewTimer(processTerminationGrace)
-		select {
-		case runErr = <-waitCh:
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-		case <-timer.C:
-			terminateProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
-			runErr = <-waitCh
-		}
-		_ = runErr
+		runErr = terminateProcessGroupAndWait(cmd.Process.Pid, waitCh, processTerminationGrace)
 		entry.complete(cancelledResult(ctx.Err()))
 	}
 
@@ -370,4 +360,42 @@ func terminateProcessGroup(pid int, signal syscall.Signal) {
 	if err := syscall.Kill(-pid, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
 		klog.V(2).Infof("Failed to signal process group %d: %v", pid, err)
 	}
+}
+
+func terminateProcessGroupAndWait(pid int, waitCh <-chan error, grace time.Duration) error {
+	terminateProcessGroup(pid, syscall.SIGTERM)
+
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	var (
+		commandDone bool
+		groupDone   bool
+		waitErr     error
+		graceC      = timer.C
+	)
+	for !commandDone || !groupDone {
+		select {
+		case waitErr = <-waitCh:
+			commandDone = true
+			waitCh = nil
+			groupDone = !processGroupExists(pid)
+		case <-ticker.C:
+			groupDone = !processGroupExists(pid)
+		case <-graceC:
+			terminateProcessGroup(pid, syscall.SIGKILL)
+			graceC = nil
+		}
+	}
+	return waitErr
+}
+
+func processGroupExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(-pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
