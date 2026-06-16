@@ -171,17 +171,7 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 		if !exists {
 			ss = v1alpha1.StepStatus{Phase: v1alpha1.StepPending}
 		}
-		switch run.Status.Phase {
-		case v1alpha1.RunSucceeded:
-			if ss.Phase == v1alpha1.StepRunning {
-				ss.Phase = v1alpha1.StepSucceeded
-				ss.Outputs = run.Status.Outputs
-			}
-		case v1alpha1.RunFailed:
-			if ss.Phase == v1alpha1.StepRunning {
-				ss.Phase = v1alpha1.StepFailed
-			}
-		}
+		ss = stepStatusFromRun(ss, run)
 		ss.RunName = run.Name
 		js.Steps[name] = ss
 	}
@@ -242,6 +232,20 @@ func (r *WorkflowReconciler) runJobSteps(ctx context.Context, wf *v1alpha1.Workf
 		}
 	}
 	js.Phase = v1alpha1.JobSucceeded
+}
+
+func stepStatusFromRun(ss v1alpha1.StepStatus, run *v1alpha1.Run) v1alpha1.StepStatus {
+	if ss.Phase != v1alpha1.StepPending && ss.Phase != v1alpha1.StepRunning {
+		return ss
+	}
+	switch run.Status.Phase {
+	case v1alpha1.RunSucceeded:
+		ss.Phase = v1alpha1.StepSucceeded
+		ss.Outputs = run.Status.Outputs
+	case v1alpha1.RunFailed, v1alpha1.RunTimeout, v1alpha1.RunCancelled:
+		ss.Phase = v1alpha1.StepFailed
+	}
+	return ss
 }
 
 func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, jobName string, job *v1alpha1.JobSpec, step *v1alpha1.StepSpec, ctx *resolveContext) (*v1alpha1.Run, error) {

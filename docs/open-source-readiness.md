@@ -68,7 +68,7 @@
 
 ### 4. Workflow State Correctness
 
-- [ ] 将 child Run 的 `Timeout` 和 `Cancelled` 转换为终态 Step/Job/Workflow。
+- [x] 将 child Run 的 `Timeout` 和 `Cancelled` 转换为终态 Step/Job/Workflow。
 - [x] 未知 `needs` 必须在 admission 或 reconcile 阶段明确失败。
 - [x] 校验 step 必须包含一个当前支持的执行方式；不能静默接受未实现的 `uses`。
 - [x] 为 job/step 名称增加 Kubernetes 名称和 label 约束。
