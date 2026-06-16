@@ -7,4 +7,5 @@ RUN CGO_ENABLED=0 go build -o scheduler ./cmd/scheduler
 
 FROM scratch
 COPY --from=builder /app/scheduler /scheduler
+USER 65532
 ENTRYPOINT ["/scheduler"]

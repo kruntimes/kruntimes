@@ -7,4 +7,5 @@ RUN CGO_ENABLED=0 go build -o bash-runtime ./runtimes/bash/cmd
 
 FROM ubuntu:latest
 COPY --from=builder /app/bash-runtime /bash-runtime
+USER 65532
 ENTRYPOINT ["/bash-runtime"]

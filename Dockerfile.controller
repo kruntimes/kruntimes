@@ -7,4 +7,5 @@ RUN CGO_ENABLED=0 go build -o controller ./cmd/controller
 
 FROM scratch
 COPY --from=builder /app/controller /controller
+USER 65532
 ENTRYPOINT ["/controller"]

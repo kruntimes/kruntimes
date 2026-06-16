@@ -160,7 +160,7 @@
 - [x] `krt logs` 同时处理 stdout/stderr，避免 stderr 重复和 offset 越界。
 - [ ] CLI 使用 Cobra command context，支持 kubeconfig/context、当前 namespace 和
   `json`/`yaml` 输出。
-- [ ] 增加真实 readiness check，而不是固定返回成功。
+- [x] 增加真实 readiness check，而不是固定返回成功。
 - [ ] 为 CRD 增加 CEL 校验和字段大小限制。
 - [ ] 为 Run/Workflow conditions 使用 Kubernetes list-map markers。
 - [ ] 补齐 queue time、dispatch latency、retry、failure 和 active Run metrics。

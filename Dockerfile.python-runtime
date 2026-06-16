@@ -29,4 +29,5 @@ COPY runtimes/python/server.py runtimes/python/cmd/main.py ./
 ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 9092
+USER 65532
 ENTRYPOINT ["python", "main.py"]
