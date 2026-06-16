@@ -89,11 +89,13 @@ spec:
                         description: |-
                           CredentialsSecretName names a Secret whose keys are exposed to runtimed
                           as environment variables for the AWS SDK credential chain.
+                        maxLength: 253
                         minLength: 1
                         type: string
                       endpoint:
                         description: Endpoint configures a custom S3-compatible service
                           endpoint.
+                        maxLength: 2048
                         type: string
                       forcePathStyle:
                         description: ForcePathStyle enables path-style S3 addressing.
@@ -101,9 +103,11 @@ spec:
                       prefix:
                         description: Prefix is prepended to generated artifact object
                           keys.
+                        maxLength: 1024
                         type: string
                       region:
                         description: Region overrides the AWS SDK region.
+                        maxLength: 128
                         type: string
                       uploadConcurrency:
                         description: UploadConcurrency overrides the number of concurrent
@@ -146,10 +150,13 @@ spec:
               command:
                 description: Command is the entrypoint for the runtime container.
                 items:
+                  maxLength: 4096
                   type: string
+                maxItems: 64
                 type: array
               daemonImage:
                 description: DaemonImage overrides the runtimed daemon image.
+                maxLength: 2048
                 type: string
               env:
                 description: Env is extra environment variables for the runtime container.
@@ -307,10 +314,13 @@ spec:
                   required:
                   - name
                   type: object
+                maxItems: 256
                 type: array
               image:
                 description: Image is the container image for this runtime (e.g.,
                   "my-bash-runner:latest").
+                maxLength: 2048
+                minLength: 1
                 type: string
               port:
                 default: 9091
@@ -459,7 +469,11 @@ spec:
                   - status
                   - type
                   type: object
+                maxItems: 16
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               readyReplicas:
                 description: ReadyReplicas is the number of pods that are ready.
                 format: int32

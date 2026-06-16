@@ -38,9 +38,14 @@ const (
 
 // +kubebuilder:object:generate=true
 // WorkflowSpec defines the desired state of Workflow.
+// +kubebuilder:validation:XValidation:rule="self.jobs.all(name, self.jobs[name].needs.all(need, need in self.jobs && need != name))",message="each dependency must name another job in this workflow"
 type WorkflowSpec struct {
 	// Jobs is a map of job names to job specs. Jobs run in parallel unless
 	// constrained by needs; the map order is not significant.
+	// Job names become Kubernetes label values on child Runs.
+	// +kubebuilder:validation:MinProperties=1
+	// +kubebuilder:validation:MaxProperties=64
+	// +kubebuilder:validation:XValidation:rule="self.all(name, size(name) <= 63 && name.matches('^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$'))",message="job names must be valid Kubernetes label values with at most 63 characters"
 	Jobs map[string]JobSpec `json:"jobs"`
 }
 
@@ -49,46 +54,66 @@ type WorkflowSpec struct {
 type JobSpec struct {
 	// RunsOn is the runtime to use for all steps in this job (e.g., "bash", "python").
 	// +kubebuilder:validation:Required
+	// Runtime names are propagated to Kubernetes label values.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
 	RunsOn string `json:"runs-on"`
 
 	// Needs is the list of job names that must complete before this job starts.
 	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=63
 	Needs []string `json:"needs,omitempty"`
 
 	// Steps is the list of steps to run sequentially within the job.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=128
 	Steps []StepSpec `json:"steps"`
 
 	// Outputs maps job-level output names to ${{ }} expressions.
 	// +optional
+	// +kubebuilder:validation:MaxProperties=64
 	Outputs map[string]string `json:"outputs,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
 // StepSpec defines a single step within a job.
+// +kubebuilder:validation:XValidation:rule="has(self.run) && !has(self.uses)",message="run must be set and uses is not supported yet"
 type StepSpec struct {
 	// Name of the step.
 	// +kubebuilder:validation:Required
+	// Step names become Kubernetes label values on child Runs.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
 	Name string `json:"name"`
 
 	// Run is the inline command/script to execute.
 	// +optional
+	// Match the Run inline-source limit.
+	// +kubebuilder:validation:MaxLength=262144
 	Run string `json:"run,omitempty"`
 
 	// Args is positional arguments for the step.
 	// +optional
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=8192
 	Args []string `json:"args,omitempty"`
 
 	// Env is extra environment variables for the step.
 	// +optional
+	// +kubebuilder:validation:MaxProperties=256
 	Env map[string]string `json:"env,omitempty"`
 
 	// Uses references an Action or WorkflowTemplate (future).
 	// +optional
+	// +kubebuilder:validation:MaxLength=2048
 	Uses string `json:"uses,omitempty"`
 
 	// With passes parameters to an Action (future).
 	// +optional
+	// +kubebuilder:validation:MaxProperties=256
 	With map[string]string `json:"with,omitempty"`
 }
 
@@ -101,11 +126,20 @@ type WorkflowStatus struct {
 
 	// Jobs tracks the status of each job by name.
 	// +optional
+	// +kubebuilder:validation:MaxProperties=64
 	Jobs map[string]JobStatus `json:"jobs,omitempty"`
 
 	// Message is a human-readable status or error message.
 	// +optional
+	// +kubebuilder:validation:MaxLength=4096
 	Message string `json:"message,omitempty"`
+
+	// Conditions represent the current state of the Workflow's lifecycle conditions.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
@@ -116,6 +150,7 @@ type JobStatus struct {
 
 	// Steps tracks the status of each step by name.
 	// +optional
+	// +kubebuilder:validation:MaxProperties=128
 	Steps map[string]StepStatus `json:"steps,omitempty"`
 }
 
@@ -131,6 +166,7 @@ type StepStatus struct {
 
 	// Outputs is key-value pairs exposed by this step.
 	// +optional
+	// +kubebuilder:validation:MaxProperties=64
 	Outputs map[string]string `json:"outputs,omitempty"`
 }
 

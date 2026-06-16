@@ -69,9 +69,9 @@
 ### 4. Workflow State Correctness
 
 - [ ] 将 child Run 的 `Timeout` 和 `Cancelled` 转换为终态 Step/Job/Workflow。
-- [ ] 未知 `needs` 必须在 admission 或 reconcile 阶段明确失败。
-- [ ] 校验 step 必须包含一个当前支持的执行方式；不能静默接受未实现的 `uses`。
-- [ ] 为 job/step 名称增加 Kubernetes 名称和 label 约束。
+- [x] 未知 `needs` 必须在 admission 或 reconcile 阶段明确失败。
+- [x] 校验 step 必须包含一个当前支持的执行方式；不能静默接受未实现的 `uses`。
+- [x] 为 job/step 名称增加 Kubernetes 名称和 label 约束。
 - [ ] 生成 child Run 名称时使用截断加稳定 hash，避免超长名称。
 - [ ] 为以上场景增加 controller 和 E2E 测试。
 
@@ -164,8 +164,8 @@
 - [ ] CLI 使用 Cobra command context，支持 kubeconfig/context、当前 namespace 和
   `json`/`yaml` 输出。
 - [x] 增加真实 readiness check，而不是固定返回成功。
-- [ ] 为 CRD 增加 CEL 校验和字段大小限制。
-- [ ] 为 Run/Workflow conditions 使用 Kubernetes list-map markers。
+- [x] 为 CRD 增加 CEL 校验和字段大小限制。
+- [x] 为 Run/Workflow conditions 使用 Kubernetes list-map markers。
 - [ ] 补齐 queue time、dispatch latency、retry、failure 和 active Run metrics。
 - [ ] Chart 创建 metrics Service，并提供可选 ServiceMonitor。
 

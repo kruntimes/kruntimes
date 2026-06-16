@@ -43,10 +43,13 @@ const (
 // FilesystemArtifactLocation identifies an artifact in a configured filesystem store.
 type FilesystemArtifactLocation struct {
 	// Path is relative to the artifact store root.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=4096
 	Path string `json:"path"`
 
 	// VolumeClaimName identifies the PVC backing the filesystem store.
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
 	VolumeClaimName string `json:"volumeClaimName,omitempty"`
 }
 
@@ -54,9 +57,13 @@ type FilesystemArtifactLocation struct {
 // S3ArtifactLocation identifies an artifact in an S3-compatible object store.
 type S3ArtifactLocation struct {
 	// Bucket is the object store bucket.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
 	Bucket string `json:"bucket"`
 
 	// Key is the object key within the bucket.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=4096
 	Key string `json:"key"`
 }
 
@@ -79,6 +86,9 @@ type ArtifactLocation struct {
 // +kubebuilder:validation:XValidation:rule="(self.driver == 'filesystem' && has(self.location.filesystem)) || (self.driver == 's3' && has(self.location.s3))",message="artifact location must match driver"
 type ArtifactRef struct {
 	// Name is the logical artifact name exposed by the Run.
+	// Artifact collection enforces the same 255-byte upper bound.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
 	Name string `json:"name"`
 
 	// Driver identifies the ArtifactStore implementation.
@@ -96,10 +106,12 @@ type ArtifactRef struct {
 
 	// Digest is the content digest, including its algorithm prefix.
 	// +optional
+	// +kubebuilder:validation:MaxLength=256
 	Digest string `json:"digest,omitempty"`
 
 	// ContentType is the detected media type.
 	// +optional
+	// +kubebuilder:validation:MaxLength=255
 	ContentType string `json:"contentType,omitempty"`
 
 	// CreatedAt records when the artifact was stored.
@@ -112,6 +124,8 @@ type RetryPolicy struct {
 	// MaxAttempts is the maximum number of execution attempts (including the initial attempt).
 	// Default: 1 (no retries).
 	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
 	MaxAttempts int32 `json:"maxAttempts,omitempty"`
 
 	// Backoff is the initial backoff duration between retries.
@@ -123,32 +137,47 @@ type RetryPolicy struct {
 	// RetryableReasons lists the failure reasons that are eligible for retry.
 	// If empty, all reasons except "Cancelled" are retryable.
 	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MaxLength=128
 	RetryableReasons []string `json:"retryableReasons,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
 // CodeSource specifies where the code to run comes from.
+// +kubebuilder:validation:XValidation:rule="!(has(self.inline) && has(self.repoURL))",message="inline and repoURL are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="!has(self.commitSHA) || has(self.repoURL)",message="commitSHA requires repoURL"
 type CodeSource struct {
 	// Inline is the source code as a string (for simple scripts).
 	// Mutually exclusive with RepoURL.
 	// +optional
+	// 256 KiB keeps simple scripts well below the Kubernetes object size limit.
+	// +kubebuilder:validation:MaxLength=262144
 	Inline *string `json:"inline,omitempty"`
 
 	// RepoURL is the Git repository URL to clone before execution.
 	// +optional
+	// 2048 characters accommodates conventional HTTPS and SSH Git URLs.
+	// +kubebuilder:validation:MaxLength=2048
 	RepoURL string `json:"repoURL,omitempty"`
 
 	// CommitSHA is the specific commit to check out.
 	// +optional
+	// The limit also permits symbolic refs while bounding object growth.
+	// +kubebuilder:validation:MaxLength=256
 	CommitSHA string `json:"commitSHA,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
 // RunSpec defines the desired state of Run.
+// +kubebuilder:validation:XValidation:rule="!has(self.entrypoint) || (!self.entrypoint.startsWith('/') && !self.entrypoint.split('/').exists(segment, segment == '..'))",message="entrypoint must be a relative path that does not contain '..'"
 type RunSpec struct {
 	// Runtime is the execution environment type (e.g., "python").
 	// It maps to the "runtime" label on Runtime Pods.
 	// +kubebuilder:validation:Required
+	// Runtime names are propagated to Kubernetes label values.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
 	Runtime string `json:"runtime"`
 
 	// Source specifies where the code to run comes from.
@@ -157,19 +186,25 @@ type RunSpec struct {
 
 	// Entrypoint is the script file to execute (default "script" for inline source).
 	// +optional
+	// Linux PATH_MAX is 4096 bytes.
+	// +kubebuilder:validation:MaxLength=4096
 	Entrypoint string `json:"entrypoint,omitempty"`
 
 	// Handler is the module.function to call (FaaS mode).
 	// When set, the runtime imports and calls the function instead of running a script.
 	// +optional
+	// +kubebuilder:validation:MaxLength=512
 	Handler string `json:"handler,omitempty"`
 
 	// Args is the list of arguments passed to the runtime.
 	// +optional
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=8192
 	Args []string `json:"args,omitempty"`
 
 	// Env is the list of environment variables to set for execution.
 	// +optional
+	// +kubebuilder:validation:MaxItems=256
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
 	// Timeout is the maximum duration the run is allowed to run.
@@ -206,6 +241,8 @@ type RunStatus struct {
 
 	// Message is a human-readable status or error message.
 	// +optional
+	// Status messages are diagnostic summaries, not execution logs.
+	// +kubebuilder:validation:MaxLength=4096
 	Message string `json:"message,omitempty"`
 
 	// StartTime is when the run began executing.
@@ -218,6 +255,8 @@ type RunStatus struct {
 
 	// Outputs is the key-value pairs exposed by this Run (from $OUTPUTS file).
 	// +optional
+	// These limits mirror the runtimed output parser's per-key bounds.
+	// +kubebuilder:validation:MaxProperties=64
 	Outputs map[string]string `json:"outputs,omitempty"`
 
 	// ArtifactRefs point to artifacts stored outside etcd.
@@ -231,6 +270,9 @@ type RunStatus struct {
 
 	// Conditions represent the current state of the Run's lifecycle conditions.
 	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
