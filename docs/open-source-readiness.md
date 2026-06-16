@@ -51,7 +51,7 @@
 - [x] 为 Bash Runtime 每个 execution 建立完整的并发保护和不可变状态快照。
 - [x] 为 Python Runtime 每个 execution 建立完整的并发保护和不可变状态快照。
 - [x] 为 Bash Runtime stdout/stderr 设置有界缓冲，禁止无限内存增长。
-- [ ] 为 Python Runtime stdout/stderr 设置有界缓冲，禁止无限内存增长。
+- [x] 为 Python Runtime stdout/stderr 设置有界缓冲，禁止无限内存增长。
 - [x] 为 Runtime API 增加 execution `Forget` 生命周期。
 - [x] Run 完成后清理 `/workspace/<runUID>`，同时保留制品上传所需顺序。
 - [x] 对 Bash Runtime 的取消和超时终止整个进程组，并等待退出。

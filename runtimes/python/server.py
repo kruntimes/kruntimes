@@ -11,10 +11,43 @@ from pb import runtime_pb2
 from pb import runtime_pb2_grpc
 
 
+DEFAULT_OUTPUT_LIMIT_BYTES = 1024 * 1024
+OUTPUT_TRUNCATED_MARKER = "\n[output truncated]\n"
+
+
+class BoundedBuffer:
+    def __init__(self, limit=DEFAULT_OUTPUT_LIMIT_BYTES):
+        self._limit = limit
+        self._buffer = bytearray()
+        self._size = 0
+        self._truncated = False
+
+    def write(self, chunk):
+        if not chunk:
+            return
+        if self._limit <= 0:
+            self._truncated = True
+            return
+        remaining = self._limit - self._size
+        if remaining > 0:
+            retained = chunk[:remaining]
+            self._buffer.extend(retained)
+            self._size += len(retained)
+        if len(chunk) > remaining:
+            self._truncated = True
+
+    def snapshot(self):
+        output = self._buffer.decode("utf-8", errors="replace")
+        if self._truncated:
+            output += OUTPUT_TRUNCATED_MARKER
+        return output
+
+
 class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
-    def __init__(self, work_dir="/workspace"):
+    def __init__(self, work_dir="/workspace", output_limit=DEFAULT_OUTPUT_LIMIT_BYTES):
         self.base_dir = Path(work_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.output_limit = output_limit
         self._tasks = {}
         self._lock = threading.Lock()
 
@@ -27,8 +60,8 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
                 return runtime_pb2.ExecuteResponse(id=task_id)
             self._tasks[task_id] = {
                 "state": runtime_pb2.EXECUTION_STATE_RUNNING,
-                "stdout": "",
-                "stderr": "",
+                "stdout": BoundedBuffer(self.output_limit),
+                "stderr": BoundedBuffer(self.output_limit),
                 "exit_code": 0,
                 "error_message": "",
                 "_cancelled": False,
@@ -115,8 +148,8 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
             id=task_id,
             state=task["state"],
             exit_code=task["exit_code"],
-            stdout=task["stdout"],
-            stderr=task["stderr"],
+            stdout=task["stdout"].snapshot(),
+            stderr=task["stderr"].snapshot(),
             error_message=task["error_message"],
         )
 
@@ -134,6 +167,20 @@ class PythonRuntime(runtime_pb2_grpc.RuntimeServicer):
             os.killpg(proc.pid, sig)
         except ProcessLookupError:
             pass
+
+    def _read_stream(self, task_id, stream_name, stream):
+        try:
+            while True:
+                chunk = stream.read(4096)
+                if not chunk:
+                    return
+                with self._lock:
+                    task = self._tasks.get(task_id)
+                    if task is None:
+                        return
+                    task[stream_name].write(chunk)
+        finally:
+            stream.close()
 
     @staticmethod
     def _resolve_entrypoint(entrypoint, fallback="script"):
@@ -206,14 +253,26 @@ if result is not None:
                 proc = subprocess.Popen(
                     cmd, cwd=str(task_dir), env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True,
                     start_new_session=True,
                 )
                 task["_proc"] = proc
-            stdout, stderr = proc.communicate(timeout=timeout)
+            stdout_reader = threading.Thread(
+                target=self._read_stream,
+                args=(task_id, "stdout", proc.stdout),
+                daemon=True,
+            )
+            stderr_reader = threading.Thread(
+                target=self._read_stream,
+                args=(task_id, "stderr", proc.stderr),
+                daemon=True,
+            )
+            stdout_reader.start()
+            stderr_reader.start()
+
+            proc.wait(timeout=timeout)
+            stdout_reader.join()
+            stderr_reader.join()
             return {
-                "stdout": stdout,
-                "stderr": stderr,
                 "exit_code": proc.returncode,
                 "state": (
                     runtime_pb2.EXECUTION_STATE_SUCCEEDED
@@ -223,10 +282,10 @@ if result is not None:
             }
         except subprocess.TimeoutExpired:
             self._signal_process_group(proc, signal.SIGKILL)
-            stdout, stderr = proc.communicate()
+            proc.wait()
+            stdout_reader.join()
+            stderr_reader.join()
             return {
-                "stdout": stdout or "",
-                "stderr": stderr or "",
                 "state": runtime_pb2.EXECUTION_STATE_FAILED,
                 "error_message": "timeout",
             }

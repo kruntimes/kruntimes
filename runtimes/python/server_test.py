@@ -8,7 +8,7 @@ import grpc
 
 from pb import runtime_pb2
 from pb import runtime_pb2_grpc
-from server import PythonRuntime
+from server import OUTPUT_TRUNCATED_MARKER, PythonRuntime
 
 
 class TestPythonRuntime(unittest.TestCase):
@@ -225,6 +225,34 @@ def handler(event):
             )
             self.assertEqual(status.stdout, f"result-{index}\n")
             self.assertEqual(status.stderr, "")
+
+    def test_output_is_bounded(self):
+        output_limit = 128
+        self.servicer.output_limit = output_limit
+        wd = self._prepare_inline("""
+import sys
+
+sys.stdout.write("x" * 4096)
+sys.stderr.write("y" * 4096)
+""")
+        self.stub.Execute(runtime_pb2.ExecuteRequest(
+            id="bounded-output",
+            working_dir=wd,
+        ))
+
+        status = self._wait("bounded-output")
+
+        self.assertEqual(status.state, runtime_pb2.EXECUTION_STATE_SUCCEEDED)
+        self.assertTrue(status.stdout.endswith(OUTPUT_TRUNCATED_MARKER))
+        self.assertEqual(
+            len(status.stdout.removesuffix(OUTPUT_TRUNCATED_MARKER)),
+            output_limit,
+        )
+        self.assertTrue(status.stderr.endswith(OUTPUT_TRUNCATED_MARKER))
+        self.assertEqual(
+            len(status.stderr.removesuffix(OUTPUT_TRUNCATED_MARKER)),
+            output_limit,
+        )
 
     def test_duplicate_id(self):
         wd = self._prepare_inline("print(1)")
