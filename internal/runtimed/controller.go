@@ -36,6 +36,7 @@ import (
 	"github.com/kruntimes/kruntimes/internal/artifact"
 	"github.com/kruntimes/kruntimes/internal/execpath"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
+	"github.com/kruntimes/kruntimes/internal/runstatus"
 	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
@@ -586,15 +587,7 @@ func (c *Controller) applyTerminalWithOutput(
 	}
 
 	now := metav1.Now()
-	run.Status.Phase = phase
-	run.Status.Message = msg
-	run.Status.CompletionTime = &now
-	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
-		Type: "Running", Status: metav1.ConditionFalse, Reason: reason, Message: msg,
-	})
-	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
-		Type: "Completed", Status: metav1.ConditionFalse, Reason: reason, Message: msg,
-	})
+	runstatus.SetTerminal(run, phase, reason, msg, now)
 
 	if err := c.Status().Update(ctx, run); err != nil {
 		return ctrl.Result{}, err
