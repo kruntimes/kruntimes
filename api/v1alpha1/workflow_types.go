@@ -38,7 +38,7 @@ const (
 
 // +kubebuilder:object:generate=true
 // WorkflowSpec defines the desired state of Workflow.
-// +kubebuilder:validation:XValidation:rule="self.jobs.all(name, self.jobs[name].needs.all(need, need in self.jobs && need != name))",message="each dependency must name another job in this workflow"
+// +kubebuilder:validation:XValidation:rule="self.jobs.all(name, !has(self.jobs[name].needs) || self.jobs[name].needs.all(need, need in self.jobs && need != name))",message="each dependency must name another job in this workflow"
 type WorkflowSpec struct {
 	// Jobs is a map of job names to job specs. Jobs run in parallel unless
 	// constrained by needs; the map order is not significant.

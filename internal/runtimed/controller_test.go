@@ -21,10 +21,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/artifact"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
+	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
 )
 
 func TestPrepareSource_NoSource(t *testing.T) {
@@ -334,6 +336,33 @@ func TestReconcileScheduledRespectsLocalCapacity(t *testing.T) {
 	}
 	if run.Status.Phase != v1alpha1.RunScheduled {
 		t.Fatalf("phase = %s, want Scheduled", run.Status.Phase)
+	}
+}
+
+func TestRunFilterAllowsRLEGGenericEventsForAssignedRuns(t *testing.T) {
+	c := &Controller{Hostname: "runtime-pod", RuntimeNamespace: "default"}
+	filter := c.runFilter()
+
+	assigned := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "assigned", Namespace: "default"},
+		Status:     v1alpha1.RunStatus{AssignedPod: "runtime-pod"},
+	}
+	if !filter.Generic(event.GenericEvent{Object: assigned}) {
+		t.Fatal("assigned Run generic event was filtered")
+	}
+
+	otherPod := assigned.DeepCopy()
+	otherPod.Name = "other-pod"
+	otherPod.Status.AssignedPod = "other-runtime-pod"
+	if filter.Generic(event.GenericEvent{Object: otherPod}) {
+		t.Fatal("Run assigned to another pod was accepted")
+	}
+
+	otherNamespace := assigned.DeepCopy()
+	otherNamespace.Name = "other-namespace"
+	otherNamespace.Namespace = "other"
+	if filter.Generic(event.GenericEvent{Object: otherNamespace}) {
+		t.Fatal("Run from another namespace was accepted")
 	}
 }
 
@@ -765,6 +794,42 @@ func TestReconcileRunningActiveDistinguishesStatusErrors(t *testing.T) {
 				t.Fatalf("Running condition = %#v, want reason %s", condition, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestReconcileRunningActiveRequeuesWhileExecutionRunning(t *testing.T) {
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "active", Namespace: "default", UID: "active-uid"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status: v1alpha1.RunStatus{
+			Phase:       v1alpha1.RunRunning,
+			AssignedPod: "pod-a",
+			StartTime:   &metav1.Time{Time: time.Now()},
+		},
+	}
+	c := &Controller{
+		Hostname: "pod-a",
+		runtimeCli: &fakeRuntimeClient{status: &pb.StatusResponse{
+			Id:    string(run.UID),
+			State: pb.ExecutionState_EXECUTION_STATE_RUNNING,
+		}},
+	}
+
+	ar := &activeRun{run: run, start: time.Now()}
+	ar.started.Store(true)
+	result, err := c.reconcileRunningActive(t.Context(), ar)
+	if err != nil {
+		t.Fatalf("reconcileRunningActive: %v", err)
+	}
+	if result.RequeueAfter != rlegpkg.DefaultRelistInterval {
+		t.Fatalf("RequeueAfter = %s, want %s", result.RequeueAfter, rlegpkg.DefaultRelistInterval)
+	}
+}
+
+func TestActiveRunRequeueAfterUsesSoonerDeadline(t *testing.T) {
+	got := activeRunRequeueAfter(&activeRun{deadline: time.Now().Add(25 * time.Millisecond)})
+	if got <= 0 || got > rlegpkg.DefaultRelistInterval {
+		t.Fatalf("activeRunRequeueAfter = %s, want positive duration <= %s", got, rlegpkg.DefaultRelistInterval)
 	}
 }
 

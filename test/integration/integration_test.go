@@ -424,6 +424,26 @@ func TestCRDValidationRejectsInvalidWorkflowNeeds(t *testing.T) {
 	}
 }
 
+func TestCRDValidationAllowsWorkflowWithoutNeeds(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-workflow-no-needs-")
+
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "no-needs", Namespace: ns.Name},
+		Spec: v1alpha1.WorkflowSpec{
+			Jobs: map[string]v1alpha1.JobSpec{
+				"test": {
+					RunsOn: "bash",
+					Steps:  []v1alpha1.StepSpec{{Name: "hello", Run: "echo hello"}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, workflow); err != nil {
+		t.Fatalf("create workflow without needs: %v", err)
+	}
+}
+
 func TestCRDValidationRejectsUnsupportedWorkflowStepShape(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-step-validation-")
