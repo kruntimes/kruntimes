@@ -47,6 +47,19 @@ func TestBuildDeploymentAddsCapacityAnnotationsAndWorkers(t *testing.T) {
 	if !slices.Contains(daemon.Args, "--runtime-name=bash") {
 		t.Fatalf("daemon args = %v, want runtime name", daemon.Args)
 	}
+	if len(daemon.Ports) != 1 || daemon.Ports[0].Name != "health" || daemon.Ports[0].ContainerPort != 9094 {
+		t.Fatalf("daemon ports = %v, want health port 9094", daemon.Ports)
+	}
+	if daemon.LivenessProbe == nil ||
+		daemon.LivenessProbe.HTTPGet == nil ||
+		daemon.LivenessProbe.HTTPGet.Path != "/healthz" {
+		t.Fatalf("daemon liveness probe = %#v, want /healthz", daemon.LivenessProbe)
+	}
+	if daemon.ReadinessProbe == nil ||
+		daemon.ReadinessProbe.HTTPGet == nil ||
+		daemon.ReadinessProbe.HTTPGet.Path != "/readyz" {
+		t.Fatalf("daemon readiness probe = %#v, want /readyz", daemon.ReadinessProbe)
+	}
 
 	for _, container := range deploy.Spec.Template.Spec.Containers {
 		if container.SecurityContext == nil {

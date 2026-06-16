@@ -8,19 +8,25 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/artifact"
 	artifactfs "github.com/kruntimes/kruntimes/internal/artifact/filesystem"
 	artifacts3 "github.com/kruntimes/kruntimes/internal/artifact/s3"
+	"github.com/kruntimes/kruntimes/internal/healthcheck"
 	"github.com/kruntimes/kruntimes/internal/runtimed"
 )
 
@@ -95,6 +101,33 @@ func main() {
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
+	}
+	runtimeHealthConn, err := grpc.NewClient(
+		runtimeEndpoint,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		setupLog.Error(err, "unable to create runtime health client")
+		os.Exit(1)
+	}
+	defer runtimeHealthConn.Close()
+	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
+		setupLog.Error(err, "unable to register health check")
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck(
+		"kubernetes-api",
+		healthcheck.KubernetesAPI(mgr.GetAPIReader(), &v1alpha1.RunList{}),
+	); err != nil {
+		setupLog.Error(err, "unable to register Kubernetes readiness check")
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck(
+		"runtime",
+		healthcheck.Runtime(pb.NewRuntimeClient(runtimeHealthConn), 2*time.Second),
+	); err != nil {
+		setupLog.Error(err, "unable to register runtime readiness check")
 		os.Exit(1)
 	}
 

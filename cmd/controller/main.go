@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"net/http"
 	"os"
 	"time"
 
@@ -11,11 +10,13 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/config"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/controller"
+	"github.com/kruntimes/kruntimes/internal/healthcheck"
 )
 
 var (
@@ -62,8 +63,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	_ = mgr.AddHealthzCheck("healthz", func(_ *http.Request) error { return nil })
-	_ = mgr.AddReadyzCheck("readyz", func(_ *http.Request) error { return nil })
+	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
+		setupLog.Error(err, "unable to register health check")
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck(
+		"kubernetes-api",
+		healthcheck.KubernetesAPI(mgr.GetAPIReader(), &v1alpha1.RuntimeList{}),
+	); err != nil {
+		setupLog.Error(err, "unable to register readiness check")
+		os.Exit(1)
+	}
 
 	reconciler := &controller.RuntimeReconciler{
 		Client:             mgr.GetClient(),

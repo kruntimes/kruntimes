@@ -170,6 +170,23 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			fmt.Sprintf("--runtime-endpoint=127.0.0.1:%d", port),
 			"--status-addr=:9093",
 		},
+		Ports: []corev1.ContainerPort{
+			{Name: "health", ContainerPort: 9094, Protocol: corev1.ProtocolTCP},
+		},
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(9094)},
+			},
+			InitialDelaySeconds: 5,
+			PeriodSeconds:       10,
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{Path: "/readyz", Port: intstr.FromInt32(9094)},
+			},
+			InitialDelaySeconds: 1,
+			PeriodSeconds:       5,
+		},
 		Env: []corev1.EnvVar{
 			{
 				Name: "HOSTNAME",
