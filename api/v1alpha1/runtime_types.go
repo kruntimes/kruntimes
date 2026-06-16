@@ -28,6 +28,8 @@ const (
 type RuntimeSpec struct {
 	// Image is the container image for this runtime (e.g., "my-bash-runner:latest").
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
 	Image string `json:"image"`
 
 	// Port is the gRPC port the runtime server listens on.
@@ -37,10 +39,13 @@ type RuntimeSpec struct {
 
 	// Command is the entrypoint for the runtime container.
 	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=4096
 	Command []string `json:"command,omitempty"`
 
 	// Env is extra environment variables for the runtime container.
 	// +optional
+	// +kubebuilder:validation:MaxItems=256
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
 	// Resources for the runtime container.
@@ -54,6 +59,7 @@ type RuntimeSpec struct {
 
 	// DaemonImage overrides the runtimed daemon image.
 	// +optional
+	// +kubebuilder:validation:MaxLength=2048
 	DaemonImage string `json:"daemonImage,omitempty"`
 
 	// Capacity declares the per-pod capacity for this runtime.
@@ -103,14 +109,17 @@ type S3ArtifactStoreSpec struct {
 
 	// Prefix is prepended to generated artifact object keys.
 	// +optional
+	// +kubebuilder:validation:MaxLength=1024
 	Prefix string `json:"prefix,omitempty"`
 
 	// Region overrides the AWS SDK region.
 	// +optional
+	// +kubebuilder:validation:MaxLength=128
 	Region string `json:"region,omitempty"`
 
 	// Endpoint configures a custom S3-compatible service endpoint.
 	// +optional
+	// +kubebuilder:validation:MaxLength=2048
 	Endpoint string `json:"endpoint,omitempty"`
 
 	// ForcePathStyle enables path-style S3 addressing.
@@ -120,6 +129,7 @@ type S3ArtifactStoreSpec struct {
 	// CredentialsSecretName names a Secret whose keys are exposed to runtimed
 	// as environment variables for the AWS SDK credential chain.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
 	// +optional
 	CredentialsSecretName string `json:"credentialsSecretName,omitempty"`
 
@@ -160,6 +170,9 @@ type RuntimeStatus struct {
 
 	// Conditions represent the latest available observations of the Runtime's state.
 	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 

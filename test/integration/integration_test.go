@@ -382,3 +382,107 @@ func TestRunArtifactRefValidation(t *testing.T) {
 		t.Fatalf("invalid mixed artifact locations error = %v, want Invalid", err)
 	}
 }
+
+func TestCRDValidationRejectsInvalidRunEntrypoint(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-run-validation-")
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-entrypoint", Namespace: ns.Name},
+		Spec: v1alpha1.RunSpec{
+			Runtime:    "bash",
+			Entrypoint: "/escape",
+		},
+	}
+	if err := k8sClient.Create(ctx, run); !apierrors.IsInvalid(err) {
+		t.Fatalf("invalid run entrypoint error = %v, want Invalid", err)
+	}
+}
+
+func TestCRDValidationRejectsInvalidWorkflowNeeds(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-workflow-validation-")
+
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "unknown-need", Namespace: ns.Name},
+		Spec: v1alpha1.WorkflowSpec{
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {
+					RunsOn: "bash",
+					Steps:  []v1alpha1.StepSpec{{Name: "compile", Run: "echo build"}},
+				},
+				"deploy": {
+					RunsOn: "bash",
+					Needs:  []string{"missing"},
+					Steps:  []v1alpha1.StepSpec{{Name: "ship", Run: "echo deploy"}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, workflow); !apierrors.IsInvalid(err) {
+		t.Fatalf("invalid workflow needs error = %v, want Invalid", err)
+	}
+}
+
+func TestCRDValidationRejectsUnsupportedWorkflowStepShape(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-step-validation-")
+
+	tests := []struct {
+		name string
+		step v1alpha1.StepSpec
+	}{
+		{
+			name: "uses-only",
+			step: v1alpha1.StepSpec{Name: "compile", Uses: "future/action"},
+		},
+		{
+			name: "run-and-uses",
+			step: v1alpha1.StepSpec{Name: "compile", Run: "echo build", Uses: "future/action"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workflow := &v1alpha1.Workflow{
+				ObjectMeta: metav1.ObjectMeta{Name: tt.name, Namespace: ns.Name},
+				Spec: v1alpha1.WorkflowSpec{
+					Jobs: map[string]v1alpha1.JobSpec{
+						"build": {
+							RunsOn: "bash",
+							Steps:  []v1alpha1.StepSpec{tt.step},
+						},
+					},
+				},
+			}
+			if err := k8sClient.Create(ctx, workflow); !apierrors.IsInvalid(err) {
+				t.Fatalf("invalid workflow step error = %v, want Invalid", err)
+			}
+		})
+	}
+}
+
+func TestCRDValidationRejectsInvalidRuntimeImage(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-runtime-validation-")
+
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-image", Namespace: ns.Name},
+		Spec: v1alpha1.RuntimeSpec{
+			Image: "",
+		},
+	}
+	if err := k8sClient.Create(ctx, rt); !apierrors.IsInvalid(err) {
+		t.Fatalf("invalid runtime image error = %v, want Invalid", err)
+	}
+}
+
+func testNamespace(t *testing.T, generateName string) *corev1.Namespace {
+	t.Helper()
+	ns := &corev1.Namespace{}
+	ns.GenerateName = generateName
+	if err := k8sClient.Create(context.Background(), ns); err != nil {
+		t.Fatalf("create namespace: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), ns) })
+	return ns
+}

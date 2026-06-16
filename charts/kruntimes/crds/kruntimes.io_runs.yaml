@@ -57,15 +57,19 @@ spec:
               args:
                 description: Args is the list of arguments passed to the runtime.
                 items:
+                  maxLength: 8192
                   type: string
+                maxItems: 256
                 type: array
               cancelRequested:
                 description: CancelRequested is set to true to request cancellation
                   of a running Run.
                 type: boolean
               entrypoint:
-                description: Entrypoint is the script file to execute (default "script"
-                  for inline source).
+                description: |-
+                  Entrypoint is the script file to execute (default "script" for inline source).
+                  Linux PATH_MAX is 4096 bytes.
+                maxLength: 4096
                 type: string
               env:
                 description: Env is the list of environment variables to set for execution.
@@ -223,11 +227,13 @@ spec:
                   required:
                   - name
                   type: object
+                maxItems: 256
                 type: array
               handler:
                 description: |-
                   Handler is the module.function to call (FaaS mode).
                   When set, the runtime imports and calls the function instead of running a script.
+                maxLength: 512
                 type: string
               retryPolicy:
                 description: RetryPolicy is the retry strategy for the Run. If nil,
@@ -244,36 +250,56 @@ spec:
                       MaxAttempts is the maximum number of execution attempts (including the initial attempt).
                       Default: 1 (no retries).
                     format: int32
+                    maximum: 100
+                    minimum: 1
                     type: integer
                   retryableReasons:
                     description: |-
                       RetryableReasons lists the failure reasons that are eligible for retry.
                       If empty, all reasons except "Cancelled" are retryable.
                     items:
+                      maxLength: 128
                       type: string
+                    maxItems: 32
                     type: array
                 type: object
               runtime:
                 description: |-
                   Runtime is the execution environment type (e.g., "python").
                   It maps to the "runtime" label on Runtime Pods.
+                  Runtime names are propagated to Kubernetes label values.
+                maxLength: 63
+                minLength: 1
+                pattern: ^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$
                 type: string
               source:
                 description: Source specifies where the code to run comes from.
                 properties:
                   commitSHA:
-                    description: CommitSHA is the specific commit to check out.
+                    description: |-
+                      CommitSHA is the specific commit to check out.
+                      The limit also permits symbolic refs while bounding object growth.
+                    maxLength: 256
                     type: string
                   inline:
                     description: |-
                       Inline is the source code as a string (for simple scripts).
                       Mutually exclusive with RepoURL.
+                      256 KiB keeps simple scripts well below the Kubernetes object size limit.
+                    maxLength: 262144
                     type: string
                   repoURL:
-                    description: RepoURL is the Git repository URL to clone before
-                      execution.
+                    description: |-
+                      RepoURL is the Git repository URL to clone before execution.
+                      2048 characters accommodates conventional HTTPS and SSH Git URLs.
+                    maxLength: 2048
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - message: inline and repoURL are mutually exclusive
+                  rule: '!(has(self.inline) && has(self.repoURL))'
+                - message: commitSHA requires repoURL
+                  rule: '!has(self.commitSHA) || has(self.repoURL)'
               timeout:
                 description: |-
                   Timeout is the maximum duration the run is allowed to run.
@@ -290,6 +316,10 @@ spec:
             required:
             - runtime
             type: object
+            x-kubernetes-validations:
+            - message: entrypoint must be a relative path that does not contain '..'
+              rule: '!has(self.entrypoint) || (!self.entrypoint.startsWith(''/'')
+                && !self.entrypoint.split(''/'').exists(segment, segment == ''..''))'
           status:
             description: RunStatus defines the observed state of Run.
             properties:
@@ -301,6 +331,7 @@ spec:
                   properties:
                     contentType:
                       description: ContentType is the detected media type.
+                      maxLength: 255
                       type: string
                     createdAt:
                       description: CreatedAt records when the artifact was stored.
@@ -309,6 +340,7 @@ spec:
                     digest:
                       description: Digest is the content digest, including its algorithm
                         prefix.
+                      maxLength: 256
                       type: string
                     driver:
                       description: Driver identifies the ArtifactStore implementation.
@@ -326,10 +358,13 @@ spec:
                             path:
                               description: Path is relative to the artifact store
                                 root.
+                              maxLength: 4096
+                              minLength: 1
                               type: string
                             volumeClaimName:
                               description: VolumeClaimName identifies the PVC backing
                                 the filesystem store.
+                              maxLength: 253
                               type: string
                           required:
                           - path
@@ -340,9 +375,13 @@ spec:
                           properties:
                             bucket:
                               description: Bucket is the object store bucket.
+                              maxLength: 255
+                              minLength: 1
                               type: string
                             key:
                               description: Key is the object key within the bucket.
+                              maxLength: 4096
+                              minLength: 1
                               type: string
                           required:
                           - bucket
@@ -353,8 +392,11 @@ spec:
                       - message: exactly one artifact location must be set
                         rule: has(self.filesystem) != has(self.s3)
                     name:
-                      description: Name is the logical artifact name exposed by the
-                        Run.
+                      description: |-
+                        Name is the logical artifact name exposed by the Run.
+                        Artifact collection enforces the same 255-byte upper bound.
+                      maxLength: 255
+                      minLength: 1
                       type: string
                     sizeBytes:
                       description: SizeBytes is the stored artifact size.
@@ -452,15 +494,24 @@ spec:
                   - status
                   - type
                   type: object
+                maxItems: 16
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               message:
-                description: Message is a human-readable status or error message.
+                description: |-
+                  Message is a human-readable status or error message.
+                  Status messages are diagnostic summaries, not execution logs.
+                maxLength: 4096
                 type: string
               outputs:
                 additionalProperties:
                   type: string
-                description: Outputs is the key-value pairs exposed by this Run (from
-                  $OUTPUTS file).
+                description: |-
+                  Outputs is the key-value pairs exposed by this Run (from $OUTPUTS file).
+                  These limits mirror the runtimed output parser's per-key bounds.
+                maxProperties: 64
                 type: object
               phase:
                 default: Pending
