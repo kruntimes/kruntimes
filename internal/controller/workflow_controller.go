@@ -2,8 +2,11 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +18,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+)
+
+const (
+	childRunNameMaxLength  = 63
+	childRunNameHashLength = 10
 )
 
 // WorkflowReconciler watches Workflow CRs and orchestrates Runs.
@@ -277,7 +285,7 @@ func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, jobName string, job
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("wf-%s-%s-%s", wf.Name, jobName, step.Name),
+			Name:      workflowChildRunName(wf.Name, jobName, step.Name),
 			Namespace: wf.Namespace,
 			Labels: map[string]string{
 				"workflow": wf.Name,
@@ -297,6 +305,62 @@ func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, jobName string, job
 	}
 
 	return run, nil
+}
+
+func workflowChildRunName(workflowName, jobName, stepName string) string {
+	raw := fmt.Sprintf("wf-%s-%s-%s", workflowName, jobName, stepName)
+	normalized := normalizeDNSLabel(raw)
+	if len(normalized) <= childRunNameMaxLength && normalized == raw {
+		return normalized
+	}
+
+	sum := sha256.Sum256([]byte(raw))
+	suffix := hex.EncodeToString(sum[:])[:childRunNameHashLength]
+	prefixLength := childRunNameMaxLength - childRunNameHashLength - 1
+	prefix := normalized
+	if len(prefix) > prefixLength {
+		prefix = prefix[:prefixLength]
+	}
+	prefix = strings.Trim(prefix, "-")
+	if prefix == "" {
+		prefix = "wf"
+	}
+	return prefix + "-" + suffix
+}
+
+func normalizeDNSLabel(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	lastDash := false
+	for _, r := range name {
+		var next rune
+		switch {
+		case r >= 'a' && r <= 'z':
+			next = r
+		case r >= 'A' && r <= 'Z':
+			next = unicode.ToLower(r)
+		case r >= '0' && r <= '9':
+			next = r
+		case r == '-':
+			next = r
+		default:
+			next = '-'
+		}
+		if next == '-' {
+			if lastDash {
+				continue
+			}
+			lastDash = true
+		} else {
+			lastDash = false
+		}
+		b.WriteRune(next)
+	}
+	normalized := strings.Trim(b.String(), "-")
+	if normalized == "" {
+		return "wf"
+	}
+	return normalized
 }
 
 func needsMet(needs []string, jobs map[string]v1alpha1.JobStatus) bool {

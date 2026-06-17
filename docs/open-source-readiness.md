@@ -72,7 +72,7 @@
 - [x] 未知 `needs` 必须在 admission 或 reconcile 阶段明确失败。
 - [x] 校验 step 必须包含一个当前支持的执行方式；不能静默接受未实现的 `uses`。
 - [x] 为 job/step 名称增加 Kubernetes 名称和 label 约束。
-- [ ] 生成 child Run 名称时使用截断加稳定 hash，避免超长名称。
+- [x] 生成 child Run 名称时使用截断加稳定 hash，避免超长名称。
 - [ ] 为以上场景增加 controller 和 E2E 测试。
 
 验收标准：

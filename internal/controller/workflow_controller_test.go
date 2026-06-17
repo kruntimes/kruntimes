@@ -3,12 +3,14 @@ package controller
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -190,6 +192,46 @@ func TestWorkflowChildRunTerminalPhasesFailWorkflow(t *testing.T) {
 				t.Fatalf("step runName = %q, want child-run", step.RunName)
 			}
 		})
+	}
+}
+
+func TestWorkflowChildRunNamePreservesShortNames(t *testing.T) {
+	got := workflowChildRunName("wf", "build", "compile")
+	if got != "wf-wf-build-compile" {
+		t.Fatalf("child run name = %q, want legacy short name", got)
+	}
+}
+
+func TestWorkflowChildRunNameTruncatesWithStableHash(t *testing.T) {
+	workflowName := "workflow-" + strings.Repeat("a", 55)
+	jobName := "job-" + strings.Repeat("b", 55)
+	stepName := "step-" + strings.Repeat("c", 55)
+
+	got := workflowChildRunName(workflowName, jobName, stepName)
+	if len(got) > childRunNameMaxLength {
+		t.Fatalf("child run name length = %d, want <= %d: %q", len(got), childRunNameMaxLength, got)
+	}
+	if errs := validation.IsDNS1123Label(got); len(errs) > 0 {
+		t.Fatalf("child run name %q is not a DNS label: %v", got, errs)
+	}
+	if again := workflowChildRunName(workflowName, jobName, stepName); again != got {
+		t.Fatalf("child run name is not stable: %q then %q", got, again)
+	}
+	if other := workflowChildRunName(workflowName, jobName, "step-"+strings.Repeat("d", 55)); other == got {
+		t.Fatalf("different step produced same child run name %q", got)
+	}
+}
+
+func TestWorkflowChildRunNameNormalizesInvalidDNSLabelCharacters(t *testing.T) {
+	got := workflowChildRunName("Release.WF", "Build_Job", "Compile.Step")
+	if len(got) > childRunNameMaxLength {
+		t.Fatalf("child run name length = %d, want <= %d: %q", len(got), childRunNameMaxLength, got)
+	}
+	if errs := validation.IsDNS1123Label(got); len(errs) > 0 {
+		t.Fatalf("child run name %q is not a DNS label: %v", got, errs)
+	}
+	if !strings.HasPrefix(got, "wf-release-wf-build-job-compile-step-") {
+		t.Fatalf("child run name = %q, want normalized prefix with hash suffix", got)
 	}
 }
 
