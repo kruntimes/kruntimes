@@ -1,22 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: kruntimes-controller
+  name: {{ include "kruntimes.controller.name" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app: kruntimes-controller
-    {{- include "kruntimes.labels" . | nindent 4 }}
+    {{- include "kruntimes.controller.labels" . | nindent 4 }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: kruntimes-controller
+      {{- include "kruntimes.controller.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: kruntimes-controller
+        {{- include "kruntimes.controller.labels" . | nindent 8 }}
     spec:
-      serviceAccountName: kruntimes-controller
+      serviceAccountName: {{ include "kruntimes.controller.name" . }}
       securityContext:
         seccompProfile:
           type: RuntimeDefault
@@ -36,6 +35,7 @@ spec:
             - --metrics-bind-address=:8082
             - --health-probe-bind-address=:8083
             - --default-daemon-image={{ .Values.runtimed.image }}
+            - --runtimed-service-account-name={{ include "kruntimes.runtimed.name" . }}
           ports:
             - containerPort: 8082
               name: metrics

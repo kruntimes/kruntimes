@@ -122,6 +122,31 @@ func TestBuildDeploymentLeavesWorkspaceSizeLimitUnsetByDefault(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentUsesRuntimedServiceAccount(t *testing.T) {
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
+		Spec: v1alpha1.RuntimeSpec{
+			Image: "bash-runtime:latest",
+		},
+	}
+
+	defaultDeploy := (&RuntimeReconciler{}).buildDeployment(rt)
+	if got := defaultDeploy.Spec.Template.Spec.ServiceAccountName; got != runtimedDefaultSA {
+		t.Fatalf("default serviceAccountName = %q, want %q", got, runtimedDefaultSA)
+	}
+
+	deploy := (&RuntimeReconciler{RuntimedServiceAccountName: "team-a-kruntimes-runtimed"}).buildDeployment(rt)
+	if got := deploy.Spec.Template.Spec.ServiceAccountName; got != "team-a-kruntimes-runtimed" {
+		t.Fatalf("serviceAccountName = %q, want configured name", got)
+	}
+
+	rt.Spec.RuntimedServiceAccountName = "custom-runtime-runtimed"
+	deploy = (&RuntimeReconciler{RuntimedServiceAccountName: "team-a-kruntimes-runtimed"}).buildDeployment(rt)
+	if got := deploy.Spec.Template.Spec.ServiceAccountName; got != "custom-runtime-runtimed" {
+		t.Fatalf("serviceAccountName = %q, want Runtime spec override", got)
+	}
+}
+
 func TestBuildNetworkPolicyDeniesRuntimePodIngressByDefault(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},

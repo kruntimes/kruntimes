@@ -22,11 +22,44 @@ app.kubernetes.io/version: {{ .Chart.AppVersion }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
+{{- define "kruntimes.controller.name" -}}
+{{- printf "%s-controller" ((include "kruntimes.fullname" .) | trunc 52 | trimSuffix "-") }}
+{{- end }}
+
+{{- define "kruntimes.scheduler.name" -}}
+{{- printf "%s-scheduler" ((include "kruntimes.fullname" .) | trunc 53 | trimSuffix "-") }}
+{{- end }}
+
+{{- define "kruntimes.runtimed.name" -}}
+{{- printf "%s-runtimed" ((include "kruntimes.fullname" .) | trunc 54 | trimSuffix "-") }}
+{{- end }}
+
+{{- define "kruntimes.controller.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "kruntimes.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: controller
+{{- end }}
+
+{{- define "kruntimes.scheduler.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "kruntimes.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: scheduler
+{{- end }}
+
+{{- define "kruntimes.controller.labels" -}}
+{{ include "kruntimes.labels" . }}
+app.kubernetes.io/component: controller
+app: kruntimes-controller
+{{- end }}
+
 {{- define "kruntimes.scheduler.labels" -}}
 {{ include "kruntimes.labels" . }}
+app.kubernetes.io/component: scheduler
 app: kruntimes-scheduler
 {{- end }}
 
 {{- define "kruntimes.runtimed.labels" -}}
 {{ include "kruntimes.labels" . }}
+app.kubernetes.io/component: runtimed
+app: kruntimes-runtimed
 {{- end }}

@@ -393,6 +393,13 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              runtimedServiceAccountName:
+                description: |-
+                  RuntimedServiceAccountName overrides the ServiceAccount used by Runtime Pods.
+                  The ServiceAccount must exist in the Runtime namespace.
+                maxLength: 253
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                type: string
               workspace:
                 description: Workspace configures the shared workspace volume mounted
                   into the runtime pod.
