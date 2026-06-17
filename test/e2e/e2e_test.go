@@ -200,6 +200,9 @@ func e2eRuntimeResources() corev1.ResourceRequirements {
 
 func cleanupRuntime(t *testing.T, name string) {
 	t.Helper()
+	if name == "bash" || name == "python" {
+		return
+	}
 	t.Cleanup(func() {
 		rt := &v1alpha1.Runtime{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace}}
 		if err := k8sClient.Delete(context.Background(), rt); err != nil && !apierrors.IsNotFound(err) {
