@@ -102,15 +102,23 @@
 
 - [ ] 明确选择 cluster-wide 或 single-namespace 安装模型。
 - [ ] Runtime Deployment 引用的 runtimed ServiceAccount 必须存在于 Runtime namespace。
-- [ ] 所有 Helm 资源名称使用 release fullname，支持多个 release 共存。
+- [ ] 为自定义 `Runtime.spec.runtimedServiceAccountName` 增加 namespace-scoped RBAC
+  controller 或等价机制，确保对应 ServiceAccount 拥有 runtimed 所需最小权限。
+- [ ] 明确 Runtime Pod customization API：评估是否用 `PodTemplateSpec` 风格的
+  template 取代当前 Runtime spec 中逐步复制的 PodSpec-like 字段。
+- [x] 所有 Helm 资源名称使用 release fullname，支持多个 release 共存。
 - [ ] 移除未使用 values，并让 replicas、leader election、ports、imagePullSecrets、
   security context、scheduling constraints 等可配置。
 - [ ] 避免默认使用 `latest`，镜像 tag 应跟随 chart appVersion。
-- [ ] 增加多 namespace 和第二个 Helm release 的模板/安装测试。
+- [ ] 增加多 namespace 模板/安装测试。
+- [x] 增加第二个 Helm release 的模板测试。
 
 验收标准：
 
 - 文档声明的 namespace 模型可真实工作。
+- 使用自定义 Runtime ServiceAccount 时，权限授予是 namespace-scoped、最小权限且
+  可审计的。
+- Runtime Pod 自定义模型在公开前有明确边界，不需要在未来兼容两套重叠 API。
 - 同一集群可以安装两个无资源命名冲突的 release。
 - chart 默认值能够引用公开发布的、不可变版本镜像。
 

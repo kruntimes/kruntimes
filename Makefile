@@ -198,6 +198,13 @@ docker-push: ## Push Docker images.
 template: manifests ## Render Helm chart to stdout for validation.
 	$(HELM) template kruntimes ./charts/kruntimes --namespace $(NAMESPACE)
 
+.PHONY: test-helm
+test-helm: manifests ## Validate Helm charts and multi-release rendering.
+	$(HELM) lint ./charts/kruntimes ./charts/kruntimes-runtimes
+	$(HELM) template kruntimes ./charts/kruntimes --namespace kruntimes-system
+	$(HELM) template kruntimes-runtimes ./charts/kruntimes-runtimes --namespace default
+	./hack/verify-helm-multi-release.py
+
 ##@ Deployment
 
 .PHONY: deploy

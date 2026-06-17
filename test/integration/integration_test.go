@@ -496,6 +496,22 @@ func TestCRDValidationRejectsInvalidRuntimeImage(t *testing.T) {
 	}
 }
 
+func TestCRDValidationRejectsInvalidRuntimeServiceAccountName(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-runtime-sa-validation-")
+
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-service-account", Namespace: ns.Name},
+		Spec: v1alpha1.RuntimeSpec{
+			Image:                      "runtime:latest",
+			RuntimedServiceAccountName: "Bad_Name",
+		},
+	}
+	if err := k8sClient.Create(ctx, rt); !apierrors.IsInvalid(err) {
+		t.Fatalf("invalid runtime serviceAccountName error = %v, want Invalid", err)
+	}
+}
+
 func testNamespace(t *testing.T, generateName string) *corev1.Namespace {
 	t.Helper()
 	ns := &corev1.Namespace{}

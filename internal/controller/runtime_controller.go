@@ -26,6 +26,7 @@ import (
 const (
 	runtimeLabel         = "runtime"
 	runtimedDefaultImage = "kruntimes-runtimed:latest"
+	runtimedDefaultSA    = "kruntimes-runtimed"
 	workspaceVolume      = "workspace"
 	workspacePath        = "/workspace"
 	artifactStoreVolume  = "artifact-store"
@@ -38,7 +39,8 @@ type RuntimeReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	DefaultDaemonImage string
+	DefaultDaemonImage         string
+	RuntimedServiceAccountName string
 }
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runtimes,verbs=get;list;watch;update;patch
@@ -108,6 +110,13 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 	}
 	if r.DefaultDaemonImage != "" {
 		daemonImage = r.DefaultDaemonImage
+	}
+	runtimedServiceAccountName := rt.Spec.RuntimedServiceAccountName
+	if runtimedServiceAccountName == "" {
+		runtimedServiceAccountName = r.RuntimedServiceAccountName
+	}
+	if runtimedServiceAccountName == "" {
+		runtimedServiceAccountName = runtimedDefaultSA
 	}
 
 	labels := map[string]string{
@@ -243,7 +252,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "kruntimes-runtimed",
+					ServiceAccountName: runtimedServiceAccountName,
 					SecurityContext:    podSecurityContext,
 					Containers:         []corev1.Container{runtimeContainer, daemonContainer},
 					Volumes:            volumes,

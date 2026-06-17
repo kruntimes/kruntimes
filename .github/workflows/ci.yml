@@ -71,9 +71,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: azure/setup-helm@v5.0.0
-      - run: helm lint ./charts/kruntimes ./charts/kruntimes-runtimes
-      - run: helm template kruntimes ./charts/kruntimes --namespace kruntimes-system
-      - run: helm template kruntimes-runtimes ./charts/kruntimes-runtimes --namespace default
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make test-helm
 
   generated:
     name: Generated files

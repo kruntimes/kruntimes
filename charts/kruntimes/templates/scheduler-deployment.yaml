@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: kruntimes-scheduler
+  name: {{ include "kruntimes.scheduler.name" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "kruntimes.scheduler.labels" . | nindent 4 }}
@@ -9,13 +9,13 @@ spec:
   replicas: {{ .Values.scheduler.replicas }}
   selector:
     matchLabels:
-      app: kruntimes-scheduler
+      {{- include "kruntimes.scheduler.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: kruntimes-scheduler
+        {{- include "kruntimes.scheduler.labels" . | nindent 8 }}
     spec:
-      serviceAccountName: kruntimes-scheduler
+      serviceAccountName: {{ include "kruntimes.scheduler.name" . }}
       securityContext:
         seccompProfile:
           type: RuntimeDefault

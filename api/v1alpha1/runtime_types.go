@@ -62,6 +62,13 @@ type RuntimeSpec struct {
 	// +kubebuilder:validation:MaxLength=2048
 	DaemonImage string `json:"daemonImage,omitempty"`
 
+	// RuntimedServiceAccountName overrides the ServiceAccount used by Runtime Pods.
+	// The ServiceAccount must exist in the Runtime namespace.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	RuntimedServiceAccountName string `json:"runtimedServiceAccountName,omitempty"`
+
 	// Capacity declares the per-pod capacity for this runtime.
 	// +optional
 	Capacity *RuntimeCapacity `json:"capacity,omitempty"`

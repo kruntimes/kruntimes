@@ -31,11 +31,12 @@ func init() {
 
 func main() {
 	var (
-		metricsAddr          string
-		probeAddr            string
-		enableLeaderElection bool
-		staleThreshold       time.Duration
-		defaultDaemonImage   string
+		metricsAddr                string
+		probeAddr                  string
+		enableLeaderElection       bool
+		staleThreshold             time.Duration
+		defaultDaemonImage         string
+		runtimedServiceAccountName string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8082", "The address the metric endpoint binds to.")
@@ -43,6 +44,7 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election for controller manager.")
 	flag.DurationVar(&staleThreshold, "stale-threshold", 30*time.Second, "Threshold for marking a Run as stale when its assigned pod is unhealthy.")
 	flag.StringVar(&defaultDaemonImage, "default-daemon-image", "", "Default runtimed daemon image injected into Runtime Pods.")
+	flag.StringVar(&runtimedServiceAccountName, "runtimed-service-account-name", "", "ServiceAccount name injected into Runtime Pods for the runtimed sidecar.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -76,10 +78,11 @@ func main() {
 	}
 
 	reconciler := &controller.RuntimeReconciler{
-		Client:             mgr.GetClient(),
-		Log:                ctrl.Log.WithName("controllers").WithName("Runtime"),
-		Scheme:             mgr.GetScheme(),
-		DefaultDaemonImage: defaultDaemonImage,
+		Client:                     mgr.GetClient(),
+		Log:                        ctrl.Log.WithName("controllers").WithName("Runtime"),
+		Scheme:                     mgr.GetScheme(),
+		DefaultDaemonImage:         defaultDaemonImage,
+		RuntimedServiceAccountName: runtimedServiceAccountName,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Runtime")

@@ -38,6 +38,9 @@ func NewRuntimeGetCmd(c client.Client) *cobra.Command {
 			if rt.Spec.DaemonImage != "" {
 				fmt.Fprintf(w, "Daemon Image:\t%s\n", rt.Spec.DaemonImage)
 			}
+			if rt.Spec.RuntimedServiceAccountName != "" {
+				fmt.Fprintf(w, "Runtimed ServiceAccount:\t%s\n", rt.Spec.RuntimedServiceAccountName)
+			}
 			if len(rt.Spec.Command) > 0 {
 				fmt.Fprintf(w, "Command:\t%v\n", rt.Spec.Command)
 			}
