@@ -88,7 +88,7 @@
 - [x] 为 runtimed status/artifact gRPC 增加网络访问控制；至少提供默认 NetworkPolicy。
 - [x] 为所有平台和内置 Runtime 容器提供安全的默认 security context。
 - [x] 禁止默认 privilege escalation，启用 seccomp，按容器能力设置只读根文件系统。
-- [ ] 编写 threat model，明确同一 Runtime Pod 内多个 Run 共享进程、网络和 workspace
+- [x] 编写 threat model，明确同一 Runtime Pod 内多个 Run 共享进程、网络和 workspace
   所带来的限制。
 - [x] 修正 README 中“per-Run resource limits”和“clean workspace”等超出当前实现的声明。
 

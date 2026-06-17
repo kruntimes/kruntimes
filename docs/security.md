@@ -1,8 +1,85 @@
-# Security and Authorization
+# Security, Authorization, and Threat Model
 
 kruntimes uses Kubernetes namespaces and RBAC as its current administrative
 boundary. The built-in Bash and Python runtimes execute trusted code inside
 shared Runtime Pods; they are not sandboxes for mutually untrusted tenants.
+
+## Threat Model Summary
+
+The primary security boundary is the Kubernetes namespace. A subject that can
+create a Run in a namespace can execute code inside any matching Runtime Pod in
+that namespace. A subject that can create or update a Runtime can influence the
+generated Runtime Deployment, including executable images, commands, resources,
+artifact storage, and workload identity.
+
+kruntimes currently protects the Kubernetes API objects it owns, keeps Run
+state transitions explicit, limits direct ingress to runtimed endpoints, and
+documents trusted-workload expectations. It does not provide per-Run sandboxing
+inside the built-in runtimes.
+
+### Assets
+
+| Asset | Security goal |
+| --- | --- |
+| Run and Workflow specs | Prevent unauthorized code execution, source disclosure, and mutation. |
+| Run status, outputs, artifact refs, and logs | Prevent unauthorized disclosure and misleading status updates. |
+| Runtime specs and generated Deployments | Restrict who can choose executable images, commands, volumes, credentials, and service accounts. |
+| Runtime Pod workspace | Prevent accidental cross-Run data reuse; do not claim hostile-code isolation. |
+| Artifact stores and credentials | Keep stored objects scoped to the owning Run and prevent credential exposure to unauthorized users. |
+| Control-plane service accounts | Reserve scheduler, controller, and runtimed status mutation rights for kruntimes components. |
+
+### Actors
+
+| Actor | Assumption |
+| --- | --- |
+| Cluster administrator | Trusted to install CRDs, Helm charts, controller RBAC, and namespace policy. |
+| Runtime administrator | Trusted namespace operator; can configure executable Runtime pools and attached credentials. |
+| Run submitter | Trusted to execute code within the namespace trust boundary, but not trusted with control-plane status writes. |
+| Run observer | May inspect Run status, outputs, artifact metadata, and optionally logs/artifacts when granted port-forward access. |
+| Built-in Runtime implementation | Trusted code running inside a shared Runtime Pod; not a hostile-code sandbox. |
+| Custom Runtime implementation | Responsible for any stronger isolation boundary it advertises. |
+
+### Trust Boundaries
+
+- **Namespace boundary**: scheduler placement is namespace-local. Namespaces
+  should not mix mutually untrusted Run submitters with shared built-in Runtime
+  pools.
+- **Runtime Pod boundary**: all Runs assigned to one built-in Runtime Pod share
+  the pod network namespace, runtime process namespace, mounted volumes,
+  workspace volume, and Kubernetes service account.
+- **Control-plane boundary**: only kruntimes controllers should update
+  `runs/status`, `runtimes/status`, and generated Runtime Pod readiness
+  conditions.
+- **Artifact boundary**: artifacts are referenced from Run status but stored
+  outside etcd. Store configuration and credentials are part of the Runtime
+  administrator trust boundary.
+
+### Threats, Mitigations, and Current Gaps
+
+| Threat | Current mitigation | Current gap or required operator control |
+| --- | --- | --- |
+| Unauthorized user executes code by creating Runs | Kubernetes RBAC controls `runs` creation. | RBAC cannot restrict `spec.runtime`, command, env, or source per user; use namespace separation or admission policy. |
+| Runtime administrator deploys malicious runtime or sidecar image | Treat `runtimes` write permission as workload-admin access. | No image policy is enforced by kruntimes; use admission controls and signed image policy. |
+| Run code reads another Run's files in the same Runtime Pod | runtimed uses per-Run workspace directories and cleanup. | Built-in runtimes do not sandbox hostile code from shared pod filesystems or runtime processes. |
+| Run code uses Runtime Pod network or service account | Namespace-local scheduling and documented role separation. | Built-in runtimes do not provide per-Run network or identity isolation; use custom runtimes or separate namespaces/service accounts. |
+| User reads secrets from Run specs or status | Documentation warns against putting credentials in `Run.spec.env`; RBAC controls `runs` reads. | Kubernetes stores readable Run spec/status for authorized readers; use Secrets mounted by trusted runtimes instead. |
+| User reaches runtimed status or artifact endpoints directly | Default NetworkPolicy restricts pod ingress; CLI access uses Kubernetes port-forward permissions. | Operators must grant `pods/portforward` only to users allowed to read logs/artifacts. |
+| Stale or compromised component mutates Run status | Status writes are reserved for control-plane service accounts. | Cluster RBAC must not grant status update verbs to users or unrelated controllers. |
+| Artifact credential disclosure or object confusion | Artifact refs are compact metadata; store drivers validate refs and paths. | Runtime admins control artifact store credentials; central cleanup and recovery semantics are tracked separately. |
+| Cross-namespace Run execution | Scheduler only considers Runtime Pods in the Run namespace. | Cluster-scoped controller RBAC still needs careful installation and audit. |
+
+### Non-Goals for Built-In Runtimes
+
+The built-in Bash and Python runtimes are not intended to provide:
+
+- isolation between mutually untrusted Runs in the same Runtime Pod;
+- per-Run Kubernetes service accounts, network policies, or cgroups;
+- protection from code that intentionally inspects shared process, network, or
+  filesystem state inside the Runtime Pod;
+- tenant-grade secret isolation for values placed directly on Run objects.
+
+Use a custom Runtime with a dedicated container, sandbox, or microVM per Run
+when these properties are required.
 
 ## Permission Semantics
 
