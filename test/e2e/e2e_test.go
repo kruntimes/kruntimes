@@ -96,10 +96,11 @@ func ensureRuntimeWithRunsCapacity(t *testing.T, name, image string, port int32,
 			Namespace: testNamespace,
 		},
 		Spec: v1alpha1.RuntimeSpec{
-			Image:    image,
-			Port:     port,
-			Replicas: 1,
-			Command:  []string{fmt.Sprintf("--port=%d", port), "--work-dir=/workspace"},
+			Image:     image,
+			Port:      port,
+			Replicas:  1,
+			Command:   []string{fmt.Sprintf("--port=%d", port), "--work-dir=/workspace"},
+			Resources: e2eRuntimeResources(),
 		},
 	}
 	if runsCapacity > 0 {
@@ -120,6 +121,7 @@ func ensureRuntimeWithRunsCapacity(t *testing.T, name, image string, port int32,
 		existing.Spec.Port = port
 		existing.Spec.Replicas = 1
 		existing.Spec.Command = []string{fmt.Sprintf("--port=%d", port), "--work-dir=/workspace"}
+		existing.Spec.Resources = e2eRuntimeResources()
 		if runsCapacity > 0 {
 			existing.Spec.Capacity = rt.Spec.Capacity
 		}
@@ -127,6 +129,7 @@ func ensureRuntimeWithRunsCapacity(t *testing.T, name, image string, port int32,
 			t.Fatalf("update runtime: %v", updateErr)
 		}
 	}
+	cleanupRuntime(t, name)
 
 	waitForRuntimePod(t, name, image, runtimedImage(), runsCapacity, "runtime pods")
 }
@@ -151,10 +154,11 @@ func ensureFilesystemRuntime(t *testing.T, name, claimName string) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
 		Spec: v1alpha1.RuntimeSpec{
-			Image:    bashRuntimeImage(),
-			Port:     9091,
-			Replicas: 1,
-			Command:  []string{"--port=9091", "--work-dir=/workspace"},
+			Image:     bashRuntimeImage(),
+			Port:      9091,
+			Replicas:  1,
+			Command:   []string{"--port=9091", "--work-dir=/workspace"},
+			Resources: e2eRuntimeResources(),
 			ArtifactStore: &v1alpha1.RuntimeArtifactStoreSpec{
 				Driver: v1alpha1.ArtifactDriverFilesystem,
 				Filesystem: &v1alpha1.FilesystemArtifactStoreSpec{
@@ -176,8 +180,32 @@ func ensureFilesystemRuntime(t *testing.T, name, claimName string) {
 			t.Fatalf("update filesystem runtime: %v", updateErr)
 		}
 	}
+	cleanupRuntime(t, name)
 
 	waitForRuntimePod(t, name, bashRuntimeImage(), runtimedImage(), 0, "filesystem runtime pod")
+}
+
+func e2eRuntimeResources() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("25m"),
+			corev1.ResourceMemory: resource.MustParse("64Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("500m"),
+			corev1.ResourceMemory: resource.MustParse("512Mi"),
+		},
+	}
+}
+
+func cleanupRuntime(t *testing.T, name string) {
+	t.Helper()
+	t.Cleanup(func() {
+		rt := &v1alpha1.Runtime{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace}}
+		if err := k8sClient.Delete(context.Background(), rt); err != nil && !apierrors.IsNotFound(err) {
+			t.Logf("delete Runtime %s: %v", name, err)
+		}
+	})
 }
 
 func isRuntimePodReady(pod *corev1.Pod, runtimeImage, daemonImage string, runsCapacity int32) bool {
