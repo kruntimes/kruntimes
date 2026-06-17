@@ -498,13 +498,18 @@ func waitForRunDeleted(t *testing.T, run *v1alpha1.Run, timeout time.Duration) {
 
 func waitForWorkflow(t *testing.T, wf *v1alpha1.Workflow, timeout time.Duration) {
 	t.Helper()
+	waitForWorkflowPhase(t, wf, timeout, v1alpha1.WorkflowSucceeded)
+}
+
+func waitForWorkflowPhase(t *testing.T, wf *v1alpha1.Workflow, timeout time.Duration, expected v1alpha1.WorkflowPhase) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	for {
 		select {
 		case <-ctx.Done():
-			t.Fatal("timed out waiting for workflow completion")
+			t.Fatalf("timed out waiting for workflow %s phase=%s, last phase=%s msg=%s", wf.Name, expected, wf.Status.Phase, wf.Status.Message)
 		default:
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -515,10 +520,38 @@ func waitForWorkflow(t *testing.T, wf *v1alpha1.Workflow, timeout time.Duration)
 		t.Logf("Workflow %s: phase=%s", wf.Name, wf.Status.Phase)
 
 		switch wf.Status.Phase {
-		case v1alpha1.WorkflowSucceeded:
+		case expected:
 			return
-		case v1alpha1.WorkflowFailed:
+		case v1alpha1.WorkflowSucceeded, v1alpha1.WorkflowFailed:
 			t.Fatalf("Workflow failed: %s", wf.Status.Message)
+		}
+	}
+}
+
+func waitForWorkflowChildRun(t *testing.T, workflowName, jobName, stepName string, timeout time.Duration) *v1alpha1.Run {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	for {
+		var runs v1alpha1.RunList
+		if err := k8sClient.List(context.Background(), &runs,
+			client.InNamespace(testNamespace),
+			client.MatchingLabels{"workflow": workflowName, "job": jobName, "step": stepName},
+		); err != nil {
+			t.Fatalf("list workflow child runs: %v", err)
+		}
+		if len(runs.Items) == 1 {
+			return &runs.Items[0]
+		}
+		if len(runs.Items) > 1 {
+			t.Fatalf("expected one child run for %s/%s/%s, got %d", workflowName, jobName, stepName, len(runs.Items))
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for child run workflow=%s job=%s step=%s", workflowName, jobName, stepName)
+		case <-time.After(500 * time.Millisecond):
 		}
 	}
 }
@@ -1231,6 +1264,92 @@ func TestWorkflowSingleJob(t *testing.T) {
 	t.Logf("Created Workflow %s", wf.Name)
 	waitForWorkflow(t, wf, 30*time.Second)
 	t.Logf("Workflow succeeded: %s", wf.Status.Message)
+}
+
+func TestWorkflowChildRunCancellationFailsWorkflow(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	wf := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-wf-cancel-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.WorkflowSpec{
+			Jobs: map[string]v1alpha1.JobSpec{
+				"test": {
+					RunsOn: "bash",
+					Steps: []v1alpha1.StepSpec{{
+						Name: "long-run",
+						Run:  "sleep 300",
+					}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), wf); err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	t.Logf("Created Workflow %s for child cancel", wf.Name)
+
+	child := waitForWorkflowChildRun(t, wf.Name, "test", "long-run", 30*time.Second)
+	waitForRunPhase(t, child, 30*time.Second, v1alpha1.RunRunning)
+	requestRunCancel(t, child)
+	waitForRunPhase(t, child, 30*time.Second, v1alpha1.RunCancelled)
+	waitForWorkflowPhase(t, wf, 30*time.Second, v1alpha1.WorkflowFailed)
+
+	job := wf.Status.Jobs["test"]
+	if job.Phase != v1alpha1.JobFailed {
+		t.Fatalf("job phase = %s, want Failed", job.Phase)
+	}
+	step := job.Steps["long-run"]
+	if step.Phase != v1alpha1.StepFailed {
+		t.Fatalf("step phase = %s, want Failed", step.Phase)
+	}
+	if step.RunName != child.Name {
+		t.Fatalf("step runName = %q, want child run %q", step.RunName, child.Name)
+	}
+}
+
+func TestWorkflowLongNamesCreateHashedChildRun(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	workflowName := "wf-" + strings.Repeat("a", 60)
+	jobName := "job-" + strings.Repeat("b", 59)
+	stepName := "step-" + strings.Repeat("c", 58)
+	wf := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      workflowName,
+			Namespace: testNamespace,
+		},
+		Spec: v1alpha1.WorkflowSpec{
+			Jobs: map[string]v1alpha1.JobSpec{
+				jobName: {
+					RunsOn: "bash",
+					Steps: []v1alpha1.StepSpec{{
+						Name: stepName,
+						Run:  "echo long_names_ok",
+					}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), wf); err != nil {
+		t.Fatalf("create workflow with long names: %v", err)
+	}
+	t.Logf("Created long-name Workflow %s", wf.Name)
+	waitForWorkflow(t, wf, 30*time.Second)
+
+	child := waitForWorkflowChildRun(t, wf.Name, jobName, stepName, 10*time.Second)
+	if len(child.Name) > 63 {
+		t.Fatalf("child run name length = %d, want <= 63: %s", len(child.Name), child.Name)
+	}
+	if rawName := fmt.Sprintf("wf-%s-%s-%s", wf.Name, jobName, stepName); child.Name == rawName {
+		t.Fatalf("child run name was not hashed: %s", child.Name)
+	}
+	step := wf.Status.Jobs[jobName].Steps[stepName]
+	if step.RunName != child.Name {
+		t.Fatalf("step runName = %q, want child run %q", step.RunName, child.Name)
+	}
 }
 
 func TestWorkflowStepOutputs(t *testing.T) {
