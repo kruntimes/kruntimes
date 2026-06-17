@@ -32,3 +32,14 @@ jobs:
         with:
           cluster_name: kruntimes-e2e
       - run: make e2e
+      - name: Dump Kubernetes diagnostics
+        if: failure()
+        run: |
+          kubectl get nodes -o wide
+          kubectl get pods,deployments,replicasets,runtimes,runs,workflows -A -o wide
+          kubectl describe pods -A
+          kubectl describe runtimes -A
+          kubectl describe runs -A
+          kubectl get events -A --sort-by=.lastTimestamp
+          kubectl logs deploy/kruntimes-controller --all-containers --tail=300 || true
+          kubectl logs -l app=kruntimes-scheduler --all-containers --tail=300 || true

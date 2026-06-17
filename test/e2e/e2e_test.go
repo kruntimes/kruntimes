@@ -13,10 +13,12 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -126,27 +128,7 @@ func ensureRuntimeWithRunsCapacity(t *testing.T, name, image string, port int32,
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	for {
-		var pods corev1.PodList
-		if err := k8sClient.List(ctx, &pods,
-			client.InNamespace(testNamespace),
-			client.MatchingLabels{"runtime": name},
-		); err == nil {
-			for _, p := range pods.Items {
-				if isRuntimePodReady(&p, image, runtimedImage(), runsCapacity) {
-					return
-				}
-			}
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("timed out waiting for runtime pods")
-		case <-time.After(2 * time.Second):
-		}
-	}
+	waitForRuntimePod(t, name, image, runtimedImage(), runsCapacity, "runtime pods")
 }
 
 func ensureFilesystemRuntime(t *testing.T, name, claimName string) {
@@ -195,26 +177,7 @@ func ensureFilesystemRuntime(t *testing.T, name, claimName string) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-	for {
-		var pods corev1.PodList
-		if err := k8sClient.List(ctx, &pods,
-			client.InNamespace(testNamespace),
-			client.MatchingLabels{"runtime": name},
-		); err == nil {
-			for _, pod := range pods.Items {
-				if isRuntimePodReady(&pod, bashRuntimeImage(), runtimedImage(), 0) {
-					return
-				}
-			}
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("timed out waiting for filesystem runtime pod")
-		case <-time.After(2 * time.Second):
-		}
-	}
+	waitForRuntimePod(t, name, bashRuntimeImage(), runtimedImage(), 0, "filesystem runtime pod")
 }
 
 func isRuntimePodReady(pod *corev1.Pod, runtimeImage, daemonImage string, runsCapacity int32) bool {
@@ -246,6 +209,124 @@ func containerImage(pod *corev1.Pod, name string) string {
 		}
 	}
 	return ""
+}
+
+func waitForRuntimePod(t *testing.T, name, runtimeImage, daemonImage string, runsCapacity int32, description string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	var lastErr error
+	for {
+		var pods corev1.PodList
+		err := k8sClient.List(ctx, &pods,
+			client.InNamespace(testNamespace),
+			client.MatchingLabels{"runtime": name},
+		)
+		if err == nil {
+			for _, pod := range pods.Items {
+				if isRuntimePodReady(&pod, runtimeImage, daemonImage, runsCapacity) {
+					return
+				}
+			}
+		} else {
+			lastErr = err
+		}
+
+		select {
+		case <-ctx.Done():
+			dumpRuntimeDiagnostics(t, name, runtimeImage, daemonImage, runsCapacity, lastErr)
+			t.Fatalf("timed out waiting for %s", description)
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+func dumpRuntimeDiagnostics(t *testing.T, name, runtimeImage, daemonImage string, runsCapacity int32, lastErr error) {
+	t.Helper()
+	t.Logf("Runtime %s diagnostics: expected runtime image=%s runtimed image=%s runsCapacity=%d", name, runtimeImage, daemonImage, runsCapacity)
+	if lastErr != nil {
+		t.Logf("last pod list error: %v", lastErr)
+	}
+
+	var rt v1alpha1.Runtime
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: name}, &rt); err != nil {
+		t.Logf("get Runtime %s: %v", name, err)
+	} else {
+		t.Logf("Runtime %s: generation=%d replicas=%d readyReplicas=%d image=%s daemonImage=%s port=%d",
+			name, rt.Generation, rt.Spec.Replicas, rt.Status.ReadyReplicas, rt.Spec.Image, rt.Spec.DaemonImage, rt.Spec.Port)
+		for _, cond := range rt.Status.Conditions {
+			t.Logf("  Runtime condition: type=%s status=%s reason=%s message=%s", cond.Type, cond.Status, cond.Reason, cond.Message)
+		}
+	}
+
+	var deploy appsv1.Deployment
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: "runtime-" + name}, &deploy); err != nil {
+		t.Logf("get Deployment runtime-%s: %v", name, err)
+	} else {
+		t.Logf("Deployment %s: generation=%d observedGeneration=%d replicas=%d ready=%d available=%d unavailable=%d",
+			deploy.Name, deploy.Generation, deploy.Status.ObservedGeneration, deploy.Status.Replicas, deploy.Status.ReadyReplicas, deploy.Status.AvailableReplicas, deploy.Status.UnavailableReplicas)
+		for _, cond := range deploy.Status.Conditions {
+			t.Logf("  Deployment condition: type=%s status=%s reason=%s message=%s", cond.Type, cond.Status, cond.Reason, cond.Message)
+		}
+	}
+
+	var pods corev1.PodList
+	if err := k8sClient.List(context.Background(), &pods, client.InNamespace(testNamespace), client.MatchingLabels{"runtime": name}); err != nil {
+		t.Logf("list Runtime pods: %v", err)
+		return
+	}
+	if len(pods.Items) == 0 {
+		t.Log("Runtime pod list is empty")
+	}
+	for i := range pods.Items {
+		logPodDiagnostics(t, &pods.Items[i])
+	}
+}
+
+func logPodDiagnostics(t *testing.T, pod *corev1.Pod) {
+	t.Helper()
+	t.Logf("Pod %s: phase=%s deletion=%v node=%s runtimeImage=%s runtimedImage=%s runsCapacity=%d",
+		pod.Name, pod.Status.Phase, pod.DeletionTimestamp != nil, pod.Spec.NodeName,
+		containerImage(pod, "runtime"), containerImage(pod, "runtimed"), runtimepod.RunsCapacity(pod, 0))
+	for _, cond := range pod.Status.Conditions {
+		t.Logf("  Pod condition: type=%s status=%s reason=%s message=%s lastProbe=%s lastTransition=%s",
+			cond.Type, cond.Status, cond.Reason, cond.Message, cond.LastProbeTime.Time.Format(time.RFC3339), cond.LastTransitionTime.Time.Format(time.RFC3339))
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		t.Logf("  Container %s: ready=%t restartCount=%d image=%s state=%s lastState=%s",
+			status.Name, status.Ready, status.RestartCount, status.Image, formatContainerState(status.State), formatContainerState(status.LastTerminationState))
+	}
+	listPodEvents(t, pod)
+}
+
+func listPodEvents(t *testing.T, pod *corev1.Pod) {
+	t.Helper()
+	if coreClientset == nil {
+		return
+	}
+	selector := fields.OneTermEqualSelector("involvedObject.name", pod.Name).String()
+	events, err := coreClientset.CoreV1().Events(pod.Namespace).List(context.Background(), metav1.ListOptions{FieldSelector: selector})
+	if err != nil {
+		t.Logf("  list pod events: %v", err)
+		return
+	}
+	for _, event := range events.Items {
+		t.Logf("  Event: type=%s reason=%s count=%d message=%s", event.Type, event.Reason, event.Count, event.Message)
+	}
+}
+
+func formatContainerState(state corev1.ContainerState) string {
+	switch {
+	case state.Running != nil:
+		return "running"
+	case state.Waiting != nil:
+		return fmt.Sprintf("waiting(%s: %s)", state.Waiting.Reason, state.Waiting.Message)
+	case state.Terminated != nil:
+		return fmt.Sprintf("terminated(%s exit=%d: %s)", state.Terminated.Reason, state.Terminated.ExitCode, state.Terminated.Message)
+	default:
+		return "unknown"
+	}
 }
 
 func waitForRun(t *testing.T, run *v1alpha1.Run, timeout time.Duration) {
