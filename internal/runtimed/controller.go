@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -72,6 +73,7 @@ type activeRun struct {
 	workDir  string
 	deadline time.Time
 	start    time.Time
+	started  atomic.Bool
 }
 
 // Controller reconciles Runs assigned to this pod.
@@ -167,8 +169,11 @@ func (c *Controller) runFilter() predicate.Predicate {
 			return ok && c.matchesRuntimeNamespace(run) &&
 				(run.Status.AssignedPod == c.Hostname || c.shouldCleanupArtifacts(run))
 		},
-		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
-		GenericFunc: func(e event.GenericEvent) bool { return false },
+		DeleteFunc: func(e event.DeleteEvent) bool { return false },
+		GenericFunc: func(e event.GenericEvent) bool {
+			run, ok := e.Object.(*v1alpha1.Run)
+			return ok && c.matchesRuntimeNamespace(run) && run.Status.AssignedPod == c.Hostname
+		},
 	}
 }
 
@@ -235,11 +240,8 @@ func (c *Controller) reconcileScheduled(ctx context.Context, run *v1alpha1.Run) 
 		return c.applyFailure(ctx, ar, runretry.ReasonPrepareSource, fmt.Sprintf("prepare source: %v", err))
 	}
 	ar.workDir = workDir
-	if err := c.startExecution(ctx, ar); err != nil {
-		return c.applyFailure(ctx, ar, runretry.ReasonRuntimeExecute, fmt.Sprintf("runtime Execute: %v", err))
-	}
-	c.rleg.AddRun(run)
-	return ctrl.Result{}, nil
+	c.startExecutionAsync(ar)
+	return ctrl.Result{RequeueAfter: activeRunRequeueAfter(ar)}, nil
 }
 
 func (c *Controller) heartbeat(ctx context.Context) {
@@ -358,7 +360,7 @@ func (c *Controller) reconcileRunningRecovered(ctx context.Context, run *v1alpha
 func (c *Controller) applyCancel(ctx context.Context, ar *activeRun) (ctrl.Result, error) {
 	run := ar.run
 	uid := string(run.UID)
-	_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
+	c.cancelRuntimeExecution(ctx, uid)
 	return c.applyTerminal(ctx, ar, v1alpha1.RunCancelled, runretry.ReasonCancelled, "cancelled by user")
 }
 
@@ -368,9 +370,18 @@ func (c *Controller) applyCancel(ctx context.Context, ar *activeRun) (ctrl.Resul
 
 func (c *Controller) handleTimeout(ctx context.Context, ar *activeRun) (ctrl.Result, error) {
 	uid := string(ar.run.UID)
-	_, _ = c.runtimeCli.Cancel(ctx, &pb.CancelRequest{Id: uid})
+	c.cancelRuntimeExecution(ctx, uid)
 	msg := fmt.Sprintf("timeout after %s", ar.run.Spec.Timeout.Duration)
 	return c.applyFailure(ctx, ar, runretry.ReasonTimeout, msg)
+}
+
+func (c *Controller) cancelRuntimeExecution(ctx context.Context, uid string) {
+	if c.runtimeCli == nil || uid == "" {
+		return
+	}
+	cancelCtx, cancel := context.WithTimeout(ctx, executionCleanupTimeout)
+	defer cancel()
+	_, _ = c.runtimeCli.Cancel(cancelCtx, &pb.CancelRequest{Id: uid})
 }
 
 // ===========================================================================
@@ -380,6 +391,9 @@ func (c *Controller) handleTimeout(ctx context.Context, ar *activeRun) (ctrl.Res
 func (c *Controller) reconcileRunningActive(ctx context.Context, ar *activeRun) (ctrl.Result, error) {
 	if !ar.deadline.IsZero() && time.Now().After(ar.deadline) {
 		return c.handleTimeout(ctx, ar)
+	}
+	if !ar.started.Load() {
+		return ctrl.Result{RequeueAfter: activeRunRequeueAfter(ar)}, nil
 	}
 
 	resp, err := c.pollStatus(ctx, string(ar.run.UID))
@@ -398,7 +412,21 @@ func (c *Controller) reconcileRunningActive(ctx context.Context, ar *activeRun) 
 		msg := summarizeRuntimeFailure(resp)
 		return c.applyFailureWithOutput(ctx, ar, reason, msg, outputFromStatus(resp))
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: activeRunRequeueAfter(ar)}, nil
+}
+
+func activeRunRequeueAfter(ar *activeRun) time.Duration {
+	if ar == nil || ar.deadline.IsZero() {
+		return rlegpkg.DefaultRelistInterval
+	}
+	untilDeadline := time.Until(ar.deadline)
+	if untilDeadline <= 0 {
+		return time.Nanosecond
+	}
+	if untilDeadline < rlegpkg.DefaultRelistInterval {
+		return untilDeadline
+	}
+	return rlegpkg.DefaultRelistInterval
 }
 
 // ===========================================================================
@@ -428,11 +456,8 @@ func (c *Controller) reconcileRetryBackoff(ctx context.Context, ar *activeRun) (
 	}
 	c.recordEvent(run, corev1.EventTypeNormal, "RunRetrying",
 		"Retry attempt %d/%d starting", run.Status.Attempt+1, policy.MaxAttempts)
-	if err := c.startExecution(ctx, ar); err != nil {
-		return c.applyFailure(ctx, ar, runretry.ReasonRuntimeExecute, fmt.Sprintf("runtime Execute: %v", err))
-	}
-	c.rleg.AddRun(run)
-	return ctrl.Result{}, nil
+	c.startExecutionAsync(ar)
+	return ctrl.Result{RequeueAfter: activeRunRequeueAfter(ar)}, nil
 }
 
 // ===========================================================================
@@ -642,6 +667,45 @@ func (c *Controller) releaseExecution(ctx context.Context, uid string) {
 // startExecution — common gRPC Execute call used for initial and retry.
 // ===========================================================================
 
+func (c *Controller) startExecutionAsync(ar *activeRun) {
+	ar.started.Store(false)
+	go func() {
+		ctx := context.Background()
+		if err := c.startExecution(ctx, ar); err != nil {
+			c.applyStartExecutionFailure(ctx, ar, err)
+			return
+		}
+		uid := string(ar.run.UID)
+		if val, ok := c.activeRuns.Load(uid); !ok || val != ar {
+			c.releaseExecution(ctx, uid)
+			return
+		}
+		ar.started.Store(true)
+		if c.rleg != nil {
+			c.rleg.AddRun(ar.run)
+		}
+	}()
+}
+
+func (c *Controller) applyStartExecutionFailure(ctx context.Context, ar *activeRun, startErr error) {
+	uid := string(ar.run.UID)
+	if val, ok := c.activeRuns.Load(uid); !ok || val != ar {
+		return
+	}
+	var run v1alpha1.Run
+	if err := c.Get(ctx, client.ObjectKeyFromObject(ar.run), &run); err != nil {
+		c.Log.Error(err, "failed to get Run after runtime Execute error", "run", client.ObjectKeyFromObject(ar.run))
+		return
+	}
+	if run.Status.Phase != v1alpha1.RunRunning || run.Status.AssignedPod != c.Hostname {
+		return
+	}
+	ar.run = &run
+	if _, err := c.applyFailure(ctx, ar, runretry.ReasonRuntimeExecute, fmt.Sprintf("runtime Execute: %v", startErr)); err != nil {
+		c.Log.Error(err, "failed to mark Run failed after runtime Execute error", "run", client.ObjectKeyFromObject(ar.run))
+	}
+}
+
 func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
 	run := ar.run
 	env := make(map[string]string)
@@ -801,6 +865,7 @@ func (c *Controller) addRecoveredRun(run *v1alpha1.Run) *activeRun {
 	if val, ok := c.activeRuns.Load(uid); ok {
 		ar := val.(*activeRun)
 		ar.run = run
+		ar.started.Store(true)
 		if c.rleg != nil {
 			c.rleg.UpdateRun(run)
 		}
@@ -808,6 +873,7 @@ func (c *Controller) addRecoveredRun(run *v1alpha1.Run) *activeRun {
 	}
 
 	ar := c.buildActiveRun(run)
+	ar.started.Store(true)
 	c.activeRuns.Store(uid, ar)
 	if c.rleg != nil {
 		c.rleg.AddRun(run)
