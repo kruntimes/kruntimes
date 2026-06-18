@@ -1,7 +1,6 @@
 package krt
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,9 +10,10 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -30,10 +30,9 @@ type runOptions struct {
 	Wait          bool
 	RetryAttempts int32
 	RetryBackoff  time.Duration
-	Namespace     string
 }
 
-func NewRunCmd(c client.Client) *cobra.Command {
+func newRunCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme) *cobra.Command {
 	opts := &runOptions{}
 
 	cmd := &cobra.Command{
@@ -41,6 +40,12 @@ func NewRunCmd(c client.Client) *cobra.Command {
 		Short: "Create and optionally wait for a Run to complete.",
 		Args:  cobra.MinimumNArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := clientFromConfig(getter, scheme)
+			if err != nil {
+				return err
+			}
+			namespace := namespaceFromConfig(getter)
+
 			if opts.File != "" && opts.RepoURL != "" {
 				return fmt.Errorf("-f/--file and --repo-url are mutually exclusive")
 			}
@@ -90,7 +95,7 @@ func NewRunCmd(c client.Client) *cobra.Command {
 			run := &v1alpha1.Run{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("run-%s", rand.String(8)),
-					Namespace: opts.Namespace,
+					Namespace: namespace,
 				},
 				Spec: spec,
 			}
@@ -108,11 +113,11 @@ func NewRunCmd(c client.Client) *cobra.Command {
 				run.Spec.Env = append(run.Spec.Env, ev)
 			}
 
-			ctx := context.Background()
+			ctx := cmd.Context()
 			if err := c.Create(ctx, run); err != nil {
 				return fmt.Errorf("create run: %w", err)
 			}
-			fmt.Printf("Task %s created\n", run.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Task %s created\n", run.Name)
 
 			if !opts.Wait {
 				return nil
@@ -127,15 +132,15 @@ func NewRunCmd(c client.Client) *cobra.Command {
 				}
 
 				if done, err := runTerminalResult(latest.Status.Phase); done {
-					fmt.Println(latest.Status.Message)
+					fmt.Fprintln(cmd.OutOrStdout(), latest.Status.Message)
 					return err
 				}
 
 				switch latest.Status.Phase {
 				case v1alpha1.RunRunning:
-					fmt.Printf("\rRunning on %s...", latest.Status.AssignedPod)
+					fmt.Fprintf(cmd.OutOrStdout(), "\rRunning on %s...", latest.Status.AssignedPod)
 				case v1alpha1.RunScheduled:
-					fmt.Printf("\rScheduled to %s...", latest.Status.AssignedPod)
+					fmt.Fprintf(cmd.OutOrStdout(), "\rScheduled to %s...", latest.Status.AssignedPod)
 				}
 			}
 		},
@@ -152,7 +157,6 @@ func NewRunCmd(c client.Client) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.Wait, "wait", false, "Block until run completes")
 	cmd.Flags().Int32Var(&opts.RetryAttempts, "retry-attempts", 0, "Maximum execution attempts (including initial attempt)")
 	cmd.Flags().DurationVar(&opts.RetryBackoff, "retry-backoff", 0, "Initial backoff between retries")
-	cmd.Flags().StringVarP(&opts.Namespace, "namespace", "n", "default", "Kubernetes namespace")
 
 	return cmd
 }

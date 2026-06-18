@@ -27,10 +27,10 @@ import (
 func TestArtifactListCommand(t *testing.T) {
 	run := artifactTestRun()
 	k8sClient := newKRTTestClient(t, run)
-	command := newArtifactCmd(k8sClient, nil)
+	command := newArtifactCmdWithClient(k8sClient, nil)
 	output := &bytes.Buffer{}
 	command.SetOut(output)
-	command.SetArgs([]string{"list", "run-1", "-n", "team-a"})
+	command.SetArgs([]string{"list", "run-1"})
 
 	if err := command.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("ExecuteContext() error = %v", err)
@@ -48,9 +48,9 @@ func TestArtifactDownloadPrefersReadyAssignedPod(t *testing.T) {
 	run.Status.AssignedPod = "runtime-b"
 	objects := []runtime.Object{
 		run,
-		readyRuntimePod("runtime-a", "team-a", "bash"),
-		readyRuntimePod("runtime-b", "team-a", "bash"),
-		readyRuntimePod("other-runtime", "team-a", "python"),
+		readyRuntimePod("runtime-a", "default", "bash"),
+		readyRuntimePod("runtime-b", "default", "bash"),
+		readyRuntimePod("other-runtime", "default", "python"),
 	}
 	k8sClient := newKRTTestClient(t, objects...)
 	var selectedPod, selectedPath string
@@ -68,10 +68,10 @@ func TestArtifactDownloadPrefersReadyAssignedPod(t *testing.T) {
 			Name: "result.txt", Type: "file", SizeBytes: 7,
 		}, nil
 	}
-	command := newArtifactCmd(k8sClient, downloader)
+	command := newArtifactCmdWithClient(k8sClient, downloader)
 	output := &bytes.Buffer{}
 	command.SetOut(output)
-	command.SetArgs([]string{"download", "run-1", "result.txt", "-n", "team-a", "-o", "download.txt"})
+	command.SetArgs([]string{"download", "run-1", "result.txt", "-o", "download.txt"})
 
 	if err := command.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("ExecuteContext() error = %v", err)
@@ -89,7 +89,7 @@ func TestArtifactDownloadUsesTarGzDefaultForDirectory(t *testing.T) {
 	run.Status.ArtifactRefs[0].Name = "bundle"
 	run.Status.ArtifactRefs[0].Type = v1alpha1.ArtifactTypeDirectory
 	run.Status.AssignedPod = "runtime-a"
-	k8sClient := newKRTTestClient(t, run, readyRuntimePod("runtime-a", "team-a", "bash"))
+	k8sClient := newKRTTestClient(t, run, readyRuntimePod("runtime-a", "default", "bash"))
 	var selectedPath string
 	downloader := func(
 		_ context.Context,
@@ -102,9 +102,9 @@ func TestArtifactDownloadUsesTarGzDefaultForDirectory(t *testing.T) {
 		selectedPath = outputPath
 		return &artifactv1.ArtifactMetadata{Name: "bundle", Type: "directory"}, nil
 	}
-	command := newArtifactCmd(k8sClient, downloader)
+	command := newArtifactCmdWithClient(k8sClient, downloader)
 	command.SetOut(&bytes.Buffer{})
-	command.SetArgs([]string{"download", "run-1", "bundle", "-n", "team-a"})
+	command.SetArgs([]string{"download", "run-1", "bundle"})
 	if err := command.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("ExecuteContext() error = %v", err)
 	}
@@ -116,13 +116,13 @@ func TestArtifactDownloadUsesTarGzDefaultForDirectory(t *testing.T) {
 func TestSelectRuntimePodFallsBackToReadyPod(t *testing.T) {
 	run := artifactTestRun()
 	run.Status.AssignedPod = "runtime-old"
-	notReady := readyRuntimePod("runtime-old", "team-a", "bash")
+	notReady := readyRuntimePod("runtime-old", "default", "bash")
 	notReady.Status.Conditions[0].Status = corev1.ConditionFalse
 	k8sClient := newKRTTestClient(
 		t,
 		run,
 		notReady,
-		readyRuntimePod("runtime-new", "team-a", "bash"),
+		readyRuntimePod("runtime-new", "default", "bash"),
 	)
 
 	pod, err := selectRuntimePod(t.Context(), k8sClient, run)
@@ -149,7 +149,7 @@ func TestReceiveArtifactPublishesAtomically(t *testing.T) {
 	metadata, err := receiveArtifact(
 		t.Context(),
 		artifactClient,
-		"team-a",
+		"default",
 		"run-1",
 		"result.bin",
 		outputPath,
@@ -191,7 +191,7 @@ func TestReceiveArtifactRejectsDigestMismatch(t *testing.T) {
 	if _, err := receiveArtifact(
 		t.Context(),
 		artifactClient,
-		"team-a",
+		"default",
 		"run-1",
 		"result.bin",
 		outputPath,
@@ -216,7 +216,7 @@ func TestReceiveArtifactRemovesPartialFile(t *testing.T) {
 	if _, err := receiveArtifact(
 		t.Context(),
 		artifactClient,
-		"team-a",
+		"default",
 		"run-1",
 		"result.bin",
 		outputPath,
@@ -237,7 +237,7 @@ func TestReceiveArtifactRemovesPartialFile(t *testing.T) {
 
 func artifactTestRun() *v1alpha1.Run {
 	return &v1alpha1.Run{
-		ObjectMeta: metav1.ObjectMeta{Name: "run-1", Namespace: "team-a"},
+		ObjectMeta: metav1.ObjectMeta{Name: "run-1", Namespace: "default"},
 		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
 		Status: v1alpha1.RunStatus{
 			ArtifactRefs: []v1alpha1.ArtifactRef{{

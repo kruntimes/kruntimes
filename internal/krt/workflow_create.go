@@ -1,14 +1,14 @@
 package krt
 
 import (
-	"context"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -33,10 +33,9 @@ type ghStep struct {
 	Uses string            `yaml:"uses"`
 }
 
-func NewWorkflowCreateCmd(c client.Client) *cobra.Command {
+func newWorkflowCreateCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme) *cobra.Command {
 	var (
-		filePath  string
-		namespace string
+		filePath string
 	)
 
 	cmd := &cobra.Command{
@@ -44,6 +43,12 @@ func NewWorkflowCreateCmd(c client.Client) *cobra.Command {
 		Short: "Create a Workflow from a GitHub Actions workflow file.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := clientFromConfig(getter, scheme)
+			if err != nil {
+				return err
+			}
+			namespace := namespaceFromConfig(getter)
+
 			if filePath == "" {
 				return fmt.Errorf("--file is required")
 			}
@@ -59,16 +64,15 @@ func NewWorkflowCreateCmd(c client.Client) *cobra.Command {
 			}
 
 			wf := convertWorkflow(gh, namespace)
-			if err := c.Create(context.Background(), wf); err != nil {
+			if err := c.Create(cmd.Context(), wf); err != nil {
 				return fmt.Errorf("create workflow: %w", err)
 			}
-			fmt.Printf("Workflow %s created\n", wf.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Workflow %s created\n", wf.Name)
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "Path to GitHub Actions workflow YAML file (required)")
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
 	return cmd
 }
 

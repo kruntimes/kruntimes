@@ -17,7 +17,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -41,38 +43,78 @@ type artifactDownloader func(
 	localPort int,
 ) (*artifactv1.ArtifactMetadata, error)
 
-func NewArtifactCmd(k8sClient client.Client, restConfig *rest.Config) *cobra.Command {
-	return newArtifactCmd(k8sClient, func(
-		ctx context.Context,
-		podName string,
-		run *v1alpha1.Run,
-		artifactName, outputPath string,
-		localPort int,
-	) (*artifactv1.ArtifactMetadata, error) {
-		return DownloadArtifact(ctx, k8sClient, restConfig, run.Namespace, run.Name, artifactName, outputPath, localPort)
-	})
+func newArtifactCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme) *cobra.Command {
+	return newArtifactCmdWithConfig(getter, scheme, nil)
 }
 
-func newArtifactCmd(k8sClient client.Client, downloader artifactDownloader) *cobra.Command {
+func newArtifactCmdWithClient(k8sClient client.Client, downloader artifactDownloader) *cobra.Command {
+	if downloader == nil {
+		downloader = func(
+			ctx context.Context,
+			podName string,
+			run *v1alpha1.Run,
+			artifactName, outputPath string,
+			localPort int,
+		) (*artifactv1.ArtifactMetadata, error) {
+			return nil, fmt.Errorf("artifact downloader is required in client-backed tests")
+		}
+	}
 	cmd := &cobra.Command{
 		Use:   "artifact",
 		Short: "List and download Run artifacts.",
 	}
-	cmd.AddCommand(newArtifactListCmd(k8sClient))
-	cmd.AddCommand(newArtifactDownloadCmd(k8sClient, downloader))
+	cmd.AddCommand(newArtifactListCmdWithClient(k8sClient))
+	cmd.AddCommand(newArtifactDownloadCmdWithClient(k8sClient, downloader))
 	return cmd
 }
 
-func newArtifactListCmd(k8sClient client.Client) *cobra.Command {
-	var namespace string
+func newArtifactCmdWithConfig(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme, downloader artifactDownloader) *cobra.Command {
+	if downloader == nil {
+		downloader = func(
+			ctx context.Context,
+			podName string,
+			run *v1alpha1.Run,
+			artifactName, outputPath string,
+			localPort int,
+		) (*artifactv1.ArtifactMetadata, error) {
+			k8sClient, err := clientFromConfig(getter, scheme)
+			if err != nil {
+				return nil, err
+			}
+			restConfig, err := restConfigFromConfig(getter)
+			if err != nil {
+				return nil, err
+			}
+			return DownloadArtifact(ctx, k8sClient, restConfig, run.Namespace, run.Name, artifactName, outputPath, localPort)
+		}
+	}
+	cmd := &cobra.Command{
+		Use:   "artifact",
+		Short: "List and download Run artifacts.",
+	}
+	cmd.AddCommand(newArtifactListCmd(getter, scheme))
+	cmd.AddCommand(newArtifactDownloadCmd(getter, scheme, downloader))
+	return cmd
+}
+
+func newArtifactListCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme) *cobra.Command {
+	var output string
 	cmd := &cobra.Command{
 		Use:   "list <run>",
 		Short: "List artifacts produced by a Run.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			k8sClient, err := clientFromConfig(getter, scheme)
+			if err != nil {
+				return err
+			}
+			namespace := namespaceFromConfig(getter)
 			run, err := getRun(cmd.Context(), k8sClient, namespace, args[0])
 			if err != nil {
 				return err
+			}
+			if output != outputTable {
+				return writeStructuredOutput(cmd.OutOrStdout(), output, run.Status.ArtifactRefs)
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(writer, "NAME\tTYPE\tSIZE\tCONTENT-TYPE\tDIGEST")
@@ -90,13 +132,39 @@ func newArtifactListCmd(k8sClient client.Client) *cobra.Command {
 			return writer.Flush()
 		},
 	}
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	addOutputFlag(cmd, &output)
 	return cmd
 }
 
-func newArtifactDownloadCmd(k8sClient client.Client, downloader artifactDownloader) *cobra.Command {
+func newArtifactListCmdWithClient(k8sClient client.Client) *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:   "list <run>",
+		Short: "List artifacts produced by a Run.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			namespace := "default"
+			run, err := getRun(cmd.Context(), k8sClient, namespace, args[0])
+			if err != nil {
+				return err
+			}
+			if output != outputTable {
+				return writeStructuredOutput(cmd.OutOrStdout(), output, run.Status.ArtifactRefs)
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(writer, "NAME\tTYPE\tSIZE\tCONTENT-TYPE\tDIGEST")
+			for _, ref := range run.Status.ArtifactRefs {
+				fmt.Fprintf(writer, "%s\t%s\t%d\t%s\t%s\n", ref.Name, ref.Type, ref.SizeBytes, ref.ContentType, ref.Digest)
+			}
+			return writer.Flush()
+		},
+	}
+	addOutputFlag(cmd, &output)
+	return cmd
+}
+
+func newArtifactDownloadCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme, downloader artifactDownloader) *cobra.Command {
 	var (
-		namespace string
 		output    string
 		localPort int
 	)
@@ -105,6 +173,11 @@ func newArtifactDownloadCmd(k8sClient client.Client, downloader artifactDownload
 		Short: "Download an artifact produced by a Run.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			k8sClient, err := clientFromConfig(getter, scheme)
+			if err != nil {
+				return err
+			}
+			namespace := namespaceFromConfig(getter)
 			run, err := getRun(cmd.Context(), k8sClient, namespace, args[0])
 			if err != nil {
 				return err
@@ -147,7 +220,56 @@ func newArtifactDownloadCmd(k8sClient client.Client, downloader artifactDownload
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Output path (defaults to the artifact name)")
+	cmd.Flags().IntVar(&localPort, "status-port", defaultArtifactLocalPort, "Local port for port-forward")
+	return cmd
+}
+
+func newArtifactDownloadCmdWithClient(k8sClient client.Client, downloader artifactDownloader) *cobra.Command {
+	var (
+		output    string
+		localPort int
+	)
+	cmd := &cobra.Command{
+		Use:   "download <run> <artifact>",
+		Short: "Download an artifact produced by a Run.",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			namespace := "default"
+			run, err := getRun(cmd.Context(), k8sClient, namespace, args[0])
+			if err != nil {
+				return err
+			}
+			ref, found := findRunArtifact(run, args[1])
+			if !found {
+				return fmt.Errorf("artifact %q not found on Run %s/%s", args[1], run.Namespace, run.Name)
+			}
+			pod, err := selectRuntimePod(cmd.Context(), k8sClient, run)
+			if err != nil {
+				return err
+			}
+			outputPath := output
+			if outputPath == "" {
+				outputPath = args[1]
+				if ref.Type == v1alpha1.ArtifactTypeDirectory {
+					outputPath += ".tar.gz"
+				}
+			}
+			metadata, err := downloader(cmd.Context(), pod.Name, run, args[1], outputPath, localPort)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(
+				cmd.OutOrStdout(),
+				"Downloaded %s (%s, %d bytes) to %s\n",
+				metadata.GetName(),
+				metadata.GetType(),
+				metadata.GetSizeBytes(),
+				outputPath,
+			)
+			return nil
+		},
+	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output path (defaults to the artifact name)")
 	cmd.Flags().IntVar(&localPort, "status-port", defaultArtifactLocalPort, "Local port for port-forward")
 	return cmd

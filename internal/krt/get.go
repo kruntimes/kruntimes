@@ -1,34 +1,42 @@
 package krt
 
 import (
-	"context"
 	"fmt"
-	"os"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
-func NewGetCmd(c client.Client) *cobra.Command {
-	var namespace string
+func newGetCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme) *cobra.Command {
+	var output string
 
 	cmd := &cobra.Command{
 		Use:   "get <run-name>",
 		Short: "Display details of a Run.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := clientFromConfig(getter, scheme)
+			if err != nil {
+				return err
+			}
+			namespace := namespaceFromConfig(getter)
+
 			run := &v1alpha1.Run{}
-			if err := c.Get(context.Background(), types.NamespacedName{
+			if err := c.Get(cmd.Context(), types.NamespacedName{
 				Name: args[0], Namespace: namespace,
 			}, run); err != nil {
 				return fmt.Errorf("get run: %w", err)
 			}
+			if output != outputTable {
+				return writeStructuredOutput(cmd.OutOrStdout(), output, run)
+			}
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintf(w, "Name:\t%s\n", run.Name)
 			fmt.Fprintf(w, "Namespace:\t%s\n", run.Namespace)
 			fmt.Fprintf(w, "Runtime:\t%s\n", run.Spec.Runtime)
@@ -63,6 +71,6 @@ func NewGetCmd(c client.Client) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	addOutputFlag(cmd, &output)
 	return cmd
 }
