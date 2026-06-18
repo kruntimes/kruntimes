@@ -26,6 +26,7 @@ import (
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/artifact"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
+	"github.com/kruntimes/kruntimes/internal/runstatus"
 	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
 )
 
@@ -45,6 +46,36 @@ func TestPrepareSource_NoSource(t *testing.T) {
 	}
 	if _, err := os.Stat(workDir); err != nil {
 		t.Errorf("workDir not created: %v", err)
+	}
+}
+
+func TestDispatchDurationSeconds(t *testing.T) {
+	claimedAt := time.Now()
+	run := &v1alpha1.Run{
+		Status: v1alpha1.RunStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:               runstatus.ConditionScheduled,
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: metav1.NewTime(claimedAt.Add(-3 * time.Second)),
+				},
+			},
+		},
+	}
+
+	got, ok := dispatchDurationSeconds(run, claimedAt)
+	if !ok || got < 2.9 || got > 3.1 {
+		t.Fatalf("dispatchDurationSeconds() = %f, %v; want about 3s", got, ok)
+	}
+
+	run.Status.Conditions[0].LastTransitionTime = metav1.NewTime(claimedAt.Add(time.Second))
+	if _, ok := dispatchDurationSeconds(run, claimedAt); ok {
+		t.Fatal("dispatchDurationSeconds() ok = true for negative duration")
+	}
+
+	run.Status.Conditions = nil
+	if _, ok := dispatchDurationSeconds(run, claimedAt); ok {
+		t.Fatal("dispatchDurationSeconds() ok = true without Scheduled condition")
 	}
 }
 

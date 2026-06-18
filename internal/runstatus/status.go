@@ -8,6 +8,7 @@ import (
 )
 
 const (
+	ConditionScheduled = "Scheduled"
 	ConditionRunning   = "Running"
 	ConditionCompleted = "Completed"
 )

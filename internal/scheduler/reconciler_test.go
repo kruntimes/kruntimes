@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -15,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runstatus"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
@@ -128,6 +130,83 @@ func TestReconcileCancelsPendingRun(t *testing.T) {
 	}
 }
 
+func TestReconcileRecordsScheduledCondition(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add kruntimes scheme: %v", err)
+	}
+
+	createdAt := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "run-scheduled",
+			Namespace:         "default",
+			CreationTimestamp: createdAt,
+		},
+		Spec: v1alpha1.RunSpec{Runtime: "bash"},
+		Status: v1alpha1.RunStatus{
+			Phase: v1alpha1.RunPending,
+		},
+	}
+	podReady := metav1.Now()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-a",
+			Namespace: "default",
+			Labels: map[string]string{
+				"runtime": "bash",
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+				{
+					Type:          v1alpha1.RuntimePodRuntimedReadyCondition,
+					Status:        corev1.ConditionTrue,
+					LastProbeTime: podReady,
+				},
+			},
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run, pod).
+		Build()
+
+	reconciler := &RunReconciler{
+		Client:   client,
+		Log:      logr.Discard(),
+		Strategy: &LeastLoaded{},
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: run.Name, Namespace: run.Namespace},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	var updated v1alpha1.Run
+	if err := client.Get(context.Background(), types.NamespacedName{Name: run.Name, Namespace: run.Namespace}, &updated); err != nil {
+		t.Fatalf("get updated run: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.RunScheduled {
+		t.Fatalf("phase = %s, want Scheduled", updated.Status.Phase)
+	}
+	if updated.Status.AssignedPod != pod.Name {
+		t.Fatalf("assignedPod = %q, want %q", updated.Status.AssignedPod, pod.Name)
+	}
+	condition := meta.FindStatusCondition(updated.Status.Conditions, runstatus.ConditionScheduled)
+	if condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "Assigned" {
+		t.Fatalf("Scheduled condition = %#v, want true/Assigned", condition)
+	}
+}
+
 func TestIsPodSchedulableRequiresReadyRunningPod(t *testing.T) {
 	now := metav1.Now()
 	tests := []struct {
@@ -233,6 +312,24 @@ func TestPendingRetryDelay(t *testing.T) {
 	run.Status.Conditions[0].LastTransitionTime = metav1.NewTime(time.Now().Add(-2 * time.Minute))
 	if delay := pendingRetryDelay(run); delay > 0 {
 		t.Fatalf("pendingRetryDelay() = %s, want no delay after backoff expires", delay)
+	}
+}
+
+func TestRunQueueDurationSeconds(t *testing.T) {
+	scheduledAt := time.Now()
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			CreationTimestamp: metav1.NewTime(scheduledAt.Add(-2 * time.Second)),
+		},
+	}
+	got, ok := runQueueDurationSeconds(run, scheduledAt)
+	if !ok || got < 1.9 || got > 2.1 {
+		t.Fatalf("runQueueDurationSeconds() = %f, %v; want about 2s", got, ok)
+	}
+
+	run.CreationTimestamp = metav1.NewTime(scheduledAt.Add(time.Second))
+	if _, ok := runQueueDurationSeconds(run, scheduledAt); ok {
+		t.Fatal("runQueueDurationSeconds() ok = true for negative duration")
 	}
 }
 
