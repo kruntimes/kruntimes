@@ -218,6 +218,7 @@ test-helm: manifests ## Validate Helm charts and multi-release rendering.
 	./hack/verify-helm-images.py
 	./hack/verify-helm-multi-namespace.py
 	./hack/verify-helm-metrics.py
+	./hack/verify-helm-config-values.py
 
 ##@ Deployment
 

@@ -1,4 +1,4 @@
-namespace: default
+imagePullSecrets: []
 
 scheduler:
   image: kruntimes-scheduler
@@ -7,6 +7,24 @@ scheduler:
   leaderElect: true
   metricsBindAddress: ":8080"
   probeBindAddress: ":8081"
+  metricsPort: 8080
+  probePort: 8081
+  podAnnotations: {}
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  priorityClassName: ""
   resources:
     requests:
       cpu: 100m
@@ -18,6 +36,28 @@ scheduler:
 controller:
   image: kruntimes-controller
   imagePullPolicy: IfNotPresent
+  replicas: 1
+  leaderElect: true
+  metricsBindAddress: ":8082"
+  probeBindAddress: ":8083"
+  metricsPort: 8082
+  probePort: 8083
+  podAnnotations: {}
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  priorityClassName: ""
   resources:
     requests:
       cpu: 100m
@@ -28,15 +68,6 @@ controller:
 
 runtimed:
   image: kruntimes-runtimed
-  imagePullPolicy: IfNotPresent
-  workers: 2
-  resources:
-    requests:
-      cpu: 500m
-      memory: 512Mi
-    limits:
-      cpu: "2"
-      memory: 2Gi
 
 workspace:
   sizeLimit: 10Gi

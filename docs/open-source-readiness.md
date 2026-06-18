@@ -107,7 +107,7 @@
 - [ ] 明确 Runtime Pod customization API：评估是否用 `PodTemplateSpec` 风格的
   template 取代当前 Runtime spec 中逐步复制的 PodSpec-like 字段。
 - [x] 所有 Helm 资源名称使用 release fullname，支持多个 release 共存。
-- [ ] 移除未使用 values，并让 replicas、leader election、ports、imagePullSecrets、
+- [x] 移除未使用 values，并让 replicas、leader election、ports、imagePullSecrets、
   security context、scheduling constraints 等可配置。
 - [x] 避免默认使用 `latest`，镜像 tag 应跟随 chart appVersion。
 - [x] 增加多 namespace 模板/安装测试。
