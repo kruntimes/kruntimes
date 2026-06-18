@@ -8,6 +8,17 @@ IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:latest
 # ENVTEST_K8S_VERSION refers to the version of k8s to use for envtest
 ENVTEST_K8S_VERSION = 1.32
 
+# Pinned local tool versions. Keep these explicit so clean developer and CI
+# environments install reproducible toolchains instead of resolving @latest.
+CONTROLLER_GEN_VERSION ?= v0.17.3
+SETUP_ENVTEST_VERSION ?= v0.24.1
+GOLANGCI_LINT_VERSION ?= v2.12.2
+PROTOC_VERSION ?= 29.3
+PROTOC_ARCH ?= linux-x86_64
+PROTOC_GEN_GO_VERSION ?= v1.36.11
+PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
+UV_VERSION ?= 0.11.16
+
 # NAMESPACE for helm deploy
 NAMESPACE ?= default
 
@@ -240,46 +251,55 @@ proto: protoc protoc-gen-go protoc-gen-go-grpc ## Generate gRPC code from proto 
 CONTROLLER_GEN = $(GOBIN)/controller-gen
 .PHONY: controller-gen
 controller-gen: ## Download controller-gen locally if not already installed.
-	@test -x $(CONTROLLER_GEN) || go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.17.3
+	@if ! test -x $(CONTROLLER_GEN) || ! $(CONTROLLER_GEN) --version | grep -q "$(CONTROLLER_GEN_VERSION)"; then \
+		go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION); \
+	fi
 
 SETUP_ENVTEST = $(GOBIN)/setup-envtest
 .PHONY: setup-envtest
 setup-envtest: ## Download setup-envtest locally if not already installed.
-	@test -x $(SETUP_ENVTEST) || go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+	@if ! test -x $(SETUP_ENVTEST) || ! $(SETUP_ENVTEST) version | grep -q "$(SETUP_ENVTEST_VERSION)"; then \
+		go install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION); \
+	fi
 
 GOLANGCI_LINT = $(GOBIN)/golangci-lint
 .PHONY: golangci-lint
 golangci-lint: ## Install golangci-lint if not present.
-	@test -x $(GOLANGCI_LINT) || go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@if ! test -x $(GOLANGCI_LINT) || ! $(GOLANGCI_LINT) --version | grep -q "$(GOLANGCI_LINT_VERSION)"; then \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
+	fi
 
 .PHONY: protoc
 protoc: ## Install protoc compiler if not present.
-	@test -x $(PROTOC) || ( \
-		V=29.3; ARCH=linux-x86_64; \
-		wget -q -O /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v$$V/protoc-$$V-$$ARCH.zip && \
+	@if ! test -x $(PROTOC) || ! $(PROTOC) --version | grep -q "libprotoc $(PROTOC_VERSION)"; then \
+		wget -q -O /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOC_VERSION)/protoc-$(PROTOC_VERSION)-$(PROTOC_ARCH).zip && \
 		python3 -c "import zipfile,sys;zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" /tmp/protoc.zip /tmp/protoc-install && \
 		cp /tmp/protoc-install/bin/protoc $(PROTOC) && chmod +x $(PROTOC) && \
-		rm -rf /tmp/protoc.zip /tmp/protoc-install \
-	)
+		rm -rf /tmp/protoc.zip /tmp/protoc-install; \
+	fi
 
 .PHONY: protoc-gen-go
 protoc-gen-go: ## Install protoc-gen-go if not present.
-	@test -x $(PROTOC_GEN_GO) || go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	@if ! test -x $(PROTOC_GEN_GO) || ! $(PROTOC_GEN_GO) --version | grep -q "$(PROTOC_GEN_GO_VERSION)"; then \
+		go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION); \
+	fi
 
 .PHONY: protoc-gen-go-grpc
 protoc-gen-go-grpc: ## Install protoc-gen-go-grpc if not present.
-	@test -x $(PROTOC_GEN_GO_GRPC) || go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+	@if ! test -x $(PROTOC_GEN_GO_GRPC) || ! $(PROTOC_GEN_GO_GRPC) --version | grep -q "$(PROTOC_GEN_GO_GRPC_VERSION)"; then \
+		go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION); \
+	fi
 
 UV = $(GOBIN)/uv
 .PHONY: uv
 uv: ## Install uv locally if not present.
-	@test -x "$(UV)" || ( \
+	@if ! test -x "$(UV)" || ! "$(UV)" --version | grep -q "uv $(UV_VERSION)"; then \
 		mkdir -p "$(GOBIN)"; \
 		installer=$$(mktemp); \
 		trap 'rm -f "$$installer"' 0; \
-		curl -LsSf https://astral.sh/uv/install.sh -o "$$installer"; \
-		env UV_INSTALL_DIR="$(GOBIN)" UV_NO_MODIFY_PATH=1 sh "$$installer" \
-	)
+		curl -LsSf https://astral.sh/uv/$(UV_VERSION)/install.sh -o "$$installer"; \
+		env UV_INSTALL_DIR="$(GOBIN)" UV_NO_MODIFY_PATH=1 sh "$$installer"; \
+	fi
 
 .PHONY: proto-python
 proto-python: uv ## Generate Python gRPC stubs from proto.
