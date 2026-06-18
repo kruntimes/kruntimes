@@ -149,7 +149,7 @@
 改进项：
 
 - [ ] 升级 Go toolchain 和受影响依赖，并让 `govulncheck` 通过。
-- [ ] Docker 基础镜像固定到明确 patch version 和 digest。
+- [x] Docker 基础镜像固定到明确 patch version 和 digest。
 - [x] Python 镜像通过 `uv.lock` 安装依赖，不直接安装未固定版本。
 - [x] 固定 Makefile 中 controller-gen、setup-envtest、golangci-lint、
   protoc plugins 和 uv 的版本。
