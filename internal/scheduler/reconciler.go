@@ -50,10 +50,18 @@ var (
 		},
 		[]string{"runtime"},
 	)
+	runQueueDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kruntimes_scheduler_run_queue_duration_seconds",
+			Help:    "Time from Run creation until scheduler assignment.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"runtime"},
+	)
 )
 
 func init() {
-	metrics.Registry.MustRegister(runsScheduled, syncDuration, noPodsTotal)
+	metrics.Registry.MustRegister(runsScheduled, syncDuration, noPodsTotal, runQueueDuration)
 }
 
 // RunReconciler watches Pending Tasks and assigns them to Runtime Pods.
@@ -158,6 +166,14 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	run.Status.AssignedPod = selected.Name
 	run.Status.Phase = v1alpha1.RunScheduled
+	scheduledAt := metav1.Now()
+	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+		Type:               runstatus.ConditionScheduled,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Assigned",
+		Message:            fmt.Sprintf("assigned to runtime pod %s", selected.Name),
+		LastTransitionTime: scheduledAt,
+	})
 	if err := r.Status().Update(ctx, &run); err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{Requeue: true}, nil
@@ -167,7 +183,25 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	log.Info("Run scheduled", "pod", selected.Name)
 	runsScheduled.WithLabelValues(run.Spec.Runtime, "scheduled").Inc()
+	observeRunQueueDuration(&run, scheduledAt.Time)
 	return ctrl.Result{}, nil
+}
+
+func observeRunQueueDuration(run *v1alpha1.Run, scheduledAt time.Time) {
+	if seconds, ok := runQueueDurationSeconds(run, scheduledAt); ok {
+		runQueueDuration.WithLabelValues(run.Spec.Runtime).Observe(seconds)
+	}
+}
+
+func runQueueDurationSeconds(run *v1alpha1.Run, scheduledAt time.Time) (float64, bool) {
+	if run == nil || run.CreationTimestamp.IsZero() || scheduledAt.IsZero() {
+		return 0, false
+	}
+	duration := scheduledAt.Sub(run.CreationTimestamp.Time)
+	if duration < 0 {
+		return 0, false
+	}
+	return duration.Seconds(), true
 }
 
 func (r *RunReconciler) applyCancelled(ctx context.Context, run *v1alpha1.Run) (ctrl.Result, error) {

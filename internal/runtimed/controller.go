@@ -66,6 +66,35 @@ var (
 		},
 		[]string{"runtime"},
 	)
+	dispatchDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kruntimes_runtimed_dispatch_duration_seconds",
+			Help:    "Time from scheduler assignment until runtimed claims the Run.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"runtime"},
+	)
+	runRetries = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kruntimes_runtimed_run_retries_total",
+			Help: "Total number of Run retries scheduled by this runtimed.",
+		},
+		[]string{"runtime", "reason"},
+	)
+	runFailures = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kruntimes_runtimed_run_failures_total",
+			Help: "Total number of terminal Run failures by this runtimed.",
+		},
+		[]string{"runtime", "phase", "reason"},
+	)
+	activeRuns = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kruntimes_runtimed_active_runs",
+			Help: "Number of Runs currently active in this runtimed.",
+		},
+		[]string{"runtime"},
+	)
 )
 
 type activeRun struct {
@@ -217,11 +246,20 @@ func (c *Controller) reconcileScheduled(ctx context.Context, run *v1alpha1.Run) 
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
+	startedAt := metav1.Now()
 	run.Status.Phase = v1alpha1.RunRunning
-	run.Status.StartTime = &metav1.Time{Time: time.Now()}
+	run.Status.StartTime = &startedAt
+	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+		Type:               runstatus.ConditionRunning,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Claimed",
+		Message:            "claimed by runtimed",
+		LastTransitionTime: startedAt,
+	})
 	if err := c.Status().Update(ctx, run); err != nil {
 		return ctrl.Result{}, err
 	}
+	c.observeDispatchDuration(run, startedAt.Time)
 	klog.Infof("Claimed run %s", run.Name)
 
 	ar := &activeRun{
@@ -234,6 +272,7 @@ func (c *Controller) reconcileScheduled(ctx context.Context, run *v1alpha1.Run) 
 	}
 
 	c.activeRuns.Store(uid, ar)
+	c.recordActiveRuns(run.Spec.Runtime)
 
 	workDir, err := prepareSource(run)
 	if err != nil {
@@ -583,6 +622,7 @@ func (c *Controller) scheduleRetry(ctx context.Context, ar *activeRun, curAttemp
 	}
 
 	c.rleg.RemoveRun(string(run.UID))
+	runRetries.WithLabelValues(run.Spec.Runtime, reason).Inc()
 	c.recordEvent(run, corev1.EventTypeWarning, "RunFailedRetrying",
 		"Run failed (attempt %d/%d), retrying in %s. Reason: %s: %s",
 		curAttempt, policy.MaxAttempts, backoff, reason, msg)
@@ -620,6 +660,9 @@ func (c *Controller) applyTerminalWithOutput(
 
 	c.emitExecutionOutput(run, output)
 	c.cleanup(ctx, ar, phase)
+	if phase == v1alpha1.RunFailed || phase == v1alpha1.RunTimeout {
+		runFailures.WithLabelValues(run.Spec.Runtime, string(phase), reason).Inc()
+	}
 	c.recordEvent(run, corev1.EventTypeWarning, "RunRetriesExhausted",
 		"Run failed after %d attempts: %s: %s", run.Status.Attempt, reason, msg)
 	return ctrl.Result{}, nil
@@ -634,6 +677,7 @@ func (c *Controller) cleanup(ctx context.Context, ar *activeRun, phase v1alpha1.
 		c.rleg.RemoveRun(string(ar.run.UID))
 	}
 	c.activeRuns.Delete(string(ar.run.UID))
+	c.recordActiveRuns(ar.run.Spec.Runtime)
 	c.releaseExecution(ctx, string(ar.run.UID))
 	if err := os.RemoveAll(workspaceForRun(ar.run)); err != nil {
 		c.Log.Error(err, "failed to remove Run workspace", "run", client.ObjectKeyFromObject(ar.run))
@@ -875,10 +919,39 @@ func (c *Controller) addRecoveredRun(run *v1alpha1.Run) *activeRun {
 	ar := c.buildActiveRun(run)
 	ar.started.Store(true)
 	c.activeRuns.Store(uid, ar)
+	c.recordActiveRuns(run.Spec.Runtime)
 	if c.rleg != nil {
 		c.rleg.AddRun(run)
 	}
 	return ar
+}
+
+func (c *Controller) observeDispatchDuration(run *v1alpha1.Run, claimedAt time.Time) {
+	if seconds, ok := dispatchDurationSeconds(run, claimedAt); ok {
+		dispatchDuration.WithLabelValues(run.Spec.Runtime).Observe(seconds)
+	}
+}
+
+func dispatchDurationSeconds(run *v1alpha1.Run, claimedAt time.Time) (float64, bool) {
+	if run == nil || claimedAt.IsZero() {
+		return 0, false
+	}
+	condition := meta.FindStatusCondition(run.Status.Conditions, runstatus.ConditionScheduled)
+	if condition == nil || condition.Status != metav1.ConditionTrue || condition.LastTransitionTime.IsZero() {
+		return 0, false
+	}
+	duration := claimedAt.Sub(condition.LastTransitionTime.Time)
+	if duration < 0 {
+		return 0, false
+	}
+	return duration.Seconds(), true
+}
+
+func (c *Controller) recordActiveRuns(runtimeName string) {
+	if runtimeName == "" {
+		runtimeName = c.RuntimeName
+	}
+	activeRuns.WithLabelValues(runtimeName).Set(float64(c.activeRunCount()))
 }
 
 func (c *Controller) buildActiveRun(run *v1alpha1.Run) *activeRun {

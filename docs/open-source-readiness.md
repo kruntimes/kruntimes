@@ -174,7 +174,7 @@
 - [x] 增加真实 readiness check，而不是固定返回成功。
 - [x] 为 CRD 增加 CEL 校验和字段大小限制。
 - [x] 为 Run/Workflow conditions 使用 Kubernetes list-map markers。
-- [ ] 补齐 queue time、dispatch latency、retry、failure 和 active Run metrics。
+- [x] 补齐 queue time、dispatch latency、retry、failure 和 active Run metrics。
 - [x] Chart 创建 metrics Service，并提供可选 ServiceMonitor。
 
 ## P2: Release and Contributor Experience
