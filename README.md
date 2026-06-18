@@ -410,6 +410,11 @@ grants code-execution capability inside the selected Runtime Pod's trust
 boundary. Creating or updating a `Runtime` grants control over the images and
 storage used by that Runtime pool.
 
+The platform chart always creates Kubernetes Services for controller and
+scheduler metrics. Optional `ServiceMonitor` rendering is disabled by default;
+enable `metrics.serviceMonitor.enabled` only when Prometheus Operator has
+installed the `monitoring.coreos.com/v1` `ServiceMonitor` CRD in the cluster.
+
 ### Create a Run
 
 ```bash

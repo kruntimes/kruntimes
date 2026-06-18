@@ -40,3 +40,17 @@ runtimed:
 
 workspace:
   sizeLimit: 10Gi
+
+metrics:
+  service:
+    type: ClusterIP
+    port: 8080
+    annotations: {}
+  # Disabled by default because ServiceMonitor is provided by Prometheus Operator,
+  # not by Kubernetes itself. Enable only when the monitoring.coreos.com/v1
+  # ServiceMonitor CRD is installed in the cluster.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
