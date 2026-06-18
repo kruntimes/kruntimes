@@ -12,45 +12,70 @@ spec:
       {{- include "kruntimes.scheduler.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      {{- with .Values.scheduler.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       labels:
         {{- include "kruntimes.scheduler.labels" . | nindent 8 }}
     spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       serviceAccountName: {{ include "kruntimes.scheduler.name" . }}
+      {{- with .Values.scheduler.podSecurityContext }}
       securityContext:
-        seccompProfile:
-          type: RuntimeDefault
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.scheduler.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: scheduler
           image: {{ include "kruntimes.image" (list . .Values.scheduler.image) }}
           imagePullPolicy: {{ .Values.scheduler.imagePullPolicy }}
+          {{- with .Values.scheduler.securityContext }}
           securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop:
-                - ALL
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           args:
             - --leader-elect={{ .Values.scheduler.leaderElect }}
             - --metrics-bind-address={{ .Values.scheduler.metricsBindAddress }}
             - --health-probe-bind-address={{ .Values.scheduler.probeBindAddress }}
           ports:
-            - containerPort: 8080
+            - containerPort: {{ .Values.scheduler.metricsPort }}
               name: metrics
               protocol: TCP
-            - containerPort: 8081
+            - containerPort: {{ .Values.scheduler.probePort }}
               name: probes
               protocol: TCP
           livenessProbe:
             httpGet:
               path: /healthz
-              port: 8081
+              port: probes
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /readyz
-              port: 8081
+              port: probes
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:

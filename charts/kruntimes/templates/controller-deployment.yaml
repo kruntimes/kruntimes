@@ -6,53 +6,78 @@ metadata:
   labels:
     {{- include "kruntimes.controller.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.controller.replicas }}
   selector:
     matchLabels:
       {{- include "kruntimes.controller.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      {{- with .Values.controller.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       labels:
         {{- include "kruntimes.controller.labels" . | nindent 8 }}
     spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       serviceAccountName: {{ include "kruntimes.controller.name" . }}
+      {{- with .Values.controller.podSecurityContext }}
       securityContext:
-        seccompProfile:
-          type: RuntimeDefault
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: controller
           image: {{ include "kruntimes.image" (list . .Values.controller.image) }}
           imagePullPolicy: {{ .Values.controller.imagePullPolicy }}
+          {{- with .Values.controller.securityContext }}
           securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            capabilities:
-              drop:
-                - ALL
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           args:
-            - --leader-elect=true
-            - --metrics-bind-address=:8082
-            - --health-probe-bind-address=:8083
+            - --leader-elect={{ .Values.controller.leaderElect }}
+            - --metrics-bind-address={{ .Values.controller.metricsBindAddress }}
+            - --health-probe-bind-address={{ .Values.controller.probeBindAddress }}
             - --default-daemon-image={{ include "kruntimes.image" (list . .Values.runtimed.image) }}
             - --runtimed-service-account-name={{ include "kruntimes.runtimed.name" . }}
           ports:
-            - containerPort: 8082
+            - containerPort: {{ .Values.controller.metricsPort }}
               name: metrics
               protocol: TCP
-            - containerPort: 8083
+            - containerPort: {{ .Values.controller.probePort }}
               name: probes
               protocol: TCP
           livenessProbe:
             httpGet:
               path: /healthz
-              port: 8083
+              port: probes
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /readyz
-              port: 8083
+              port: probes
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
