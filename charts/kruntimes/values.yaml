@@ -1,7 +1,7 @@
 namespace: default
 
 scheduler:
-  image: kruntimes-scheduler:latest
+  image: kruntimes-scheduler
   imagePullPolicy: IfNotPresent
   replicas: 2
   leaderElect: true
@@ -16,7 +16,7 @@ scheduler:
       memory: 256Mi
 
 controller:
-  image: kruntimes-controller:latest
+  image: kruntimes-controller
   imagePullPolicy: IfNotPresent
   resources:
     requests:
@@ -27,7 +27,7 @@ controller:
       memory: 256Mi
 
 runtimed:
-  image: kruntimes-runtimed:latest
+  image: kruntimes-runtimed
   imagePullPolicy: IfNotPresent
   workers: 2
   resources:
