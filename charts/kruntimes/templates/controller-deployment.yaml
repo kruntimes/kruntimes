@@ -21,7 +21,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: controller
-          image: {{ .Values.controller.image }}
+          image: {{ include "kruntimes.image" (list . .Values.controller.image) }}
           imagePullPolicy: {{ .Values.controller.imagePullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -34,7 +34,7 @@ spec:
             - --leader-elect=true
             - --metrics-bind-address=:8082
             - --health-probe-bind-address=:8083
-            - --default-daemon-image={{ .Values.runtimed.image }}
+            - --default-daemon-image={{ include "kruntimes.image" (list . .Values.runtimed.image) }}
             - --runtimed-service-account-name={{ include "kruntimes.runtimed.name" . }}
           ports:
             - containerPort: 8082

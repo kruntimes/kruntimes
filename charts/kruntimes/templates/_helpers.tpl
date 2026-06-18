@@ -63,3 +63,13 @@ app: kruntimes-scheduler
 app.kubernetes.io/component: runtimed
 app: kruntimes-runtimed
 {{- end }}
+
+{{- define "kruntimes.image" -}}
+{{- $root := index . 0 -}}
+{{- $image := index . 1 -}}
+{{- if or (contains "@" $image) (regexMatch "(^|/)[^/]+:[^/]+$" $image) -}}
+{{- $image -}}
+{{- else -}}
+{{- printf "%s:%s" $image $root.Chart.AppVersion -}}
+{{- end -}}
+{{- end }}

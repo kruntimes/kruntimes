@@ -21,7 +21,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: scheduler
-          image: {{ .Values.scheduler.image }}
+          image: {{ include "kruntimes.image" (list . .Values.scheduler.image) }}
           imagePullPolicy: {{ .Values.scheduler.imagePullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false

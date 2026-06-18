@@ -109,7 +109,7 @@
 - [x] 所有 Helm 资源名称使用 release fullname，支持多个 release 共存。
 - [ ] 移除未使用 values，并让 replicas、leader election、ports、imagePullSecrets、
   security context、scheduling constraints 等可配置。
-- [ ] 避免默认使用 `latest`，镜像 tag 应跟随 chart appVersion。
+- [x] 避免默认使用 `latest`，镜像 tag 应跟随 chart appVersion。
 - [ ] 增加多 namespace 模板/安装测试。
 - [x] 增加第二个 Helm release 的模板测试。
 

@@ -215,6 +215,7 @@ test-helm: manifests ## Validate Helm charts and multi-release rendering.
 	$(HELM) template kruntimes ./charts/kruntimes --namespace kruntimes-system
 	$(HELM) template kruntimes-runtimes ./charts/kruntimes-runtimes --namespace default
 	./hack/verify-helm-multi-release.py
+	./hack/verify-helm-images.py
 
 ##@ Deployment
 

@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "kruntimes-runtimes.labels" . | nindent 4 }}
 spec:
-  image: {{ .Values.python.image }}
+  image: {{ include "kruntimes-runtimes.image" (list . .Values.python.image) }}
   port: {{ .Values.python.port }}
   replicas: {{ .Values.python.replicas }}
   capacity:
