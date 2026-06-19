@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -147,6 +148,80 @@ func TestBuildDeploymentUsesRuntimedServiceAccount(t *testing.T) {
 	}
 }
 
+func TestBuildRuntimedRBACUsesNamespaceScopedRole(t *testing.T) {
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "workloads"},
+		Spec: v1alpha1.RuntimeSpec{
+			Image: "bash-runtime:latest",
+		},
+	}
+	reconciler := &RuntimeReconciler{}
+
+	serviceAccountName := reconciler.runtimedServiceAccountName(rt)
+	serviceAccount := reconciler.buildRuntimedServiceAccount(rt, serviceAccountName)
+	if serviceAccount.Name != runtimedDefaultSA || serviceAccount.Namespace != "workloads" {
+		t.Fatalf("serviceAccount = %s/%s, want workloads/%s", serviceAccount.Namespace, serviceAccount.Name, runtimedDefaultSA)
+	}
+
+	role := reconciler.buildRuntimedRole(rt)
+	if role.Name != runtimedRoleName || role.Namespace != "workloads" {
+		t.Fatalf("role = %s/%s, want workloads/%s", role.Namespace, role.Name, runtimedRoleName)
+	}
+	assertPolicyRule(t, role.Rules, "kruntimes.io", "runs", "get", "list", "watch", "update", "patch")
+	assertPolicyRule(t, role.Rules, "kruntimes.io", "runs/status", "get", "update", "patch")
+	assertPolicyRule(t, role.Rules, "", "pods", "get")
+	assertPolicyRule(t, role.Rules, "", "pods/status", "get", "patch")
+	assertPolicyRule(t, role.Rules, "", "events", "create", "patch")
+
+	binding := reconciler.buildRuntimedRoleBinding(rt, serviceAccountName)
+	if binding.Name != "kruntimes-runtimed-kruntimes-runtimed" || binding.Namespace != "workloads" {
+		t.Fatalf("roleBinding = %s/%s, want workloads/kruntimes-runtimed-kruntimes-runtimed", binding.Namespace, binding.Name)
+	}
+	if binding.RoleRef.APIGroup != rbacv1.GroupName || binding.RoleRef.Kind != "Role" || binding.RoleRef.Name != runtimedRoleName {
+		t.Fatalf("roleRef = %#v, want runtimed Role", binding.RoleRef)
+	}
+	if len(binding.Subjects) != 1 ||
+		binding.Subjects[0].Kind != rbacv1.ServiceAccountKind ||
+		binding.Subjects[0].Name != runtimedDefaultSA ||
+		binding.Subjects[0].Namespace != "workloads" {
+		t.Fatalf("subjects = %#v, want workloads/%s ServiceAccount", binding.Subjects, runtimedDefaultSA)
+	}
+}
+
+func TestBuildRuntimedRBACUsesRuntimeServiceAccountOverride(t *testing.T) {
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "workloads"},
+		Spec: v1alpha1.RuntimeSpec{
+			Image:                      "bash-runtime:latest",
+			RuntimedServiceAccountName: "runtime-specific-runtimed",
+		},
+	}
+	reconciler := &RuntimeReconciler{RuntimedServiceAccountName: "controller-default-runtimed"}
+
+	serviceAccountName := reconciler.runtimedServiceAccountName(rt)
+	if serviceAccountName != "runtime-specific-runtimed" {
+		t.Fatalf("serviceAccountName = %q, want Runtime spec override", serviceAccountName)
+	}
+
+	binding := reconciler.buildRuntimedRoleBinding(rt, serviceAccountName)
+	if binding.Subjects[0].Name != "runtime-specific-runtimed" {
+		t.Fatalf("subjects = %#v, want Runtime spec service account", binding.Subjects)
+	}
+}
+
+func TestRuntimedRoleBindingNameTruncatesLongServiceAccountNames(t *testing.T) {
+	name := runtimedRoleBindingName(strings.Repeat("a", 253))
+	if len(name) > runtimedRBACNameMax {
+		t.Fatalf("roleBinding name length = %d, want <= %d: %q", len(name), runtimedRBACNameMax, name)
+	}
+	if strings.HasSuffix(name, "-") || strings.HasSuffix(name, ".") {
+		t.Fatalf("roleBinding name = %q, want DNS-safe suffix", name)
+	}
+	if name != runtimedRoleBindingName(strings.Repeat("a", 253)) {
+		t.Fatalf("roleBinding name must be deterministic")
+	}
+}
+
 func TestBuildNetworkPolicyDeniesRuntimePodIngressByDefault(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
@@ -171,6 +246,19 @@ func TestBuildNetworkPolicyDeniesRuntimePodIngressByDefault(t *testing.T) {
 	if networkPolicy.Spec.PodSelector.MatchLabels["app"] != "kruntimes-bash" {
 		t.Fatalf("networkPolicy selector = %v, want app=kruntimes-bash", networkPolicy.Spec.PodSelector.MatchLabels)
 	}
+}
+
+func assertPolicyRule(t *testing.T, rules []rbacv1.PolicyRule, apiGroup string, resource string, verbs ...string) {
+	t.Helper()
+	for _, rule := range rules {
+		if slices.Contains(rule.APIGroups, apiGroup) && slices.Contains(rule.Resources, resource) {
+			if slices.Equal(rule.Verbs, verbs) {
+				return
+			}
+			t.Fatalf("rule for %s/%s verbs = %v, want %v", apiGroup, resource, rule.Verbs, verbs)
+		}
+	}
+	t.Fatalf("missing rule for %s/%s", apiGroup, resource)
 }
 
 func TestBuildDeploymentMountsFilesystemArtifactStoreOnlyIntoRuntimed(t *testing.T) {

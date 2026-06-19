@@ -101,8 +101,8 @@
 ### 6. Installation Scope and Helm Correctness
 
 - [ ] 明确选择 cluster-wide 或 single-namespace 安装模型。
-- [ ] Runtime Deployment 引用的 runtimed ServiceAccount 必须存在于 Runtime namespace。
-- [ ] 为自定义 `Runtime.spec.runtimedServiceAccountName` 增加 namespace-scoped RBAC
+- [x] Runtime Deployment 引用的 runtimed ServiceAccount 必须存在于 Runtime namespace。
+- [x] 为自定义 `Runtime.spec.runtimedServiceAccountName` 增加 namespace-scoped RBAC
   controller 或等价机制，确保对应 ServiceAccount 拥有 runtimed 所需最小权限。
 - [ ] 明确 Runtime Pod customization API：评估是否用 `PodTemplateSpec` 风格的
   template 取代当前 Runtime spec 中逐步复制的 PodSpec-like 字段。

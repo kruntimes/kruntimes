@@ -2,12 +2,16 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -27,6 +31,8 @@ const (
 	runtimeLabel         = "runtime"
 	runtimedDefaultImage = "kruntimes-runtimed:latest"
 	runtimedDefaultSA    = "kruntimes-runtimed"
+	runtimedRoleName     = "kruntimes-runtimed"
+	runtimedRBACNameMax  = 63
 	workspaceVolume      = "workspace"
 	workspacePath        = "/workspace"
 	artifactStoreVolume  = "artifact-store"
@@ -47,6 +53,9 @@ type RuntimeReconciler struct {
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runtimes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -60,9 +69,31 @@ func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, fmt.Errorf("get runtime: %w", err)
 	}
 
+	runtimedServiceAccountName := r.runtimedServiceAccountName(&rt)
+	serviceAccount := r.buildRuntimedServiceAccount(&rt, runtimedServiceAccountName)
+	role := r.buildRuntimedRole(&rt)
+	roleBinding := r.buildRuntimedRoleBinding(&rt, runtimedServiceAccountName)
 	deploy := r.buildDeployment(&rt)
 	networkPolicy := r.buildNetworkPolicy(&rt)
 
+	if changed, err := r.reconcileServiceAccount(ctx, serviceAccount); err != nil {
+		return ctrl.Result{}, err
+	} else if changed {
+		log.Info("Reconciled runtimed ServiceAccount", "serviceAccount", serviceAccount.Name)
+		return ctrl.Result{}, nil
+	}
+	if changed, err := r.reconcileRole(ctx, role); err != nil {
+		return ctrl.Result{}, err
+	} else if changed {
+		log.Info("Reconciled runtimed Role", "role", role.Name)
+		return ctrl.Result{}, nil
+	}
+	if changed, err := r.reconcileRoleBinding(ctx, roleBinding); err != nil {
+		return ctrl.Result{}, err
+	} else if changed {
+		log.Info("Reconciled runtimed RoleBinding", "roleBinding", roleBinding.Name)
+		return ctrl.Result{}, nil
+	}
 	if changed, err := r.reconcileDeployment(ctx, &rt, deploy); err != nil {
 		return ctrl.Result{}, err
 	} else if changed {
@@ -111,13 +142,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 	if r.DefaultDaemonImage != "" {
 		daemonImage = r.DefaultDaemonImage
 	}
-	runtimedServiceAccountName := rt.Spec.RuntimedServiceAccountName
-	if runtimedServiceAccountName == "" {
-		runtimedServiceAccountName = r.RuntimedServiceAccountName
-	}
-	if runtimedServiceAccountName == "" {
-		runtimedServiceAccountName = runtimedDefaultSA
-	}
+	runtimedServiceAccountName := r.runtimedServiceAccountName(rt)
 
 	labels := map[string]string{
 		runtimeLabel: runtimeLabelVal,
@@ -260,6 +285,105 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			},
 		},
 	}
+}
+
+func (r *RuntimeReconciler) runtimedServiceAccountName(rt *v1alpha1.Runtime) string {
+	if rt.Spec.RuntimedServiceAccountName != "" {
+		return rt.Spec.RuntimedServiceAccountName
+	}
+	if r.RuntimedServiceAccountName != "" {
+		return r.RuntimedServiceAccountName
+	}
+	return runtimedDefaultSA
+}
+
+func (r *RuntimeReconciler) buildRuntimedServiceAccount(rt *v1alpha1.Runtime, name string) *corev1.ServiceAccount {
+	return &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: rt.Namespace,
+			Labels:    runtimedRBACLabels(),
+		},
+	}
+}
+
+func (r *RuntimeReconciler) buildRuntimedRole(rt *v1alpha1.Runtime) *rbacv1.Role {
+	return &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      runtimedRoleName,
+			Namespace: rt.Namespace,
+			Labels:    runtimedRBACLabels(),
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{"kruntimes.io"},
+				Resources: []string{"runs"},
+				Verbs:     []string{"get", "list", "watch", "update", "patch"},
+			},
+			{
+				APIGroups: []string{"kruntimes.io"},
+				Resources: []string{"runs/status"},
+				Verbs:     []string{"get", "update", "patch"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				Verbs:     []string{"get"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods/status"},
+				Verbs:     []string{"get", "patch"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"events"},
+				Verbs:     []string{"create", "patch"},
+			},
+		},
+	}
+}
+
+func (r *RuntimeReconciler) buildRuntimedRoleBinding(rt *v1alpha1.Runtime, serviceAccountName string) *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      runtimedRoleBindingName(serviceAccountName),
+			Namespace: rt.Namespace,
+			Labels:    runtimedRBACLabels(),
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "Role",
+			Name:     runtimedRoleName,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      rbacv1.ServiceAccountKind,
+				Name:      serviceAccountName,
+				Namespace: rt.Namespace,
+			},
+		},
+	}
+}
+
+func runtimedRBACLabels() map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":      "kruntimes",
+		"app.kubernetes.io/component": "runtimed",
+		"app":                         "kruntimes-runtimed",
+	}
+}
+
+func runtimedRoleBindingName(serviceAccountName string) string {
+	name := fmt.Sprintf("%s-%s", runtimedRoleName, serviceAccountName)
+	if len(name) <= runtimedRBACNameMax {
+		return name
+	}
+	sum := sha256.Sum256([]byte(serviceAccountName))
+	suffix := hex.EncodeToString(sum[:])[:10]
+	prefixLength := runtimedRBACNameMax - len(suffix) - 1
+	prefix := strings.TrimRight(name[:prefixLength], "-.")
+	return fmt.Sprintf("%s-%s", prefix, suffix)
 }
 
 func (r *RuntimeReconciler) buildNetworkPolicy(rt *v1alpha1.Runtime) *networkingv1.NetworkPolicy {
@@ -419,6 +543,78 @@ func (r *RuntimeReconciler) reconcileDeployment(
 	}
 	if err := r.Update(ctx, &existing); err != nil {
 		return false, fmt.Errorf("update deployment: %w", err)
+	}
+	return true, nil
+}
+
+func (r *RuntimeReconciler) reconcileServiceAccount(
+	ctx context.Context,
+	desired *corev1.ServiceAccount,
+) (bool, error) {
+	var existing corev1.ServiceAccount
+	if err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, &existing); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("get serviceaccount: %w", err)
+		}
+		if err := r.Create(ctx, desired); err != nil {
+			return false, fmt.Errorf("create serviceaccount: %w", err)
+		}
+		return true, nil
+	}
+	if equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+		return false, nil
+	}
+	existing.Labels = desired.Labels
+	if err := r.Update(ctx, &existing); err != nil {
+		return false, fmt.Errorf("update serviceaccount: %w", err)
+	}
+	return true, nil
+}
+
+func (r *RuntimeReconciler) reconcileRole(ctx context.Context, desired *rbacv1.Role) (bool, error) {
+	var existing rbacv1.Role
+	if err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, &existing); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("get role: %w", err)
+		}
+		if err := r.Create(ctx, desired); err != nil {
+			return false, fmt.Errorf("create role: %w", err)
+		}
+		return true, nil
+	}
+	if equality.Semantic.DeepEqual(existing.Labels, desired.Labels) &&
+		equality.Semantic.DeepEqual(existing.Rules, desired.Rules) {
+		return false, nil
+	}
+	existing.Labels = desired.Labels
+	existing.Rules = desired.Rules
+	if err := r.Update(ctx, &existing); err != nil {
+		return false, fmt.Errorf("update role: %w", err)
+	}
+	return true, nil
+}
+
+func (r *RuntimeReconciler) reconcileRoleBinding(ctx context.Context, desired *rbacv1.RoleBinding) (bool, error) {
+	var existing rbacv1.RoleBinding
+	if err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, &existing); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("get rolebinding: %w", err)
+		}
+		if err := r.Create(ctx, desired); err != nil {
+			return false, fmt.Errorf("create rolebinding: %w", err)
+		}
+		return true, nil
+	}
+	if equality.Semantic.DeepEqual(existing.Labels, desired.Labels) &&
+		equality.Semantic.DeepEqual(existing.RoleRef, desired.RoleRef) &&
+		equality.Semantic.DeepEqual(existing.Subjects, desired.Subjects) {
+		return false, nil
+	}
+	existing.Labels = desired.Labels
+	existing.RoleRef = desired.RoleRef
+	existing.Subjects = desired.Subjects
+	if err := r.Update(ctx, &existing); err != nil {
+		return false, fmt.Errorf("update rolebinding: %w", err)
 	}
 	return true, nil
 }

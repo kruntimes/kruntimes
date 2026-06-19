@@ -52,6 +52,7 @@ def main() -> int:
         require_rbac_subject_namespace(resources),
         require_runtime_namespace(resources),
         require_controller_runtimed_service_account(resources),
+        require_no_runtimed_chart_rbac(resources),
     ]
     if not all(checks):
         return 1
@@ -169,6 +170,19 @@ def require_controller_runtimed_service_account(resources: list[Resource]) -> bo
             return True
     print("missing platform controller Deployment", file=sys.stderr)
     return False
+
+
+def require_no_runtimed_chart_rbac(resources: list[Resource]) -> bool:
+    for resource in resources:
+        if resource.chart != "runtimes":
+            continue
+        if resource.kind in {"ServiceAccount", "Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding"}:
+            print(
+                f"runtimes chart must not render runtimed RBAC; got {resource.kind}/{resource.name}",
+                file=sys.stderr,
+            )
+            return False
+    return True
 
 
 if __name__ == "__main__":
