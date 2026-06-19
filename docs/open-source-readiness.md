@@ -169,7 +169,7 @@
 - [x] runtimed 主动区分 transient Status 错误和 execution `NotFound`。
 - [x] `krt run --wait` 正确处理 `Timeout` 和 `Cancelled`。
 - [x] `krt logs` 同时处理 stdout/stderr，避免 stderr 重复和 offset 越界。
-- [ ] CLI 使用 Cobra command context，支持 kubeconfig/context、当前 namespace 和
+- [x] CLI 使用 Cobra command context，支持 kubeconfig/context、当前 namespace 和
   `json`/`yaml` 输出。
 - [x] 增加真实 readiness check，而不是固定返回成功。
 - [x] 为 CRD 增加 CEL 校验和字段大小限制。

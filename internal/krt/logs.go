@@ -10,16 +10,16 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"k8s.io/client-go/rest"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
-func NewLogsCmd(k8sClient client.Client, restConfig *rest.Config) *cobra.Command {
+func newLogsCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme) *cobra.Command {
 	var (
-		namespace  string
 		follow     bool
 		tailLines  int
 		statusPort int
@@ -30,6 +30,15 @@ func NewLogsCmd(k8sClient client.Client, restConfig *rest.Config) *cobra.Command
 		Short: "Show logs from a Run.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			k8sClient, err := clientFromConfig(getter, scheme)
+			if err != nil {
+				return err
+			}
+			restConfig, err := restConfigFromConfig(getter)
+			if err != nil {
+				return err
+			}
+			namespace := namespaceFromConfig(getter)
 			runName := args[0]
 
 			run := &v1alpha1.Run{}
@@ -67,7 +76,6 @@ func NewLogsCmd(k8sClient client.Client, restConfig *rest.Config) *cobra.Command
 		},
 	}
 
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output")
 	cmd.Flags().IntVar(&tailLines, "tail", 0, "Number of lines from the end of the logs to show")
 	cmd.Flags().IntVar(&statusPort, "status-port", 19093, "Local port for port-forward")
