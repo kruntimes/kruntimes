@@ -404,6 +404,17 @@ make deploy           # platform (CRDs, scheduler, controller, RBAC)
 make deploy-runtimes  # built-in runtimes (bash, python)
 ```
 
+kruntimes currently uses a cluster-wide installation model. Install the platform
+chart once per cluster; it installs CRDs plus cluster-scoped RBAC for the
+controller and scheduler. Install the runtimes chart into each namespace that
+should host Runtime pools and Runs.
+
+Runtime scheduling is namespace-local: a Run is assigned only to Runtime Pods in
+the same namespace. The cluster-wide control plane watches all namespaces, but
+application access should be granted with namespace-scoped RBAC. Use separate
+namespaces for tenants or trust boundaries that should not share Runtime Pods,
+workspace volumes, service accounts, or artifact credentials.
+
 Before granting user access, read
 [Security, Authorization, and Threat Model](docs/security.md). Creating a `Run`
 grants code-execution capability inside the selected Runtime Pod's trust

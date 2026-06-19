@@ -131,8 +131,9 @@ Namespaces should therefore group subjects and Runtime pools that share a trust
 level. Do not place mutually untrusted Run submitters in one namespace with a
 shared built-in Runtime pool.
 
-The platform Helm chart currently installs cluster-scoped controller roles.
-Those roles are for kruntimes components, not examples of end-user access.
+The platform Helm chart installs a cluster-wide control plane with
+cluster-scoped controller and scheduler roles. Those roles are for kruntimes
+components, not examples of end-user access.
 Application user access should be granted separately with namespaced RBAC.
 
 NetworkPolicy limits direct Pod ingress, but it does not isolate Runs executing

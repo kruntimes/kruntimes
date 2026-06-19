@@ -31,7 +31,7 @@ def main() -> int:
     resources = [
         *parse_resources(
             "platform",
-            helm_template(PLATFORM_RELEASE, PLATFORM_CHART, PLATFORM_NAMESPACE),
+            helm_template(PLATFORM_RELEASE, PLATFORM_CHART, PLATFORM_NAMESPACE, include_crds=True),
         ),
         *parse_resources(
             "runtimes",
@@ -47,6 +47,7 @@ def main() -> int:
         return 1
 
     checks = [
+        require_platform_cluster_scoped_resources(resources),
         require_namespaced_resources("platform", PLATFORM_NAMESPACE, resources),
         require_namespaced_resources("runtimes", RUNTIMES_NAMESPACE, resources),
         require_rbac_subject_namespace(resources),
@@ -59,11 +60,11 @@ def main() -> int:
     return 0
 
 
-def helm_template(release: str, chart: Path, namespace: str) -> str:
-    return subprocess.check_output(
-        ["helm", "template", release, str(chart), "--namespace", namespace],
-        text=True,
-    )
+def helm_template(release: str, chart: Path, namespace: str, include_crds: bool = False) -> str:
+    command = ["helm", "template", release, str(chart), "--namespace", namespace]
+    if include_crds:
+        command.append("--include-crds")
+    return subprocess.check_output(command, text=True)
 
 
 def parse_resources(chart: str, rendered: str) -> list[Resource]:
@@ -122,6 +123,30 @@ def require_namespaced_resources(chart: str, namespace: str, resources: list[Res
             )
             ok = False
     return ok
+
+
+def require_platform_cluster_scoped_resources(resources: list[Resource]) -> bool:
+    expected = {
+        ("CustomResourceDefinition", "runs.kruntimes.io"),
+        ("CustomResourceDefinition", "runtimes.kruntimes.io"),
+        ("CustomResourceDefinition", "workflows.kruntimes.io"),
+        ("ClusterRole", "kruntimes-controller"),
+        ("ClusterRole", "kruntimes-scheduler"),
+        ("ClusterRoleBinding", "kruntimes-controller"),
+        ("ClusterRoleBinding", "kruntimes-scheduler"),
+    }
+    actual = {
+        (resource.kind, resource.name)
+        for resource in resources
+        if resource.chart == "platform" and resource.namespace == "_cluster"
+    }
+    missing = expected - actual
+    if missing:
+        print("platform chart missing expected cluster-scoped resources:", file=sys.stderr)
+        for kind, name in sorted(missing):
+            print(f"  {kind}/{name}", file=sys.stderr)
+        return False
+    return True
 
 
 def require_rbac_subject_namespace(resources: list[Resource]) -> bool:
