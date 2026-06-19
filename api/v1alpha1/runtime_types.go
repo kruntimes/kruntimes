@@ -63,7 +63,8 @@ type RuntimeSpec struct {
 	DaemonImage string `json:"daemonImage,omitempty"`
 
 	// RuntimedServiceAccountName overrides the ServiceAccount used by Runtime Pods.
-	// The ServiceAccount must exist in the Runtime namespace.
+	// The Runtime controller creates the ServiceAccount when it is missing and
+	// binds the namespace-scoped runtimed Role to it.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
