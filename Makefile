@@ -13,6 +13,7 @@ ENVTEST_K8S_VERSION = 1.32
 CONTROLLER_GEN_VERSION ?= v0.17.3
 SETUP_ENVTEST_VERSION ?= v0.24.1
 GOLANGCI_LINT_VERSION ?= v2.12.2
+GOVULNCHECK_VERSION ?= v1.4.0
 PROTOC_VERSION ?= 29.3
 PROTOC_ARCH ?= linux-x86_64
 PROTOC_GEN_GO_VERSION ?= v1.36.11
@@ -78,6 +79,10 @@ test-integration: generate manifests setup-envtest ## Run integration tests (req
 .PHONY: test-race
 test-race: generate manifests proto ## Run focused Go race-detector coverage for runtime and control-plane packages.
 	go test -race ./internal/controller ./internal/scheduler ./internal/runtimed ./runtimes/bash -count=1
+
+.PHONY: govulncheck
+govulncheck: govulncheck-tool ## Run govulncheck against all Go packages.
+	$(GOVULNCHECK) ./...
 
 .PHONY: test-s3-integration
 test-s3-integration: ## Run S3 ArtifactStore integration tests against MinIO.
@@ -271,6 +276,13 @@ GOLANGCI_LINT = $(GOBIN)/golangci-lint
 golangci-lint: ## Install golangci-lint if not present.
 	@if ! test -x $(GOLANGCI_LINT) || ! $(GOLANGCI_LINT) --version | grep -q "$(GOLANGCI_LINT_VERSION)"; then \
 		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
+	fi
+
+GOVULNCHECK = $(GOBIN)/govulncheck
+.PHONY: govulncheck-tool
+govulncheck-tool: ## Install govulncheck if not present.
+	@if ! test -x $(GOVULNCHECK) || ! $(GOVULNCHECK) -version | grep -q "$(GOVULNCHECK_VERSION)"; then \
+		go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION); \
 	fi
 
 .PHONY: protoc
