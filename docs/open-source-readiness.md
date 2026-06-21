@@ -148,7 +148,7 @@
 
 改进项：
 
-- [ ] 升级 Go toolchain 和受影响依赖，并让 `govulncheck` 通过。
+- [x] 升级 Go toolchain 和受影响依赖，并让 `govulncheck` 通过。
 - [x] Docker 基础镜像固定到明确 patch version 和 digest。
 - [x] Python 镜像通过 `uv.lock` 安装依赖，不直接安装未固定版本。
 - [x] 固定 Makefile 中 controller-gen、setup-envtest、golangci-lint、
@@ -213,5 +213,5 @@ artifact store 的配置所有权。
 - Helm lint: 通过。
 - Python Runtime unit tests: 通过。
 - `go test -race`: 失败，复现 Bash Runtime 并发读写。
-- `govulncheck ./...`: 失败，检测到 5 个可达漏洞。
+- `make govulncheck`: 通过。
 - 完整 `make e2e`: 本次审查未执行。
