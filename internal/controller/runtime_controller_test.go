@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
@@ -19,7 +21,7 @@ func TestBuildDeploymentAddsCapacityAnnotationsAndWorkers(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
-			Image: "bash-runtime:latest",
+			Template: runtimePodTemplate("bash-runtime:latest"),
 			Capacity: &v1alpha1.RuntimeCapacity{
 				Resources: corev1.ResourceList{
 					corev1.ResourceName(v1alpha1.RuntimeResourceRuns): resource.MustParse("3"),
@@ -84,11 +86,107 @@ func TestBuildDeploymentAddsCapacityAnnotationsAndWorkers(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentMergesPodTemplate(t *testing.T) {
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "python", Namespace: "workloads"},
+		Spec: v1alpha1.RuntimeSpec{
+			Port: 8080,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      map[string]string{"team": "compute", runtimeLabel: "ignored"},
+					Annotations: map[string]string{"example.com/owner": "platform"},
+				},
+				Spec: corev1.PodSpec{
+					ServiceAccountName: "custom-runtime",
+					NodeSelector:       map[string]string{"accelerator": "gpu"},
+					ImagePullSecrets:   []corev1.LocalObjectReference{{Name: "registry"}},
+					InitContainers: []corev1.Container{{
+						Name: "init", Image: "init:v1",
+						VolumeMounts: []corev1.VolumeMount{{Name: artifactStoreVolume, MountPath: "/artifacts"}},
+					}},
+					Containers: []corev1.Container{
+						{
+							Name:  "runtime",
+							Image: "python-runtime:v1",
+							Args:  []string{"serve"},
+							Env:   []corev1.EnvVar{{Name: "MODE", Value: "worker"}},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromInt32(8080)},
+								},
+							},
+						},
+						{
+							Name: "telemetry", Image: "telemetry:v1",
+							VolumeMounts: []corev1.VolumeMount{{Name: artifactStoreVolume, MountPath: "/artifacts"}},
+						},
+						{Name: "runtimed", Image: "ignored:v1"},
+					},
+					Volumes: []corev1.Volume{
+						{Name: "cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+						{Name: workspaceVolume},
+						{Name: artifactStoreVolume},
+					},
+				},
+			},
+		},
+	}
+
+	deploy := (&RuntimeReconciler{}).buildDeployment(rt)
+	if !maps.Equal(deploy.Spec.Selector.MatchLabels, map[string]string{
+		runtimeLabel: "python", "app": "kruntimes-python",
+	}) {
+		t.Fatalf("selector labels = %v, want controller-owned stable labels", deploy.Spec.Selector.MatchLabels)
+	}
+	if deploy.Spec.Template.Labels["team"] != "compute" || deploy.Spec.Template.Labels[runtimeLabel] != "python" {
+		t.Fatalf("pod labels = %v, want custom and controller-owned labels", deploy.Spec.Template.Labels)
+	}
+	if deploy.Spec.Template.Annotations["example.com/owner"] != "platform" {
+		t.Fatalf("pod annotations = %v, want custom annotation", deploy.Spec.Template.Annotations)
+	}
+	podSpec := deploy.Spec.Template.Spec
+	if podSpec.ServiceAccountName != "custom-runtime" || podSpec.NodeSelector["accelerator"] != "gpu" {
+		t.Fatalf("pod spec customization was not preserved: %#v", podSpec)
+	}
+	if len(podSpec.ImagePullSecrets) != 1 || podSpec.ImagePullSecrets[0].Name != "registry" {
+		t.Fatalf("imagePullSecrets = %v, want registry", podSpec.ImagePullSecrets)
+	}
+	if len(podSpec.Containers) != 3 || podSpec.Containers[0].Name != "runtime" ||
+		podSpec.Containers[1].Name != "telemetry" || podSpec.Containers[2].Name != "runtimed" {
+		t.Fatalf("containers = %v, want runtime, telemetry, runtimed", podSpec.Containers)
+	}
+	if len(podSpec.Volumes) != 2 || podSpec.Volumes[0].Name != "cache" || podSpec.Volumes[1].Name != workspaceVolume {
+		t.Fatalf("volumes = %v, want custom cache and controller workspace", podSpec.Volumes)
+	}
+	if len(podSpec.Containers[1].VolumeMounts) != 0 || len(podSpec.InitContainers[0].VolumeMounts) != 0 {
+		t.Fatal("artifact-store mounts from the user template must be removed")
+	}
+	runtimeContainer := podSpec.Containers[0]
+	if runtimeContainer.Image != "python-runtime:v1" || !slices.Equal(runtimeContainer.Args, []string{"serve"}) {
+		t.Fatalf("runtime container = %#v, want template image and args", runtimeContainer)
+	}
+	if runtimeContainer.ReadinessProbe == nil || runtimeContainer.ReadinessProbe.HTTPGet == nil ||
+		runtimeContainer.ReadinessProbe.HTTPGet.Path != "/ready" {
+		t.Fatalf("runtime readiness probe = %#v, want custom probe", runtimeContainer.ReadinessProbe)
+	}
+	if !slices.ContainsFunc(runtimeContainer.Ports, func(port corev1.ContainerPort) bool {
+		return port.Name == "grpc" && port.ContainerPort == 8080
+	}) {
+		t.Fatalf("runtime ports = %v, want injected grpc port", runtimeContainer.Ports)
+	}
+	if rt.Spec.Template.Labels[runtimeLabel] != "ignored" || len(rt.Spec.Template.Spec.Volumes) != 3 ||
+		len(rt.Spec.Template.Spec.Containers) != 3 ||
+		len(rt.Spec.Template.Spec.Containers[1].VolumeMounts) != 1 ||
+		len(rt.Spec.Template.Spec.InitContainers[0].VolumeMounts) != 1 {
+		t.Fatal("buildDeployment mutated the Runtime template")
+	}
+}
+
 func TestBuildDeploymentAppliesWorkspaceSizeLimit(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
-			Image: "bash-runtime:latest",
+			Template: runtimePodTemplate("bash-runtime:latest"),
 			Workspace: &v1alpha1.RuntimeWorkspaceSpec{
 				SizeLimit: quantityPtr(resource.MustParse("10Gi")),
 			},
@@ -109,7 +207,7 @@ func TestBuildDeploymentLeavesWorkspaceSizeLimitUnsetByDefault(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
-			Image: "bash-runtime:latest",
+			Template: runtimePodTemplate("bash-runtime:latest"),
 		},
 	}
 
@@ -127,7 +225,7 @@ func TestBuildDeploymentUsesRuntimedServiceAccount(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
-			Image: "bash-runtime:latest",
+			Template: runtimePodTemplate("bash-runtime:latest"),
 		},
 	}
 
@@ -141,7 +239,7 @@ func TestBuildDeploymentUsesRuntimedServiceAccount(t *testing.T) {
 		t.Fatalf("serviceAccountName = %q, want configured name", got)
 	}
 
-	rt.Spec.RuntimedServiceAccountName = "custom-runtime-runtimed"
+	rt.Spec.Template.Spec.ServiceAccountName = "custom-runtime-runtimed"
 	deploy = (&RuntimeReconciler{RuntimedServiceAccountName: "team-a-kruntimes-runtimed"}).buildDeployment(rt)
 	if got := deploy.Spec.Template.Spec.ServiceAccountName; got != "custom-runtime-runtimed" {
 		t.Fatalf("serviceAccountName = %q, want Runtime spec override", got)
@@ -152,7 +250,7 @@ func TestBuildRuntimedRBACUsesNamespaceScopedRole(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "workloads"},
 		Spec: v1alpha1.RuntimeSpec{
-			Image: "bash-runtime:latest",
+			Template: runtimePodTemplate("bash-runtime:latest"),
 		},
 	}
 	reconciler := &RuntimeReconciler{}
@@ -192,10 +290,10 @@ func TestBuildRuntimedRBACUsesRuntimeServiceAccountOverride(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "workloads"},
 		Spec: v1alpha1.RuntimeSpec{
-			Image:                      "bash-runtime:latest",
-			RuntimedServiceAccountName: "runtime-specific-runtimed",
+			Template: runtimePodTemplate("bash-runtime:latest"),
 		},
 	}
+	rt.Spec.Template.Spec.ServiceAccountName = "runtime-specific-runtimed"
 	reconciler := &RuntimeReconciler{RuntimedServiceAccountName: "controller-default-runtimed"}
 
 	serviceAccountName := reconciler.runtimedServiceAccountName(rt)
@@ -226,7 +324,7 @@ func TestBuildNetworkPolicyDeniesRuntimePodIngressByDefault(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
-			Image: "bash-runtime:latest",
+			Template: runtimePodTemplate("bash-runtime:latest"),
 		},
 	}
 
@@ -265,7 +363,7 @@ func TestBuildDeploymentMountsFilesystemArtifactStoreOnlyIntoRuntimed(t *testing
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
-			Image: "bash-runtime:latest",
+			Template: runtimePodTemplate("bash-runtime:latest"),
 			ArtifactStore: &v1alpha1.RuntimeArtifactStoreSpec{
 				Driver: v1alpha1.ArtifactDriverFilesystem,
 				Filesystem: &v1alpha1.FilesystemArtifactStoreSpec{
@@ -321,7 +419,7 @@ func TestBuildDeploymentConfiguresS3ArtifactStoreOnlyInRuntimed(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
-			Image: "bash-runtime:latest",
+			Template: runtimePodTemplate("bash-runtime:latest"),
 			ArtifactStore: &v1alpha1.RuntimeArtifactStoreSpec{
 				Driver: v1alpha1.ArtifactDriverS3,
 				S3: &v1alpha1.S3ArtifactStoreSpec{
@@ -384,7 +482,7 @@ func TestBuildDeploymentOmitsUnsetS3ArtifactStoreOptions(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
-			Image: "bash-runtime:latest",
+			Template: runtimePodTemplate("bash-runtime:latest"),
 			ArtifactStore: &v1alpha1.RuntimeArtifactStoreSpec{
 				Driver: v1alpha1.ArtifactDriverS3,
 				S3: &v1alpha1.S3ArtifactStoreSpec{
@@ -425,4 +523,12 @@ func TestBuildDeploymentOmitsUnsetS3ArtifactStoreOptions(t *testing.T) {
 
 func quantityPtr(q resource.Quantity) *resource.Quantity {
 	return &q
+}
+
+func runtimePodTemplate(image string) corev1.PodTemplateSpec {
+	return corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "runtime", Image: image}},
+		},
+	}
 }

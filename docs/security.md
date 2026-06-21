@@ -106,9 +106,9 @@ any Runtime name available to the scheduler in that namespace.
 Use namespaced `Role` and `RoleBinding` objects for application users:
 
 - **Runtime administrators** may manage `runtimes`. Only trusted platform
-  operators should receive this capability because `spec.image`,
-  `spec.daemonImage`, artifact credentials, and mounted storage affect the
-  generated Runtime Pods.
+  operators should receive this capability because images, commands, volumes,
+  service accounts, and scheduling fields in `spec.template`, as well as
+  `spec.daemonImage` and artifact credentials, affect the generated Runtime Pods.
 - **Run submitters** may create and read `runs`. Grant `update` or `patch` only
   when they also need cancellation; those verbs currently permit broader Run
   mutation.

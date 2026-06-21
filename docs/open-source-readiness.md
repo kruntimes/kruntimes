@@ -102,10 +102,10 @@
 
 - [x] 明确选择 cluster-wide 或 single-namespace 安装模型。
 - [x] Runtime Deployment 引用的 runtimed ServiceAccount 必须存在于 Runtime namespace。
-- [x] 为自定义 `Runtime.spec.runtimedServiceAccountName` 增加 namespace-scoped RBAC
-  controller 或等价机制，确保对应 ServiceAccount 拥有 runtimed 所需最小权限。
-- [ ] 明确 Runtime Pod customization API：评估是否用 `PodTemplateSpec` 风格的
-  template 取代当前 Runtime spec 中逐步复制的 PodSpec-like 字段。
+- [x] 为自定义 `Runtime.spec.template.spec.serviceAccountName` 增加 namespace-scoped
+  RBAC controller，确保对应 ServiceAccount 拥有 runtimed 所需最小权限。
+- [x] 使用 `Runtime.spec.template` (`PodTemplateSpec`) 统一 Runtime Pod 自定义，
+  取代 Runtime spec 中重复的 PodSpec-like 字段，并明确 controller 保留字段。
 - [x] 所有 Helm 资源名称使用 release fullname，支持多个 release 共存。
 - [x] 移除未使用 values，并让 replicas、leader election、ports、imagePullSecrets、
   security context、scheduling constraints 等可配置。

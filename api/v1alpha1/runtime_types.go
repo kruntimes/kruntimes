@@ -25,32 +25,22 @@ const (
 
 // +kubebuilder:object:generate=true
 // RuntimeSpec defines the desired state of Runtime.
+// +kubebuilder:validation:XValidation:rule="self.template.spec.containers.size() > 0 && self.template.spec.containers[0].name == 'runtime'",message="template.spec.containers[0] must be named runtime"
+// +kubebuilder:validation:XValidation:rule="self.template.spec.containers.size() == 0 || (self.template.spec.containers[0].image.size() > 0 && self.template.spec.containers[0].image.size() <= 2048)",message="the runtime container image must contain between 1 and 2048 characters"
+// +kubebuilder:validation:XValidation:rule="!has(self.template.spec.restartPolicy) || self.template.spec.restartPolicy == 'Always'",message="template.spec.restartPolicy must be Always"
+// +kubebuilder:validation:XValidation:rule="!has(self.template.spec.ephemeralContainers) || self.template.spec.ephemeralContainers.size() == 0",message="template.spec.ephemeralContainers is not supported in a Deployment"
+// +kubebuilder:validation:XValidation:rule="!has(self.template.spec.serviceAccountName) || self.template.spec.serviceAccountName.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$')",message="template.spec.serviceAccountName must be a valid DNS subdomain"
 type RuntimeSpec struct {
-	// Image is the container image for this runtime (e.g., "my-bash-runner:latest").
+	// Template defines the Runtime Pod. The first container must be named
+	// "runtime". The controller injects the "runtimed" sidecar and the
+	// "workspace" and "artifact-store" volumes.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=2048
-	Image string `json:"image"`
+	Template corev1.PodTemplateSpec `json:"template"`
 
 	// Port is the gRPC port the runtime server listens on.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:default=9091
 	Port int32 `json:"port,omitempty"`
-
-	// Command is the entrypoint for the runtime container.
-	// +optional
-	// +kubebuilder:validation:MaxItems=64
-	// +kubebuilder:validation:items:MaxLength=4096
-	Command []string `json:"command,omitempty"`
-
-	// Env is extra environment variables for the runtime container.
-	// +optional
-	// +kubebuilder:validation:MaxItems=256
-	Env []corev1.EnvVar `json:"env,omitempty"`
-
-	// Resources for the runtime container.
-	// +optional
-	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
 	// Replicas is the number of runtime pods to run.
 	// +kubebuilder:default=1
@@ -61,14 +51,6 @@ type RuntimeSpec struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=2048
 	DaemonImage string `json:"daemonImage,omitempty"`
-
-	// RuntimedServiceAccountName overrides the ServiceAccount used by Runtime Pods.
-	// The Runtime controller creates the ServiceAccount when it is missing and
-	// binds the namespace-scoped runtimed Role to it.
-	// +optional
-	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
-	RuntimedServiceAccountName string `json:"runtimedServiceAccountName,omitempty"`
 
 	// Capacity declares the per-pod capacity for this runtime.
 	// +optional
@@ -186,7 +168,7 @@ type RuntimeStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.image"
+// +kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.template.spec.containers[0].image"
 // +kubebuilder:printcolumn:name="Replicas",type="integer",JSONPath=".spec.replicas"
 // +kubebuilder:printcolumn:name="Ready",type="integer",JSONPath=".status.readyReplicas"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"

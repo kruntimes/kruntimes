@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -143,45 +144,59 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		daemonImage = r.DefaultDaemonImage
 	}
 	runtimedServiceAccountName := r.runtimedServiceAccountName(rt)
-
-	labels := map[string]string{
+	template := rt.Spec.Template.DeepCopy()
+	selectorLabels := map[string]string{
 		runtimeLabel: runtimeLabelVal,
 		"app":        "kruntimes-" + name,
 	}
-	annotations := runtimepod.CapacityAnnotations(rt)
+	labels := maps.Clone(template.Labels)
+	if labels == nil {
+		labels = make(map[string]string, 2)
+	}
+	maps.Copy(labels, selectorLabels)
+	annotations := maps.Clone(template.Annotations)
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	for key, value := range runtimepod.CapacityAnnotations(rt) {
+		annotations[key] = value
+	}
 	runsCapacity := runtimepod.RunsCapacityFromRuntime(rt, 0)
 
-	runtimeContainer := corev1.Container{
-		Name:            "runtime",
-		Image:           rt.Spec.Image,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Args:            rt.Spec.Command,
-		Ports: []corev1.ContainerPort{
-			{Name: "grpc", ContainerPort: port, Protocol: corev1.ProtocolTCP},
-		},
-		LivenessProbe: &corev1.Probe{
+	runtimeContainer, additionalContainers := runtimeContainers(template.Spec.Containers)
+	runtimeContainer.VolumeMounts = withoutVolumeMount(runtimeContainer.VolumeMounts, artifactStoreVolume)
+	for i := range additionalContainers {
+		additionalContainers[i].VolumeMounts = withoutVolumeMount(additionalContainers[i].VolumeMounts, artifactStoreVolume)
+	}
+	for i := range template.Spec.InitContainers {
+		template.Spec.InitContainers[i].VolumeMounts = withoutVolumeMount(template.Spec.InitContainers[i].VolumeMounts, artifactStoreVolume)
+	}
+	runtimeContainer.Ports = upsertContainerPort(runtimeContainer.Ports, corev1.ContainerPort{
+		Name: "grpc", ContainerPort: port, Protocol: corev1.ProtocolTCP,
+	})
+	if runtimeContainer.LivenessProbe == nil {
+		runtimeContainer.LivenessProbe = &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
 			},
 			InitialDelaySeconds: 5,
 			PeriodSeconds:       10,
-		},
-		ReadinessProbe: &corev1.Probe{
+		}
+	}
+	if runtimeContainer.ReadinessProbe == nil {
+		runtimeContainer.ReadinessProbe = &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
 			},
 			InitialDelaySeconds: 1,
 			PeriodSeconds:       5,
-		},
-		Env: rt.Spec.Env,
-		Resources: corev1.ResourceRequirements{
-			Requests: rt.Spec.Resources.Requests,
-			Limits:   rt.Spec.Resources.Limits,
-		},
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: workspaceVolume, MountPath: workspacePath},
-		},
-		SecurityContext: defaultContainerSecurityContext(),
+		}
+	}
+	runtimeContainer.VolumeMounts = upsertVolumeMount(runtimeContainer.VolumeMounts, corev1.VolumeMount{
+		Name: workspaceVolume, MountPath: workspacePath,
+	})
+	if runtimeContainer.SecurityContext == nil {
+		runtimeContainer.SecurityContext = defaultContainerSecurityContext()
 	}
 	if runtimeContainer.Resources.Requests == nil {
 		runtimeContainer.Resources.Requests = corev1.ResourceList{
@@ -255,46 +270,109 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--workers=%d", runsCapacity))
 	}
 
-	volumes := []corev1.Volume{
-		{
+	volumes := make([]corev1.Volume, 0, len(template.Spec.Volumes)+2)
+	for _, volume := range template.Spec.Volumes {
+		if volume.Name != workspaceVolume && volume.Name != artifactStoreVolume {
+			volumes = append(volumes, volume)
+		}
+	}
+	volumes = append(volumes,
+		corev1.Volume{
 			Name: workspaceVolume,
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: workspaceVolumeSource(rt.Spec.Workspace),
 			},
 		},
+	)
+	artifactSecurityContext := configureArtifactStore(rt.Spec.ArtifactStore, &daemonContainer, &volumes)
+	podSecurityContext := template.Spec.SecurityContext
+	if podSecurityContext == nil {
+		podSecurityContext = artifactSecurityContext
+	} else if artifactSecurityContext != nil && podSecurityContext.FSGroup == nil {
+		podSecurityContext.FSGroup = artifactSecurityContext.FSGroup
+		if podSecurityContext.FSGroupChangePolicy == nil {
+			podSecurityContext.FSGroupChangePolicy = artifactSecurityContext.FSGroupChangePolicy
+		}
 	}
-	podSecurityContext := configureArtifactStore(rt.Spec.ArtifactStore, &daemonContainer, &volumes)
+
+	containers := make([]corev1.Container, 0, 2+len(additionalContainers))
+	containers = append(containers, runtimeContainer)
+	containers = append(containers, additionalContainers...)
+	containers = append(containers, daemonContainer)
+	template.Spec.Containers = containers
+	template.Spec.Volumes = volumes
+	template.Spec.ServiceAccountName = runtimedServiceAccountName
+	template.Spec.SecurityContext = podSecurityContext
+	template.ObjectMeta = metav1.ObjectMeta{Labels: labels, Annotations: annotations}
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "runtime-" + name,
 			Namespace: ns,
-			Labels:    labels,
+			Labels:    selectorLabels,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
-				Spec: corev1.PodSpec{
-					ServiceAccountName: runtimedServiceAccountName,
-					SecurityContext:    podSecurityContext,
-					Containers:         []corev1.Container{runtimeContainer, daemonContainer},
-					Volumes:            volumes,
-				},
-			},
+			Selector: &metav1.LabelSelector{MatchLabels: selectorLabels},
+			Template: *template,
 		},
 	}
 }
 
 func (r *RuntimeReconciler) runtimedServiceAccountName(rt *v1alpha1.Runtime) string {
-	if rt.Spec.RuntimedServiceAccountName != "" {
-		return rt.Spec.RuntimedServiceAccountName
+	if rt.Spec.Template.Spec.ServiceAccountName != "" {
+		return rt.Spec.Template.Spec.ServiceAccountName
 	}
 	if r.RuntimedServiceAccountName != "" {
 		return r.RuntimedServiceAccountName
 	}
 	return runtimedDefaultSA
+}
+
+func runtimeContainers(containers []corev1.Container) (corev1.Container, []corev1.Container) {
+	runtimeContainer := corev1.Container{Name: "runtime"}
+	additional := make([]corev1.Container, 0, len(containers))
+	for _, container := range containers {
+		switch container.Name {
+		case "runtime":
+			runtimeContainer = container
+		case "runtimed":
+			// The controller owns the runtimed sidecar and ignores user overrides.
+		default:
+			additional = append(additional, container)
+		}
+	}
+	return runtimeContainer, additional
+}
+
+func upsertContainerPort(ports []corev1.ContainerPort, required corev1.ContainerPort) []corev1.ContainerPort {
+	for i := range ports {
+		if ports[i].Name == required.Name {
+			ports[i] = required
+			return ports
+		}
+	}
+	return append(ports, required)
+}
+
+func upsertVolumeMount(mounts []corev1.VolumeMount, required corev1.VolumeMount) []corev1.VolumeMount {
+	for i := range mounts {
+		if mounts[i].Name == required.Name {
+			mounts[i] = required
+			return mounts
+		}
+	}
+	return append(mounts, required)
+}
+
+func withoutVolumeMount(mounts []corev1.VolumeMount, name string) []corev1.VolumeMount {
+	result := mounts[:0]
+	for _, mount := range mounts {
+		if mount.Name != name {
+			result = append(result, mount)
+		}
+	}
+	return result
 }
 
 func (r *RuntimeReconciler) buildRuntimedServiceAccount(rt *v1alpha1.Runtime, name string) *corev1.ServiceAccount {

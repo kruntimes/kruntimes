@@ -42,10 +42,14 @@ func newRuntimeListCmd(getter genericclioptions.RESTClientGetter, scheme *runtim
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
 			fmt.Fprintln(w, "NAME\tNAMESPACE\tIMAGE\tREPLICAS\tREADY\tPORT\tAGE")
 			for _, rt := range list.Items {
+				image := "<missing>"
+				if len(rt.Spec.Template.Spec.Containers) > 0 {
+					image = rt.Spec.Template.Spec.Containers[0].Image
+				}
 				fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
 					rt.Name,
 					rt.Namespace,
-					rt.Spec.Image,
+					image,
 					rt.Spec.Replicas,
 					rt.Status.ReadyReplicas,
 					rt.Spec.Port,

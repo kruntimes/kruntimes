@@ -488,7 +488,11 @@ func TestCRDValidationRejectsInvalidRuntimeImage(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "invalid-image", Namespace: ns.Name},
 		Spec: v1alpha1.RuntimeSpec{
-			Image: "",
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "runtime", Image: ""}},
+				},
+			},
 		},
 	}
 	if err := k8sClient.Create(ctx, rt); !apierrors.IsInvalid(err) {
@@ -503,8 +507,12 @@ func TestCRDValidationRejectsInvalidRuntimeServiceAccountName(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "invalid-service-account", Namespace: ns.Name},
 		Spec: v1alpha1.RuntimeSpec{
-			Image:                      "runtime:latest",
-			RuntimedServiceAccountName: "Bad_Name",
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					ServiceAccountName: "Bad_Name",
+					Containers:         []corev1.Container{{Name: "runtime", Image: "runtime:latest"}},
+				},
+			},
 		},
 	}
 	if err := k8sClient.Create(ctx, rt); !apierrors.IsInvalid(err) {

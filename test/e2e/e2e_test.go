@@ -96,11 +96,9 @@ func ensureRuntimeWithRunsCapacity(t *testing.T, name, image string, port int32,
 			Namespace: testNamespace,
 		},
 		Spec: v1alpha1.RuntimeSpec{
-			Image:     image,
-			Port:      port,
-			Replicas:  1,
-			Command:   []string{fmt.Sprintf("--port=%d", port), "--work-dir=/workspace"},
-			Resources: e2eRuntimeResources(),
+			Template: runtimePodTemplate(image, port),
+			Port:     port,
+			Replicas: 1,
 		},
 	}
 	if runsCapacity > 0 {
@@ -117,11 +115,9 @@ func ensureRuntimeWithRunsCapacity(t *testing.T, name, image string, port int32,
 		if getErr := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(rt), existing); getErr != nil {
 			t.Fatalf("get runtime: %v", getErr)
 		}
-		existing.Spec.Image = image
+		existing.Spec.Template = rt.Spec.Template
 		existing.Spec.Port = port
 		existing.Spec.Replicas = 1
-		existing.Spec.Command = []string{fmt.Sprintf("--port=%d", port), "--work-dir=/workspace"}
-		existing.Spec.Resources = e2eRuntimeResources()
 		if runsCapacity > 0 {
 			existing.Spec.Capacity = rt.Spec.Capacity
 		}
@@ -154,11 +150,9 @@ func ensureFilesystemRuntime(t *testing.T, name, claimName string) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
 		Spec: v1alpha1.RuntimeSpec{
-			Image:     bashRuntimeImage(),
-			Port:      9091,
-			Replicas:  1,
-			Command:   []string{"--port=9091", "--work-dir=/workspace"},
-			Resources: e2eRuntimeResources(),
+			Template: runtimePodTemplate(bashRuntimeImage(), 9091),
+			Port:     9091,
+			Replicas: 1,
 			ArtifactStore: &v1alpha1.RuntimeArtifactStoreSpec{
 				Driver: v1alpha1.ArtifactDriverFilesystem,
 				Filesystem: &v1alpha1.FilesystemArtifactStoreSpec{
@@ -194,6 +188,19 @@ func e2eRuntimeResources() corev1.ResourceRequirements {
 		Limits: corev1.ResourceList{
 			corev1.ResourceCPU:    resource.MustParse("500m"),
 			corev1.ResourceMemory: resource.MustParse("512Mi"),
+		},
+	}
+}
+
+func runtimePodTemplate(image string, port int32) corev1.PodTemplateSpec {
+	return corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:      "runtime",
+				Image:     image,
+				Args:      []string{fmt.Sprintf("--port=%d", port), "--work-dir=/workspace"},
+				Resources: e2eRuntimeResources(),
+			}},
 		},
 	}
 }
@@ -284,8 +291,12 @@ func dumpRuntimeDiagnostics(t *testing.T, name, runtimeImage, daemonImage string
 	if err := k8sClient.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: name}, &rt); err != nil {
 		t.Logf("get Runtime %s: %v", name, err)
 	} else {
+		runtimeImage := "<missing>"
+		if len(rt.Spec.Template.Spec.Containers) > 0 {
+			runtimeImage = rt.Spec.Template.Spec.Containers[0].Image
+		}
 		t.Logf("Runtime %s: generation=%d replicas=%d readyReplicas=%d image=%s daemonImage=%s port=%d",
-			name, rt.Generation, rt.Spec.Replicas, rt.Status.ReadyReplicas, rt.Spec.Image, rt.Spec.DaemonImage, rt.Spec.Port)
+			name, rt.Generation, rt.Spec.Replicas, rt.Status.ReadyReplicas, runtimeImage, rt.Spec.DaemonImage, rt.Spec.Port)
 		for _, cond := range rt.Status.Conditions {
 			t.Logf("  Runtime condition: type=%s status=%s reason=%s message=%s", cond.Type, cond.Status, cond.Reason, cond.Message)
 		}

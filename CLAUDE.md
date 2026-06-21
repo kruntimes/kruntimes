@@ -52,7 +52,7 @@ Run CRD (Pending) → Scheduler → Run (Scheduled, assignedPod)
 
 - **Run CRD** (`api/v1alpha1/run_types.go`): the central state machine. Phase: Pending → Scheduled → Running → Succeeded/Failed. Spec holds runtime name, args, env, timeout. Status holds phase, assignedPod, message, timestamps. CRD group: `kruntimes.io/v1alpha1`. Short name: `rn`. Scheduler treats empty phase as equivalent to Pending (the kubebuilder default on status subresource doesn't apply on Create).
 
-- **Runtime CRD** (`api/v1alpha1/runtime_types.go`): defines a runtime type (image, port, replicas). The Runtime controller creates a Deployment with **two containers** — the runtime server + runtimed daemon — sharing an emptyDir `/workspace`. Pod label `runtime: <cr-name>` is used by the scheduler for pod selection.
+- **Runtime CRD** (`api/v1alpha1/runtime_types.go`): defines a runtime pool (Pod template, port, replicas, capacity, workspace, and artifact store). The Runtime controller creates a Deployment, preserves supported Pod template customization, and injects the runtimed daemon plus a shared emptyDir `/workspace`. Pod label `runtime: <cr-name>` is used by the scheduler for pod selection.
 
 - **gRPC Runtime service** (`api/runtime/v1/runtime.proto`): `Execute / Status / List / Cancel / Forget`. The runtimed daemon calls this on `localhost:<port>` to delegate command execution. `Forget` releases terminal execution state after the Run status is persisted. Import as `pb "github.com/kruntimes/kruntimes/api/runtime/v1"`.
 
