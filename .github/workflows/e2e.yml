@@ -35,6 +35,7 @@ jobs:
       - name: Dump Kubernetes diagnostics
         if: failure()
         run: |
+          set +e
           kubectl get nodes -o wide
           kubectl get pods,deployments,replicasets,runtimes,runs,workflows -A -o wide
           kubectl describe pods -A
