@@ -23,6 +23,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
@@ -583,12 +585,48 @@ func configureS3ArtifactStore(store *v1alpha1.S3ArtifactStoreSpec, daemon *corev
 	}
 }
 
+func (r *RuntimeReconciler) runtimesForRuntimedRBAC(ctx context.Context, object client.Object) []reconcile.Request {
+	serviceAccount, isServiceAccount := object.(*corev1.ServiceAccount)
+	switch object.(type) {
+	case *corev1.ServiceAccount:
+	case *rbacv1.Role:
+		if object.GetName() != runtimedRoleName {
+			return nil
+		}
+	case *rbacv1.RoleBinding:
+		if !strings.HasPrefix(object.GetName(), runtimedRoleName+"-") {
+			return nil
+		}
+	default:
+		return nil
+	}
+
+	var runtimes v1alpha1.RuntimeList
+	if err := r.List(ctx, &runtimes, client.InNamespace(object.GetNamespace())); err != nil {
+		r.Log.Error(err, "unable to list Runtimes for runtimed RBAC event", "object", client.ObjectKeyFromObject(object))
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(runtimes.Items))
+	for i := range runtimes.Items {
+		runtime := &runtimes.Items[i]
+		if isServiceAccount && r.runtimedServiceAccountName(runtime) != serviceAccount.Name {
+			continue
+		}
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(runtime)})
+	}
+	return requests
+}
+
 // SetupWithManager registers the reconciler with the controller manager.
 func (r *RuntimeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Runtime{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		Watches(&corev1.ServiceAccount{}, handler.EnqueueRequestsFromMapFunc(r.runtimesForRuntimedRBAC)).
+		Watches(&rbacv1.Role{}, handler.EnqueueRequestsFromMapFunc(r.runtimesForRuntimedRBAC)).
+		Watches(&rbacv1.RoleBinding{}, handler.EnqueueRequestsFromMapFunc(r.runtimesForRuntimedRBAC)).
 		Complete(r)
 }
 

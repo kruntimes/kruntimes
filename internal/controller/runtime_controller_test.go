@@ -11,7 +11,10 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
@@ -304,6 +307,74 @@ func TestBuildRuntimedRBACUsesRuntimeServiceAccountOverride(t *testing.T) {
 	binding := reconciler.buildRuntimedRoleBinding(rt, serviceAccountName)
 	if binding.Subjects[0].Name != "runtime-specific-runtimed" {
 		t.Fatalf("subjects = %#v, want Runtime spec service account", binding.Subjects)
+	}
+}
+
+func TestRuntimedRBACWatchMapsResourcesToRuntimes(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	defaultRuntime := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "default-runtime", Namespace: "workloads"},
+		Spec:       v1alpha1.RuntimeSpec{Template: runtimePodTemplate("runtime:v1")},
+	}
+	customRuntime := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-runtime", Namespace: "workloads"},
+		Spec:       v1alpha1.RuntimeSpec{Template: runtimePodTemplate("runtime:v1")},
+	}
+	customRuntime.Spec.Template.Spec.ServiceAccountName = "custom-runtimed"
+	otherNamespace := customRuntime.DeepCopy()
+	otherNamespace.Name = "other-runtime"
+	otherNamespace.Namespace = "other"
+
+	reconciler := &RuntimeReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(defaultRuntime, customRuntime, otherNamespace).Build(),
+	}
+
+	tests := []struct {
+		name   string
+		object client.Object
+		want   []string
+	}{
+		{
+			name:   "default service account",
+			object: &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: runtimedDefaultSA, Namespace: "workloads"}},
+			want:   []string{"default-runtime"},
+		},
+		{
+			name:   "custom service account",
+			object: &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "custom-runtimed", Namespace: "workloads"}},
+			want:   []string{"custom-runtime"},
+		},
+		{
+			name:   "shared role",
+			object: &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: runtimedRoleName, Namespace: "workloads"}},
+			want:   []string{"custom-runtime", "default-runtime"},
+		},
+		{
+			name:   "managed role binding",
+			object: &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: runtimedRoleName + "-custom", Namespace: "workloads"}},
+			want:   []string{"custom-runtime", "default-runtime"},
+		},
+		{
+			name:   "unrelated role",
+			object: &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "workloads"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := reconciler.runtimesForRuntimedRBAC(t.Context(), tt.object)
+			got := make([]string, 0, len(requests))
+			for _, request := range requests {
+				got = append(got, request.Name)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("mapped Runtimes = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
