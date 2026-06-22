@@ -517,9 +517,6 @@ func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, resp *pb.S
 	artifactRefs, err := c.collectArtifacts(ctx, run)
 	if err != nil {
 		if isArtifactInvalid(err) {
-			if cleanupErr := c.deleteRunArtifacts(ctx, run); cleanupErr != nil {
-				return ctrl.Result{}, cleanupErr
-			}
 			return c.applyTerminalWithOutput(
 				ctx,
 				ar,

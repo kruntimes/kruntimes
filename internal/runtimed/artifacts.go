@@ -29,7 +29,7 @@ func (c *Controller) prepareArtifactStaging(run *v1alpha1.Run) (string, error) {
 	return path, nil
 }
 
-func (c *Controller) collectArtifacts(ctx context.Context, run *v1alpha1.Run) ([]v1alpha1.ArtifactRef, error) {
+func (c *Controller) collectArtifacts(ctx context.Context, run *v1alpha1.Run) (refs []v1alpha1.ArtifactRef, resultErr error) {
 	if c.ArtifactStore == nil {
 		return nil, nil
 	}
@@ -52,7 +52,17 @@ func (c *Controller) collectArtifacts(ctx context.Context, run *v1alpha1.Run) ([
 		return nil, err
 	}
 
-	refs := make([]v1alpha1.ArtifactRef, 0, len(entries))
+	uploadStarted := false
+	defer func() {
+		if resultErr == nil || !uploadStarted {
+			return
+		}
+		if err := c.deleteRunArtifacts(ctx, run); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("rollback partial artifacts: %w", err))
+		}
+	}()
+
+	refs = make([]v1alpha1.ArtifactRef, 0, len(entries))
 	var totalBytes int64
 	for _, entry := range entries {
 		if err := artifact.ValidateName(entry.Name()); err != nil {
@@ -63,11 +73,20 @@ func (c *Controller) collectArtifacts(ctx context.Context, run *v1alpha1.Run) ([
 		if err != nil {
 			return refs, artifactInvalidError{err: fmt.Errorf("artifact %q: %w", entry.Name(), err)}
 		}
+		maxStoredBytes := min(c.maxArtifactBytes(), c.maxArtifactsBytes()-totalBytes)
+		if maxStoredBytes <= 0 {
+			return refs, artifactInvalidError{err: fmt.Errorf("total stored artifact size exceeds %d bytes", c.maxArtifactsBytes())}
+		}
+		uploadStarted = true
 		ref, err := c.ArtifactStore.Put(ctx, run, localPath, artifact.PutOptions{
-			Name: entry.Name(),
-			Type: artifactType,
+			Name:         entry.Name(),
+			Type:         artifactType,
+			MaxSizeBytes: maxStoredBytes,
 		})
 		if err != nil {
+			if errors.Is(err, artifact.ErrSizeLimitExceeded) {
+				return refs, artifactInvalidError{err: fmt.Errorf("store artifact %q: %w", entry.Name(), err)}
+			}
 			return refs, fmt.Errorf("store artifact %q: %w", entry.Name(), err)
 		}
 		if ref.SizeBytes > c.maxArtifactBytes() {

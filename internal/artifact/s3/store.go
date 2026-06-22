@@ -105,6 +105,15 @@ func (s *Store) Put(ctx context.Context, run *v1alpha1.Run, localPath string, op
 	if !info.Mode().IsRegular() {
 		return v1alpha1.ArtifactRef{}, fmt.Errorf("artifact %q must be a regular file", localPath)
 	}
+	if opts.MaxSizeBytes > 0 && info.Size() > opts.MaxSizeBytes {
+		return v1alpha1.ArtifactRef{}, fmt.Errorf(
+			"%w: stored artifact %q size %d exceeds %d bytes",
+			artifact.ErrSizeLimitExceeded,
+			opts.Name,
+			info.Size(),
+			opts.MaxSizeBytes,
+		)
+	}
 
 	contentType, digest, err := inspectFile(file, uploadPath, contentTypeOverride)
 	if err != nil {
