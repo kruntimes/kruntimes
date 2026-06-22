@@ -17,7 +17,7 @@ import (
 func TestKubernetesAPI(t *testing.T) {
 	wantErr := errors.New("api unavailable")
 	reader := &readerStub{listErr: wantErr}
-	check := KubernetesAPI(reader, &v1alpha1.RunList{})
+	check := KubernetesAPI(reader, &v1alpha1.RunList{}, client.InNamespace("workloads"))
 
 	err := check(httptest.NewRequest("GET", "/readyz", nil))
 	if !errors.Is(err, wantErr) {
@@ -25,6 +25,9 @@ func TestKubernetesAPI(t *testing.T) {
 	}
 	if reader.list == nil {
 		t.Fatal("readiness check did not list a resource")
+	}
+	if reader.namespace != "workloads" {
+		t.Fatalf("readiness list namespace = %q, want workloads", reader.namespace)
 	}
 }
 
@@ -53,16 +56,20 @@ func TestRuntime(t *testing.T) {
 }
 
 type readerStub struct {
-	listErr error
-	list    client.ObjectList
+	listErr   error
+	list      client.ObjectList
+	namespace string
 }
 
 func (r *readerStub) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
 	return nil
 }
 
-func (r *readerStub) List(_ context.Context, list client.ObjectList, _ ...client.ListOption) error {
+func (r *readerStub) List(_ context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	r.list = list
+	listOpts := &client.ListOptions{}
+	listOpts.ApplyOptions(opts)
+	r.namespace = listOpts.Namespace
 	return r.listErr
 }
 
