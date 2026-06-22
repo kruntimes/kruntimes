@@ -54,11 +54,14 @@ type RuntimeReconciler struct {
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runtimes,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runtimes/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=kruntimes.io,resources=runs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=core,resources=pods/status,verbs=get;patch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

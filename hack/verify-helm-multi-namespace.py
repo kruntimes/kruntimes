@@ -53,6 +53,7 @@ def main() -> int:
         require_rbac_subject_namespace(resources),
         require_runtime_namespace(resources),
         require_controller_runtimed_service_account(resources),
+        require_controller_can_delegate_runtimed_role(resources),
         require_no_runtimed_chart_rbac(resources),
     ]
     if not all(checks):
@@ -195,6 +196,76 @@ def require_controller_runtimed_service_account(resources: list[Resource]) -> bo
             return True
     print("missing platform controller Deployment", file=sys.stderr)
     return False
+
+
+def require_controller_can_delegate_runtimed_role(resources: list[Resource]) -> bool:
+    controller_role = next(
+        (
+            resource
+            for resource in resources
+            if resource.chart == "platform"
+            and resource.kind == "ClusterRole"
+            and resource.name == "kruntimes-controller"
+        ),
+        None,
+    )
+    if controller_role is None:
+        print("missing platform controller ClusterRole", file=sys.stderr)
+        return False
+
+    rules = parse_rbac_rules(controller_role.text)
+    required = [
+        ("kruntimes.io", "runs", {"update", "patch"}),
+        ("kruntimes.io", "runs/status", {"get", "update", "patch"}),
+        ("", "pods/status", {"get", "patch"}),
+    ]
+    ok = True
+    for api_group, resource, verbs in required:
+        if not any(
+            api_group in rule["apiGroups"]
+            and resource in rule["resources"]
+            and verbs <= rule["verbs"]
+            for rule in rules
+        ):
+            print(
+                f"controller ClusterRole cannot delegate {api_group or 'core'}/{resource} {sorted(verbs)}",
+                file=sys.stderr,
+            )
+            ok = False
+    return ok
+
+
+def parse_rbac_rules(doc: str) -> list[dict[str, set[str]]]:
+    rules: list[dict[str, set[str]]] = []
+    current: dict[str, set[str]] | None = None
+    section = ""
+    in_rules = False
+    for line in doc.splitlines():
+        if line == "rules:":
+            in_rules = True
+            continue
+        if not in_rules:
+            continue
+        if line.startswith("  - apiGroups:"):
+            if current is not None:
+                rules.append(current)
+            current = {"apiGroups": set(), "resources": set(), "verbs": set()}
+            section = "apiGroups"
+            continue
+        if line.startswith("    resources:"):
+            section = "resources"
+            continue
+        if line.startswith("    verbs:"):
+            section = "verbs"
+            continue
+        if current is not None and line.startswith("      - "):
+            current[section].add(line.split("-", 1)[1].strip().strip('"'))
+            continue
+        if line and not line.startswith(" "):
+            break
+    if current is not None:
+        rules.append(current)
+    return rules
 
 
 def require_no_runtimed_chart_rbac(resources: list[Resource]) -> bool:
