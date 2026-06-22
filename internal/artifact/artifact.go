@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -29,12 +30,17 @@ const (
 	RunArtifactFinalizer = "kruntimes.io/artifact-cleanup"
 )
 
+var ErrSizeLimitExceeded = errors.New("artifact size limit exceeded")
+
 // PutOptions describes metadata applied while storing an artifact.
 type PutOptions struct {
 	Name        string
 	Type        v1alpha1.ArtifactType
 	ContentType string
 	Retention   *time.Duration
+	// MaxSizeBytes bounds the final representation written to the store.
+	// A non-positive value disables the store-level limit.
+	MaxSizeBytes int64
 }
 
 // Store persists artifact content outside Kubernetes API storage.

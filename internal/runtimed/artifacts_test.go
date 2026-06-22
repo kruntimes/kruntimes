@@ -79,6 +79,11 @@ func TestCollectArtifactsStoresSortedTopLevelEntries(t *testing.T) {
 	if store.puts[1].options.Type != v1alpha1.ArtifactTypeFile {
 		t.Fatalf("z.txt type = %q", store.puts[1].options.Type)
 	}
+	for _, put := range store.puts {
+		if put.options.MaxSizeBytes != artifact.DefaultMaxArtifactBytes {
+			t.Fatalf("MaxSizeBytes = %d, want %d", put.options.MaxSizeBytes, artifact.DefaultMaxArtifactBytes)
+		}
+	}
 }
 
 func TestApplySuccessWritesArtifactRefsOnlyAfterAllUploadsSucceed(t *testing.T) {
@@ -120,6 +125,9 @@ func TestApplySuccessWritesArtifactRefsOnlyAfterAllUploadsSucceed(t *testing.T) 
 	}
 	if unchanged.Status.Phase != v1alpha1.RunRunning || len(unchanged.Status.ArtifactRefs) != 0 {
 		t.Fatalf("status after failed collection = %#v", unchanged.Status)
+	}
+	if store.deleteRuns != 1 {
+		t.Fatalf("DeleteRun calls after partial upload = %d, want 1", store.deleteRuns)
 	}
 
 	store.failAt = 0
@@ -167,6 +175,53 @@ func TestCollectArtifactsRejectsSymlinkBeforeStore(t *testing.T) {
 	}
 }
 
+func TestCollectArtifactsReportsRollbackFailure(t *testing.T) {
+	setTestWorkspace(t)
+	wantRollbackErr := errors.New("store unavailable during rollback")
+	store := &fakeArtifactStore{failAt: 2, deleteErr: wantRollbackErr}
+	c := &Controller{ArtifactStore: store}
+	run := artifactTestRun()
+	staging := artifactStagingDir(run)
+	if err := os.MkdirAll(staging, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a", "b"} {
+		if err := os.WriteFile(filepath.Join(staging, name), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := c.collectArtifacts(t.Context(), run)
+	if !errors.Is(err, wantRollbackErr) {
+		t.Fatalf("collectArtifacts error = %v, want rollback error", err)
+	}
+	if store.deleteRuns != 1 {
+		t.Fatalf("DeleteRun calls = %d, want 1", store.deleteRuns)
+	}
+}
+
+func TestCollectArtifactsClassifiesStoreSizeLimitAsInvalid(t *testing.T) {
+	setTestWorkspace(t)
+	store := &fakeArtifactStore{failAt: 1, putErr: artifact.ErrSizeLimitExceeded}
+	c := &Controller{ArtifactStore: store}
+	run := artifactTestRun()
+	staging := artifactStagingDir(run)
+	if err := os.MkdirAll(staging, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "artifact"), []byte("content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := c.collectArtifacts(t.Context(), run)
+	if !isArtifactInvalid(err) {
+		t.Fatalf("collectArtifacts error = %v, want ArtifactInvalid", err)
+	}
+	if store.deleteRuns != 1 {
+		t.Fatalf("DeleteRun calls = %d, want 1", store.deleteRuns)
+	}
+}
+
 func TestCollectArtifactsEnforcesSingleAndTotalLimits(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -209,6 +264,14 @@ func TestCollectArtifactsEnforcesSingleAndTotalLimits(t *testing.T) {
 			_, err := c.collectArtifacts(t.Context(), run)
 			if err == nil || !isArtifactInvalid(err) {
 				t.Fatalf("error = %v, want ArtifactInvalid", err)
+			}
+			if tt.name == "total" {
+				if len(store.puts) != 2 || store.puts[1].options.MaxSizeBytes != 2 {
+					t.Fatalf("second Put options = %#v, want 2-byte remaining budget", store.puts)
+				}
+				if store.deleteRuns != 1 {
+					t.Fatalf("DeleteRun calls = %d, want 1", store.deleteRuns)
+				}
 			}
 		})
 	}
@@ -268,11 +331,14 @@ func TestApplySuccessInvalidArtifactTerminatesWithoutRetry(t *testing.T) {
 	if err := os.MkdirAll(staging, 0o750); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(staging, "a-valid"), []byte("valid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	target := filepath.Join(staging, "target")
 	if err := os.WriteFile(target, []byte("target"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, filepath.Join(staging, "link")); err != nil {
+	if err := os.Symlink(target, filepath.Join(staging, "z-link")); err != nil {
 		t.Fatal(err)
 	}
 	k8sClient := fake.NewClientBuilder().
@@ -339,6 +405,7 @@ func TestReconcileArtifactDeletionDeletesRunObjectsAndRemovesFinalizer(t *testin
 type fakeArtifactStore struct {
 	puts       []fakeArtifactPut
 	failAt     int
+	putErr     error
 	deleteRuns int
 	deleteErr  error
 }
@@ -351,6 +418,9 @@ type fakeArtifactPut struct {
 func (s *fakeArtifactStore) Put(_ context.Context, run *v1alpha1.Run, localPath string, opts artifact.PutOptions) (v1alpha1.ArtifactRef, error) {
 	s.puts = append(s.puts, fakeArtifactPut{path: localPath, options: opts})
 	if s.failAt > 0 && len(s.puts) == s.failAt {
+		if s.putErr != nil {
+			return v1alpha1.ArtifactRef{}, s.putErr
+		}
 		return v1alpha1.ArtifactRef{}, errors.New("store unavailable")
 	}
 	size, _, err := inspectArtifact(localPath, artifact.DefaultMaxArtifactsBytes)

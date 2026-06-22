@@ -260,6 +260,60 @@ func TestPutArchivesDirectory(t *testing.T) {
 	}
 }
 
+func TestPutRejectsFinalRepresentationAboveLimitBeforeUpload(t *testing.T) {
+	tests := []struct {
+		name         string
+		artifactType v1alpha1.ArtifactType
+		prepare      func(*testing.T) string
+	}{
+		{
+			name:         "file",
+			artifactType: v1alpha1.ArtifactTypeFile,
+			prepare: func(t *testing.T) string {
+				path := filepath.Join(t.TempDir(), "artifact")
+				if err := os.WriteFile(path, []byte("too large"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+		},
+		{
+			name:         "directory archive",
+			artifactType: v1alpha1.ArtifactTypeDirectory,
+			prepare: func(t *testing.T) string {
+				path := t.TempDir()
+				if err := os.WriteFile(filepath.Join(path, "artifact"), []byte("content"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uploader := &mockUploader{}
+			store := newStore(Config{Bucket: "artifacts"}, uploader, &mockObjectClient{})
+			run := &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{Namespace: "default", UID: "uid"}}
+
+			_, err := store.Put(t.Context(), run, tt.prepare(t), artifact.PutOptions{
+				Name:         "artifact",
+				Type:         tt.artifactType,
+				MaxSizeBytes: 1,
+			})
+			if err == nil {
+				t.Fatal("Put() accepted a final representation above the size limit")
+			}
+			if !errors.Is(err, artifact.ErrSizeLimitExceeded) {
+				t.Fatalf("Put() error = %v, want size limit error", err)
+			}
+			if uploader.input != nil {
+				t.Fatal("oversized artifact reached the S3 uploader")
+			}
+		})
+	}
+}
+
 func TestOpenAndDelete(t *testing.T) {
 	objects := &mockObjectClient{body: "stored artifact"}
 	store := newStore(Config{Bucket: "artifacts", Prefix: "prod"}, &mockUploader{}, objects)
