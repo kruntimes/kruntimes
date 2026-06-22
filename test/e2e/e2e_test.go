@@ -14,6 +14,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -29,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/artifact"
 	"github.com/kruntimes/kruntimes/internal/krt"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
@@ -63,6 +65,7 @@ func runtimedImage() string {
 func TestMain(m *testing.M) {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(batchv1.AddToScheme(scheme))
 	utilruntime.Must(v1alpha1.AddToScheme(scheme))
 
 	restConfig = config.GetConfigOrDie()
@@ -620,6 +623,10 @@ func TestFilesystemArtifacts(t *testing.T) {
 	if len(run.Status.ArtifactRefs) != 2 {
 		t.Fatalf("artifact refs = %#v, want 2", run.Status.ArtifactRefs)
 	}
+	if run.Status.ArtifactStore == nil || run.Status.ArtifactStore.Filesystem == nil ||
+		run.Status.ArtifactStore.Filesystem.VolumeClaimName != claimName {
+		t.Fatalf("artifact store cleanup snapshot = %#v", run.Status.ArtifactStore)
+	}
 	var report, bundle *v1alpha1.ArtifactRef
 	for i := range run.Status.ArtifactRefs {
 		ref := &run.Status.ArtifactRefs[i]
@@ -663,7 +670,9 @@ func TestFilesystemArtifacts(t *testing.T) {
 	}
 	assertTarGzFile(t, bundlePath, "data.txt", "nested")
 
-	artifactPath := "/var/lib/kruntimes/artifacts/" + report.Location.Filesystem.Path
+	deleteRuntimeAndWait(t, runtimeName, 30*time.Second)
+	injectFailedArtifactCleanupJob(t, run)
+
 	ttlSeconds := int32(1)
 	for i := 0; i < 10; i++ {
 		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
@@ -679,9 +688,123 @@ func TestFilesystemArtifacts(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	waitForRunDeleted(t, run, 30*time.Second)
+	assertFilesystemArtifactMissing(t, claimName, report.Location.Filesystem.Path)
+}
 
-	if _, stderr, err := execInPod(context.Background(), run.Status.AssignedPod, "runtimed", []string{"test", "!", "-e", artifactPath}); err != nil {
-		t.Fatalf("artifact remained after Run deletion: %v: %s", err, stderr)
+func injectFailedArtifactCleanupJob(t *testing.T, run *v1alpha1.Run) {
+	t.Helper()
+	backoffLimit := int32(0)
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      artifact.CleanupJobName(run.UID),
+			Namespace: run.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "kruntimes",
+				"app.kubernetes.io/component": "artifact-cleaner",
+			},
+			Annotations: map[string]string{
+				artifact.CleanupRunAnnotation:    run.Name,
+				artifact.CleanupRunUIDAnnotation: string(run.UID),
+			},
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoffLimit,
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				RestartPolicy: corev1.RestartPolicyNever,
+				Containers: []corev1.Container{{
+					Name: "cleaner", Image: bashRuntimeImage(),
+					Command: []string{"/bin/sh", "-c"}, Args: []string{"exit 1"},
+				}},
+			}},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), job); err != nil {
+		t.Fatalf("create failed cleanup Job: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(job), job); err != nil {
+			t.Fatalf("get failed cleanup Job: %v", err)
+		}
+		for _, condition := range job.Status.Conditions {
+			if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for injected cleanup Job to fail")
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func deleteRuntimeAndWait(t *testing.T, name string, timeout time.Duration) {
+	t.Helper()
+	runtimeResource := &v1alpha1.Runtime{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace}}
+	if err := k8sClient.Delete(context.Background(), runtimeResource); err != nil && !apierrors.IsNotFound(err) {
+		t.Fatalf("delete Runtime %s: %v", name, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for {
+		var pods corev1.PodList
+		if err := k8sClient.List(ctx, &pods, client.InNamespace(testNamespace), client.MatchingLabels{"runtime": name}); err != nil {
+			t.Fatalf("list Runtime pods: %v", err)
+		}
+		if len(pods.Items) == 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for Runtime %s pods to be deleted", name)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func assertFilesystemArtifactMissing(t *testing.T, claimName, relativePath string) {
+	t.Helper()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{GenerateName: "artifact-inspector-", Namespace: testNamespace},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			Containers: []corev1.Container{{
+				Name: "inspector", Image: bashRuntimeImage(),
+				Command:      []string{"test"},
+				Args:         []string{"!", "-e", "/artifacts/" + relativePath},
+				VolumeMounts: []corev1.VolumeMount{{Name: "artifacts", MountPath: "/artifacts"}},
+			}},
+			Volumes: []corev1.Volume{{
+				Name: "artifacts",
+				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: claimName,
+				}},
+			}},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), pod); err != nil {
+		t.Fatalf("create artifact inspector Pod: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), pod) })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), pod); err != nil {
+			t.Fatalf("get artifact inspector Pod: %v", err)
+		}
+		switch pod.Status.Phase {
+		case corev1.PodSucceeded:
+			return
+		case corev1.PodFailed:
+			t.Fatalf("artifact inspector found path %s", relativePath)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for artifact inspector Pod, phase=%s", pod.Status.Phase)
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 }
 

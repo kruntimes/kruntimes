@@ -580,6 +580,7 @@ func configureS3ArtifactStore(store *v1alpha1.S3ArtifactStoreSpec, daemon *corev
 		daemon.Args = append(daemon.Args, fmt.Sprintf("--artifact-s3-upload-concurrency=%d", store.UploadConcurrency))
 	}
 	if store.CredentialsSecretName != "" {
+		daemon.Args = append(daemon.Args, fmt.Sprintf("--artifact-s3-credentials-secret-name=%s", store.CredentialsSecretName))
 		daemon.EnvFrom = append(daemon.EnvFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{Name: store.CredentialsSecretName},

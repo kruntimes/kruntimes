@@ -3,8 +3,10 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -37,6 +39,8 @@ func main() {
 		staleThreshold             time.Duration
 		defaultDaemonImage         string
 		runtimedServiceAccountName string
+		artifactCleanerImage       string
+		artifactCleanerPullSecrets string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8082", "The address the metric endpoint binds to.")
@@ -45,6 +49,8 @@ func main() {
 	flag.DurationVar(&staleThreshold, "stale-threshold", 30*time.Second, "Threshold for marking a Run as stale when its assigned pod is unhealthy.")
 	flag.StringVar(&defaultDaemonImage, "default-daemon-image", "", "Default runtimed daemon image injected into Runtime Pods.")
 	flag.StringVar(&runtimedServiceAccountName, "runtimed-service-account-name", "", "ServiceAccount name injected into Runtime Pods for the runtimed sidecar.")
+	flag.StringVar(&artifactCleanerImage, "artifact-cleaner-image", "", "Controller image containing the artifact-cleaner helper.")
+	flag.StringVar(&artifactCleanerPullSecrets, "artifact-cleaner-image-pull-secrets", "", "Comma-separated image pull Secret names for artifact cleanup Jobs.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -89,6 +95,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	artifactCleanup := &controller.ArtifactCleanupReconciler{
+		Client:           mgr.GetClient(),
+		Log:              ctrl.Log.WithName("controllers").WithName("ArtifactCleanup"),
+		Recorder:         mgr.GetEventRecorderFor("artifact-cleanup"),
+		CleanerImage:     artifactCleanerImage,
+		ImagePullSecrets: localObjectReferences(artifactCleanerPullSecrets),
+	}
+	if err := artifactCleanup.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ArtifactCleanup")
+		os.Exit(1)
+	}
+
 	wfReconciler := &controller.WorkflowReconciler{
 		Client: mgr.GetClient(),
 		Log:    ctrl.Log.WithName("controllers").WithName("Workflow"),
@@ -124,4 +142,14 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func localObjectReferences(csv string) []corev1.LocalObjectReference {
+	var refs []corev1.LocalObjectReference
+	for _, value := range strings.Split(csv, ",") {
+		if name := strings.TrimSpace(value); name != "" {
+			refs = append(refs, corev1.LocalObjectReference{Name: name})
+		}
+	}
+	return refs
 }

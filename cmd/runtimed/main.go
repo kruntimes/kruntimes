@@ -58,6 +58,7 @@ func main() {
 		artifactS3Region    string
 		artifactS3Endpoint  string
 		artifactS3PathStyle bool
+		artifactS3Secret    string
 		artifactS3PartSize  int64
 		artifactS3Workers   int
 		maxArtifactBytes    int64
@@ -78,6 +79,7 @@ func main() {
 	flag.StringVar(&artifactS3Region, "artifact-s3-region", "", "S3 region override.")
 	flag.StringVar(&artifactS3Endpoint, "artifact-s3-endpoint", "", "S3-compatible endpoint override.")
 	flag.BoolVar(&artifactS3PathStyle, "artifact-s3-force-path-style", false, "Use path-style S3 addressing.")
+	flag.StringVar(&artifactS3Secret, "artifact-s3-credentials-secret-name", "", "Secret containing S3 credentials (recorded for centralized cleanup).")
 	flag.Int64Var(&artifactS3PartSize, "artifact-s3-upload-part-size", 0, "S3 multipart upload part size.")
 	flag.IntVar(&artifactS3Workers, "artifact-s3-upload-concurrency", 0, "S3 multipart upload concurrency.")
 	flag.Int64Var(&maxArtifactBytes, "max-artifact-bytes", artifact.DefaultMaxArtifactBytes, "Maximum bytes allowed for one artifact.")
@@ -144,10 +146,17 @@ func main() {
 	defer cancel()
 
 	var artifactStore artifact.Store
+	var artifactStoreSpec *v1alpha1.RuntimeArtifactStoreSpec
 	switch artifactStoreDriver {
 	case "", string(v1alpha1.ArtifactDriverFilesystem):
 		if artifactStoreRoot != "" || artifactVolumeClaim != "" {
 			artifactStore, err = artifactfs.NewWithLimit(artifactStoreRoot, artifactVolumeClaim, maxArtifactBytes)
+			artifactStoreSpec = &v1alpha1.RuntimeArtifactStoreSpec{
+				Driver: v1alpha1.ArtifactDriverFilesystem,
+				Filesystem: &v1alpha1.FilesystemArtifactStoreSpec{
+					VolumeClaimName: artifactVolumeClaim,
+				},
+			}
 		}
 	case string(v1alpha1.ArtifactDriverS3):
 		artifactStore, err = artifacts3.New(ctx, artifacts3.Config{
@@ -159,6 +168,19 @@ func main() {
 			UploadPartSize:    artifactS3PartSize,
 			UploadConcurrency: artifactS3Workers,
 		})
+		artifactStoreSpec = &v1alpha1.RuntimeArtifactStoreSpec{
+			Driver: v1alpha1.ArtifactDriverS3,
+			S3: &v1alpha1.S3ArtifactStoreSpec{
+				Bucket:                artifactS3Bucket,
+				Prefix:                artifactS3Prefix,
+				Region:                artifactS3Region,
+				Endpoint:              artifactS3Endpoint,
+				ForcePathStyle:        artifactS3PathStyle,
+				CredentialsSecretName: artifactS3Secret,
+				UploadPartSize:        artifactS3PartSize,
+				UploadConcurrency:     int32(artifactS3Workers),
+			},
+		}
 	default:
 		err = fmt.Errorf("unsupported artifact store driver %q", artifactStoreDriver)
 	}
@@ -197,6 +219,7 @@ func main() {
 		RuntimeEndpoint:   runtimeEndpoint,
 		Workers:           workers,
 		ArtifactStore:     artifactStore,
+		ArtifactStoreSpec: artifactStoreSpec,
 		MaxArtifactBytes:  maxArtifactBytes,
 		MaxArtifactsBytes: maxArtifactsBytes,
 		Recorder:          mgr.GetEventRecorderFor("runtimed"),

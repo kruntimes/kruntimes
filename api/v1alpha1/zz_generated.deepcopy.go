@@ -326,6 +326,11 @@ func (in *RunStatus) DeepCopyInto(out *RunStatus) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.ArtifactStore != nil {
+		in, out := &in.ArtifactStore, &out.ArtifactStore
+		*out = new(RuntimeArtifactStoreSpec)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))

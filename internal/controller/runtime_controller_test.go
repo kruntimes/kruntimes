@@ -536,6 +536,7 @@ func TestBuildDeploymentConfiguresS3ArtifactStoreOnlyInRuntimed(t *testing.T) {
 		"--artifact-s3-force-path-style=true",
 		"--artifact-s3-upload-part-size=8388608",
 		"--artifact-s3-upload-concurrency=4",
+		"--artifact-s3-credentials-secret-name=artifact-credentials",
 	}
 	for _, arg := range wantArgs {
 		if !slices.Contains(daemon.Args, arg) {
