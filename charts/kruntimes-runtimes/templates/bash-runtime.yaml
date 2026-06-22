@@ -6,15 +6,19 @@ metadata:
   labels:
     {{- include "kruntimes-runtimes.labels" . | nindent 4 }}
 spec:
-  image: {{ include "kruntimes-runtimes.image" (list . .Values.bash.image) }}
   port: {{ .Values.bash.port }}
   replicas: {{ .Values.bash.replicas }}
   capacity:
     {{- toYaml .Values.bash.capacity | nindent 4 }}
-  resources:
-    {{- toYaml .Values.bash.resources | nindent 4 }}
   workspace:
     sizeLimit: {{ .Values.workspace.sizeLimit | quote }}
-  command:
-    - --port={{ .Values.bash.port }}
-    - --work-dir=/workspace
+  template:
+    spec:
+      containers:
+        - name: runtime
+          image: {{ include "kruntimes-runtimes.image" (list . .Values.bash.image) }}
+          args:
+            - --port={{ .Values.bash.port }}
+            - --work-dir=/workspace
+          resources:
+            {{- toYaml .Values.bash.resources | nindent 12 }}

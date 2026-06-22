@@ -46,12 +46,15 @@ rules:
       - list
       - watch
       - create
+      - update
+      - patch
       - delete
   - apiGroups:
       - kruntimes.io
     resources:
       - runs/status
     verbs:
+      - get
       - update
       - patch
   - apiGroups:
@@ -109,6 +112,13 @@ rules:
       - get
       - list
       - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods/status
+    verbs:
+      - get
+      - patch
   - apiGroups:
       - ""
     resources:

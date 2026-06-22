@@ -620,10 +620,33 @@ kind: Runtime
 metadata:
   name: my-python
 spec:
-  image: my-python-runtime:latest
   port: 9091
   replicas: 3
+  template:
+    metadata:
+      labels:
+        workload-tier: runtimes
+    spec:
+      serviceAccountName: my-python-runtime
+      containers:
+        - name: runtime
+          image: my-python-runtime:latest
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
 ```
+
+The first container in `spec.template.spec.containers` must be named `runtime`.
+The controller owns the `runtime` and `app` selector labels, the `grpc` port,
+the runtime container's `/workspace` mount, the `runtimed` sidecar, and the
+`workspace` and `artifact-store` volumes. User entries with the reserved
+`runtimed`, `workspace`, or `artifact-store` names are ignored; the artifact
+store volume is never mounted into user containers. Custom probes, resources,
+security contexts, labels, annotations, scheduling constraints, image pull
+secrets, init containers, and additional sidecars are otherwise preserved.
+When probes, resources, or security contexts are omitted from the `runtime`
+container, the controller supplies secure defaults.
 
 ## Metrics
 

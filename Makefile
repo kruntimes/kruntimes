@@ -112,7 +112,8 @@ e2e-setup: manifests docker-build ## Create kind cluster, load images, and deplo
 	kind load docker-image $(E2E_IMG_RUNTIMED) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_BASH_RUNTIME) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_PYTHON_RUNTIME) --name $(KIND_CLUSTER_NAME)
-	kubectl apply -f charts/kruntimes/crds
+	# Server-side apply avoids copying large CRD schemas into the 256 KiB last-applied annotation.
+	kubectl apply --server-side --force-conflicts -f charts/kruntimes/crds
 	$(HELM) upgrade --install kruntimes ./charts/kruntimes \
 		--set scheduler.image=$(E2E_IMG_SCHEDULER) \
 		--set controller.image=$(E2E_IMG_CONTROLLER) \

@@ -18,13 +18,15 @@ type runtimeHealthClient interface {
 }
 
 // KubernetesAPI checks that the component can read its primary API resource.
-func KubernetesAPI(reader client.Reader, prototype client.ObjectList) healthz.Checker {
+func KubernetesAPI(reader client.Reader, prototype client.ObjectList, opts ...client.ListOption) healthz.Checker {
 	return func(req *http.Request) error {
 		list, ok := prototype.DeepCopyObject().(client.ObjectList)
 		if !ok {
 			return fmt.Errorf("copy readiness list %T", prototype)
 		}
-		if err := reader.List(req.Context(), list, client.Limit(1)); err != nil {
+		listOpts := append([]client.ListOption(nil), opts...)
+		listOpts = append(listOpts, client.Limit(1))
+		if err := reader.List(req.Context(), list, listOpts...); err != nil {
 			return fmt.Errorf("query Kubernetes API: %w", err)
 		}
 		return nil

@@ -35,6 +35,7 @@ jobs:
       - name: Dump Kubernetes diagnostics
         if: failure()
         run: |
+          set +e
           kubectl get nodes -o wide
           kubectl get pods,deployments,replicasets,runtimes,runs,workflows -A -o wide
           kubectl describe pods -A
@@ -43,3 +44,10 @@ jobs:
           kubectl get events -A --sort-by=.lastTimestamp
           kubectl logs deploy/kruntimes-controller --all-containers --tail=300 || true
           kubectl logs -l app=kruntimes-scheduler --all-containers --tail=300 || true
+          for pod in $(kubectl get pods -A -l runtime -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}'); do
+            namespace=${pod%%/*}
+            name=${pod#*/}
+            kubectl logs -n "$namespace" "$name" --all-containers --tail=300 || true
+            kubectl exec -n "$namespace" "$name" -c runtime -- bash -c \
+              'exec 3<>/dev/tcp/127.0.0.1/9094; printf "GET /readyz?verbose HTTP/1.0\r\n\r\n" >&3; cat <&3' || true
+          done
