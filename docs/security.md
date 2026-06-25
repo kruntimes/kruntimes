@@ -155,8 +155,8 @@ policy, and admission controls.
   can inspect its spec.
 - Treat Git repositories and inline source as executable input.
 - A Runtime artifact `credentialsSecretName` is exposed to the runtimed
-  container and read by the controller for artifact finalizer cleanup. Because
-  a Runtime administrator can also select `spec.daemonImage`, only trusted
-  administrators may configure Runtime objects.
+  container. Because a Runtime administrator can also select
+  `spec.daemonImage`, only trusted administrators may configure Runtime
+  objects.
 - Review the service account, volumes, Secrets, network access, and node
   placement of every custom Runtime before allowing users to submit Runs to it.

@@ -104,10 +104,6 @@ controller:
         matchLabels:
           app.kubernetes.io/component: controller
   priorityClassName: system-cluster-critical
-  artifactStore:
-    filesystem:
-      volumeClaimName: controller-artifacts
-      mountPath: /mnt/kruntimes-artifacts
 """
 
 
@@ -165,9 +161,6 @@ def main() -> int:
                 "topologySpreadConstraints:",
                 "priorityClassName: system-cluster-critical",
                 "port: probes",
-                "--artifact-filesystem-root=/mnt/kruntimes-artifacts",
-                "mountPath: /mnt/kruntimes-artifacts",
-                "claimName: controller-artifacts",
             ],
         ),
     ]

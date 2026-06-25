@@ -382,19 +382,14 @@ deletion and `ttlSecondsAfterFinished` garbage collection remove all external
 objects for the Run before the Run is deleted. Before the first upload,
 runtimed snapshots the non-secret store configuration in
 `Run.status.artifactStore`. The long-lived controller uses that snapshot to
-delete artifacts directly, so cleanup does not depend on the Runtime or its
-Pods still existing and does not require scheduling a new cleanup workload.
-
-For filesystem ArtifactStores, mount the same PVC into the controller by setting
-`controller.artifactStore.filesystem.volumeClaimName` in the platform chart.
-For S3-compatible stores, the controller reads `credentialsSecretName` in the
-Run namespace only while cleaning artifacts.
+run an isolated cleanup Job, so cleanup does not depend on the Runtime or its
+Pods still existing.
 
 Cleanup is idempotent: an already-missing filesystem path or S3 object is
 treated as success. Missing PVCs, unavailable object stores, and missing or
-invalid credential Secrets keep the Run finalizer in place; the controller
-retries after the dependency is restored. Secret contents are never copied into
-the Run. For Runs created before store snapshots were
+invalid credential Secrets keep the Run finalizer in place; the cleanup Job
+continues or is recreated after the dependency is restored. Secret contents
+are never copied into the Run. For Runs created before store snapshots were
 introduced, the controller copies the configuration from the Runtime while it
 still exists. If both the snapshot and Runtime are missing, recreate the
 Runtime with the original artifact store configuration so migration and

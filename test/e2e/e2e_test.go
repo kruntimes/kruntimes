@@ -14,6 +14,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -29,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/artifact"
 	"github.com/kruntimes/kruntimes/internal/krt"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
@@ -63,6 +65,7 @@ func runtimedImage() string {
 func TestMain(m *testing.M) {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(batchv1.AddToScheme(scheme))
 	utilruntime.Must(v1alpha1.AddToScheme(scheme))
 
 	restConfig = config.GetConfigOrDie()
@@ -146,7 +149,6 @@ func ensureFilesystemRuntime(t *testing.T, name, claimName string) {
 	if err := k8sClient.Create(context.Background(), claim); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create artifact PVC: %v", err)
 	}
-	configureControllerArtifactPVC(t, claimName)
 
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
@@ -669,6 +671,7 @@ func TestFilesystemArtifacts(t *testing.T) {
 	assertTarGzFile(t, bundlePath, "data.txt", "nested")
 
 	deleteRuntimeAndWait(t, runtimeName, 30*time.Second)
+	injectFailedArtifactCleanupJob(t, run)
 
 	ttlSeconds := int32(1)
 	for i := 0; i < 10; i++ {
@@ -688,86 +691,53 @@ func TestFilesystemArtifacts(t *testing.T) {
 	assertFilesystemArtifactMissing(t, claimName, report.Location.Filesystem.Path)
 }
 
-func configureControllerArtifactPVC(t *testing.T, claimName string) {
+func injectFailedArtifactCleanupJob(t *testing.T, run *v1alpha1.Run) {
 	t.Helper()
-	key := client.ObjectKey{Namespace: testNamespace, Name: "kruntimes-controller"}
-	for i := 0; i < 10; i++ {
-		var deploy appsv1.Deployment
-		if err := k8sClient.Get(context.Background(), key, &deploy); err != nil {
-			t.Fatalf("get controller deployment: %v", err)
-		}
-		podSpec := &deploy.Spec.Template.Spec
-		podSpec.Volumes = upsertVolume(podSpec.Volumes, corev1.Volume{
-			Name: "artifact-store",
-			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: claimName,
+	backoffLimit := int32(0)
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      artifact.CleanupJobName(run.UID),
+			Namespace: run.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "kruntimes",
+				"app.kubernetes.io/component": "artifact-cleaner",
+			},
+			Annotations: map[string]string{
+				artifact.CleanupRunAnnotation:    run.Name,
+				artifact.CleanupRunUIDAnnotation: string(run.UID),
+			},
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoffLimit,
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				RestartPolicy: corev1.RestartPolicyNever,
+				Containers: []corev1.Container{{
+					Name: "cleaner", Image: bashRuntimeImage(),
+					Command: []string{"/bin/sh", "-c"}, Args: []string{"exit 1"},
+				}},
 			}},
-		})
-		for idx := range podSpec.Containers {
-			if podSpec.Containers[idx].Name == "controller" {
-				podSpec.Containers[idx].VolumeMounts = upsertVolumeMount(
-					podSpec.Containers[idx].VolumeMounts,
-					corev1.VolumeMount{Name: "artifact-store", MountPath: "/var/lib/kruntimes/artifacts"},
-				)
-				break
-			}
-		}
-		if err := k8sClient.Update(context.Background(), &deploy); err == nil {
-			waitForDeploymentAvailable(t, key, deploy.Generation, 60*time.Second)
-			return
-		} else if !apierrors.IsConflict(err) {
-			t.Fatalf("update controller deployment: %v", err)
-		}
-		time.Sleep(200 * time.Millisecond)
+		},
 	}
-	t.Fatal("failed to configure controller artifact PVC")
-}
-
-func waitForDeploymentAvailable(t *testing.T, key client.ObjectKey, generation int64, timeout time.Duration) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	if err := k8sClient.Create(context.Background(), job); err != nil {
+		t.Fatalf("create failed cleanup Job: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for {
-		var deploy appsv1.Deployment
-		if err := k8sClient.Get(ctx, key, &deploy); err != nil {
-			t.Fatalf("get deployment: %v", err)
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(job), job); err != nil {
+			t.Fatalf("get failed cleanup Job: %v", err)
 		}
-		if deploy.Status.ObservedGeneration >= generation {
-			for _, condition := range deploy.Status.Conditions {
-				if condition.Type == appsv1.DeploymentAvailable && condition.Status == corev1.ConditionTrue {
-					return
-				}
-			}
-			if deploy.Status.UpdatedReplicas == *deploy.Spec.Replicas && deploy.Status.AvailableReplicas == *deploy.Spec.Replicas {
+		for _, condition := range job.Status.Conditions {
+			if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
 				return
 			}
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("timed out waiting for deployment %s to become available", key)
+			t.Fatalf("timed out waiting for injected cleanup Job to fail")
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-}
-
-func upsertVolume(volumes []corev1.Volume, volume corev1.Volume) []corev1.Volume {
-	for idx := range volumes {
-		if volumes[idx].Name == volume.Name {
-			volumes[idx] = volume
-			return volumes
-		}
-	}
-	return append(volumes, volume)
-}
-
-func upsertVolumeMount(mounts []corev1.VolumeMount, mount corev1.VolumeMount) []corev1.VolumeMount {
-	for idx := range mounts {
-		if mounts[idx].Name == mount.Name {
-			mounts[idx] = mount
-			return mounts
-		}
-	}
-	return append(mounts, mount)
 }
 
 func deleteRuntimeAndWait(t *testing.T, name string, timeout time.Duration) {

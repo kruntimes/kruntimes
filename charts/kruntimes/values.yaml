@@ -58,13 +58,6 @@ controller:
   affinity: {}
   topologySpreadConstraints: []
   priorityClassName: ""
-  artifactStore:
-    filesystem:
-      # Mount the shared filesystem ArtifactStore PVC into the controller so it
-      # can remove Run artifacts without creating cleanup Jobs. Leave empty
-      # when using only S3-compatible ArtifactStores.
-      volumeClaimName: ""
-      mountPath: /var/lib/kruntimes/artifacts
   resources:
     requests:
       cpu: 100m
