@@ -109,7 +109,7 @@ func TestApplySuccessWritesArtifactRefsOnlyAfterAllUploadsSucceed(t *testing.T) 
 		WithObjects(run).
 		Build()
 	store := &fakeArtifactStore{failAt: 2}
-	c := &Controller{Client: k8sClient, ArtifactStore: store}
+	c := &Controller{Client: k8sClient, ArtifactStore: store, ArtifactStoreSpec: artifactTestStoreSpec()}
 	ar := &activeRun{run: run, workDir: filepath.Join(workspacePath, string(run.UID))}
 
 	result, err := c.applySuccess(t.Context(), ar, &pb.StatusResponse{Stdout: "stdout"})
@@ -298,8 +298,9 @@ func TestApplySuccessTransientStoreFailureRequeuesWithoutChangingRun(t *testing.
 		WithObjects(run).
 		Build()
 	c := &Controller{
-		Client:        k8sClient,
-		ArtifactStore: &fakeArtifactStore{failAt: 1},
+		Client:            k8sClient,
+		ArtifactStore:     &fakeArtifactStore{failAt: 1},
+		ArtifactStoreSpec: artifactTestStoreSpec(),
 	}
 	ar := &activeRun{run: run, workDir: filepath.Join(workspacePath, string(run.UID))}
 
@@ -347,7 +348,7 @@ func TestApplySuccessInvalidArtifactTerminatesWithoutRetry(t *testing.T) {
 		WithObjects(run).
 		Build()
 	store := &fakeArtifactStore{}
-	c := &Controller{Client: k8sClient, ArtifactStore: store}
+	c := &Controller{Client: k8sClient, ArtifactStore: store, ArtifactStoreSpec: artifactTestStoreSpec()}
 	ar := &activeRun{run: run, workDir: filepath.Join(workspacePath, string(run.UID))}
 
 	if _, err := c.applySuccess(t.Context(), ar, &pb.StatusResponse{Stdout: "stdout"}); err != nil {
@@ -369,7 +370,7 @@ func TestApplySuccessInvalidArtifactTerminatesWithoutRetry(t *testing.T) {
 	}
 }
 
-func TestReconcileArtifactDeletionDeletesRunObjectsAndRemovesFinalizer(t *testing.T) {
+func TestReconcileArtifactDeletionLeavesCleanupToCentralController(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -392,13 +393,16 @@ func TestReconcileArtifactDeletionDeletesRunObjectsAndRemovesFinalizer(t *testin
 	if _, err := c.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
 		t.Fatalf("Reconcile deletion: %v", err)
 	}
-	if store.deleteRuns != 1 {
-		t.Fatalf("DeleteRun calls = %d, want 1", store.deleteRuns)
+	if store.deleteRuns != 0 {
+		t.Fatalf("DeleteRun calls = %d, want 0", store.deleteRuns)
 	}
 	var current v1alpha1.Run
 	err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), &current)
-	if err == nil && slices.Contains(current.Finalizers, artifact.RunArtifactFinalizer) {
-		t.Fatalf("finalizer was not removed: %v", current.Finalizers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(current.Finalizers, artifact.RunArtifactFinalizer) {
+		t.Fatalf("central cleanup finalizer was removed: %v", current.Finalizers)
 	}
 }
 
@@ -463,6 +467,15 @@ func artifactTestRun() *v1alpha1.Run {
 			UID:       "artifact-run-uid",
 		},
 		Spec: v1alpha1.RunSpec{Runtime: "bash"},
+	}
+}
+
+func artifactTestStoreSpec() *v1alpha1.RuntimeArtifactStoreSpec {
+	return &v1alpha1.RuntimeArtifactStoreSpec{
+		Driver: v1alpha1.ArtifactDriverFilesystem,
+		Filesystem: &v1alpha1.FilesystemArtifactStoreSpec{
+			VolumeClaimName: "artifacts-pvc",
+		},
 	}
 }
 

@@ -264,6 +264,12 @@ type RunStatus struct {
 	// +kubebuilder:validation:MaxItems=32
 	ArtifactRefs []ArtifactRef `json:"artifactRefs,omitempty"`
 
+	// ArtifactStore is the immutable cleanup configuration captured before
+	// artifacts are uploaded. It allows cleanup to continue if the Runtime is
+	// later changed or deleted. Secret contents are never copied here.
+	// +optional
+	ArtifactStore *RuntimeArtifactStoreSpec `json:"artifactStore,omitempty"`
+
 	// Attempt is the current execution attempt number (1-based).
 	// +optional
 	Attempt int32 `json:"attempt,omitempty"`

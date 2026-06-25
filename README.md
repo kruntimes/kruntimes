@@ -379,7 +379,21 @@ file, verify size and SHA-256, then atomically rename into place.
 
 Runs that publish artifacts carry an artifact cleanup finalizer. Manual
 deletion and `ttlSecondsAfterFinished` garbage collection remove all external
-objects for the Run before the Run is deleted.
+objects for the Run before the Run is deleted. Before the first upload,
+runtimed snapshots the non-secret store configuration in
+`Run.status.artifactStore`. The long-lived controller uses that snapshot to
+run an isolated cleanup Job, so cleanup does not depend on the Runtime or its
+Pods still existing.
+
+Cleanup is idempotent: an already-missing filesystem path or S3 object is
+treated as success. Missing PVCs, unavailable object stores, and missing or
+invalid credential Secrets keep the Run finalizer in place; the cleanup Job
+continues or is recreated after the dependency is restored. Secret contents
+are never copied into the Run. For Runs created before store snapshots were
+introduced, the controller copies the configuration from the Runtime while it
+still exists. If both the snapshot and Runtime are missing, recreate the
+Runtime with the original artifact store configuration so migration and
+cleanup can continue.
 
 ## Quick Start
 

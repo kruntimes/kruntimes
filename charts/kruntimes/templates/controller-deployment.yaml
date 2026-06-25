@@ -1,3 +1,7 @@
+{{- $artifactCleanerPullSecrets := list -}}
+{{- range .Values.imagePullSecrets -}}
+{{- $artifactCleanerPullSecrets = append $artifactCleanerPullSecrets .name -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -61,6 +65,10 @@ spec:
             - --health-probe-bind-address={{ .Values.controller.probeBindAddress }}
             - --default-daemon-image={{ include "kruntimes.image" (list . .Values.runtimed.image) }}
             - --runtimed-service-account-name={{ include "kruntimes.runtimed.name" . }}
+            - --artifact-cleaner-image={{ include "kruntimes.image" (list . .Values.controller.image) }}
+            {{- if $artifactCleanerPullSecrets }}
+            - --artifact-cleaner-image-pull-secrets={{ join "," $artifactCleanerPullSecrets }}
+            {{- end }}
           ports:
             - containerPort: {{ .Values.controller.metricsPort }}
               name: metrics

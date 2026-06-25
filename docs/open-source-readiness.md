@@ -124,15 +124,16 @@
 
 ### 7. Artifact Cleanup Ownership
 
-目前 artifact finalizer 由 Runtime Pod 内的 runtimed 执行。Runtime 被删除、缩容到零或
-凭据不可用时，Run 可能永久停留在 `Terminating`。
+Artifact finalizer 最初由 Runtime Pod 内的 runtimed 执行，导致 Runtime 删除或缩容到零
+时无法清理。现在由长期运行的 controller 创建独立 cleanup Job，并从 Run status 中读取
+持久化的 store 配置快照。
 
-- [ ] 将 artifact finalizer 清理迁移到独立、长期存在的 controller，或提供等价的
+- [x] 将 artifact finalizer 清理迁移到独立、长期存在的 controller，或提供等价的
   central GC。
-- [ ] 定义 store 配置删除、凭据丢失和外部对象不存在时的恢复语义。
+- [x] 定义 store 配置删除、凭据丢失和外部对象不存在时的恢复语义。
 - [x] 对部分上传失败进行回滚，避免孤立对象。
 - [x] S3 上传前执行最终存储大小限制，避免先上传再拒绝。
-- [ ] 增加 finalizer 故障恢复和 Runtime 删除后的 E2E 测试。
+- [x] 增加 finalizer 故障恢复和 Runtime 删除后的 E2E 测试。
 
 验收标准：
 

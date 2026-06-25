@@ -425,6 +425,86 @@ spec:
                       || (self.driver == 's3' && has(self.location.s3))
                 maxItems: 32
                 type: array
+              artifactStore:
+                description: |-
+                  ArtifactStore is the immutable cleanup configuration captured before
+                  artifacts are uploaded. It allows cleanup to continue if the Runtime is
+                  later changed or deleted. Secret contents are never copied here.
+                properties:
+                  driver:
+                    description: Driver identifies the configured artifact storage
+                      backend.
+                    enum:
+                    - filesystem
+                    - s3
+                    type: string
+                  filesystem:
+                    description: Filesystem configures a PVC-backed filesystem artifact
+                      store.
+                    properties:
+                      volumeClaimName:
+                        description: VolumeClaimName is the PVC mounted into runtimed
+                          for durable artifact storage.
+                        minLength: 1
+                        type: string
+                    required:
+                    - volumeClaimName
+                    type: object
+                  s3:
+                    description: S3 configures an S3-compatible object artifact store.
+                    properties:
+                      bucket:
+                        description: Bucket is the S3 bucket used to store artifacts.
+                        minLength: 1
+                        pattern: ^[^/]+$
+                        type: string
+                      credentialsSecretName:
+                        description: |-
+                          CredentialsSecretName names a Secret whose keys are exposed to runtimed
+                          as environment variables for the AWS SDK credential chain.
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      endpoint:
+                        description: Endpoint configures a custom S3-compatible service
+                          endpoint.
+                        maxLength: 2048
+                        type: string
+                      forcePathStyle:
+                        description: ForcePathStyle enables path-style S3 addressing.
+                        type: boolean
+                      prefix:
+                        description: Prefix is prepended to generated artifact object
+                          keys.
+                        maxLength: 1024
+                        type: string
+                      region:
+                        description: Region overrides the AWS SDK region.
+                        maxLength: 128
+                        type: string
+                      uploadConcurrency:
+                        description: UploadConcurrency overrides the number of concurrent
+                          multipart upload workers.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      uploadPartSize:
+                        description: UploadPartSize overrides the multipart upload
+                          part size in bytes.
+                        format: int64
+                        minimum: 5242880
+                        type: integer
+                    required:
+                    - bucket
+                    type: object
+                required:
+                - driver
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one artifact store configuration matching driver
+                    must be set
+                  rule: (self.driver == 'filesystem' && has(self.filesystem) && !has(self.s3))
+                    || (self.driver == 's3' && has(self.s3) && !has(self.filesystem))
               assignedPod:
                 description: AssignedPod is the name of the Runtime Pod assigned by
                   the scheduler.

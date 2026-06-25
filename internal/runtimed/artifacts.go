@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
@@ -102,6 +101,15 @@ func (c *Controller) collectArtifacts(ctx context.Context, run *v1alpha1.Run) (r
 }
 
 func (c *Controller) ensureArtifactFinalizer(ctx context.Context, run *v1alpha1.Run) error {
+	if run.Status.ArtifactStore == nil && c.Client != nil {
+		if c.ArtifactStoreSpec == nil {
+			return fmt.Errorf("artifact store cleanup configuration is not available")
+		}
+		run.Status.ArtifactStore = c.ArtifactStoreSpec.DeepCopy()
+		if err := c.Status().Update(ctx, run); err != nil {
+			return fmt.Errorf("record artifact store cleanup configuration: %w", err)
+		}
+	}
 	if controllerutil.ContainsFinalizer(run, artifact.RunArtifactFinalizer) {
 		return nil
 	}
@@ -113,20 +121,6 @@ func (c *Controller) ensureArtifactFinalizer(ctx context.Context, run *v1alpha1.
 		return fmt.Errorf("add artifact cleanup finalizer: %w", err)
 	}
 	return nil
-}
-
-func (c *Controller) reconcileArtifactDeletion(ctx context.Context, run *v1alpha1.Run) (ctrl.Result, error) {
-	if !controllerutil.ContainsFinalizer(run, artifact.RunArtifactFinalizer) {
-		return ctrl.Result{}, nil
-	}
-	if err := c.deleteRunArtifacts(ctx, run); err != nil {
-		return ctrl.Result{}, err
-	}
-	controllerutil.RemoveFinalizer(run, artifact.RunArtifactFinalizer)
-	if err := c.Update(ctx, run); err != nil {
-		return ctrl.Result{}, fmt.Errorf("remove artifact cleanup finalizer: %w", err)
-	}
-	return ctrl.Result{}, nil
 }
 
 func (c *Controller) deleteRunArtifacts(ctx context.Context, run *v1alpha1.Run) error {

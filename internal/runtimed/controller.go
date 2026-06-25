@@ -26,7 +26,6 @@ import (
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -117,6 +116,7 @@ type Controller struct {
 	RuntimeEndpoint   string
 	Workers           int
 	ArtifactStore     artifact.Store
+	ArtifactStoreSpec *v1alpha1.RuntimeArtifactStoreSpec
 	MaxArtifactBytes  int64
 	MaxArtifactsBytes int64
 
@@ -195,8 +195,7 @@ func (c *Controller) runFilter() predicate.Predicate {
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			run, ok := e.ObjectNew.(*v1alpha1.Run)
-			return ok && c.matchesRuntimeNamespace(run) &&
-				(run.Status.AssignedPod == c.Hostname || c.shouldCleanupArtifacts(run))
+			return ok && c.matchesRuntimeNamespace(run) && run.Status.AssignedPod == c.Hostname
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool { return false },
 		GenericFunc: func(e event.GenericEvent) bool {
@@ -218,7 +217,7 @@ func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !run.DeletionTimestamp.IsZero() {
-		return c.reconcileArtifactDeletion(ctx, &run)
+		return ctrl.Result{}, nil
 	}
 
 	switch run.Status.Phase {
@@ -556,17 +555,6 @@ func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, resp *pb.S
 			"Run succeeded after %d attempts", run.Status.Attempt)
 	}
 	return ctrl.Result{}, nil
-}
-
-func (c *Controller) shouldCleanupArtifacts(run *v1alpha1.Run) bool {
-	if run == nil || run.DeletionTimestamp.IsZero() ||
-		!controllerutil.ContainsFinalizer(run, artifact.RunArtifactFinalizer) {
-		return false
-	}
-	if c.RuntimeName != "" {
-		return run.Spec.Runtime == c.RuntimeName
-	}
-	return run.Status.AssignedPod == c.Hostname
 }
 
 // ===========================================================================
