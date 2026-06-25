@@ -154,7 +154,7 @@ Artifact finalizer 最初由 Runtime Pod 内的 runtimed 执行，导致 Runtime
 - [x] Python 镜像通过 `uv.lock` 安装依赖，不直接安装未固定版本。
 - [x] 固定 Makefile 中 controller-gen、setup-envtest、golangci-lint、
   protoc plugins 和 uv 的版本。
-- [ ] 发布镜像生成 SBOM，并使用 cosign 或等价机制签名。
+- [x] 发布镜像生成 SBOM，并使用 cosign 或等价机制签名。
 
 验收标准：
 

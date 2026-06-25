@@ -567,6 +567,25 @@ make test-integration      # integration tests (envtest)
 make docker-build          # build all Docker images
 ```
 
+## Release Images
+
+Pushing a SemVer tag such as `v0.1.0` runs the `Release Images` workflow. The
+workflow publishes the scheduler, controller, runtimed, Bash Runtime, and Python
+Runtime images to GitHub Container Registry under `ghcr.io/<owner>/`.
+
+Each published image is built for `linux/amd64` and `linux/arm64`, includes
+BuildKit SBOM and provenance attestations, and is signed with `cosign` keyless
+signing through GitHub OIDC. Tags include the original Git tag, the SemVer
+version without the leading `v`, and the major/minor version.
+
+Example verification:
+
+```bash
+cosign verify ghcr.io/<owner>/kruntimes-controller:0.1.0 \
+  --certificate-identity-regexp 'https://github.com/.*/.github/workflows/release-images.yml@refs/tags/v0.1.0' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 ## Python Runtime
 
 ### Development Setup
