@@ -3,12 +3,10 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o controller ./cmd/controller && \
-    CGO_ENABLED=0 go build -o artifact-cleaner ./cmd/artifact-cleaner
+RUN CGO_ENABLED=0 go build -o controller ./cmd/controller
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /app/controller /controller
-COPY --from=builder /app/artifact-cleaner /artifact-cleaner
 USER 65532
 ENTRYPOINT ["/controller"]

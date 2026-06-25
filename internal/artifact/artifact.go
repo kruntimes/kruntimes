@@ -2,13 +2,9 @@ package artifact
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"time"
-
-	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -32,18 +28,9 @@ const (
 	DefaultMaxArtifactsBytes int64 = 10 << 30
 
 	RunArtifactFinalizer = "kruntimes.io/artifact-cleanup"
-
-	CleanupRunAnnotation    = "kruntimes.io/artifact-cleanup-run"
-	CleanupRunUIDAnnotation = "kruntimes.io/artifact-cleanup-run-uid"
 )
 
 var ErrSizeLimitExceeded = errors.New("artifact size limit exceeded")
-
-// CleanupJobName returns the stable name of the cleanup Job for a Run UID.
-func CleanupJobName(uid types.UID) string {
-	sum := sha256.Sum256([]byte(uid))
-	return "artifact-cleanup-" + hex.EncodeToString(sum[:8])
-}
 
 // PutOptions describes metadata applied while storing an artifact.
 type PutOptions struct {

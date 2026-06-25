@@ -23,6 +23,10 @@ type Config struct {
 	Endpoint       string
 	ForcePathStyle bool
 
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+
 	UploadPartSize    int64
 	UploadConcurrency int
 }
@@ -61,6 +65,19 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 	loadOptions := make([]func(*awsconfig.LoadOptions) error, 0, 1)
 	if cfg.Region != "" {
 		loadOptions = append(loadOptions, awsconfig.WithRegion(cfg.Region))
+	}
+	if cfg.AccessKeyID != "" || cfg.SecretAccessKey != "" || cfg.SessionToken != "" {
+		if cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
+			return nil, fmt.Errorf("s3 access key id and secret access key must both be set")
+		}
+		loadOptions = append(loadOptions, awsconfig.WithCredentialsProvider(aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+			return aws.Credentials{
+				AccessKeyID:     cfg.AccessKeyID,
+				SecretAccessKey: cfg.SecretAccessKey,
+				SessionToken:    cfg.SessionToken,
+				Source:          "kruntimes artifact store secret",
+			}, nil
+		})))
 	}
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOptions...)
 	if err != nil {
