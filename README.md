@@ -580,6 +580,9 @@ make docker-build          # build all Docker images
 See [docs/release.md](docs/release.md) for the SemVer, changelog, release
 notes, and pre-tag checklist.
 
+See [docs/compatibility.md](docs/compatibility.md) for the Kubernetes, Helm,
+Go, Python, and `krt` release artifact compatibility matrix.
+
 Pushing a SemVer tag such as `v0.1.0` runs the `Release Images` workflow. The
 workflow publishes the scheduler, controller, runtimed, Bash Runtime, and Python
 Runtime images to GitHub Container Registry under `ghcr.io/<owner>/`.
@@ -619,7 +622,7 @@ uv run python -m unittest server_test -v
 
 ### How it works
 
-The Python runtime is a standalone gRPC server (Python 3.13) deployed alongside the runtimed daemon. The runtimed handles code preparation (inline dump, git clone) on the shared `/workspace` volume, then delegates execution to the Python runtime via gRPC.
+The Python runtime is a standalone gRPC server (Python 3.14 in the released image) deployed alongside the runtimed daemon. The runtimed handles code preparation (inline dump, git clone) on the shared `/workspace` volume, then delegates execution to the Python runtime via gRPC.
 
 **Execution flow:**
 1. Runtimed prepares source on `/workspace/<uid>/` — inline code dumped to the `entrypoint` file (default `"script"`), or git clone to `repo/`

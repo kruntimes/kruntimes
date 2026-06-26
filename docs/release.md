@@ -45,6 +45,8 @@ Before tagging a release:
 3. Call out breaking changes and required migrations before the regular lists.
 4. Keep internal-only refactors out of the changelog unless they affect users,
    operators, runtime authors, or contributors.
+5. Update `docs/compatibility.md` when the release changes Kubernetes, Helm,
+   Go, Python, or published `krt` artifact support.
 
 ## Release Notes
 
