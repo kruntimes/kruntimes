@@ -49,6 +49,8 @@ Before tagging a release:
    Go, Python, or published `krt` artifact support.
 6. Update `docs/operations.md` when the release changes installation,
    upgrade, uninstall, troubleshooting, backup, or restore behavior.
+7. Update `docs/custom-runtime.md` when the release changes the Runtime Server
+   protocol, Runtime CRD template contract, or execution semantics.
 
 ## Release Notes
 
