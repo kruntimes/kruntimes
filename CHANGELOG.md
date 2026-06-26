@@ -16,3 +16,5 @@ but each release note must call them out explicitly.
   guidance.
 - GitHub Actions release workflow for multi-platform `krt` CLI binaries with
   checksums and provenance attestations.
+- Kubernetes, Helm, Go, Python, and `krt` release artifact compatibility
+  matrix.
