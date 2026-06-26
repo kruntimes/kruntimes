@@ -53,6 +53,7 @@ GitHub release notes should be written from the changelog and include:
 - release type and support level,
 - upgrade notes and breaking changes,
 - image tags and verification instructions,
+- CLI binary, checksum, and provenance verification instructions,
 - known limitations for the release,
 - links to the changelog and installation documentation.
 
@@ -112,10 +113,14 @@ After checks pass:
 
 3. Confirm the `Release Images` workflow publishes signed images with SBOM and
    provenance attestations.
-4. Draft the GitHub release from the changelog and publish it only after the
+4. Confirm the `Release CLI` workflow uploads `krt` archives, checksums, and
+   provenance attestations to the GitHub release.
+5. Draft the GitHub release from the changelog and publish it only after the
    release artifacts are available.
 
 ## Artifact Verification
+
+### Container Images
 
 Published container images are expected under:
 
@@ -135,6 +140,32 @@ cosign verify ghcr.io/<owner>/kruntimes-controller:0.1.0 \
 
 Also confirm the image digest shown in GitHub Packages matches the digest in
 the `Release Images` workflow output.
+
+### krt CLI
+
+Published `krt` release assets are expected under the GitHub release:
+
+- `krt_vX.Y.Z_linux_amd64.tar.gz`
+- `krt_vX.Y.Z_linux_arm64.tar.gz`
+- `krt_vX.Y.Z_darwin_amd64.tar.gz`
+- `krt_vX.Y.Z_darwin_arm64.tar.gz`
+- `krt_vX.Y.Z_windows_amd64.tar.gz`
+- `krt_vX.Y.Z_checksums.txt`
+
+Verify checksums after downloading the desired archive and checksum file:
+
+```bash
+sha256sum --check --ignore-missing krt_v0.1.0_checksums.txt
+```
+
+Verify GitHub artifact provenance:
+
+```bash
+gh attestation verify krt_v0.1.0_linux_amd64.tar.gz \
+  --repo <owner>/kruntimes
+```
+
+The attestation subject digest must match the downloaded archive digest.
 
 ## Failed Releases
 

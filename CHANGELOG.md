@@ -14,3 +14,5 @@ but each release note must call them out explicitly.
   release notes.
 - Release preflight, artifact verification, and failed-release handling
   guidance.
+- GitHub Actions release workflow for multi-platform `krt` CLI binaries with
+  checksums and provenance attestations.

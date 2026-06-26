@@ -575,7 +575,7 @@ make test-integration      # integration tests (envtest)
 make docker-build          # build all Docker images
 ```
 
-## Release Images
+## Release Artifacts
 
 See [docs/release.md](docs/release.md) for the SemVer, changelog, release
 notes, and pre-tag checklist.
@@ -588,6 +588,10 @@ Each published image is built for `linux/amd64` and `linux/arm64`, includes
 BuildKit SBOM and provenance attestations, and is signed with `cosign` keyless
 signing through GitHub OIDC. Tags include the original Git tag, the SemVer
 version without the leading `v`, and the major/minor version.
+
+The `Release CLI` workflow publishes multi-platform `krt` archives for Linux,
+macOS, and Windows, plus a checksum file and GitHub artifact provenance
+attestations.
 
 Example verification:
 
