@@ -4,11 +4,11 @@ import (
 	"slices"
 	"testing"
 
-	batchv1 "k8s.io/api/batch/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -26,7 +26,7 @@ func TestArtifactCleanupSnapshotsRuntimeStore(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.Run{}).WithObjects(run, runtimeResource).Build()
-	r := &ArtifactCleanupReconciler{Client: k8sClient, CleanerImage: "controller:test"}
+	r := &ArtifactCleanupReconciler{Client: k8sClient, MaintainerImage: "controller:test"}
 
 	if _, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -41,41 +41,61 @@ func TestArtifactCleanupSnapshotsRuntimeStore(t *testing.T) {
 	}
 }
 
-func TestArtifactCleanupCreatesFilesystemJobWithoutRuntime(t *testing.T) {
+func TestArtifactCleanupEnsuresFilesystemWorkerWithoutRuntime(t *testing.T) {
 	scheme := artifactCleanupScheme(t)
 	run := artifactCleanupRun(true, filesystemStoreSpec())
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()
 	r := &ArtifactCleanupReconciler{
-		Client: k8sClient, CleanerImage: "controller:test",
+		Client: k8sClient, MaintainerImage: "controller:test",
 		ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry"}},
 	}
 
 	if _, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	var job batchv1.Job
-	if err := k8sClient.Get(t.Context(), types.NamespacedName{
-		Namespace: run.Namespace, Name: artifact.CleanupJobName(run.UID),
-	}, &job); err != nil {
+	storeHash, err := artifact.StoreHash(run.Status.ArtifactStore)
+	if err != nil {
 		t.Fatal(err)
 	}
-	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "controller:test" || container.Command[0] != "/artifact-cleaner" {
+	var deploy appsv1.Deployment
+	if err := k8sClient.Get(t.Context(), client.ObjectKey{
+		Namespace: run.Namespace, Name: artifact.RuntimeMaintainerName(storeHash),
+	}, &deploy); err != nil {
+		t.Fatal(err)
+	}
+	if deploy.Spec.Template.Spec.ServiceAccountName != runtimeMaintainerServiceAccount {
+		t.Fatalf("serviceAccountName = %q", deploy.Spec.Template.Spec.ServiceAccountName)
+	}
+	container := deploy.Spec.Template.Spec.Containers[0]
+	if container.Image != "controller:test" || container.Command[0] != "/runtime-maintainer" {
 		t.Fatalf("cleaner container = %#v", container)
 	}
-	if !slices.Contains(container.Args, "--filesystem-volume-claim=artifacts-pvc") {
-		t.Fatalf("cleaner args = %v", container.Args)
+	for _, want := range []string{"--store-hash=" + storeHash, "--filesystem-volume-claim=artifacts-pvc"} {
+		if !slices.Contains(container.Args, want) {
+			t.Fatalf("cleaner args = %v, missing %s", container.Args, want)
+		}
 	}
-	if len(job.Spec.Template.Spec.Volumes) != 1 ||
-		job.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "artifacts-pvc" {
-		t.Fatalf("cleanup volumes = %#v", job.Spec.Template.Spec.Volumes)
+	if len(deploy.Spec.Template.Spec.Volumes) != 1 ||
+		deploy.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "artifacts-pvc" {
+		t.Fatalf("cleanup volumes = %#v", deploy.Spec.Template.Spec.Volumes)
 	}
-	if len(job.Spec.Template.Spec.ImagePullSecrets) != 1 || job.Spec.Template.Spec.ImagePullSecrets[0].Name != "registry" {
-		t.Fatalf("imagePullSecrets = %#v", job.Spec.Template.Spec.ImagePullSecrets)
+	if len(deploy.Spec.Template.Spec.ImagePullSecrets) != 1 || deploy.Spec.Template.Spec.ImagePullSecrets[0].Name != "registry" {
+		t.Fatalf("imagePullSecrets = %#v", deploy.Spec.Template.Spec.ImagePullSecrets)
+	}
+
+	for _, object := range []client.Object{&corev1.ServiceAccount{}, &rbacv1.Role{}, &rbacv1.RoleBinding{}} {
+		if err := k8sClient.Get(t.Context(), client.ObjectKey{Namespace: run.Namespace, Name: runtimeMaintainerRole}, object); err != nil {
+			if _, ok := object.(*corev1.ServiceAccount); ok {
+				err = k8sClient.Get(t.Context(), client.ObjectKey{Namespace: run.Namespace, Name: runtimeMaintainerServiceAccount}, object)
+			}
+			if err != nil {
+				t.Fatalf("get cleanup RBAC object %T: %v", object, err)
+			}
+		}
 	}
 }
 
-func TestBuildS3ArtifactCleanupJobUsesSecretReference(t *testing.T) {
+func TestBuildS3ArtifactCleanupWorkerUsesSecretReference(t *testing.T) {
 	store := &v1alpha1.RuntimeArtifactStoreSpec{
 		Driver: v1alpha1.ArtifactDriverS3,
 		S3: &v1alpha1.S3ArtifactStoreSpec{
@@ -84,13 +104,13 @@ func TestBuildS3ArtifactCleanupJobUsesSecretReference(t *testing.T) {
 		},
 	}
 	run := artifactCleanupRun(true, store)
-	r := &ArtifactCleanupReconciler{CleanerImage: "controller:test"}
+	r := &ArtifactCleanupReconciler{MaintainerImage: "controller:test"}
 
-	job, err := r.buildCleanupJob(run)
+	deploy, err := r.buildCleanupWorkerDeployment(run)
 	if err != nil {
-		t.Fatalf("buildCleanupJob: %v", err)
+		t.Fatalf("buildCleanupWorkerDeployment: %v", err)
 	}
-	container := job.Spec.Template.Spec.Containers[0]
+	container := deploy.Spec.Template.Spec.Containers[0]
 	for _, want := range []string{
 		"--s3-bucket=artifacts", "--s3-prefix=prod", "--s3-endpoint=http://minio:9000", "--s3-force-path-style=true",
 	} {
@@ -103,50 +123,27 @@ func TestBuildS3ArtifactCleanupJobUsesSecretReference(t *testing.T) {
 	}
 }
 
-func TestArtifactCleanupCompletedJobRemovesFinalizer(t *testing.T) {
+func TestArtifactCleanupReusesWorkerForSameStoreHash(t *testing.T) {
 	scheme := artifactCleanupScheme(t)
-	run := artifactCleanupRun(true, filesystemStoreSpec())
-	r := &ArtifactCleanupReconciler{CleanerImage: "controller:test"}
-	job, err := r.buildCleanupJob(run)
-	if err != nil {
+	first := artifactCleanupRun(true, filesystemStoreSpec())
+	first.Name = "first"
+	second := artifactCleanupRun(true, filesystemStoreSpec())
+	second.Name = "second"
+	second.UID = "second-uid"
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(first, second).Build()
+	r := &ArtifactCleanupReconciler{Client: k8sClient, MaintainerImage: "controller:test"}
+
+	for _, run := range []*v1alpha1.Run{first, second} {
+		if _, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+			t.Fatalf("Reconcile(%s): %v", run.Name, err)
+		}
+	}
+	var deployments appsv1.DeploymentList
+	if err := k8sClient.List(t.Context(), &deployments, client.InNamespace(first.Namespace)); err != nil {
 		t.Fatal(err)
 	}
-	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
-	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run, &job).Build()
-	r.Client = k8sClient
-
-	if _, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	var current v1alpha1.Run
-	err = k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), &current)
-	if err == nil && slices.Contains(current.Finalizers, artifact.RunArtifactFinalizer) {
-		t.Fatalf("finalizer was not removed: %v", current.Finalizers)
-	}
-}
-
-func TestArtifactCleanupFailedJobIsDeletedForRetry(t *testing.T) {
-	scheme := artifactCleanupScheme(t)
-	run := artifactCleanupRun(true, filesystemStoreSpec())
-	r := &ArtifactCleanupReconciler{CleanerImage: "controller:test"}
-	job, err := r.buildCleanupJob(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
-	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run, &job).Build()
-	r.Client = k8sClient
-
-	result, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if result.RequeueAfter != artifactCleanupRetry {
-		t.Fatalf("RequeueAfter = %s, want %s", result.RequeueAfter, artifactCleanupRetry)
-	}
-	var currentJob batchv1.Job
-	if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(&job), &currentJob); err == nil {
-		t.Fatal("failed cleanup Job was not deleted")
+	if len(deployments.Items) != 1 {
+		t.Fatalf("worker deployments = %d, want 1", len(deployments.Items))
 	}
 }
 
@@ -156,7 +153,13 @@ func artifactCleanupScheme(t *testing.T) *runtime.Scheme {
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	if err := batchv1.AddToScheme(scheme); err != nil {
+	if err := appsv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := rbacv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	return scheme

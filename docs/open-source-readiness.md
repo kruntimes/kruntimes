@@ -125,8 +125,9 @@
 ### 7. Artifact Cleanup Ownership
 
 Artifact finalizer 最初由 Runtime Pod 内的 runtimed 执行，导致 Runtime 删除或缩容到零
-时无法清理。现在由长期运行的 controller 创建独立 cleanup Job，并从 Run status 中读取
-持久化的 store 配置快照。
+时无法清理。现在 controller 从 Run status 中读取持久化的 store 配置快照，并按
+artifact store hash 确保长期运行的 runtime maintainer Deployment 存在。maintainer 不依赖
+当前 Runtime spec 或 Runtime 是否仍存在。
 
 - [x] 将 artifact finalizer 清理迁移到独立、长期存在的 controller，或提供等价的
   central GC。

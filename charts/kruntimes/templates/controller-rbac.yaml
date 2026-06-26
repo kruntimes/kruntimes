@@ -70,16 +70,6 @@ rules:
       - patch
       - delete
   - apiGroups:
-      - batch
-    resources:
-      - jobs
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - delete
-  - apiGroups:
       - networking.k8s.io
     resources:
       - networkpolicies
