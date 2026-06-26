@@ -20,3 +20,5 @@ but each release note must call them out explicitly.
   matrix.
 - Operations guide covering installation, upgrade, uninstall,
   troubleshooting, backup, and restore procedures.
+- Custom Runtime development guide covering Runtime Server protocol semantics,
+  Runtime CRD template ownership, capacity, and compatibility expectations.
