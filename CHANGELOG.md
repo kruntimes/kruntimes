@@ -18,3 +18,5 @@ but each release note must call them out explicitly.
   checksums and provenance attestations.
 - Kubernetes, Helm, Go, Python, and `krt` release artifact compatibility
   matrix.
+- Operations guide covering installation, upgrade, uninstall,
+  troubleshooting, backup, and restore procedures.

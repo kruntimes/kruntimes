@@ -583,6 +583,9 @@ notes, and pre-tag checklist.
 See [docs/compatibility.md](docs/compatibility.md) for the Kubernetes, Helm,
 Go, Python, and `krt` release artifact compatibility matrix.
 
+See [docs/operations.md](docs/operations.md) for installation, upgrade,
+uninstall, troubleshooting, backup, and restore procedures.
+
 Pushing a SemVer tag such as `v0.1.0` runs the `Release Images` workflow. The
 workflow publishes the scheduler, controller, runtimed, Bash Runtime, and Python
 Runtime images to GitHub Container Registry under `ghcr.io/<owner>/`.
