@@ -88,6 +88,10 @@ govulncheck: govulncheck-tool ## Run govulncheck against all Go packages.
 test-s3-integration: ## Run S3 ArtifactStore integration tests against MinIO.
 	CONTAINER_TOOL=$(CONTAINER_TOOL) ./hack/test-s3-integration.sh
 
+.PHONY: benchmark
+benchmark: generate ## Run the performance benchmark against the current Kubernetes context.
+	go run ./hack/benchmark
+
 ##@ E2E
 
 KIND_CLUSTER_NAME ?= kruntimes-e2e

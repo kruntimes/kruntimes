@@ -580,8 +580,12 @@ make proto-python          # generate Python gRPC stubs (requires uv)
 make generate manifests    # generate deepcopy + CRDs
 make test                  # unit tests
 make test-integration      # integration tests (envtest)
+make benchmark             # performance benchmark against the current Kubernetes context
 make docker-build          # build all Docker images
 ```
+
+See [docs/benchmarks.md](docs/benchmarks.md) for benchmark inputs, output
+fields, and release-note reporting guidance.
 
 ## Release Artifacts
 
