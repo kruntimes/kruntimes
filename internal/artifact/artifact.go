@@ -4,11 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"time"
-
-	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -33,16 +33,27 @@ const (
 
 	RunArtifactFinalizer = "kruntimes.io/artifact-cleanup"
 
-	CleanupRunAnnotation    = "kruntimes.io/artifact-cleanup-run"
-	CleanupRunUIDAnnotation = "kruntimes.io/artifact-cleanup-run-uid"
+	CleanupStoreHashLabel = "kruntimes.io/artifact-store-hash"
 )
 
 var ErrSizeLimitExceeded = errors.New("artifact size limit exceeded")
 
-// CleanupJobName returns the stable name of the cleanup Job for a Run UID.
-func CleanupJobName(uid types.UID) string {
-	sum := sha256.Sum256([]byte(uid))
-	return "artifact-cleanup-" + hex.EncodeToString(sum[:8])
+// RuntimeMaintainerName returns the stable name of the long-running runtime maintainer for a store hash.
+func RuntimeMaintainerName(storeHash string) string {
+	return "runtime-maintainer-" + storeHash
+}
+
+// StoreHash returns a stable short hash for an artifact store configuration.
+func StoreHash(store *v1alpha1.RuntimeArtifactStoreSpec) (string, error) {
+	if store == nil {
+		return "", fmt.Errorf("artifact store is required")
+	}
+	payload, err := json.Marshal(store)
+	if err != nil {
+		return "", fmt.Errorf("marshal artifact store: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])[:16], nil
 }
 
 // PutOptions describes metadata applied while storing an artifact.

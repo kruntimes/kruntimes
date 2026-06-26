@@ -192,6 +192,7 @@ No request-time Pod creation. No per-run Kubernetes scheduling. No global connec
 | **Runtime Controller** | Watches Runtime CRs and reconciles them into Deployments. Each Runtime Pod contains the Runtime Server container plus the kruntimes-managed `runtimed` sidecar. |
 | **Scheduler** | Kubernetes controller that watches Pending Runs, finds healthy Runtime Pods in the same namespace with matching labels and available capacity, then assigns Runs by updating Run status. |
 | **Runtimed** | Sidecar daemon in each Runtime Pod. Watches Runs assigned to its pod, atomically claims them, delegates execution to the local Runtime Server via gRPC, and updates Run status. |
+| **Runtime Maintainer** | Long-running Deployment for Runtime-scope maintenance that must outlive individual Runtime Pods. It is keyed by durable configuration snapshots rather than live pod identity; today it cleans artifacts for Runs whose Runtime may have changed or been deleted. |
 | **Runtime Server** | Pluggable local gRPC service that performs the actual execution. Implements `Execute`, `Status`, `List`, and `Cancel`. Built-in implementations include bash and Python. |
 | **Stale Run Reaper** | Watches Running Runs and checks assigned Pod health. If the pod is deleted or unhealthy for too long, resets the Run for retry (if RetryPolicy configured) or marks it Failed. Runs in the controller manager. |
 | **krt** | CLI for creating Runs, watching status, streaming logs, cancelling executions, and retrieving results. |
@@ -207,6 +208,11 @@ Runtime Pod
 ```
 
 `runtimed` owns Kubernetes communication. The Runtime Server only exposes a local execution API and does not need to know about Kubernetes.
+
+Runtime-scope maintenance that is not tied to one Runtime Pod instance runs in
+separate runtime maintainer Deployments. Maintainers are created by the
+controller for durable configuration snapshots, such as an artifact store hash,
+and use their own namespace-scoped ServiceAccount and Role.
 
 ### Run State Machine
 
@@ -382,14 +388,16 @@ deletion and `ttlSecondsAfterFinished` garbage collection remove all external
 objects for the Run before the Run is deleted. Before the first upload,
 runtimed snapshots the non-secret store configuration in
 `Run.status.artifactStore`. The long-lived controller uses that snapshot to
-run an isolated cleanup Job, so cleanup does not depend on the Runtime or its
-Pods still existing.
+ensure a long-running runtime maintainer Deployment exists for that store
+snapshot. Cleanup workers are keyed by artifact store hash, not by the current
+Runtime spec, so old workers can continue cleaning Runs after a Runtime is
+changed or deleted.
 
 Cleanup is idempotent: an already-missing filesystem path or S3 object is
 treated as success. Missing PVCs, unavailable object stores, and missing or
-invalid credential Secrets keep the Run finalizer in place; the cleanup Job
-continues or is recreated after the dependency is restored. Secret contents
-are never copied into the Run. For Runs created before store snapshots were
+invalid credential Secrets keep the Run finalizer in place; the worker
+continues retrying after the dependency is restored. Secret contents are never
+copied into the Run. For Runs created before store snapshots were
 introduced, the controller copies the configuration from the Runtime while it
 still exists. If both the snapshot and Runtime are missing, recreate the
 Runtime with the original artifact store configuration so migration and
@@ -702,6 +710,7 @@ api/
 cmd/
 ├── scheduler/         Scheduler entry point
 ├── controller/        Runtime controller entry point
+├── runtime-maintainer/ Runtime-scope maintenance worker
 ├── runtimed/          Runtimed daemon entry point
 └── krt/               CLI tool
 runtimes/

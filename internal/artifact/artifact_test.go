@@ -3,16 +3,37 @@ package artifact
 import (
 	"testing"
 
-	"k8s.io/apimachinery/pkg/types"
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
-func TestCleanupJobName(t *testing.T) {
-	uid := types.UID("d6ecbc18-4411-4d54-9d8e-032687dc85e8")
-	first := CleanupJobName(uid)
-	if first != CleanupJobName(uid) {
-		t.Fatal("cleanup Job name is not deterministic")
+func TestStoreHash(t *testing.T) {
+	store := &v1alpha1.RuntimeArtifactStoreSpec{
+		Driver: v1alpha1.ArtifactDriverFilesystem,
+		Filesystem: &v1alpha1.FilesystemArtifactStoreSpec{
+			VolumeClaimName: "artifacts",
+		},
 	}
-	if len(first) > 63 || first == CleanupJobName(types.UID("different")) {
-		t.Fatalf("invalid cleanup Job name %q", first)
+	first, err := StoreHash(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := StoreHash(store.DeepCopy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("StoreHash is not deterministic: %s != %s", first, second)
+	}
+	other, err := StoreHash(&v1alpha1.RuntimeArtifactStoreSpec{
+		Driver: v1alpha1.ArtifactDriverFilesystem,
+		Filesystem: &v1alpha1.FilesystemArtifactStoreSpec{
+			VolumeClaimName: "other",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == other || len(first) != 16 {
+		t.Fatalf("unexpected store hashes: first=%q other=%q", first, other)
 	}
 }

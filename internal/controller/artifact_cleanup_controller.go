@@ -3,69 +3,60 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
-	batchv1 "k8s.io/api/batch/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	kptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/artifact"
 )
 
 const (
-	artifactCleanerMountPath = "/var/lib/kruntimes/artifacts"
-	artifactCleanupRetry     = 30 * time.Second
+	artifactStoreMountPath          = "/var/lib/kruntimes/artifacts"
+	artifactCleanupRetry            = 30 * time.Second
+	runtimeMaintainerServiceAccount = "kruntimes-runtime-maintainer"
+	runtimeMaintainerRole           = "kruntimes-runtime-maintainer"
 )
 
-// ArtifactCleanupReconciler owns artifact finalizer removal independently of Runtime Pods.
+// ArtifactCleanupReconciler snapshots artifact store config and ensures a
+// long-running runtime maintainer exists for each store snapshot referenced by a
+// deleting Run. Workers are intentionally not owned by Runtime objects so they
+// survive Runtime deletion and artifactStore changes.
 type ArtifactCleanupReconciler struct {
 	client.Client
 	Log              logr.Logger
 	Recorder         record.EventRecorder
-	CleanerImage     string
+	MaintainerImage  string
 	ImagePullSecrets []corev1.LocalObjectReference
 }
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runtimes,verbs=get;list;watch
-// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
-// SetupWithManager registers Run and cleanup Job watches.
 func (r *ArtifactCleanupReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	jobEvents := predicate.Funcs{
-		CreateFunc:  func(event.CreateEvent) bool { return true },
-		UpdateFunc:  func(event.UpdateEvent) bool { return true },
-		DeleteFunc:  func(event.DeleteEvent) bool { return true },
-		GenericFunc: func(event.GenericEvent) bool { return false },
-	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Run{}).
-		Watches(
-			&batchv1.Job{},
-			handler.EnqueueRequestsFromMapFunc(r.runForCleanupJob),
-			builder.WithPredicates(jobEvents),
-		).
 		Complete(r)
 }
 
-// Reconcile snapshots store configuration and drives cleanup Jobs for deleting Runs.
 func (r *ArtifactCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var run v1alpha1.Run
 	if err := r.Get(ctx, req.NamespacedName, &run); err != nil {
@@ -80,48 +71,14 @@ func (r *ArtifactCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if run.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
-	if r.CleanerImage == "" {
-		return ctrl.Result{}, fmt.Errorf("artifact cleaner image is not configured")
+	if r.MaintainerImage == "" {
+		return ctrl.Result{}, fmt.Errorf("runtime maintainer image is not configured")
 	}
-
-	jobKey := client.ObjectKey{Namespace: run.Namespace, Name: artifact.CleanupJobName(run.UID)}
-	var job batchv1.Job
-	if err := r.Get(ctx, jobKey, &job); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, err
-		}
-		job, err = r.buildCleanupJob(&run)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := r.Create(ctx, &job); err != nil {
-			return ctrl.Result{}, fmt.Errorf("create artifact cleanup Job: %w", err)
-		}
-		r.record(&run, corev1.EventTypeNormal, "ArtifactCleanupStarted", "Created artifact cleanup Job %s", job.Name)
-		return ctrl.Result{}, nil
-	}
-	if job.Annotations[artifact.CleanupRunAnnotation] != run.Name ||
-		job.Annotations[artifact.CleanupRunUIDAnnotation] != string(run.UID) {
-		return ctrl.Result{}, fmt.Errorf("artifact cleanup Job %s does not belong to Run %s", jobKey, req.NamespacedName)
-	}
-
-	if jobComplete(&job) {
-		base := run.DeepCopy()
-		controllerutil.RemoveFinalizer(&run, artifact.RunArtifactFinalizer)
-		if err := r.Patch(ctx, &run, client.MergeFrom(base)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("remove artifact cleanup finalizer: %w", err)
-		}
-		r.record(&run, corev1.EventTypeNormal, "ArtifactCleanupComplete", "Deleted external artifacts")
-		return ctrl.Result{}, nil
-	}
-	if jobFailed(&job) {
-		r.record(&run, corev1.EventTypeWarning, "ArtifactCleanupRetry", "Cleanup Job %s failed; retrying", job.Name)
-		if err := r.Delete(ctx, &job); err != nil && !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, fmt.Errorf("delete failed artifact cleanup Job: %w", err)
-		}
+	if err := r.ensureCleanupWorker(ctx, &run); err != nil {
+		r.record(&run, corev1.EventTypeWarning, "ArtifactCleanupRetry", "Ensure runtime maintainer failed: %v", err)
 		return ctrl.Result{RequeueAfter: artifactCleanupRetry}, nil
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: artifactCleanupRetry}, nil
 }
 
 func (r *ArtifactCleanupReconciler) snapshotArtifactStore(ctx context.Context, run *v1alpha1.Run) (ctrl.Result, error) {
@@ -141,19 +98,47 @@ func (r *ArtifactCleanupReconciler) snapshotArtifactStore(ctx context.Context, r
 	return ctrl.Result{}, nil
 }
 
-func (r *ArtifactCleanupReconciler) buildCleanupJob(run *v1alpha1.Run) (batchv1.Job, error) {
+func (r *ArtifactCleanupReconciler) ensureCleanupWorker(ctx context.Context, run *v1alpha1.Run) error {
+	serviceAccount := cleanupServiceAccount(run.Namespace)
+	role := cleanupRole(run.Namespace)
+	roleBinding := cleanupRoleBinding(run.Namespace)
+	deploy, err := r.buildCleanupWorkerDeployment(run)
+	if err != nil {
+		return err
+	}
+	if err := r.reconcileServiceAccount(ctx, serviceAccount); err != nil {
+		return err
+	}
+	if err := r.reconcileRole(ctx, role); err != nil {
+		return err
+	}
+	if err := r.reconcileRoleBinding(ctx, roleBinding); err != nil {
+		return err
+	}
+	if err := r.reconcileCleanupDeployment(ctx, deploy); err != nil {
+		return err
+	}
+	r.record(run, corev1.EventTypeNormal, "RuntimeMaintainerEnsured", "Ensured runtime maintainer %s", deploy.Name)
+	return nil
+}
+
+func (r *ArtifactCleanupReconciler) buildCleanupWorkerDeployment(run *v1alpha1.Run) (*appsv1.Deployment, error) {
 	store := run.Status.ArtifactStore
 	if store == nil {
-		return batchv1.Job{}, fmt.Errorf("Run has no artifact store cleanup configuration")
+		return nil, fmt.Errorf("Run has no artifact store cleanup configuration")
+	}
+	storeHash, err := artifact.StoreHash(store)
+	if err != nil {
+		return nil, err
 	}
 	args := []string{
 		"--run-namespace=" + run.Namespace,
-		"--run-uid=" + string(run.UID),
+		"--store-hash=" + storeHash,
 		"--driver=" + string(store.Driver),
 	}
 	podSpec := corev1.PodSpec{
-		RestartPolicy:                corev1.RestartPolicyNever,
-		AutomountServiceAccountToken: kptr.To(false),
+		ServiceAccountName:           runtimeMaintainerServiceAccount,
+		AutomountServiceAccountToken: kptr.To(true),
 		ImagePullSecrets:             append([]corev1.LocalObjectReference(nil), r.ImagePullSecrets...),
 		SecurityContext: &corev1.PodSecurityContext{
 			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
@@ -161,8 +146,8 @@ func (r *ArtifactCleanupReconciler) buildCleanupJob(run *v1alpha1.Run) (batchv1.
 	}
 	container := corev1.Container{
 		Name:    "cleaner",
-		Image:   r.CleanerImage,
-		Command: []string{"/artifact-cleaner"},
+		Image:   r.MaintainerImage,
+		Command: []string{"/runtime-maintainer"},
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: kptr.To(false),
 			ReadOnlyRootFilesystem:   kptr.To(true),
@@ -178,13 +163,13 @@ func (r *ArtifactCleanupReconciler) buildCleanupJob(run *v1alpha1.Run) (batchv1.
 	switch store.Driver {
 	case v1alpha1.ArtifactDriverFilesystem:
 		if store.Filesystem == nil || store.Filesystem.VolumeClaimName == "" {
-			return batchv1.Job{}, fmt.Errorf("filesystem artifact store configuration is incomplete")
+			return nil, fmt.Errorf("filesystem artifact store configuration is incomplete")
 		}
 		args = append(args,
-			"--filesystem-root="+artifactCleanerMountPath,
+			"--filesystem-root="+artifactStoreMountPath,
 			"--filesystem-volume-claim="+store.Filesystem.VolumeClaimName,
 		)
-		container.VolumeMounts = []corev1.VolumeMount{{Name: "artifact-store", MountPath: artifactCleanerMountPath}}
+		container.VolumeMounts = []corev1.VolumeMount{{Name: "artifact-store", MountPath: artifactStoreMountPath}}
 		podSpec.Volumes = []corev1.Volume{{
 			Name: "artifact-store",
 			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
@@ -195,7 +180,7 @@ func (r *ArtifactCleanupReconciler) buildCleanupJob(run *v1alpha1.Run) (batchv1.
 		podSpec.SecurityContext.FSGroupChangePolicy = kptr.To(corev1.FSGroupChangeOnRootMismatch)
 	case v1alpha1.ArtifactDriverS3:
 		if store.S3 == nil || store.S3.Bucket == "" {
-			return batchv1.Job{}, fmt.Errorf("S3 artifact store configuration is incomplete")
+			return nil, fmt.Errorf("S3 artifact store configuration is incomplete")
 		}
 		args = append(args, "--s3-bucket="+store.S3.Bucket)
 		if store.S3.Prefix != "" {
@@ -216,68 +201,136 @@ func (r *ArtifactCleanupReconciler) buildCleanupJob(run *v1alpha1.Run) (batchv1.
 			}}}
 		}
 	default:
-		return batchv1.Job{}, fmt.Errorf("unsupported artifact store driver %q", store.Driver)
+		return nil, fmt.Errorf("unsupported artifact store driver %q", store.Driver)
 	}
 	container.Args = args
 	podSpec.Containers = []corev1.Container{container}
 
-	job := batchv1.Job{
+	labels := cleanupWorkerLabels(storeHash)
+	// Do not set Runtime owner references here. Runtime maintainers are keyed by
+	// immutable artifact-store snapshots so they can clean deleting Runs even
+	// after the Runtime is deleted or its artifactStore spec changes.
+	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      artifact.CleanupJobName(run.UID),
+			Name:      artifact.RuntimeMaintainerName(storeHash),
 			Namespace: run.Namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":      "kruntimes",
-				"app.kubernetes.io/component": "artifact-cleaner",
-				"kruntimes.io/run-uid-hash":   strings.TrimPrefix(artifact.CleanupJobName(run.UID), "artifact-cleanup-"),
-			},
-			Annotations: map[string]string{
-				artifact.CleanupRunAnnotation:    run.Name,
-				artifact.CleanupRunUIDAnnotation: string(run.UID),
-			},
+			Labels:    labels,
 		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit:            kptr.To[int32](3),
-			ActiveDeadlineSeconds:   kptr.To[int64](600),
-			TTLSecondsAfterFinished: kptr.To[int32](300),
+		Spec: appsv1.DeploymentSpec{
+			Replicas: kptr.To[int32](1),
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
-					"app.kubernetes.io/name":      "kruntimes",
-					"app.kubernetes.io/component": "artifact-cleaner",
-				}},
-				Spec: podSpec,
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec:       podSpec,
 			},
 		},
+	}, nil
+}
+
+func cleanupWorkerLabels(storeHash string) map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":       "kruntimes",
+		"app.kubernetes.io/component":  "runtime-maintainer",
+		artifact.CleanupStoreHashLabel: storeHash,
 	}
-	return job, nil
 }
 
-func (r *ArtifactCleanupReconciler) runForCleanupJob(_ context.Context, object client.Object) []ctrl.Request {
-	job, ok := object.(*batchv1.Job)
-	if !ok || job.Labels["app.kubernetes.io/component"] != "artifact-cleaner" {
-		return nil
+func cleanupServiceAccount(namespace string) *corev1.ServiceAccount {
+	return &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
+		Name:      runtimeMaintainerServiceAccount,
+		Namespace: namespace,
+		Labels:    cleanupWorkerLabels("rbac"),
+	}}
+}
+
+func cleanupRole(namespace string) *rbacv1.Role {
+	return &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: runtimeMaintainerRole, Namespace: namespace, Labels: cleanupWorkerLabels("rbac")},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{"kruntimes.io"}, Resources: []string{"runs"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
+			{APIGroups: []string{"kruntimes.io"}, Resources: []string{"runs/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
+		},
 	}
-	runName := job.Annotations[artifact.CleanupRunAnnotation]
-	if runName == "" {
-		return nil
+}
+
+func cleanupRoleBinding(namespace string) *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: runtimeMaintainerRole, Namespace: namespace, Labels: cleanupWorkerLabels("rbac")},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: runtimeMaintainerRole},
+		Subjects: []rbacv1.Subject{{
+			Kind:      rbacv1.ServiceAccountKind,
+			Name:      runtimeMaintainerServiceAccount,
+			Namespace: namespace,
+		}},
 	}
-	return []ctrl.Request{{NamespacedName: types.NamespacedName{Namespace: job.Namespace, Name: runName}}}
 }
 
-func jobComplete(job *batchv1.Job) bool {
-	return jobConditionTrue(job, batchv1.JobComplete)
-}
-
-func jobFailed(job *batchv1.Job) bool {
-	return jobConditionTrue(job, batchv1.JobFailed)
-}
-
-func jobConditionTrue(job *batchv1.Job, conditionType batchv1.JobConditionType) bool {
-	for _, condition := range job.Status.Conditions {
-		if condition.Type == conditionType && condition.Status == corev1.ConditionTrue {
-			return true
+func (r *ArtifactCleanupReconciler) reconcileServiceAccount(ctx context.Context, desired *corev1.ServiceAccount) error {
+	var existing corev1.ServiceAccount
+	if err := r.Get(ctx, client.ObjectKeyFromObject(desired), &existing); err != nil {
+		if apierrors.IsNotFound(err) {
+			return r.Create(ctx, desired)
 		}
+		return err
 	}
-	return false
+	if equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+		return nil
+	}
+	existing.Labels = desired.Labels
+	return r.Update(ctx, &existing)
+}
+
+func (r *ArtifactCleanupReconciler) reconcileRole(ctx context.Context, desired *rbacv1.Role) error {
+	var existing rbacv1.Role
+	if err := r.Get(ctx, client.ObjectKeyFromObject(desired), &existing); err != nil {
+		if apierrors.IsNotFound(err) {
+			return r.Create(ctx, desired)
+		}
+		return err
+	}
+	if equality.Semantic.DeepEqual(existing.Labels, desired.Labels) && equality.Semantic.DeepEqual(existing.Rules, desired.Rules) {
+		return nil
+	}
+	existing.Labels = desired.Labels
+	existing.Rules = desired.Rules
+	return r.Update(ctx, &existing)
+}
+
+func (r *ArtifactCleanupReconciler) reconcileRoleBinding(ctx context.Context, desired *rbacv1.RoleBinding) error {
+	var existing rbacv1.RoleBinding
+	if err := r.Get(ctx, client.ObjectKeyFromObject(desired), &existing); err != nil {
+		if apierrors.IsNotFound(err) {
+			return r.Create(ctx, desired)
+		}
+		return err
+	}
+	if equality.Semantic.DeepEqual(existing.Labels, desired.Labels) &&
+		equality.Semantic.DeepEqual(existing.RoleRef, desired.RoleRef) &&
+		equality.Semantic.DeepEqual(existing.Subjects, desired.Subjects) {
+		return nil
+	}
+	existing.Labels = desired.Labels
+	existing.RoleRef = desired.RoleRef
+	existing.Subjects = desired.Subjects
+	return r.Update(ctx, &existing)
+}
+
+func (r *ArtifactCleanupReconciler) reconcileCleanupDeployment(ctx context.Context, desired *appsv1.Deployment) error {
+	var existing appsv1.Deployment
+	if err := r.Get(ctx, client.ObjectKeyFromObject(desired), &existing); err != nil {
+		if apierrors.IsNotFound(err) {
+			return r.Create(ctx, desired)
+		}
+		return err
+	}
+	if equality.Semantic.DeepEqual(existing.Labels, desired.Labels) &&
+		equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
+		return nil
+	}
+	existing.Labels = desired.Labels
+	existing.Spec = desired.Spec
+	return r.Update(ctx, &existing)
 }
 
 func (r *ArtifactCleanupReconciler) record(run *v1alpha1.Run, eventType, reason, message string, args ...any) {

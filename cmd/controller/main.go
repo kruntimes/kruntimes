@@ -33,14 +33,14 @@ func init() {
 
 func main() {
 	var (
-		metricsAddr                string
-		probeAddr                  string
-		enableLeaderElection       bool
-		staleThreshold             time.Duration
-		defaultDaemonImage         string
-		runtimedServiceAccountName string
-		artifactCleanerImage       string
-		artifactCleanerPullSecrets string
+		metricsAddr                  string
+		probeAddr                    string
+		enableLeaderElection         bool
+		staleThreshold               time.Duration
+		defaultDaemonImage           string
+		runtimedServiceAccountName   string
+		runtimeMaintainerImage       string
+		runtimeMaintainerPullSecrets string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8082", "The address the metric endpoint binds to.")
@@ -49,8 +49,8 @@ func main() {
 	flag.DurationVar(&staleThreshold, "stale-threshold", 30*time.Second, "Threshold for marking a Run as stale when its assigned pod is unhealthy.")
 	flag.StringVar(&defaultDaemonImage, "default-daemon-image", "", "Default runtimed daemon image injected into Runtime Pods.")
 	flag.StringVar(&runtimedServiceAccountName, "runtimed-service-account-name", "", "ServiceAccount name injected into Runtime Pods for the runtimed sidecar.")
-	flag.StringVar(&artifactCleanerImage, "artifact-cleaner-image", "", "Controller image containing the artifact-cleaner helper.")
-	flag.StringVar(&artifactCleanerPullSecrets, "artifact-cleaner-image-pull-secrets", "", "Comma-separated image pull Secret names for artifact cleanup Jobs.")
+	flag.StringVar(&runtimeMaintainerImage, "runtime-maintainer-image", "", "Image containing the long-running runtime maintainer.")
+	flag.StringVar(&runtimeMaintainerPullSecrets, "runtime-maintainer-image-pull-secrets", "", "Comma-separated image pull Secret names for runtime maintainers.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -99,8 +99,8 @@ func main() {
 		Client:           mgr.GetClient(),
 		Log:              ctrl.Log.WithName("controllers").WithName("ArtifactCleanup"),
 		Recorder:         mgr.GetEventRecorderFor("artifact-cleanup"),
-		CleanerImage:     artifactCleanerImage,
-		ImagePullSecrets: localObjectReferences(artifactCleanerPullSecrets),
+		MaintainerImage:  runtimeMaintainerImage,
+		ImagePullSecrets: localObjectReferences(runtimeMaintainerPullSecrets),
 	}
 	if err := artifactCleanup.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ArtifactCleanup")

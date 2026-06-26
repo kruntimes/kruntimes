@@ -14,7 +14,6 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -30,7 +29,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
-	"github.com/kruntimes/kruntimes/internal/artifact"
 	"github.com/kruntimes/kruntimes/internal/krt"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
@@ -65,7 +63,6 @@ func runtimedImage() string {
 func TestMain(m *testing.M) {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(batchv1.AddToScheme(scheme))
 	utilruntime.Must(v1alpha1.AddToScheme(scheme))
 
 	restConfig = config.GetConfigOrDie()
@@ -671,7 +668,6 @@ func TestFilesystemArtifacts(t *testing.T) {
 	assertTarGzFile(t, bundlePath, "data.txt", "nested")
 
 	deleteRuntimeAndWait(t, runtimeName, 30*time.Second)
-	injectFailedArtifactCleanupJob(t, run)
 
 	ttlSeconds := int32(1)
 	for i := 0; i < 10; i++ {
@@ -689,55 +685,6 @@ func TestFilesystemArtifacts(t *testing.T) {
 	}
 	waitForRunDeleted(t, run, 30*time.Second)
 	assertFilesystemArtifactMissing(t, claimName, report.Location.Filesystem.Path)
-}
-
-func injectFailedArtifactCleanupJob(t *testing.T, run *v1alpha1.Run) {
-	t.Helper()
-	backoffLimit := int32(0)
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      artifact.CleanupJobName(run.UID),
-			Namespace: run.Namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":      "kruntimes",
-				"app.kubernetes.io/component": "artifact-cleaner",
-			},
-			Annotations: map[string]string{
-				artifact.CleanupRunAnnotation:    run.Name,
-				artifact.CleanupRunUIDAnnotation: string(run.UID),
-			},
-		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit: &backoffLimit,
-			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-				RestartPolicy: corev1.RestartPolicyNever,
-				Containers: []corev1.Container{{
-					Name: "cleaner", Image: bashRuntimeImage(),
-					Command: []string{"/bin/sh", "-c"}, Args: []string{"exit 1"},
-				}},
-			}},
-		},
-	}
-	if err := k8sClient.Create(context.Background(), job); err != nil {
-		t.Fatalf("create failed cleanup Job: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	for {
-		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(job), job); err != nil {
-			t.Fatalf("get failed cleanup Job: %v", err)
-		}
-		for _, condition := range job.Status.Conditions {
-			if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
-				return
-			}
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for injected cleanup Job to fail")
-		case <-time.After(250 * time.Millisecond):
-		}
-	}
 }
 
 func deleteRuntimeAndWait(t *testing.T, name string, timeout time.Duration) {
@@ -1447,7 +1394,7 @@ func TestWorkflowChildRunCancellationFailsWorkflow(t *testing.T) {
 func TestWorkflowLongNamesCreateHashedChildRun(t *testing.T) {
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
-	workflowName := "wf-" + strings.Repeat("a", 60)
+	workflowName := fmt.Sprintf("wf-%s-%08x", strings.Repeat("a", 51), uint32(time.Now().UnixNano()))
 	jobName := "job-" + strings.Repeat("b", 59)
 	stepName := "step-" + strings.Repeat("c", 58)
 	wf := &v1alpha1.Workflow{
