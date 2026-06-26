@@ -82,7 +82,10 @@ Layer 2 (app)  →  assigns individual Runs to pods within a pool (fine, high-th
 
 This separation lets kruntimes implement application-level queuing, prioritization, backpressure, and resource allocation without touching Kubernetes internals.
 
-Runtime Pods continuously report health, capacity, supported Runtime labels, active Run count, and load. The application scheduler uses this information to place Runs onto hot pods without relying on Kubernetes scheduling for every execution.
+Runtime Pods expose Kubernetes readiness, runtimed heartbeat, supported Runtime
+labels, and static per-pod capacity. The application scheduler derives
+fast-changing usage from its Run cache and places Runs onto hot pods without
+relying on Kubernetes scheduling for every execution.
 
 Because multiple Runs may share a Runtime Pod, kruntimes enforces scheduling
 capacity, timeout, cancellation, and retry behavior at the runtime layer.
@@ -141,7 +144,7 @@ No request-time Pod creation. No per-run Kubernetes scheduling. No global connec
 ┌─────────────────────────────────────────────────────┐
 │  Scheduler                                          │
 │    finds healthy Runtime Pods by runtime label      │
-│    checks capacity / load / readiness               │
+│    checks readiness + cached capacity usage         │
 │    sets assignment + phase=Scheduled                │
 └────────────────────────┬────────────────────────────┘
                          │ watch assigned Runs
@@ -467,6 +470,11 @@ make e2e-cleanup  # tears down kind cluster
 
 ## Roadmap
 
+Checked items are implemented, covered by unit/integration/E2E tests where the
+behavior needs runtime validation, and available through the documented Helm or
+CLI installation path. Unchecked items may have partial scaffolding, but are not
+ready to treat as delivered capability.
+
 ### v0.1 — Core Execution
 
 - [x] Run CRD with lifecycle: Pending → Scheduled → Running → Succeeded/Failed
@@ -491,7 +499,7 @@ make e2e-cleanup  # tears down kind cluster
 - [x] Scheduler assignment checks Pod readiness, not only Pod existence
 - [x] Unified retry engine shared by runtimed and stale reaper
 - [x] Deterministic attempt counting and retry exhaustion behavior
-- [x] Runtime Pod heartbeat and capacity reporting
+- [x] Runtime Pod heartbeat and configured capacity enforcement
 - [x] Runtimed recovery after restart using Runtime Server `List`
 - [x] Log streaming via `krt logs`
 - [x] Bounded result outputs and artifact references outside etcd
