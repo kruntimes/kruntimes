@@ -47,6 +47,8 @@ Before tagging a release:
    operators, runtime authors, or contributors.
 5. Update `docs/compatibility.md` when the release changes Kubernetes, Helm,
    Go, Python, or published `krt` artifact support.
+6. Update `docs/operations.md` when the release changes installation,
+   upgrade, uninstall, troubleshooting, backup, or restore behavior.
 
 ## Release Notes
 
