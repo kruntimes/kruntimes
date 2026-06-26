@@ -28,7 +28,7 @@ public compatibility claim.
 | --- | --- | --- | --- |
 | Helm chart rendering | Helm 3 | Required | Charts use `apiVersion: v2`; `make test-helm` runs `helm lint` and `helm template`. |
 | Multi-release and multi-namespace installs | Helm 3 | Tested | `hack/verify-helm-multi-release.py` and `hack/verify-helm-multi-namespace.py`. |
-| Helm OCI chart publication | Not yet available | Planned | Tracked separately in `docs/open-source-readiness.md`. |
+| Helm OCI chart publication | Helm 3 OCI registry support | Released by `Release Charts` | Charts are packaged and pushed to `oci://ghcr.io/<owner>/charts`. |
 
 ## Go
 
