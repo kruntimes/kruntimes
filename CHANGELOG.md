@@ -22,3 +22,5 @@ but each release note must call them out explicitly.
   troubleshooting, backup, and restore procedures.
 - Custom Runtime development guide covering Runtime Server protocol semantics,
   Runtime CRD template ownership, capacity, and compatibility expectations.
+- GitHub Actions release workflow for publishing Helm OCI charts to GitHub
+  Container Registry.

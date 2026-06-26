@@ -59,6 +59,7 @@ GitHub release notes should be written from the changelog and include:
 - release type and support level,
 - upgrade notes and breaking changes,
 - image tags and verification instructions,
+- Helm OCI chart references,
 - CLI binary, checksum, and provenance verification instructions,
 - known limitations for the release,
 - links to the changelog and installation documentation.
@@ -119,9 +120,10 @@ After checks pass:
 
 3. Confirm the `Release Images` workflow publishes signed images with SBOM and
    provenance attestations.
-4. Confirm the `Release CLI` workflow uploads `krt` archives, checksums, and
+4. Confirm the `Release Charts` workflow publishes Helm OCI charts.
+5. Confirm the `Release CLI` workflow uploads `krt` archives, checksums, and
    provenance attestations to the GitHub release.
-5. Draft the GitHub release from the changelog and publish it only after the
+6. Draft the GitHub release from the changelog and publish it only after the
    release artifacts are available.
 
 ## Artifact Verification
@@ -146,6 +148,27 @@ cosign verify ghcr.io/<owner>/kruntimes-controller:0.1.0 \
 
 Also confirm the image digest shown in GitHub Packages matches the digest in
 the `Release Images` workflow output.
+
+### Helm OCI Charts
+
+Published Helm charts are expected under:
+
+- `oci://ghcr.io/<owner>/charts/kruntimes`
+- `oci://ghcr.io/<owner>/charts/kruntimes-runtimes`
+
+Install released charts by version:
+
+```bash
+helm upgrade --install kruntimes oci://ghcr.io/<owner>/charts/kruntimes \
+  --version 0.1.0 \
+  --namespace kruntimes-system \
+  --create-namespace
+
+helm upgrade --install kruntimes-runtimes oci://ghcr.io/<owner>/charts/kruntimes-runtimes \
+  --version 0.1.0 \
+  --namespace default \
+  --create-namespace
+```
 
 ### krt CLI
 
