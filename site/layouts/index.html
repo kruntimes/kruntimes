@@ -2,12 +2,12 @@
 <section class="hero">
   <div>
     <img class="hero-logo" src="{{ "img/logo.png" | relURL }}" alt="kruntimes" width="887" height="243">
-    <p class="eyebrow">Kubernetes-native warm execution pools</p>
-    <h1>Fast scheduling for short-lived workloads</h1>
+    <p class="eyebrow">Kubernetes-native execution engine</p>
+    <h1>Run serverless, CI, batch, and agent workloads on pre-warmed pools</h1>
     <p>
-      kruntimes keeps Runtime Pods warm, schedules Runs inside those pools, and
-      stores compact execution state in Kubernetes while large logs and
-      artifacts stay outside etcd.
+      kruntimes reuses hot Runtime Pods and performs fine-grained scheduling in
+      the application layer, reducing startup latency and operational
+      complexity without modifying Kubernetes internals.
     </p>
     <div class="actions">
       <a class="button primary" href="{{ "docs/quickstart/" | relURL }}">Quick Start</a>
