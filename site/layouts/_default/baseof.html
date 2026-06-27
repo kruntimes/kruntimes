@@ -28,10 +28,17 @@
         <span>kruntimes</span>
       </a>
       <nav class="site-nav" aria-label="Primary">
-        <a href="{{ "docs/" | relURL }}">Docs</a>
-        <a href="{{ "community/" | relURL }}">Community</a>
-        <a href="{{ "blog/" | relURL }}">Blog</a>
+        <a href="{{ "docs/" | relLangURL }}">{{ if eq site.Language.Lang "zh" }}文档{{ else }}Docs{{ end }}</a>
+        <a href="{{ "community/" | relLangURL }}">{{ if eq site.Language.Lang "zh" }}社区{{ else }}Community{{ end }}</a>
+        <a href="{{ "blog/" | relLangURL }}">{{ if eq site.Language.Lang "zh" }}博客{{ else }}Blog{{ end }}</a>
         <a href="https://github.com/kruntimes/kruntimes">GitHub</a>
+        {{ if gt (len .AllTranslations) 1 }}
+        <span class="language-switcher" aria-label="Language versions">
+          {{ range .AllTranslations }}
+            <a href="{{ .RelPermalink }}" lang="{{ .Language.LanguageCode }}">{{ .Language.LanguageName }}</a>
+          {{ end }}
+        </span>
+        {{ end }}
       </nav>
     </header>
     <main class="page">

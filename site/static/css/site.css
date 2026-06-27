@@ -74,6 +74,18 @@ a:hover {
   font-weight: 600;
 }
 
+.language-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 6px;
+  border-left: 1px solid var(--line);
+}
+
+.language-switcher a {
+  white-space: nowrap;
+}
+
 .page {
   width: min(1320px, calc(100% - 32px));
   margin: 0 auto;

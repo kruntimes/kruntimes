@@ -1,17 +1,29 @@
 {{ define "main" }}
+{{ $isZH := eq site.Language.Lang "zh" }}
 <section class="hero">
   <div class="hero-inner">
     <img class="hero-logo" src="{{ "img/logo.png" | relURL }}" alt="kruntimes" width="887" height="243">
-    <p class="eyebrow">Kubernetes-native execution engine</p>
-    <h1>Fast reusable execution on Kubernetes</h1>
+    <p class="eyebrow">{{ if $isZH }}Kubernetes-native 执行引擎{{ else }}Kubernetes-native execution engine{{ end }}</p>
+    <h1>{{ if $isZH }}Kubernetes 上的快速可复用执行引擎{{ else }}Fast reusable execution on Kubernetes{{ end }}</h1>
     <p>
+      {{ if $isZH }}
+      kruntimes 帮助平台团队和开发者在预热的 Runtime Pod 池上运行函数、流水线、
+      包含 AI workload 的 batch jobs，以及 agent sandboxes，避免每次执行都
+      付出 Pod cold start 成本。
+      {{ else }}
       kruntimes helps platform teams and developers run functions, pipelines,
       batch jobs including AI workloads, and agent sandboxes on warm Runtime Pod
       pools without paying a Pod cold start for every execution.
+      {{ end }}
     </p>
     <div class="actions">
-      <a class="button primary" href="{{ "docs/quickstart/" | relURL }}">Quick Start</a>
-      <a class="button" href="{{ "docs/overview/" | relURL }}">How It Works</a>
+      {{ if $isZH }}
+      <a class="button primary" href="{{ "docs/open-source-readiness/" | relLangURL }}">开源准备计划</a>
+      <a class="button" href="{{ site.BaseURL }}">English Docs</a>
+      {{ else }}
+      <a class="button primary" href="{{ "docs/quickstart/" | relLangURL }}">Quick Start</a>
+      <a class="button" href="{{ "docs/overview/" | relLangURL }}">How It Works</a>
+      {{ end }}
     </div>
   </div>
 </section>
@@ -19,38 +31,49 @@
 <section class="content home-content">
   {{ .Content }}
   <div class="doc-grid">
-    <a class="doc-card" href="{{ "docs/overview/" | relURL }}">
+    {{ if $isZH }}
+    <a class="doc-card" href="{{ "docs/open-source-readiness/" | relLangURL }}">
+      <strong>开源准备计划</strong>
+      <span>查看 kruntimes 对外开放前的质量、发布、安全和文档检查项。</span>
+    </a>
+    <a class="doc-card" href="{{ site.BaseURL }}">
+      <strong>English documentation</strong>
+      <span>Read the complete English documentation set.</span>
+    </a>
+    {{ else }}
+    <a class="doc-card" href="{{ "docs/overview/" | relLangURL }}">
       <strong>Understand the project</strong>
       <span>Problem, approach, value, use cases, and current limits.</span>
     </a>
-    <a class="doc-card" href="{{ "docs/quickstart/" | relURL }}">
+    <a class="doc-card" href="{{ "docs/quickstart/" | relLangURL }}">
       <strong>Run the first workload</strong>
       <span>Start a local environment and execute a Bash Run.</span>
     </a>
-    <a class="doc-card" href="{{ "docs/operations/" | relURL }}">
+    <a class="doc-card" href="{{ "docs/operations/" | relLangURL }}">
       <strong>Operate kruntimes</strong>
       <span>Install, upgrade, uninstall, troubleshoot, and recover a cluster deployment.</span>
     </a>
-    <a class="doc-card" href="{{ "docs/security/" | relURL }}">
+    <a class="doc-card" href="{{ "docs/security/" | relLangURL }}">
       <strong>Review the security model</strong>
       <span>Understand trusted workloads, namespace boundaries, and current isolation limits.</span>
     </a>
-    <a class="doc-card" href="{{ "docs/custom-runtime/" | relURL }}">
+    <a class="doc-card" href="{{ "docs/custom-runtime/" | relLangURL }}">
       <strong>Build a Runtime</strong>
       <span>Implement the local Runtime Server API and execution lifecycle.</span>
     </a>
-    <a class="doc-card" href="{{ "docs/benchmarks/" | relURL }}">
+    <a class="doc-card" href="{{ "docs/benchmarks/" | relLangURL }}">
       <strong>Benchmark capacity</strong>
       <span>Measure scheduler latency, throughput, Runtime slots, and API load.</span>
     </a>
-    <a class="doc-card" href="{{ "docs/development/" | relURL }}">
+    <a class="doc-card" href="{{ "docs/development/" | relLangURL }}">
       <strong>Contribute</strong>
       <span>Set up a development environment, run tests, and open PRs.</span>
     </a>
-    <a class="doc-card" href="{{ "community/" | relURL }}">
+    <a class="doc-card" href="{{ "community/" | relLangURL }}">
       <strong>Join the project</strong>
       <span>Find support, security reporting, governance, and conduct docs.</span>
     </a>
+    {{ end }}
   </div>
 </section>
 {{ end }}

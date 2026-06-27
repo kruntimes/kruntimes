@@ -8,8 +8,13 @@
     {{ $fragment = printf "#%s" (index $parts 1) }}
   {{ end }}
   {{ if strings.HasSuffix $path ".md" }}
-    {{ $page := strings.TrimSuffix ".md" $path }}
-    {{ $destination = printf "%s%s" (printf "docs/%s/" $page | relURL) $fragment }}
+    {{ if strings.HasSuffix $path ".zh.md" }}
+      {{ $page := strings.TrimSuffix ".zh.md" $path }}
+      {{ $destination = printf "%s%s" (printf "zh/docs/%s/" $page | relURL) $fragment }}
+    {{ else }}
+      {{ $page := strings.TrimSuffix ".md" $path }}
+      {{ $destination = printf "%s%s" (printf "docs/%s/" $page | relLangURL) $fragment }}
+    {{ end }}
   {{ end }}
 {{ end }}
 <a href="{{ $destination | safeURL }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text | safeHTML }}</a>
