@@ -1,0 +1,12 @@
+<aside class="page-toc" aria-label="On this page">
+  <p>On This Page</p>
+  {{ if gt (len .TableOfContents) 32 }}
+  {{ .TableOfContents }}
+  {{ else }}
+  <nav>
+    <ul>
+      <li><a href="#top">Top</a></li>
+    </ul>
+  </nav>
+  {{ end }}
+</aside>

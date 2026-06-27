@@ -1,16 +1,30 @@
 {{ define "main" }}
-<article class="content">
-  {{ with .Title }}<h1>{{ . }}</h1>{{ end }}
-  {{ .Content }}
-  {{ if .Pages }}
-  <div class="doc-grid">
-    {{ range .Pages.ByTitle }}
-    <a class="doc-card" href="{{ .RelPermalink }}">
-      <strong>{{ if .Title }}{{ .Title }}{{ else }}{{ .File.BaseFileName | humanize | title }}{{ end }}</strong>
-      {{ with .Summary }}<span>{{ . | plainify | truncate 120 }}</span>{{ end }}
-    </a>
+{{ if eq .Section "docs" }}
+<div class="docs-layout">
+  {{ partial "docs-sidebar.html" . }}
+  <article id="top" class="content docs-content">
+    {{ with .Title }}<h1>{{ . }}</h1>{{ end }}
+    {{ .Content }}
+    {{ if .Pages }}
+    <div class="doc-grid">
+      {{ range .Pages.ByTitle }}
+      <a class="doc-card" href="{{ .RelPermalink }}">
+        <strong>{{ if .Title }}{{ .Title }}{{ else }}{{ .File.BaseFileName | humanize | title }}{{ end }}</strong>
+        {{ with .Summary }}<span>{{ . | plainify | truncate 120 }}</span>{{ end }}
+      </a>
+      {{ end }}
+    </div>
     {{ end }}
-  </div>
-  {{ end }}
-</article>
+  </article>
+  {{ partial "page-toc.html" . }}
+</div>
+{{ else }}
+<div class="page-layout">
+  <article id="top" class="content">
+    {{ with .Title }}<h1>{{ . }}</h1>{{ end }}
+    {{ .Content }}
+  </article>
+  {{ partial "page-toc.html" . }}
+</div>
+{{ end }}
 {{ end }}

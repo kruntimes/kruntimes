@@ -71,10 +71,11 @@ a:hover {
 
 .site-nav a {
   color: var(--muted);
+  font-weight: 600;
 }
 
 .page {
-  width: min(1080px, calc(100% - 32px));
+  width: min(1320px, calc(100% - 32px));
   margin: 0 auto;
   padding: 40px 0 64px;
 }
@@ -151,6 +152,97 @@ a:hover {
 .content {
   max-width: 860px;
   margin: 0 auto;
+}
+
+.docs-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 220px;
+  gap: 32px;
+  align-items: start;
+}
+
+.page-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 860px) 220px;
+  gap: 32px;
+  align-items: start;
+  justify-content: center;
+}
+
+.docs-content {
+  max-width: none;
+  min-width: 0;
+}
+
+.docs-sidebar,
+.page-toc {
+  position: sticky;
+  top: 88px;
+  max-height: calc(100vh - 104px);
+  overflow: auto;
+  padding-bottom: 16px;
+}
+
+.docs-sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 14px;
+}
+
+.docs-sidebar p,
+.page-toc p {
+  margin: 18px 0 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.docs-sidebar p:first-child,
+.page-toc p:first-child {
+  margin-top: 0;
+}
+
+.docs-sidebar a {
+  display: block;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.docs-sidebar a:hover {
+  background: var(--code-bg);
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+.page-toc {
+  font-size: 13px;
+}
+
+.page-toc nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.page-toc nav ul ul {
+  padding-left: 12px;
+  margin-top: 4px;
+}
+
+.page-toc li {
+  margin: 4px 0;
+}
+
+.page-toc a {
+  color: var(--muted);
+}
+
+.page-toc a:hover {
+  color: var(--accent-strong);
 }
 
 .home-content {
@@ -250,6 +342,30 @@ a:hover {
 .doc-card span {
   color: var(--muted);
   font-size: 14px;
+}
+
+@media (max-width: 1080px) {
+  .docs-layout,
+  .page-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .docs-sidebar,
+  .page-toc {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    padding: 16px;
+  }
+
+  .docs-sidebar nav {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 4px 10px;
+  }
 }
 
 @media (max-width: 720px) {

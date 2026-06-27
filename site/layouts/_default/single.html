@@ -1,6 +1,20 @@
 {{ define "main" }}
-<article class="content">
-  {{ with .Title }}<h1>{{ . }}</h1>{{ end }}
-  {{ .Content }}
-</article>
+{{ if eq .Section "docs" }}
+<div class="docs-layout">
+  {{ partial "docs-sidebar.html" . }}
+  <article id="top" class="content docs-content">
+    {{ with .Title }}<h1>{{ . }}</h1>{{ end }}
+    {{ .Content }}
+  </article>
+  {{ partial "page-toc.html" . }}
+</div>
+{{ else }}
+<div class="page-layout">
+  <article id="top" class="content">
+    {{ with .Title }}<h1>{{ . }}</h1>{{ end }}
+    {{ .Content }}
+  </article>
+  {{ partial "page-toc.html" . }}
+</div>
+{{ end }}
 {{ end }}

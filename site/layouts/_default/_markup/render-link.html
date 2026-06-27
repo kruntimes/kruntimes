@@ -1,0 +1,15 @@
+{{ $destination := .Destination }}
+{{ $isExternal := or (strings.HasPrefix $destination "http://") (strings.HasPrefix $destination "https://") }}
+{{ if and (not $isExternal) (strings.Contains $destination ".md") }}
+  {{ $parts := split $destination "#" }}
+  {{ $path := index $parts 0 }}
+  {{ $fragment := "" }}
+  {{ if gt (len $parts) 1 }}
+    {{ $fragment = printf "#%s" (index $parts 1) }}
+  {{ end }}
+  {{ if strings.HasSuffix $path ".md" }}
+    {{ $page := strings.TrimSuffix ".md" $path }}
+    {{ $destination = printf "%s%s" (printf "docs/%s/" $page | relURL) $fragment }}
+  {{ end }}
+{{ end }}
+<a href="{{ $destination | safeURL }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text | safeHTML }}</a>
