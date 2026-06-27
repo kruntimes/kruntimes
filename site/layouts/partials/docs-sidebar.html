@@ -1,7 +1,37 @@
 <aside class="docs-sidebar" aria-label="Documentation">
   <nav>
     {{ if eq site.Language.Lang "zh" }}
+    <a href="{{ "docs/overview/" | relLangURL }}">项目概览</a>
+    <a href="{{ "docs/quickstart/" | relLangURL }}">快速开始</a>
+
+    <p>用户指南</p>
+    <a href="{{ "docs/installation/" | relLangURL }}">安装</a>
+    <a href="{{ "docs/usage/" | relLangURL }}">进阶用法</a>
+    <a href="{{ "docs/api/" | relLangURL }}">API 参考</a>
+    <a href="{{ "docs/configuration/" | relLangURL }}">配置</a>
+
+    <p>运维指南</p>
+    <a href="{{ "docs/operations/" | relLangURL }}">安装与卸载</a>
+    <a href="{{ "docs/operations/#upgrade" | relLangURL }}">升级</a>
+    <a href="{{ "docs/operations/#backup" | relLangURL }}">备份与恢复</a>
+    <a href="{{ "docs/security/" | relLangURL }}">安全与威胁模型</a>
+    <a href="{{ "docs/custom-runtime/" | relLangURL }}">自定义 Runtime 开发</a>
+    <a href="{{ "docs/compatibility/" | relLangURL }}">兼容性矩阵</a>
+    <a href="{{ "docs/troubleshooting/" | relLangURL }}">故障排查</a>
+
+    <p>开发指南</p>
+    <a href="{{ "docs/architecture/" | relLangURL }}">架构</a>
+    <a href="{{ "docs/development/" | relLangURL }}">贡献指南</a>
+    <a href="{{ "docs/testing/" | relLangURL }}">测试指南</a>
+    <a href="{{ "docs/release/" | relLangURL }}">发布流程</a>
+    <a href="{{ "docs/benchmarks/" | relLangURL }}">性能基准测试</a>
+
+    <p>社区</p>
+    <a href="{{ "docs/community/" | relLangURL }}">治理</a>
+    <a href="{{ "docs/roadmap/" | relLangURL }}">路线图</a>
     <a href="{{ "docs/open-source-readiness/" | relLangURL }}">开源准备计划</a>
+
+    <a href="{{ "docs/faq/" | relLangURL }}">常见问题</a>
     {{ else }}
     <a href="{{ "docs/overview/" | relLangURL }}">Overview</a>
     <a href="{{ "docs/quickstart/" | relLangURL }}">Quick Start</a>
@@ -10,6 +40,7 @@
     <a href="{{ "docs/installation/" | relLangURL }}">Installation</a>
     <a href="{{ "docs/usage/" | relLangURL }}">Advanced Usage</a>
     <a href="{{ "docs/api/" | relLangURL }}">API Reference</a>
+    <a href="{{ "docs/configuration/" | relLangURL }}">Configuration</a>
 
     <p>Operations Guide</p>
     <a href="{{ "docs/operations/" | relLangURL }}">Installation and Uninstallation</a>
@@ -23,12 +54,14 @@
     <p>Development Guide</p>
     <a href="{{ "docs/architecture/" | relLangURL }}">Architecture</a>
     <a href="{{ "docs/development/" | relLangURL }}">Contributing</a>
+    <a href="{{ "docs/testing/" | relLangURL }}">Testing Guide</a>
     <a href="{{ "docs/release/" | relLangURL }}">Release Process</a>
     <a href="{{ "docs/benchmarks/" | relLangURL }}">Performance Benchmarks</a>
 
     <p>Community</p>
     <a href="{{ "docs/community/" | relLangURL }}">Governance</a>
     <a href="{{ "docs/roadmap/" | relLangURL }}">Roadmap</a>
+    <a href="{{ "docs/open-source-readiness/" | relLangURL }}">Open Source Readiness</a>
 
     <a href="{{ "docs/faq/" | relLangURL }}">FAQ</a>
     {{ end }}
