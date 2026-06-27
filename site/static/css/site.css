@@ -1,0 +1,264 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f8fb;
+  --panel: #ffffff;
+  --text: #151922;
+  --muted: #5e6878;
+  --line: #d9dee8;
+  --accent: #0969da;
+  --accent-strong: #054da3;
+  --code-bg: #eef2f7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 64px;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(10px);
+}
+
+.brand {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 14px;
+}
+
+.site-nav a {
+  color: var(--muted);
+}
+
+.page {
+  width: min(1080px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 40px 0 64px;
+}
+
+.hero {
+  min-height: 360px;
+  display: grid;
+  align-items: center;
+  padding: 56px 0 64px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hero > div {
+  max-width: 780px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--accent-strong);
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.hero h1 {
+  max-width: 720px;
+  margin: 0 0 18px;
+  font-size: clamp(42px, 7vw, 76px);
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.hero p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 20px;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 28px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--panel);
+  font-weight: 600;
+}
+
+.button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.content {
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+.home-content {
+  margin-top: 40px;
+}
+
+.content h1 {
+  margin: 0 0 24px;
+  font-size: 42px;
+  line-height: 1.12;
+  letter-spacing: 0;
+}
+
+.content h2 {
+  margin: 36px 0 12px;
+  padding-top: 8px;
+  font-size: 28px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.content h3 {
+  margin: 28px 0 10px;
+  font-size: 21px;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+
+.content p,
+.content li {
+  color: var(--text);
+}
+
+.content table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.content th,
+.content td {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.content th {
+  background: var(--code-bg);
+}
+
+.content code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  font-size: 0.92em;
+}
+
+.content pre {
+  overflow-x: auto;
+  padding: 16px;
+  border-radius: 6px;
+  background: #121722;
+  color: #f5f7fb;
+}
+
+.content pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.doc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 28px;
+}
+
+.doc-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 132px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.doc-card strong {
+  margin-bottom: 8px;
+  font-size: 17px;
+}
+
+.doc-card span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+@media (max-width: 720px) {
+  .site-header {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 16px;
+  }
+
+  .page {
+    width: min(100% - 24px, 1080px);
+    padding-top: 28px;
+  }
+
+  .hero {
+    min-height: 320px;
+    padding: 32px 0 40px;
+  }
+
+  .hero p {
+    font-size: 18px;
+  }
+
+  .content h1 {
+    font-size: 34px;
+  }
+}

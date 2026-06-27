@@ -1,0 +1,52 @@
+{{ define "main" }}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Kubernetes-native warm execution pools</p>
+    <h1>Fast scheduling for short-lived workloads</h1>
+    <p>
+      kruntimes keeps Runtime Pods warm, schedules Runs inside those pools, and
+      stores compact execution state in Kubernetes while large logs and
+      artifacts stay outside etcd.
+    </p>
+    <div class="actions">
+      <a class="button primary" href="{{ "docs/quickstart/" | relURL }}">Quick Start</a>
+      <a class="button" href="{{ "docs/installation/" | relURL }}">Install</a>
+      <a class="button" href="{{ "docs/security/" | relURL }}">Security Model</a>
+    </div>
+  </div>
+</section>
+
+<section class="content home-content">
+  {{ .Content }}
+  <div class="doc-grid">
+    <a class="doc-card" href="{{ "docs/overview/" | relURL }}">
+      <strong>Understand the project</strong>
+      <span>Problem, approach, value, use cases, and current limits.</span>
+    </a>
+    <a class="doc-card" href="{{ "docs/quickstart/" | relURL }}">
+      <strong>Run the first workload</strong>
+      <span>Start a local environment and execute a Bash Run.</span>
+    </a>
+    <a class="doc-card" href="{{ "docs/operations/" | relURL }}">
+      <strong>Operate kruntimes</strong>
+      <span>Install, upgrade, uninstall, troubleshoot, and recover a cluster deployment.</span>
+    </a>
+    <a class="doc-card" href="{{ "docs/custom-runtime/" | relURL }}">
+      <strong>Build a Runtime</strong>
+      <span>Implement the local Runtime Server API and execution lifecycle.</span>
+    </a>
+    <a class="doc-card" href="{{ "docs/benchmarks/" | relURL }}">
+      <strong>Benchmark capacity</strong>
+      <span>Measure scheduler latency, throughput, Runtime slots, and API load.</span>
+    </a>
+    <a class="doc-card" href="{{ "docs/development/" | relURL }}">
+      <strong>Contribute</strong>
+      <span>Set up a development environment, run tests, and open PRs.</span>
+    </a>
+    <a class="doc-card" href="{{ "docs/community/" | relURL }}">
+      <strong>Join the project</strong>
+      <span>Find support, security reporting, governance, and conduct docs.</span>
+    </a>
+  </div>
+</section>
+{{ end }}

@@ -1,0 +1,16 @@
+{{ define "main" }}
+<article class="content">
+  <h1>{{ .Title }}</h1>
+  {{ .Content }}
+  {{ if .Pages }}
+  <div class="doc-grid">
+    {{ range .Pages.ByTitle }}
+    <a class="doc-card" href="{{ .RelPermalink }}">
+      <strong>{{ .Title }}</strong>
+      {{ with .Summary }}<span>{{ . | plainify | truncate 120 }}</span>{{ end }}
+    </a>
+    {{ end }}
+  </div>
+  {{ end }}
+</article>
+{{ end }}

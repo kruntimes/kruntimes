@@ -1,0 +1,20 @@
+baseURL: "https://kruntimes.github.io/kruntimes/"
+languageCode: "en-us"
+title: "kruntimes"
+disableKinds:
+  - taxonomy
+  - term
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+  highlight:
+    noClasses: false
+module:
+  mounts:
+    - source: content
+      target: content
+    - source: ../docs
+      target: content/docs
+params:
+  description: "Warm Runtime Pods and application-level scheduling for short-lived Kubernetes workloads."

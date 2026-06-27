@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="{{ site.Language.LanguageCode }}">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="{{ site.Params.description }}">
+    <title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} | {{ site.Title }}{{ end }}</title>
+    <link rel="stylesheet" href="{{ "css/site.css" | relURL }}">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="{{ site.Home.RelPermalink }}">kruntimes</a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="{{ "docs/quickstart/" | relURL }}">Quick Start</a>
+        <a href="{{ "docs/operations/" | relURL }}">Operations</a>
+        <a href="{{ "docs/architecture/" | relURL }}">Architecture</a>
+        <a href="{{ "docs/api/" | relURL }}">API</a>
+        <a href="{{ "docs/security/" | relURL }}">Security</a>
+        <a href="https://github.com/kruntimes/kruntimes">GitHub</a>
+      </nav>
+    </header>
+    <main class="page">
+      {{ block "main" . }}{{ end }}
+    </main>
+  </body>
+</html>
