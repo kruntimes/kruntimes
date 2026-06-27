@@ -5,11 +5,11 @@
 # kruntimes
 
 kruntimes is a Kubernetes-native execution engine that runs serverless
-functions, CI pipelines, and AI agent tasks/sandboxes on pre-warmed runtime
-pools. Instead of creating a new Pod for every execution, kruntimes reuses hot
-Runtime Pods and performs fine-grained scheduling in the application layer,
-reducing startup latency and operational complexity without modifying
-Kubernetes internals.
+functions, CI pipelines, batch workloads including AI workloads, and AI agent
+tasks/sandboxes on pre-warmed runtime pools. Instead of creating a new Pod for
+every execution, kruntimes reuses hot Runtime Pods and performs fine-grained
+scheduling in the application layer, reducing startup latency and operational
+complexity without modifying Kubernetes internals.
 
 The project is currently `v0.x experimental` with `v1alpha1` APIs. Built-in
 Bash and Python runtimes are intended for trusted workloads in trusted
