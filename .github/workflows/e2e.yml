@@ -27,7 +27,7 @@ jobs:
           working-directory: runtimes/python
           python-version: "3.12"
           enable-cache: true
-      - uses: azure/setup-helm@v5.0.0
+      - uses: azure/setup-helm@v5.0.1
       - uses: helm/kind-action@v1.14.0
         with:
           cluster_name: kruntimes-e2e
