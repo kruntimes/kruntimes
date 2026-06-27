@@ -88,10 +88,6 @@ govulncheck: govulncheck-tool ## Run govulncheck against all Go packages.
 test-s3-integration: ## Run S3 ArtifactStore integration tests against MinIO.
 	CONTAINER_TOOL=$(CONTAINER_TOOL) ./hack/test-s3-integration.sh
 
-.PHONY: benchmark
-benchmark: generate ## Run the performance benchmark against the current Kubernetes context.
-	go run ./hack/benchmark
-
 ##@ E2E
 
 KIND_CLUSTER_NAME ?= kruntimes-e2e
@@ -102,7 +98,6 @@ E2E_IMG_CONTROLLER ?= kruntimes-controller:$(E2E_IMAGE_TAG)
 E2E_IMG_RUNTIMED ?= kruntimes-runtimed:$(E2E_IMAGE_TAG)
 E2E_IMG_BASH_RUNTIME ?= kruntimes-bash-runtime:$(E2E_IMAGE_TAG)
 E2E_IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:$(E2E_IMAGE_TAG)
-
 .PHONY: e2e-setup
 e2e-setup: IMG_SCHEDULER = $(E2E_IMG_SCHEDULER)
 e2e-setup: IMG_CONTROLLER = $(E2E_IMG_CONTROLLER)
@@ -141,6 +136,12 @@ e2e: e2e-setup e2e-test ## Full E2E: setup cluster, deploy, run tests.
 .PHONY: e2e-cleanup
 e2e-cleanup: ## Delete the kind cluster.
 	kind delete cluster --name $(KIND_CLUSTER_NAME)
+
+.PHONY: benchmark
+benchmark: e2e-setup ## Run the performance benchmark against the current Kubernetes context.
+	KRUNTIMES_BASH_RUNTIME_IMAGE=$(E2E_IMG_BASH_RUNTIME) \
+	KRUNTIMES_RUNTIMED_IMAGE=$(E2E_IMG_RUNTIMED) \
+	go run ./hack/benchmark
 
 ##@ Build
 

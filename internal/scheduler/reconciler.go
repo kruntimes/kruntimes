@@ -14,10 +14,13 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
@@ -278,9 +281,39 @@ func pendingRetryDelay(run *v1alpha1.Run) time.Duration {
 // SetupWithManager registers the reconciler with the controller manager.
 func (r *RunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.Run{}).
-		WithEventFilter(pendingRunPredicate()).
+		For(&v1alpha1.Run{}, builder.WithPredicates(pendingRunPredicate())).
+		Watches(
+			&v1alpha1.Run{},
+			handler.EnqueueRequestsFromMapFunc(r.pendingRunsForReleasedCapacity),
+			builder.WithPredicates(runCapacityReleasedPredicate()),
+		).
 		Complete(r)
+}
+
+func (r *RunReconciler) pendingRunsForReleasedCapacity(ctx context.Context, object client.Object) []reconcile.Request {
+	run, ok := object.(*v1alpha1.Run)
+	if !ok || run.Spec.Runtime == "" {
+		return nil
+	}
+
+	var runs v1alpha1.RunList
+	if err := r.List(ctx, &runs, client.InNamespace(run.Namespace)); err != nil {
+		r.Log.Error(err, "unable to list pending runs for released runtime capacity", "run", client.ObjectKeyFromObject(run))
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(runs.Items))
+	for i := range runs.Items {
+		pending := &runs.Items[i]
+		if pending.Spec.Runtime != run.Spec.Runtime {
+			continue
+		}
+		if pending.Status.Phase != "" && pending.Status.Phase != v1alpha1.RunPending {
+			continue
+		}
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pending)})
+	}
+	return requests
 }
 
 func pendingRunPredicate() predicate.Predicate {
@@ -299,5 +332,34 @@ func pendingRunPredicate() predicate.Predicate {
 		GenericFunc: func(e event.GenericEvent) bool {
 			return false
 		},
+	}
+}
+
+func runCapacityReleasedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return false
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldRun, oldOK := e.ObjectOld.(*v1alpha1.Run)
+			newRun, newOK := e.ObjectNew.(*v1alpha1.Run)
+			return oldOK && newOK && consumesRuntimeCapacity(oldRun.Status.Phase) && !consumesRuntimeCapacity(newRun.Status.Phase)
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			run, ok := e.Object.(*v1alpha1.Run)
+			return ok && consumesRuntimeCapacity(run.Status.Phase)
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return false
+		},
+	}
+}
+
+func consumesRuntimeCapacity(phase v1alpha1.RunPhase) bool {
+	switch phase {
+	case v1alpha1.RunScheduled, v1alpha1.RunRunning:
+		return true
+	default:
+		return false
 	}
 }

@@ -143,10 +143,10 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 	}
 	daemonImage := rt.Spec.DaemonImage
 	if daemonImage == "" {
-		daemonImage = runtimedDefaultImage
-	}
-	if r.DefaultDaemonImage != "" {
 		daemonImage = r.DefaultDaemonImage
+	}
+	if daemonImage == "" {
+		daemonImage = runtimedDefaultImage
 	}
 	runtimedServiceAccountName := r.runtimedServiceAccountName(rt)
 	template := rt.Spec.Template.DeepCopy()

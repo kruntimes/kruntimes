@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -995,6 +996,91 @@ func TestCleanupForgetsExecutionAndRemovesWorkspace(t *testing.T) {
 	}
 	if c.activeRunCount() != 0 {
 		t.Fatalf("active runs = %d, want 0", c.activeRunCount())
+	}
+}
+
+func TestReconcileDeletedRunReleasesActiveRun(t *testing.T) {
+	setTestWorkspace(t)
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	now := metav1.Now()
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "deleted",
+			Namespace:         "default",
+			UID:               "deleted-uid",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{"test.finalizer"},
+		},
+		Spec:   v1alpha1.RunSpec{Runtime: "bash"},
+		Status: v1alpha1.RunStatus{Phase: v1alpha1.RunRunning},
+	}
+	runWorkspace := workspaceForRun(run)
+	if err := os.MkdirAll(runWorkspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(run).
+		Build()
+	runtimeClient := &fakeRuntimeClient{}
+	c := &Controller{Client: k8sClient, runtimeCli: runtimeClient}
+	c.activeRuns.Store(string(run.UID), &activeRun{run: run, workDir: runWorkspace})
+
+	if _, err := c.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if c.activeRunCount() != 0 {
+		t.Fatalf("activeRunCount = %d, want 0", c.activeRunCount())
+	}
+	if len(runtimeClient.forgetRequests) != 1 || runtimeClient.forgetRequests[0].Id != string(run.UID) {
+		t.Fatalf("Forget requests = %#v, want deleted-uid", runtimeClient.forgetRequests)
+	}
+	if _, err := os.Stat(runWorkspace); !os.IsNotExist(err) {
+		t.Fatalf("workspace still exists or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestReconcileNotFoundRunReleasesActiveRunByName(t *testing.T) {
+	setTestWorkspace(t)
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "gone", Namespace: "default", UID: "gone-uid"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+	}
+	runWorkspace := workspaceForRun(run)
+	if err := os.MkdirAll(runWorkspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+	runtimeClient := &fakeRuntimeClient{}
+	c := &Controller{Client: k8sClient, runtimeCli: runtimeClient}
+	c.activeRuns.Store(string(run.UID), &activeRun{run: run, workDir: runWorkspace})
+
+	if _, err := c.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if c.activeRunCount() != 0 {
+		t.Fatalf("activeRunCount = %d, want 0", c.activeRunCount())
+	}
+	if len(runtimeClient.forgetRequests) != 1 || runtimeClient.forgetRequests[0].Id != string(run.UID) {
+		t.Fatalf("Forget requests = %#v, want gone-uid", runtimeClient.forgetRequests)
+	}
+	if _, err := os.Stat(runWorkspace); !os.IsNotExist(err) {
+		t.Fatalf("workspace still exists or stat failed unexpectedly: %v", err)
 	}
 }
 

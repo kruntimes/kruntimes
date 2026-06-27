@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/runstatus"
@@ -330,6 +332,111 @@ func TestRunQueueDurationSeconds(t *testing.T) {
 	run.CreationTimestamp = metav1.NewTime(scheduledAt.Add(time.Second))
 	if _, ok := runQueueDurationSeconds(run, scheduledAt); ok {
 		t.Fatal("runQueueDurationSeconds() ok = true for negative duration")
+	}
+}
+
+func TestPendingRunsForReleasedCapacity(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add kruntimes scheme: %v", err)
+	}
+
+	released := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "released", Namespace: "default"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunSucceeded},
+	}
+	pendingSameRuntime := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-same-runtime", Namespace: "default"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunPending},
+	}
+	pendingEmptyPhase := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-empty-phase", Namespace: "default"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+	}
+	pendingOtherRuntime := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-other-runtime", Namespace: "default"},
+		Spec:       v1alpha1.RunSpec{Runtime: "python"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunPending},
+	}
+	scheduledSameRuntime := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "scheduled-same-runtime", Namespace: "default"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunScheduled},
+	}
+	pendingOtherNamespace := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-other-namespace", Namespace: "other"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunPending},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(released, pendingSameRuntime, pendingEmptyPhase, pendingOtherRuntime, scheduledSameRuntime, pendingOtherNamespace).
+		Build()
+	reconciler := &RunReconciler{Client: k8sClient, Log: logr.Discard()}
+
+	requests := reconciler.pendingRunsForReleasedCapacity(context.Background(), released)
+	got := make([]string, 0, len(requests))
+	for _, request := range requests {
+		got = append(got, request.NamespacedName.String())
+	}
+	sort.Strings(got)
+
+	want := []string{"default/pending-empty-phase", "default/pending-same-runtime"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("requests = %v, want %v", got, want)
+	}
+
+	if requests := reconciler.pendingRunsForReleasedCapacity(context.Background(), &corev1.Pod{}); len(requests) != 0 {
+		t.Fatalf("requests for non-Run object = %v, want none", requests)
+	}
+}
+
+func TestRunCapacityReleasedPredicate(t *testing.T) {
+	pred := runCapacityReleasedPredicate()
+
+	tests := []struct {
+		name     string
+		oldPhase v1alpha1.RunPhase
+		newPhase v1alpha1.RunPhase
+		want     bool
+	}{
+		{name: "scheduled to succeeded", oldPhase: v1alpha1.RunScheduled, newPhase: v1alpha1.RunSucceeded, want: true},
+		{name: "running to failed", oldPhase: v1alpha1.RunRunning, newPhase: v1alpha1.RunFailed, want: true},
+		{name: "running to pending", oldPhase: v1alpha1.RunRunning, newPhase: v1alpha1.RunPending, want: true},
+		{name: "pending to scheduled", oldPhase: v1alpha1.RunPending, newPhase: v1alpha1.RunScheduled, want: false},
+		{name: "running stays running", oldPhase: v1alpha1.RunRunning, newPhase: v1alpha1.RunRunning, want: false},
+		{name: "terminal update", oldPhase: v1alpha1.RunSucceeded, newPhase: v1alpha1.RunFailed, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pred.Update(event.UpdateEvent{
+				ObjectOld: &v1alpha1.Run{Status: v1alpha1.RunStatus{Phase: tt.oldPhase}},
+				ObjectNew: &v1alpha1.Run{Status: v1alpha1.RunStatus{Phase: tt.newPhase}},
+			})
+			if got != tt.want {
+				t.Fatalf("Update() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	if pred.Create(event.CreateEvent{Object: &v1alpha1.Run{Status: v1alpha1.RunStatus{Phase: v1alpha1.RunRunning}}}) {
+		t.Fatal("Create() = true, want false")
+	}
+	if !pred.Delete(event.DeleteEvent{Object: &v1alpha1.Run{Status: v1alpha1.RunStatus{Phase: v1alpha1.RunRunning}}}) {
+		t.Fatal("Delete() = false, want true for Running Run")
+	}
+	if pred.Delete(event.DeleteEvent{Object: &v1alpha1.Run{Status: v1alpha1.RunStatus{Phase: v1alpha1.RunSucceeded}}}) {
+		t.Fatal("Delete() = true, want false for terminal Run")
+	}
+	if pred.Generic(event.GenericEvent{Object: &v1alpha1.Run{Status: v1alpha1.RunStatus{Phase: v1alpha1.RunRunning}}}) {
+		t.Fatal("Generic() = true, want false")
 	}
 }
 

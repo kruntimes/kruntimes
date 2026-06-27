@@ -214,9 +214,13 @@ func (c *Controller) matchesRuntimeNamespace(run *v1alpha1.Run) bool {
 func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var run v1alpha1.Run
 	if err := c.Get(ctx, req.NamespacedName, &run); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			c.cleanupDeletedRun(ctx, req.NamespacedName)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !run.DeletionTimestamp.IsZero() {
+		c.releaseActiveRun(ctx, &run)
 		return ctrl.Result{}, nil
 	}
 
@@ -658,17 +662,36 @@ func (c *Controller) applyTerminalWithOutput(
 // ===========================================================================
 
 func (c *Controller) cleanup(ctx context.Context, ar *activeRun, phase v1alpha1.RunPhase) {
-	if c.rleg != nil {
-		c.rleg.RemoveRun(string(ar.run.UID))
-	}
-	c.activeRuns.Delete(string(ar.run.UID))
-	c.recordActiveRuns(ar.run.Spec.Runtime)
-	c.releaseExecution(ctx, string(ar.run.UID))
-	if err := os.RemoveAll(workspaceForRun(ar.run)); err != nil {
-		c.Log.Error(err, "failed to remove Run workspace", "run", client.ObjectKeyFromObject(ar.run))
-	}
+	c.releaseActiveRun(ctx, ar.run)
 	runDuration.WithLabelValues(ar.run.Spec.Runtime).Observe(time.Since(ar.start).Seconds())
 	runsCompleted.WithLabelValues(ar.run.Spec.Runtime, string(phase)).Inc()
+}
+
+func (c *Controller) releaseActiveRun(ctx context.Context, run *v1alpha1.Run) {
+	if run == nil || run.UID == "" {
+		return
+	}
+	uid := string(run.UID)
+	if c.rleg != nil {
+		c.rleg.RemoveRun(uid)
+	}
+	c.activeRuns.Delete(uid)
+	c.recordActiveRuns(run.Spec.Runtime)
+	c.releaseExecution(ctx, uid)
+	if err := os.RemoveAll(workspaceForRun(run)); err != nil {
+		c.Log.Error(err, "failed to remove Run workspace", "run", client.ObjectKeyFromObject(run))
+	}
+}
+
+func (c *Controller) cleanupDeletedRun(ctx context.Context, key types.NamespacedName) {
+	c.activeRuns.Range(func(_, value any) bool {
+		ar := value.(*activeRun)
+		if ar.run.Namespace == key.Namespace && ar.run.Name == key.Name {
+			c.releaseActiveRun(ctx, ar.run)
+			return false
+		}
+		return true
+	})
 }
 
 func (c *Controller) releaseExecution(ctx context.Context, uid string) {

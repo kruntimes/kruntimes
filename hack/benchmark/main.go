@@ -216,9 +216,22 @@ func run(parent context.Context, opts options) error {
 		}()
 	}
 
+	capProbe, err := observeCapacitySaturation(ctx, k8sClient, opts, benchID, runtimePods)
+	if err != nil {
+		return err
+	}
 	observations, createLatencies, listLatencies, getLatencies, capReport, err := executeRuns(ctx, k8sClient, opts, benchID, runtimePods)
 	if err != nil {
 		return err
+	}
+	capReport.ObservedPendingAtCapacity = capProbe.ObservedPendingAtCapacity
+	if capProbe.MaxObservedRunningRuns > capReport.MaxObservedRunningRuns {
+		capReport.MaxObservedRunningRuns = capProbe.MaxObservedRunningRuns
+	}
+	for pod, count := range capProbe.MaxObservedRunningByPod {
+		if count > capReport.MaxObservedRunningByPod[pod] {
+			capReport.MaxObservedRunningByPod[pod] = count
+		}
 	}
 	completedAt := time.Now()
 
@@ -282,9 +295,10 @@ func runtimePodTemplate(image string) corev1.PodTemplateSpec {
 	return corev1.PodTemplateSpec{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{
-				Name:  "runtime",
-				Image: image,
-				Args:  []string{"--port=9091", "--work-dir=/workspace"},
+				Name:            "runtime",
+				Image:           image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Args:            []string{"--port=9091", "--work-dir=/workspace"},
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
 						corev1.ResourceCPU:    resource.MustParse("25m"),
@@ -355,7 +369,7 @@ func executeRuns(ctx context.Context, k8sClient client.Client, opts options, ben
 		sem <- struct{}{}
 		go func() {
 			defer func() { <-sem }()
-			run := benchmarkRun(opts, benchID, i)
+			run := benchmarkRun(opts, benchID, i, opts.Sleep)
 			start := time.Now()
 			if err := k8sClient.Create(ctx, run); err != nil {
 				errCh <- fmt.Errorf("create Run %d: %w", i, err)
@@ -384,76 +398,8 @@ func executeRuns(ctx context.Context, k8sClient client.Client, opts options, ben
 		RuntimePodNames:         runtimePodNames(runtimePods),
 	}
 	assignedSeen := map[string]struct{}{}
-
-	err := wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, opts.Timeout, true, func(ctx context.Context) (bool, error) {
-		list := &v1alpha1.RunList{}
-		start := time.Now()
-		if err := k8sClient.List(ctx, list, client.InNamespace(opts.Namespace), client.MatchingLabels{benchmarkIDLabel: benchID}); err != nil {
-			return false, fmt.Errorf("list benchmark Runs: %w", err)
-		}
-		listLatencies = append(listLatencies, time.Since(start))
-
-		now := time.Now()
-		runningByPod := map[string]int{}
-		pending := 0
-		terminal := 0
-		for i := range list.Items {
-			run := &list.Items[i]
-			obs := observations[run.Name]
-			if obs == nil {
-				obs = &runObservation{CreatedAt: run.CreationTimestamp.Time}
-				observations[run.Name] = obs
-			}
-			obs.Phase = run.Status.Phase
-			obs.AssignedPod = run.Status.AssignedPod
-			if obs.ScheduledAt.IsZero() && run.Status.AssignedPod != "" {
-				obs.ScheduledAt = now
-			}
-			if obs.StartedAt.IsZero() && run.Status.StartTime != nil {
-				obs.StartedAt = run.Status.StartTime.Time
-			}
-			if obs.FinishedAt.IsZero() && isTerminal(run.Status.Phase) {
-				if run.Status.CompletionTime != nil {
-					obs.FinishedAt = run.Status.CompletionTime.Time
-				} else {
-					obs.FinishedAt = now
-				}
-			}
-			if run.Status.AssignedPod != "" {
-				key := run.Name + "/" + run.Status.AssignedPod
-				if _, ok := assignedSeen[key]; !ok {
-					capReport.AssignedRunsByPod[run.Status.AssignedPod]++
-					assignedSeen[key] = struct{}{}
-				}
-			}
-			switch run.Status.Phase {
-			case "", v1alpha1.RunPending:
-				pending++
-			case v1alpha1.RunRunning:
-				runningByPod[run.Status.AssignedPod]++
-			}
-			if isTerminal(run.Status.Phase) {
-				terminal++
-			}
-		}
-
-		runningTotal := 0
-		for pod, count := range runningByPod {
-			runningTotal += count
-			if count > capReport.MaxObservedRunningByPod[pod] {
-				capReport.MaxObservedRunningByPod[pod] = count
-			}
-		}
-		if runningTotal > capReport.MaxObservedRunningRuns {
-			capReport.MaxObservedRunningRuns = runningTotal
-		}
-		if pending > 0 && runningTotal >= int(capReport.ConfiguredTotalRunSlots) {
-			capReport.ObservedPendingAtCapacity = true
-		}
-		return terminal == opts.Runs, nil
-	})
-	if err != nil {
-		return nil, nil, nil, nil, capacityReport{}, fmt.Errorf("wait for benchmark Runs to finish: %w", err)
+	if err := waitForAllTerminal(ctx, k8sClient, opts, benchID, observations, &listLatencies, &capReport, assignedSeen); err != nil {
+		return nil, nil, nil, nil, capacityReport{}, err
 	}
 
 	for name := range observations {
@@ -467,7 +413,129 @@ func executeRuns(ctx context.Context, k8sClient client.Client, opts options, ben
 	return observations, createLatencies, listLatencies, getLatencies, capReport, nil
 }
 
-func benchmarkRun(opts options, benchID string, index int) *v1alpha1.Run {
+func observeCapacitySaturation(ctx context.Context, k8sClient client.Client, opts options, benchID string, runtimePods []corev1.Pod) (capacityReport, error) {
+	totalSlots := int32(len(runtimePods)) * opts.Capacity
+	out := capacityReport{
+		ReadyRuntimePods:        len(runtimePods),
+		ConfiguredTotalRunSlots: totalSlots,
+		MaxObservedRunningByPod: map[string]int{},
+		AssignedRunsByPod:       map[string]int{},
+		RuntimePodNames:         runtimePodNames(runtimePods),
+	}
+	if totalSlots <= 0 {
+		return out, nil
+	}
+
+	names := make([]string, 0, int(totalSlots)+1)
+	for i := 0; i < int(totalSlots)+1; i++ {
+		run := benchmarkRun(opts, benchID+"-capacity", i, 3*time.Second)
+		if err := k8sClient.Create(ctx, run); err != nil {
+			return out, fmt.Errorf("create capacity probe Run %d: %w", i, err)
+		}
+		names = append(names, run.Name)
+	}
+	defer deleteRuns(context.Background(), k8sClient, opts.Namespace, names)
+
+	err := wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+		list := &v1alpha1.RunList{}
+		if err := k8sClient.List(ctx, list, client.InNamespace(opts.Namespace), client.MatchingLabels{benchmarkIDLabel: benchID + "-capacity"}); err != nil {
+			return false, fmt.Errorf("list capacity probe Runs: %w", err)
+		}
+		runningByPod := map[string]int{}
+		pending := 0
+		for i := range list.Items {
+			run := &list.Items[i]
+			switch run.Status.Phase {
+			case "", v1alpha1.RunPending:
+				pending++
+			case v1alpha1.RunRunning:
+				runningByPod[run.Status.AssignedPod]++
+			}
+		}
+		runningTotal := 0
+		for pod, count := range runningByPod {
+			runningTotal += count
+			if count > out.MaxObservedRunningByPod[pod] {
+				out.MaxObservedRunningByPod[pod] = count
+			}
+		}
+		if runningTotal > out.MaxObservedRunningRuns {
+			out.MaxObservedRunningRuns = runningTotal
+		}
+		if pending > 0 && runningTotal >= int(totalSlots) {
+			out.ObservedPendingAtCapacity = true
+			return true, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		return out, nil
+	}
+	return out, nil
+}
+
+func waitForAllTerminal(ctx context.Context, k8sClient client.Client, opts options, benchID string, observations map[string]*runObservation, listLatencies *[]time.Duration, capReport *capacityReport, assignedSeen map[string]struct{}) error {
+	err := wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, opts.Timeout, true, func(ctx context.Context) (bool, error) {
+		list := &v1alpha1.RunList{}
+		start := time.Now()
+		if err := k8sClient.List(ctx, list, client.InNamespace(opts.Namespace), client.MatchingLabels{benchmarkIDLabel: benchID}); err != nil {
+			return false, fmt.Errorf("list benchmark Runs: %w", err)
+		}
+		*listLatencies = append(*listLatencies, time.Since(start))
+
+		now := time.Now()
+		runningByPod := map[string]int{}
+		terminal := 0
+		for i := range list.Items {
+			run := &list.Items[i]
+			obs := observations[run.Name]
+			if obs == nil {
+				continue
+			}
+			obs.Phase = run.Status.Phase
+			obs.AssignedPod = run.Status.AssignedPod
+			if obs.ScheduledAt.IsZero() && run.Status.AssignedPod != "" {
+				obs.ScheduledAt = now
+			}
+			if obs.StartedAt.IsZero() && run.Status.StartTime != nil {
+				obs.StartedAt = now
+			}
+			if obs.FinishedAt.IsZero() && isTerminal(run.Status.Phase) {
+				obs.FinishedAt = now
+			}
+			if run.Status.AssignedPod != "" {
+				key := run.Name + "/" + run.Status.AssignedPod
+				if _, ok := assignedSeen[key]; !ok {
+					capReport.AssignedRunsByPod[run.Status.AssignedPod]++
+					assignedSeen[key] = struct{}{}
+				}
+			}
+			if run.Status.Phase == v1alpha1.RunRunning {
+				runningByPod[run.Status.AssignedPod]++
+			}
+			if isTerminal(run.Status.Phase) {
+				terminal++
+			}
+		}
+		runningTotal := 0
+		for pod, count := range runningByPod {
+			runningTotal += count
+			if count > capReport.MaxObservedRunningByPod[pod] {
+				capReport.MaxObservedRunningByPod[pod] = count
+			}
+		}
+		if runningTotal > capReport.MaxObservedRunningRuns {
+			capReport.MaxObservedRunningRuns = runningTotal
+		}
+		return terminal == len(observations), nil
+	})
+	if err != nil {
+		return fmt.Errorf("wait for benchmark Runs to finish: %w", err)
+	}
+	return nil
+}
+
+func benchmarkRun(opts options, benchID string, index int, sleep time.Duration) *v1alpha1.Run {
 	ttl := int32(300)
 	return &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
@@ -480,7 +548,7 @@ func benchmarkRun(opts options, benchID string, index int) *v1alpha1.Run {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime:                 opts.RuntimeName,
-			Args:                    []string{fmt.Sprintf("sleep %.3f; echo benchmark-run-%d", opts.Sleep.Seconds(), index)},
+			Args:                    []string{fmt.Sprintf("sleep %.3f; echo benchmark-run-%d", sleep.Seconds(), index)},
 			TTLSecondsAfterFinished: &ttl,
 		},
 	}
@@ -660,6 +728,13 @@ func cleanup(ctx context.Context, k8sClient client.Client, opts options, benchID
 	}
 	rt := &v1alpha1.Runtime{ObjectMeta: metav1.ObjectMeta{Name: opts.RuntimeName, Namespace: opts.Namespace}}
 	_ = k8sClient.Delete(ctx, rt)
+}
+
+func deleteRuns(ctx context.Context, k8sClient client.Client, namespace string, names []string) {
+	for _, name := range names {
+		run := &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}}
+		_ = k8sClient.Delete(ctx, run)
+	}
 }
 
 func isTerminal(phase v1alpha1.RunPhase) bool {
