@@ -33,11 +33,14 @@
         <a href="{{ "blog/" | relLangURL }}">{{ if eq site.Language.Lang "zh" }}博客{{ else }}Blog{{ end }}</a>
         <a href="https://github.com/kruntimes/kruntimes">GitHub</a>
         {{ if gt (len .AllTranslations) 1 }}
-        <span class="language-switcher" aria-label="Language versions">
-          {{ range .AllTranslations }}
-            <a href="{{ .RelPermalink }}" lang="{{ .Language.LanguageCode }}">{{ .Language.LanguageName }}</a>
-          {{ end }}
-        </span>
+        <details class="language-switcher">
+          <summary>{{ site.Language.LanguageName }}</summary>
+          <div class="language-menu" role="list">
+            {{ range .AllTranslations }}
+              <a href="{{ .RelPermalink }}" lang="{{ .Language.LanguageCode }}" role="listitem"{{ if eq .Language.Lang $.Language.Lang }} aria-current="page"{{ end }}>{{ .Language.LanguageName }}</a>
+            {{ end }}
+          </div>
+        </details>
         {{ end }}
       </nav>
     </header>
