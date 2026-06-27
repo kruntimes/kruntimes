@@ -99,8 +99,5 @@ See [Security and Threat Model](security.md) for recommended role separation.
 ## Validation
 
 CRDs include schema and CEL validation for supported fields, sizes, names,
-entrypoints, and workflow shapes. Regenerate CRDs with:
-
-```bash
-make manifests
-```
+entrypoints, and workflow shapes. Contributors should regenerate CRDs when API
+types change; see the [Development Guide](development.md).

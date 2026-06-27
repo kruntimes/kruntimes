@@ -8,29 +8,29 @@ installation plus namespace-local Runtime definitions.
 - Kubernetes cluster with CRD support.
 - Helm 3.
 - kubectl configured for the target cluster.
-- Published kruntimes images for production installs, or locally loaded images
-  for kind development.
+- kruntimes images that the cluster can pull.
 
 See [Compatibility Matrix](compatibility.md) for the versions intentionally
 tested by the project.
 
-## Local Development Install
+## Kubernetes Cluster
 
-For kind-based development:
+kruntimes runs on Kubernetes. Start with a cluster you can administer:
+
+- a production or shared Kubernetes cluster, or
+- a local cluster such as
+  [kind](https://kind.sigs.k8s.io/docs/user/quick-start/) or
+  [minikube](https://minikube.sigs.k8s.io/docs/start/).
+
+Follow the provider's setup guide, then verify access:
 
 ```bash
-make e2e-setup
+kubectl cluster-info
 ```
 
-This target:
-
-1. generates CRDs,
-2. builds scheduler, controller, runtimed, Bash runtime, and Python runtime
-   images,
-3. creates or reuses a kind cluster,
-4. loads images into kind,
-5. applies CRDs,
-6. installs the platform chart.
+For local clusters, make sure the kruntimes images referenced by Helm values are
+available inside the cluster. For example, use a registry reachable from the
+cluster or load locally built images using your cluster tool.
 
 ## Platform Chart
 
@@ -39,7 +39,10 @@ Install the platform chart once per cluster:
 ```bash
 helm upgrade --install kruntimes ./charts/kruntimes \
   --namespace kruntimes-system \
-  --create-namespace
+  --create-namespace \
+  --set scheduler.image=<scheduler-image> \
+  --set controller.image=<controller-image> \
+  --set runtimed.image=<runtimed-image>
 ```
 
 The platform chart installs:
@@ -58,22 +61,15 @@ Install built-in Runtime CRs into namespaces where Runs should execute:
 ```bash
 helm upgrade --install kruntimes-runtimes ./charts/kruntimes-runtimes \
   --namespace default \
-  --create-namespace
+  --create-namespace \
+  --set bash.image=<bash-runtime-image> \
+  --set python.image=<python-runtime-image>
 ```
 
 ## Image Configuration
 
-Use immutable image tags or digests for shared environments. Avoid mutable
-`latest` tags outside local development.
-
-For local make targets:
-
-```bash
-IMG_SCHEDULER=ghcr.io/kruntimes/scheduler:v0.1.0 \
-IMG_CONTROLLER=ghcr.io/kruntimes/controller:v0.1.0 \
-IMG_RUNTIMED=ghcr.io/kruntimes/runtimed:v0.1.0 \
-make deploy
-```
+Use immutable image tags or digests for shared environments. Avoid mutable tags
+outside local development.
 
 ## Multiple Releases
 

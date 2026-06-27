@@ -52,16 +52,29 @@ Kubernetes-level pool scheduler plus a faster application-level Run scheduler.
 
 Prerequisites:
 
-- Kubernetes cluster or kind
-- Go version from `go.mod`
-- Docker or another compatible container tool
+- Kubernetes cluster
 - Helm 3
 - kubectl
 
-Build and deploy to a local kind cluster:
+Install the platform chart:
 
 ```bash
-make e2e-setup
+helm upgrade --install kruntimes ./charts/kruntimes \
+  --namespace kruntimes-system \
+  --create-namespace \
+  --set scheduler.image=<scheduler-image> \
+  --set controller.image=<controller-image> \
+  --set runtimed.image=<runtimed-image>
+```
+
+Install built-in Runtime definitions into a workload namespace:
+
+```bash
+helm upgrade --install kruntimes-runtimes ./charts/kruntimes-runtimes \
+  --namespace default \
+  --create-namespace \
+  --set bash.image=<bash-runtime-image> \
+  --set python.image=<python-runtime-image>
 ```
 
 Create a Run:
@@ -112,17 +125,6 @@ Core documentation:
 - [FAQ](docs/faq.md)
 - [Roadmap](docs/roadmap.md)
 - [Community and Governance](docs/community.md)
-
-## Common Commands
-
-```bash
-make test
-make test-integration
-make test-race
-make test-helm
-make e2e
-make benchmark
-```
 
 ## Project Status
 

@@ -56,17 +56,17 @@ Common causes:
 - readiness or runtimed heartbeat is failing,
 - custom ServiceAccount lacks required permissions.
 
-## Image Pull Backoff in kind
+## Image Pull Backoff in Local Clusters
 
-If a kind-based E2E or benchmark run shows `ImagePullBackOff`, confirm the image
-tag matches the image loaded into kind:
+If a local kind or minikube cluster shows `ImagePullBackOff`, confirm the
+Runtime image reference matches an image available to that cluster:
 
 ```bash
-kind load docker-image kruntimes-bash-runtime:latest --name kruntimes-e2e
 kubectl describe pod <runtime-pod>
 ```
 
-The `make e2e` and `make benchmark` targets build and load the expected images.
+For local clusters, either load locally built images using the cluster tool or
+configure the Helm values to use images in a registry the cluster can pull from.
 
 ## Artifact Cleanup Is Stuck
 
@@ -98,22 +98,14 @@ Render manifests locally:
 helm template kruntimes ./charts/kruntimes --namespace <namespace>
 ```
 
-Validate charts:
-
-```bash
-make test-helm
-```
+Contributors can run chart validation from the repository; see the
+[Testing Guide](testing.md).
 
 ## Generated Files Changed After Tests
 
-Run:
-
-```bash
-make generate manifests
-git diff
-```
-
-Commit generated API and CRD changes with the source change that required them.
+Generated file workflows are contributor tasks. See the
+[Development Guide](development.md) for code generation commands and commit
+expectations.
 
 ## Need More Help
 

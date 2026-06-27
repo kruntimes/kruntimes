@@ -1,65 +1,61 @@
 # Quick Start
 
-This guide gets kruntimes running on a local kind cluster and executes one Bash
-Run.
+This guide installs kruntimes on an existing Kubernetes cluster and executes one
+Bash Run.
 
 ## Prerequisites
 
-- Go version from `go.mod`
-- Docker or another compatible container tool
-- kind
+- Kubernetes cluster with CRD support.
 - kubectl
 - Helm 3
 
-## Start a Local Environment
-
-Build local images, create or reuse a kind cluster, load images, install CRDs,
-and deploy the platform chart:
+kruntimes runs on Kubernetes. The cluster can be a production cluster or a local
+development cluster such as
+[kind](https://kind.sigs.k8s.io/docs/user/quick-start/) or
+[minikube](https://minikube.sigs.k8s.io/docs/start/). Follow the cluster
+provider's setup guide first, then confirm access:
 
 ```bash
-make e2e-setup
+kubectl cluster-info
 ```
 
-The default namespace is `default`. Override it with:
+## Install kruntimes
 
 ```bash
-NAMESPACE=kruntimes-system make e2e-setup
+helm upgrade --install kruntimes ./charts/kruntimes \
+  --namespace kruntimes-system \
+  --create-namespace \
+  --set scheduler.image=<scheduler-image> \
+  --set controller.image=<controller-image> \
+  --set runtimed.image=<runtimed-image>
 ```
 
-## Create a Runtime
-
-The E2E setup installs the platform but not every user Runtime. Create a Bash
-Runtime in the workload namespace:
+Install the built-in Runtime definitions into the namespace where Runs should
+execute:
 
 ```bash
-kubectl apply -f - <<'EOF'
-apiVersion: kruntimes.io/v1alpha1
-kind: Runtime
-metadata:
-  name: bash
-spec:
-  replicas: 1
-  capacity:
-    resources:
-      runs: 4
-  template:
-    metadata:
-      labels:
-        runtime: bash
-    spec:
-      containers:
-        - name: runtime
-          image: kruntimes-bash-runtime:latest
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 19091
-EOF
+helm upgrade --install kruntimes-runtimes ./charts/kruntimes-runtimes \
+  --namespace default \
+  --create-namespace \
+  --set bash.image=<bash-runtime-image> \
+  --set python.image=<python-runtime-image>
 ```
 
-Wait for the Runtime Pod:
+Use image references that your cluster can pull. For local kind or minikube
+clusters, either load locally built images into the cluster or point the chart at
+images in a registry the cluster can access.
+
+Check the control plane and Runtime Pods:
 
 ```bash
-kubectl get pods -l runtime=bash -w
+kubectl get deploy -n kruntimes-system
+kubectl get runtime,pods -n default
+```
+
+Wait until the Bash Runtime Pods are ready:
+
+```bash
+kubectl get pods -n default -l runtime=bash -w
 ```
 
 ## Run a Command
@@ -90,17 +86,16 @@ Inspect the final object:
 kubectl get run hello -o yaml
 ```
 
-## Run the Full E2E Suite
-
-```bash
-make e2e
-```
-
 ## Clean Up
 
 ```bash
-make e2e-cleanup
+helm uninstall kruntimes-runtimes --namespace default --ignore-not-found
+helm uninstall kruntimes --namespace kruntimes-system --ignore-not-found
 ```
+
+Helm uninstall does not remove kruntimes CRDs. See
+[Installation](installation.md) and [Operations Guide](operations.md) for
+cluster uninstall details.
 
 ## Next Steps
 

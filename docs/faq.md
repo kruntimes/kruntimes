@@ -55,8 +55,5 @@ Not yet. The project is `v0.x experimental` and CRDs are `v1alpha1`.
 
 ## How do I benchmark the scheduler?
 
-```bash
-make benchmark
-```
-
-See [Performance Benchmarks](benchmarks.md).
+See [Performance Benchmarks](benchmarks.md). Benchmark execution is a
+contributor workflow and assumes a local development environment.

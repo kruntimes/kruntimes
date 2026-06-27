@@ -2,27 +2,6 @@
 
 This page summarizes the most common configuration surfaces.
 
-## Make Variables
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `NAMESPACE` | `default` | Namespace used by deploy and E2E helpers. |
-| `CONTAINER_TOOL` | `docker` | Container CLI used for image builds and pushes. |
-| `HELM` | `helm` | Helm binary. |
-| `IMG_SCHEDULER` | `kruntimes-scheduler:latest` | Scheduler image for build/deploy targets. |
-| `IMG_CONTROLLER` | `kruntimes-controller:latest` | Controller image. |
-| `IMG_RUNTIMED` | `kruntimes-runtimed:latest` | runtimed sidecar image. |
-| `IMG_BASH_RUNTIME` | `kruntimes-bash-runtime:latest` | Bash Runtime image. |
-| `IMG_PYTHON_RUNTIME` | `kruntimes-python-runtime:latest` | Python Runtime image. |
-| `KIND_CLUSTER_NAME` | `kruntimes-e2e` | kind cluster used by E2E helpers. |
-| `E2E_IMAGE_TAG` | `latest` | Image tag loaded into kind for E2E setup. |
-
-Example:
-
-```bash
-CONTAINER_TOOL=podman NAMESPACE=kruntimes-system make e2e-setup
-```
-
 ## Helm Values
 
 The platform chart configures:
@@ -43,11 +22,8 @@ Render chart output before applying:
 helm template kruntimes ./charts/kruntimes --namespace kruntimes-system
 ```
 
-Validate chart changes:
-
-```bash
-make test-helm
-```
+Contributor-only Make variables and chart validation commands are documented in
+the [Development Guide](development.md) and [Testing Guide](testing.md).
 
 ## Runtime Capacity
 
@@ -109,7 +85,7 @@ contents.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `KRUNTIMES_BENCHMARK_RUNS` | `50` | Number of Runs created by `make benchmark`. |
+| `KRUNTIMES_BENCHMARK_RUNS` | `50` | Number of Runs created by the benchmark harness. |
 | `KRUNTIMES_BENCHMARK_CONCURRENCY` | `10` | Concurrent Kubernetes create requests. |
 | `KRUNTIMES_BENCHMARK_REPLICAS` | `2` | Runtime replica count. |
 | `KRUNTIMES_BENCHMARK_CAPACITY` | `4` | Runs capacity per Runtime Pod. |
