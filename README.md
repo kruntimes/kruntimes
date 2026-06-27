@@ -4,30 +4,49 @@
 
 # kruntimes
 
-kruntimes is a Kubernetes-native warm execution pool for short-lived workloads.
-It keeps Runtime Pods ready, schedules Runs inside those hot pods, and avoids
-creating a new Kubernetes Pod for every execution.
+kruntimes is a Kubernetes-native execution engine that runs serverless
+functions, CI pipelines, and AI agent tasks/sandboxes on pre-warmed runtime
+pools. Instead of creating a new Pod for every execution, kruntimes reuses hot
+Runtime Pods and performs fine-grained scheduling in the application layer,
+reducing startup latency and operational complexity without modifying
+Kubernetes internals.
 
 The project is currently `v0.x experimental` with `v1alpha1` APIs. Built-in
 Bash and Python runtimes are intended for trusted workloads in trusted
 namespaces; they are not tenant-grade sandboxes.
 
-## Why kruntimes?
+## Motivation
 
-Vanilla Kubernetes is a strong substrate for services, but it is expensive for
-fine-grained function-style execution. Creating one Pod per invocation adds
-scheduling, image, container, CNI, readiness, and controller-loop latency to the
-critical path.
+Vanilla Kubernetes is a strong substrate for services and long-running jobs, but
+it is not a complete low-latency execution engine by itself. A request-time Pod
+startup path includes Kubernetes scheduling, image distribution, container
+creation, CNI setup, readiness checks, and controller reconciliation before user
+code can run.
 
-kruntimes splits scheduling into two layers:
+That overhead is acceptable for many services. It becomes expensive for
+serverless functions, CI steps, AI agent tools, sandboxes, and high-performance
+batch workloads where many short executions need to start quickly.
+
+Cold-start optimizations such as image caching, lazy image loading, node
+pre-warming, Firecracker, or custom runtimes can help, but they often require
+infrastructure-level ownership. Many platform teams can deploy applications on
+Kubernetes, but cannot replace the cluster scheduler, CNI, CRI, snapshotter, or
+node image policy.
+
+kruntimes keeps Kubernetes as the coarse-grained resource substrate and moves
+fine-grained execution scheduling into the application layer:
 
 - Kubernetes keeps coarse-grained Runtime Pod pools alive.
 - kruntimes assigns individual Runs to healthy warm pods with available
   capacity.
 
-This is useful for AI agents, CI/CD tasks, trusted serverless functions,
-automation jobs, and other short-lived high-concurrency workloads where
-sub-second dispatch matters more than per-invocation Pod isolation.
+This hierarchical scheduling model reduces startup latency and operational
+complexity without modifying Kubernetes internals.
+
+Typical use cases include trusted serverless functions, CI/CD pipelines,
+automation jobs, AI agent tasks and sandboxes, short-lived high-concurrency
+workloads, and high-performance batch workloads that benefit from a
+Kubernetes-level pool scheduler plus a faster application-level Run scheduler.
 
 ## Quick Start
 

@@ -1,13 +1,18 @@
 # Project Overview
 
-kruntimes is a Kubernetes-native execution system for short-lived workloads. It
-keeps Runtime Pods warm and schedules Runs into those pods without creating a
-new Kubernetes Pod per invocation.
+kruntimes is a Kubernetes-native execution engine that runs serverless
+functions, CI pipelines, and AI agent tasks/sandboxes on pre-warmed runtime
+pools. Instead of creating a new Pod for every execution, kruntimes reuses hot
+Runtime Pods and performs fine-grained scheduling in the application layer,
+reducing startup latency and operational complexity without modifying
+Kubernetes internals.
 
-## Problem
+## Motivation
 
-Serverless and function-style systems on Kubernetes often hit the same latency
-path:
+Kubernetes is a strong substrate for services and long-running jobs, but vanilla
+Kubernetes is not a complete low-latency serverless or batch execution engine by
+itself. Serverless, CI, automation, and agent workloads often hit the same
+request-time Pod startup path:
 
 1. create a Pod,
 2. wait for Kubernetes scheduling,
@@ -17,8 +22,13 @@ path:
 6. wait for readiness,
 7. then finally run user work.
 
-That path is reasonable for services and long-running jobs. It is costly for
-high-volume, short-lived work.
+That path is costly when the workload is short-lived, high-concurrency,
+latency-sensitive, or part of a larger batch pipeline.
+
+Infrastructure-level optimizations can reduce parts of this cost, but they
+often require ownership of the cluster scheduler, node runtime, image
+distribution, CNI, or sandboxing layer. kruntimes is designed for platform teams
+that need faster execution semantics while staying above Kubernetes internals.
 
 ## Approach
 
@@ -33,6 +43,11 @@ The Kubernetes API remains the durable control plane through CRDs. Runtime Pods
 hold local execution capacity and run a `runtimed` sidecar that coordinates with
 the local Runtime Server.
 
+This is hierarchical scheduling: Kubernetes performs coarse placement for warm
+Runtime pools, while kruntimes performs fine-grained Run placement inside those
+pools. The model supports low-latency serverless-style execution and
+high-performance batch workloads without creating one Pod per execution.
+
 ## Core Value
 
 - Avoid request-time Pod creation.
@@ -41,13 +56,17 @@ the local Runtime Server.
   status conditions.
 - Let teams build low-latency execution above Kubernetes without replacing the
   Kubernetes scheduler.
+- Support hierarchical scheduling for workloads that need Kubernetes-level pool
+  management plus fast application-level dispatch.
 
 ## Use Cases
 
 - AI agent tools and code execution.
+- AI agent tasks and sandboxes.
 - Trusted serverless workloads.
 - CI/CD and automation tasks.
 - High-concurrency short-lived scripts.
+- High-performance batch workloads that benefit from hierarchical scheduling.
 - Custom Runtime pools for specialized execution environments.
 
 ## Current Limits
