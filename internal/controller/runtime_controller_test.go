@@ -89,6 +89,22 @@ func TestBuildDeploymentAddsCapacityAnnotationsAndWorkers(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentRuntimeDaemonImageOverridesDefault(t *testing.T) {
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
+		Spec: v1alpha1.RuntimeSpec{
+			Template:    runtimePodTemplate("bash-runtime:latest"),
+			DaemonImage: "custom-runtimed:v1",
+		},
+	}
+
+	deploy := (&RuntimeReconciler{DefaultDaemonImage: "default-runtimed:v1"}).buildDeployment(rt)
+	daemon := deploy.Spec.Template.Spec.Containers[1]
+	if daemon.Image != "custom-runtimed:v1" {
+		t.Fatalf("daemon image = %q, want runtime override", daemon.Image)
+	}
+}
+
 func TestBuildDeploymentMergesPodTemplate(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "python", Namespace: "workloads"},
