@@ -48,9 +48,17 @@ a:hover {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   color: var(--text);
   font-weight: 700;
   font-size: 18px;
+}
+
+.brand img {
+  flex: 0 0 auto;
+  border-radius: 6px;
 }
 
 .site-nav {
@@ -81,6 +89,13 @@ a:hover {
 
 .hero > div {
   max-width: 780px;
+}
+
+.hero-logo {
+  display: block;
+  width: min(520px, 100%);
+  height: auto;
+  margin: 0 0 28px;
 }
 
 .eyebrow {

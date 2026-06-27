@@ -1,12 +1,12 @@
 {{ define "main" }}
 <article class="content">
-  <h1>{{ .Title }}</h1>
+  {{ with .Title }}<h1>{{ . }}</h1>{{ end }}
   {{ .Content }}
   {{ if .Pages }}
   <div class="doc-grid">
     {{ range .Pages.ByTitle }}
     <a class="doc-card" href="{{ .RelPermalink }}">
-      <strong>{{ .Title }}</strong>
+      <strong>{{ if .Title }}{{ .Title }}{{ else }}{{ .File.BaseFileName | humanize | title }}{{ end }}</strong>
       {{ with .Summary }}<span>{{ . | plainify | truncate 120 }}</span>{{ end }}
     </a>
     {{ end }}

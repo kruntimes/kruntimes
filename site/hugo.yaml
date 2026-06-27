@@ -16,5 +16,11 @@ module:
       target: content
     - source: ../docs
       target: content/docs
+    - source: ../docs/logo.png
+      target: static/img/logo.png
+    - source: ../docs/icon.png
+      target: static/img/icon.png
+    - source: static
+      target: static
 params:
   description: "Warm Runtime Pods and application-level scheduling for short-lived Kubernetes workloads."

@@ -1,15 +1,32 @@
 <!doctype html>
 <html lang="{{ site.Language.LanguageCode }}">
   <head>
+    {{ $displayTitle := .Title }}
+    {{ if and (not $displayTitle) .File }}
+      {{ $displayTitle = .File.BaseFileName | humanize | title }}
+    {{ end }}
+    {{ $fullTitle := site.Title }}
+    {{ if not .IsHome }}
+      {{ $fullTitle = printf "%s | %s" $displayTitle site.Title }}
+    {{ end }}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="{{ site.Params.description }}">
-    <title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} | {{ site.Title }}{{ end }}</title>
+    <meta property="og:title" content="{{ $fullTitle }}">
+    <meta property="og:description" content="{{ site.Params.description }}">
+    <meta property="og:image" content="{{ "img/logo.png" | absURL }}">
+    <meta name="twitter:card" content="summary_large_image">
+    <title>{{ $fullTitle }}</title>
+    <link rel="icon" type="image/png" sizes="200x200" href="{{ "img/icon.png" | relURL }}">
+    <link rel="apple-touch-icon" href="{{ "img/icon.png" | relURL }}">
     <link rel="stylesheet" href="{{ "css/site.css" | relURL }}">
   </head>
   <body>
     <header class="site-header">
-      <a class="brand" href="{{ site.Home.RelPermalink }}">kruntimes</a>
+      <a class="brand" href="{{ site.Home.RelPermalink }}">
+        <img src="{{ "img/icon.png" | relURL }}" alt="" width="28" height="28">
+        <span>kruntimes</span>
+      </a>
       <nav class="site-nav" aria-label="Primary">
         <a href="{{ "docs/quickstart/" | relURL }}">Quick Start</a>
         <a href="{{ "docs/operations/" | relURL }}">Operations</a>

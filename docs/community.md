@@ -8,6 +8,13 @@ get help, and report issues.
 kruntimes is released under the Apache License 2.0. See
 [LICENSE](https://github.com/kruntimes/kruntimes/blob/main/LICENSE).
 
+## Brand Assets
+
+- Square icon: [`docs/icon.png`](icon.png), used for the website favicon and
+  compact header mark.
+- Horizontal logo: [`docs/logo.png`](logo.png), used for README and website
+  hero branding.
+
 ## Maintainers
 
 Current maintainers are listed in
