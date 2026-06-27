@@ -2,9 +2,10 @@
 title: "kruntimes"
 ---
 
-kruntimes is a two-layer scheduling system built on Kubernetes. It keeps warm
-Runtime Pods ready and assigns short-lived Runs to those pods without creating a
-new Pod for every execution.
+kruntimes is a Kubernetes-native execution engine for serverless functions, CI
+pipelines, batch workloads including AI workloads, and AI agent sandboxes. It
+keeps Runtime Pods warm and assigns fine-grained Runs to those pools without
+creating a new Pod for every execution.
 
 The project is currently `v0.x experimental` with `v1alpha1` APIs. Built-in
 Runtimes are intended for trusted workloads in trusted namespaces.
