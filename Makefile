@@ -19,6 +19,9 @@ PROTOC_ARCH ?= linux-x86_64
 PROTOC_GEN_GO_VERSION ?= v1.36.11
 PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
 UV_VERSION ?= 0.11.16
+HUGO_VERSION ?= v0.152.2
+HUGO_BIND ?= 127.0.0.1
+HUGO_PORT ?= 1313
 
 # NAMESPACE for helm deploy
 NAMESPACE ?= default
@@ -87,6 +90,14 @@ govulncheck: govulncheck-tool ## Run govulncheck against all Go packages.
 .PHONY: test-s3-integration
 test-s3-integration: ## Run S3 ArtifactStore integration tests against MinIO.
 	CONTAINER_TOOL=$(CONTAINER_TOOL) ./hack/test-s3-integration.sh
+
+.PHONY: site-build
+site-build: hugo-tool ## Build the Hugo documentation website.
+	$(HUGO) --source site --minify $(if $(HUGO_BASE_URL),--baseURL "$(HUGO_BASE_URL)")
+
+.PHONY: site-serve
+site-serve: hugo-tool ## Serve the Hugo documentation website locally.
+	$(HUGO) server --source site --bind $(HUGO_BIND) --port $(HUGO_PORT) --baseURL http://$(HUGO_BIND):$(HUGO_PORT)/
 
 ##@ E2E
 
@@ -321,6 +332,13 @@ uv: ## Install uv locally if not present.
 		trap 'rm -f "$$installer"' 0; \
 		curl -LsSf https://astral.sh/uv/$(UV_VERSION)/install.sh -o "$$installer"; \
 		env UV_INSTALL_DIR="$(GOBIN)" UV_NO_MODIFY_PATH=1 sh "$$installer"; \
+	fi
+
+HUGO = $(GOBIN)/hugo
+.PHONY: hugo-tool
+hugo-tool: ## Install Hugo locally if not present.
+	@if ! test -x "$(HUGO)" || ! "$(HUGO)" version | grep -q "$(HUGO_VERSION)"; then \
+		go install github.com/gohugoio/hugo@$(HUGO_VERSION); \
 	fi
 
 .PHONY: proto-python

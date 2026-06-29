@@ -1,0 +1,39 @@
+baseURL: "https://kruntimes.github.io/kruntimes/"
+title: "kruntimes"
+defaultContentLanguage: en
+disableKinds:
+  - taxonomy
+  - term
+languages:
+  en:
+    languageCode: "en-US"
+    languageName: "English"
+    weight: 1
+    params:
+      description: "Warm Runtime Pods and application-level scheduling for short-lived Kubernetes workloads."
+  zh:
+    languageCode: "zh-CN"
+    languageName: "简体中文"
+    weight: 2
+    params:
+      description: "面向 Kubernetes 短时任务的预热 Runtime Pod 池和应用层调度。"
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+  highlight:
+    noClasses: false
+module:
+  mounts:
+    - source: content
+      target: content
+    - source: ../docs
+      target: content/docs
+    - source: ../docs/logo.png
+      target: static/img/logo.png
+    - source: ../docs/icon.png
+      target: static/img/icon.png
+    - source: static
+      target: static
+params:
+  description: "Warm Runtime Pods and application-level scheduling for short-lived Kubernetes workloads."

@@ -33,6 +33,8 @@ Thumbs.db
 # Temporary files
 tmp/
 .worktrees/
+site/.hugo_build.lock
+site/public/
 __pycache__/
 .python-version
 /krt

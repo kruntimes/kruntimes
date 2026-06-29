@@ -18,15 +18,15 @@ public compatibility claim.
 
 | Scope | Version | Status | Evidence |
 | --- | --- | --- | --- |
-| API/controller integration tests | `1.32` | Tested | `ENVTEST_K8S_VERSION = 1.32` and `make test-integration`. |
-| E2E cluster | kind default Kubernetes version | Tested before public release tags | `make e2e` creates or reuses the `kruntimes-e2e` kind cluster. |
+| API/controller integration tests | `1.32` | Tested | `ENVTEST_K8S_VERSION = 1.32` in the integration test workflow. |
+| E2E cluster | kind default Kubernetes version | Tested before public release tags | The E2E workflow creates or reuses the `kruntimes-e2e` kind cluster. |
 | Newer Kubernetes minors | Not certified | Best effort | The project uses Kubernetes client libraries from `k8s.io/* v0.36.x`, but newer API server versions need explicit validation before being documented as supported. |
 
 ## Helm
 
 | Scope | Version | Status | Evidence |
 | --- | --- | --- | --- |
-| Helm chart rendering | Helm 3 | Required | Charts use `apiVersion: v2`; `make test-helm` runs `helm lint` and `helm template`. |
+| Helm chart rendering | Helm 3 | Required | Charts use `apiVersion: v2`; chart validation runs `helm lint` and `helm template`. |
 | Multi-release and multi-namespace installs | Helm 3 | Tested | `hack/verify-helm-multi-release.py` and `hack/verify-helm-multi-namespace.py`. |
 | Helm OCI chart publication | Helm 3 OCI registry support | Released by `Release Charts` | Charts are packaged and pushed to `oci://ghcr.io/<owner>/charts`. |
 

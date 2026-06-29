@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="{{ site.Language.LanguageCode }}">
+  <head>
+    {{ $displayTitle := .Title }}
+    {{ if and (not $displayTitle) .File }}
+      {{ $displayTitle = .File.BaseFileName | humanize | title }}
+    {{ end }}
+    {{ $fullTitle := site.Title }}
+    {{ if not .IsHome }}
+      {{ $fullTitle = printf "%s | %s" $displayTitle site.Title }}
+    {{ end }}
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="{{ site.Params.description }}">
+    <meta property="og:title" content="{{ $fullTitle }}">
+    <meta property="og:description" content="{{ site.Params.description }}">
+    <meta property="og:image" content="{{ "img/logo.png" | absURL }}">
+    <meta name="twitter:card" content="summary_large_image">
+    <title>{{ $fullTitle }}</title>
+    <link rel="icon" type="image/png" sizes="200x200" href="{{ "img/icon.png" | relURL }}">
+    <link rel="apple-touch-icon" href="{{ "img/icon.png" | relURL }}">
+    <link rel="stylesheet" href="{{ "css/site.css" | relURL }}">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="{{ site.Home.RelPermalink }}">
+        <img src="{{ "img/icon.png" | relURL }}" alt="" width="28" height="28">
+        <span>kruntimes</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="{{ "docs/" | relLangURL }}">{{ if eq site.Language.Lang "zh" }}文档{{ else }}Docs{{ end }}</a>
+        <a href="{{ "community/" | relLangURL }}">{{ if eq site.Language.Lang "zh" }}社区{{ else }}Community{{ end }}</a>
+        <a href="{{ "blog/" | relLangURL }}">{{ if eq site.Language.Lang "zh" }}博客{{ else }}Blog{{ end }}</a>
+        <a href="https://github.com/kruntimes/kruntimes">GitHub</a>
+        {{ if gt (len .AllTranslations) 1 }}
+        <details class="language-switcher">
+          <summary>{{ site.Language.LanguageName }}</summary>
+          <div class="language-menu" role="list">
+            {{ range .AllTranslations }}
+              <a href="{{ .RelPermalink }}" lang="{{ .Language.LanguageCode }}" role="listitem"{{ if eq .Language.Lang $.Language.Lang }} aria-current="page"{{ end }}>{{ .Language.LanguageName }}</a>
+            {{ end }}
+          </div>
+        </details>
+        {{ end }}
+      </nav>
+    </header>
+    <main class="page">
+      {{ block "main" . }}{{ end }}
+    </main>
+  </body>
+</html>

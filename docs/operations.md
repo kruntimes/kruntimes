@@ -15,7 +15,10 @@ resources.
 ```bash
 helm upgrade --install kruntimes ./charts/kruntimes \
   --namespace kruntimes-system \
-  --create-namespace
+  --create-namespace \
+  --set scheduler.image=<scheduler-image> \
+  --set controller.image=<controller-image> \
+  --set runtimed.image=<runtimed-image>
 ```
 
 Install built-in Runtime CRs into each namespace that should host Runtime Pods
@@ -24,14 +27,9 @@ and Runs:
 ```bash
 helm upgrade --install kruntimes-runtimes ./charts/kruntimes-runtimes \
   --namespace default \
-  --create-namespace
-```
-
-The `make` shortcuts use `NAMESPACE`, defaulting to `default`:
-
-```bash
-NAMESPACE=kruntimes-system make deploy
-NAMESPACE=default make deploy-runtimes
+  --create-namespace \
+  --set bash.image=<bash-runtime-image> \
+  --set python.image=<python-runtime-image>
 ```
 
 Use explicit image tags or digests for shared clusters. Do not depend on
