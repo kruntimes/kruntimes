@@ -262,7 +262,7 @@ Acceptance criteria:
 
 ## P3: Post-Public Product Validation
 
-- [ ] Publish a comparison guide covering kruntimes vs Knative, Argo Workflows,
+- [x] Publish a comparison guide covering kruntimes vs Knative, Argo Workflows,
   Tekton, Volcano, and a worker queue on a Deployment.
 - [x] Add a "when to use / when not to use" guide that clearly positions
   kruntimes as a warm execution substrate rather than a full serverless
