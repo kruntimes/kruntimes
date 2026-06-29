@@ -19,4 +19,5 @@ title: "文档"
 11. [故障排查](troubleshooting/)
 12. [开发指南](development/)
 13. [测试指南](testing/)
-14. [社区与治理](community/)
+14. [Adoption Signals](adoption-signals/)
+15. [社区与治理](community/)

@@ -273,7 +273,7 @@ Acceptance criteria:
   or infrastructure-ownership constraints.
 - [ ] Publish three end-to-end demos: low-latency Bash/Python Run, burst
   short-task execution, and custom Runtime skeleton.
-- [ ] Define and track public adoption signals: users can explain the value in
+- [x] Define and track public adoption signals: users can explain the value in
   two minutes, at least two design partners try real workloads, and at least one
   non-maintainer completes the quick start.
 - [ ] Validate the first primary wedge. The current hypothesis is AI agent
