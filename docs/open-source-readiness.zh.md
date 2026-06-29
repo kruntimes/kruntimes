@@ -23,7 +23,7 @@ title: "开源准备计划"
 - [x] 添加 `SECURITY.md`，说明漏洞报告渠道、响应范围和支持版本。
 - [x] 添加 `CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、`SUPPORT.md`。
 - [x] 添加维护者列表、`CODEOWNERS`、Issue 和 PR 模板。
-- [ ] 公开后启用 main 分支保护，要求 CI 通过和至少一次 review。
+- [x] 公开后启用 main 分支保护，要求 CI 通过和至少一次 review。
 
 验收标准：
 
