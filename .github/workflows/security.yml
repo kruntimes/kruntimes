@@ -17,9 +17,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect non-docs changes
+    runs-on: ubuntu-latest
+    outputs:
+      non_docs: ${{ steps.filter.outputs.non_docs }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            non_docs:
+              - "**"
+              - "!README.md"
+              - "!docs/**"
+              - "!site/**"
+
   secrets:
     name: Secret scanning
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v7
         with:
