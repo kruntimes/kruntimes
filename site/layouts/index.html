@@ -18,8 +18,8 @@
     </p>
     <div class="actions">
       {{ if $isZH }}
-      <a class="button primary" href="{{ "docs/open-source-readiness/" | relLangURL }}">开源准备计划</a>
-      <a class="button" href="{{ site.BaseURL }}">English Docs</a>
+      <a class="button primary" href="{{ "docs/quickstart/" | relLangURL }}">快速开始</a>
+      <a class="button" href="{{ "docs/overview/" | relLangURL }}">工作原理</a>
       {{ else }}
       <a class="button primary" href="{{ "docs/quickstart/" | relLangURL }}">Quick Start</a>
       <a class="button" href="{{ "docs/overview/" | relLangURL }}">How It Works</a>
@@ -32,13 +32,37 @@
   {{ .Content }}
   <div class="doc-grid">
     {{ if $isZH }}
-    <a class="doc-card" href="{{ "docs/open-source-readiness/" | relLangURL }}">
-      <strong>开源准备计划</strong>
-      <span>查看 kruntimes 对外开放前的质量、发布、安全和文档检查项。</span>
+    <a class="doc-card" href="{{ "docs/overview/" | relLangURL }}">
+      <strong>理解项目</strong>
+      <span>了解问题背景、方案、核心价值、使用场景和当前限制。</span>
     </a>
-    <a class="doc-card" href="{{ site.BaseURL }}">
-      <strong>English documentation</strong>
-      <span>Read the complete English documentation set.</span>
+    <a class="doc-card" href="{{ "docs/quickstart/" | relLangURL }}">
+      <strong>运行第一个 workload</strong>
+      <span>安装 kruntimes 并执行一个 Bash Run。</span>
+    </a>
+    <a class="doc-card" href="{{ "docs/operations/" | relLangURL }}">
+      <strong>运维 kruntimes</strong>
+      <span>安装、升级、卸载、故障排查和恢复集群部署。</span>
+    </a>
+    <a class="doc-card" href="{{ "docs/security/" | relLangURL }}">
+      <strong>审查安全模型</strong>
+      <span>理解 trusted workloads、namespace 边界和当前隔离限制。</span>
+    </a>
+    <a class="doc-card" href="{{ "docs/custom-runtime/" | relLangURL }}">
+      <strong>构建 Runtime</strong>
+      <span>实现本地 Runtime Server API 和执行生命周期。</span>
+    </a>
+    <a class="doc-card" href="{{ "docs/benchmarks/" | relLangURL }}">
+      <strong>测试容量</strong>
+      <span>衡量调度延迟、吞吐量、Runtime slots 和控制面负载。</span>
+    </a>
+    <a class="doc-card" href="{{ "docs/development/" | relLangURL }}">
+      <strong>参与贡献</strong>
+      <span>准备开发环境、运行测试并提交 PR。</span>
+    </a>
+    <a class="doc-card" href="{{ "community/" | relLangURL }}">
+      <strong>加入社区</strong>
+      <span>查看支持、安全报告、治理和行为准则文档。</span>
     </a>
     {{ else }}
     <a class="doc-card" href="{{ "docs/overview/" | relLangURL }}">
