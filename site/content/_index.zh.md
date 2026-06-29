@@ -17,6 +17,7 @@ Pod，并在应用层完成细粒度调度。
 - [安装](docs/installation/)
 - [进阶用法](docs/usage/)
 - [架构](docs/architecture/)
+- [设计 PRD](docs/prd/kruntimes-prd/)
 - [API 参考](docs/api/)
 - [配置](docs/configuration/)
 - [故障排查](docs/troubleshooting/)
