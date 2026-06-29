@@ -260,6 +260,26 @@ Acceptance criteria:
 - [x] Align README roadmap so only capabilities with implementation, tests,
   and a working install path are marked complete.
 
+## P3: Post-Public Product Validation
+
+- [ ] Publish a comparison guide covering kruntimes vs Knative, Argo Workflows,
+  Tekton, Volcano, and a worker queue on a Deployment.
+- [ ] Add a "when to use / when not to use" guide that clearly positions
+  kruntimes as a warm execution substrate rather than a full serverless
+  platform, workflow engine, batch scheduler replacement, or hostile-code
+  sandbox.
+- [ ] Recruit 5-8 target users from platform, CI, and AI agent infrastructure
+  teams and validate whether they experience Pod cold start, burst throughput,
+  or infrastructure-ownership constraints.
+- [ ] Publish three end-to-end demos: low-latency Bash/Python Run, burst
+  short-task execution, and custom Runtime skeleton.
+- [ ] Define and track public adoption signals: users can explain the value in
+  two minutes, at least two design partners try real workloads, and at least one
+  non-maintainer completes the quick start.
+- [ ] Validate the first primary wedge. The current hypothesis is AI agent
+  tools and trusted internal code-execution sandboxes, with CI micro-steps and
+  automation tasks as secondary use cases.
+
 ## Suggested PR Sequence
 
 1. **Repository baseline**: license, community files, GitHub templates, basic CI.
