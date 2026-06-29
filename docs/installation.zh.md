@@ -53,6 +53,37 @@ platform chart 会安装：
 - metrics Services，
 - 可选的 ServiceMonitor。
 
+## krt CLI
+
+基础 Kubernetes 操作不强制依赖 `krt` CLI，但它是查看 Run logs、下载 artifacts、取消
+Runs、跟踪 Run status 的最直接方式。端到端 demo 会使用 `krt logs`，同时也提供等价
+的 `kubectl` 命令。
+
+在 Linux 或 macOS 上安装发布的 CLI archive：
+
+```bash
+KRUNTIMES_VERSION=0.0.2
+OS="$(uname | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+
+case "${ARCH}" in
+  x86_64) ARCH=amd64 ;;
+  arm64|aarch64) ARCH=arm64 ;;
+  *) echo "unsupported architecture: ${ARCH}" >&2; exit 1 ;;
+esac
+
+curl -L -o /tmp/krt.tar.gz \
+  "https://github.com/kruntimes/kruntimes/releases/download/v${KRUNTIMES_VERSION}/krt_v${KRUNTIMES_VERSION}_${OS}_${ARCH}.tar.gz"
+tar -xzf /tmp/krt.tar.gz -C /tmp
+sudo install /tmp/krt /usr/local/bin/krt
+krt --help
+```
+
+Windows 用户可以从 GitHub release 页面下载
+`krt_v${KRUNTIMES_VERSION}_windows_amd64.tar.gz`，并将 `krt.exe` 放到 `PATH` 中。
+
+Checksum 和 provenance verification 见 [Release Process](release.md#krt-cli)。
+
 ## Built-In Runtime Chart
 
 将内置 Runtime CRs 安装到需要执行 Runs 的 namespaces：

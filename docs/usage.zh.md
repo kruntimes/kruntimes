@@ -48,9 +48,10 @@ metadata:
   name: hello
 spec:
   runtime: bash
-  args:
-    - echo
-    - hello
+  source:
+    inline: |
+      echo hello
+  entrypoint: script
 ```
 
 scheduler 会 watch Pending Runs，并将它们分配到同一 namespace 内健康的 Runtime Pods。
@@ -66,10 +67,10 @@ spec:
   runtime: bash
   env:
     MESSAGE: hello
-  args:
-    - sh
-    - -c
-    - echo "$MESSAGE"
+  source:
+    inline: |
+      echo "$MESSAGE"
+  entrypoint: script
 ```
 
 不要把 secrets 直接放在 `Run.spec.env`。请使用 namespace 隔离、Runtime-controlled
@@ -88,11 +89,9 @@ metadata:
 spec:
   runtime: bash
   source:
-    inline:
-      files:
-        main.sh: |
-          echo "hello from source"
-  entrypoint: main.sh
+    inline: |
+      echo "hello from source"
+  entrypoint: script
 ```
 
 ## Outputs

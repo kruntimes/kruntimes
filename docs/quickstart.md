@@ -1,11 +1,11 @@
 # Quick Start
 
-This guide installs kruntimes on an existing Kubernetes cluster and executes one
-Bash Run.
+This guide installs a released kruntimes build on an existing Kubernetes
+cluster and executes one Bash Run.
 
 ## Prerequisites
 
-- Kubernetes cluster with CRD support.
+- Kubernetes cluster with CRD support
 - kubectl
 - Helm 3
 
@@ -21,29 +21,39 @@ kubectl cluster-info
 
 ## Install kruntimes
 
+Set the release version used by the Helm charts and images:
+
 ```bash
-helm upgrade --install kruntimes ./charts/kruntimes \
+KRUNTIMES_VERSION=0.0.2
+```
+
+Install the control plane once per cluster:
+
+```bash
+helm upgrade --install kruntimes oci://ghcr.io/kruntimes/charts/kruntimes \
+  --version "${KRUNTIMES_VERSION}" \
   --namespace kruntimes-system \
   --create-namespace \
-  --set scheduler.image=<scheduler-image> \
-  --set controller.image=<controller-image> \
-  --set runtimed.image=<runtimed-image>
+  --set scheduler.image=ghcr.io/kruntimes/kruntimes-scheduler \
+  --set controller.image=ghcr.io/kruntimes/kruntimes-controller \
+  --set runtimed.image=ghcr.io/kruntimes/kruntimes-runtimed
 ```
 
 Install the built-in Runtime definitions into the namespace where Runs should
 execute:
 
 ```bash
-helm upgrade --install kruntimes-runtimes ./charts/kruntimes-runtimes \
+helm upgrade --install kruntimes-runtimes oci://ghcr.io/kruntimes/charts/kruntimes-runtimes \
+  --version "${KRUNTIMES_VERSION}" \
   --namespace default \
   --create-namespace \
-  --set bash.image=<bash-runtime-image> \
-  --set python.image=<python-runtime-image>
+  --set bash.image=ghcr.io/kruntimes/kruntimes-bash-runtime \
+  --set python.image=ghcr.io/kruntimes/kruntimes-python-runtime
 ```
 
-Use image references that your cluster can pull. For local kind or minikube
-clusters, either load locally built images into the cluster or point the chart at
-images in a registry the cluster can access.
+The chart appends the chart `appVersion` to image repositories when the value
+does not already include a tag or digest. Use image repositories without a tag
+for the published release path shown above.
 
 Check the control plane and Runtime Pods:
 
@@ -52,38 +62,56 @@ kubectl get deploy -n kruntimes-system
 kubectl get runtime,pods -n default
 ```
 
-Wait until the Bash Runtime Pods are ready:
+Wait until the control plane and Bash Runtime Pods are ready:
 
 ```bash
-kubectl get pods -n default -l runtime=bash -w
+kubectl wait deployment -n kruntimes-system -l app=kruntimes-controller --for=condition=Available --timeout=120s
+kubectl wait deployment -n kruntimes-system -l app=kruntimes-scheduler --for=condition=Available --timeout=120s
+kubectl wait pod -n default -l runtime=bash --for=condition=Ready --timeout=120s
 ```
 
 ## Run a Command
 
 ```bash
-kubectl apply -f - <<'EOF'
+kubectl apply -n default -f - <<'EOF'
 apiVersion: kruntimes.io/v1alpha1
 kind: Run
 metadata:
   name: hello
 spec:
   runtime: bash
-  args:
-    - echo
-    - hello from kruntimes
+  source:
+    inline: |
+      echo "hello from kruntimes"
+  entrypoint: script
 EOF
 ```
 
 Watch status:
 
 ```bash
-kubectl get run hello -w
+kubectl get run hello -n default -w
 ```
 
 Inspect the final object:
 
 ```bash
-kubectl get run hello -o yaml
+kubectl get run hello -n default -o yaml
+```
+
+Inspect logs. If you have the `krt` CLI installed, use:
+
+```bash
+krt logs hello -n default
+```
+
+The `krt` install command is covered in [Installation](installation.md#krt-cli).
+Without `krt`, read the assigned Runtime Pod's structured runtimed logs:
+
+```bash
+HELLO_POD="$(kubectl get run hello -n default -o jsonpath='{.status.assignedPod}')"
+HELLO_UID="$(kubectl get run hello -n default -o jsonpath='{.metadata.uid}')"
+kubectl logs "$HELLO_POD" -n default -c runtimed | grep "\"run_uid\":\"${HELLO_UID}\""
 ```
 
 ## Clean Up
@@ -101,4 +129,5 @@ cluster uninstall details.
 
 - [Installation](installation.md)
 - [Usage Guide](usage.md)
+- [End-to-End Demos](demos.md)
 - [Troubleshooting](troubleshooting.md)

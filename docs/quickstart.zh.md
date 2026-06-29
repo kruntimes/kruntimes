@@ -2,11 +2,11 @@
 title: "快速开始"
 ---
 
-本指南演示如何在已有 Kubernetes 集群上安装 kruntimes，并执行一个 Bash Run。
+本指南演示如何在已有 Kubernetes 集群上安装发布版 kruntimes，并执行一个 Bash Run。
 
 ## 前置条件
 
-- 支持 CRD 的 Kubernetes 集群。
+- 支持 CRD 的 Kubernetes 集群
 - kubectl
 - Helm 3
 
@@ -21,27 +21,37 @@ kubectl cluster-info
 
 ## 安装 kruntimes
 
+设置 Helm charts 和 images 使用的发布版本：
+
 ```bash
-helm upgrade --install kruntimes ./charts/kruntimes \
+KRUNTIMES_VERSION=0.0.2
+```
+
+每个集群安装一次 control plane：
+
+```bash
+helm upgrade --install kruntimes oci://ghcr.io/kruntimes/charts/kruntimes \
+  --version "${KRUNTIMES_VERSION}" \
   --namespace kruntimes-system \
   --create-namespace \
-  --set scheduler.image=<scheduler-image> \
-  --set controller.image=<controller-image> \
-  --set runtimed.image=<runtimed-image>
+  --set scheduler.image=ghcr.io/kruntimes/kruntimes-scheduler \
+  --set controller.image=ghcr.io/kruntimes/kruntimes-controller \
+  --set runtimed.image=ghcr.io/kruntimes/kruntimes-runtimed
 ```
 
 将内置 Runtime definitions 安装到 Runs 将要执行的 namespace：
 
 ```bash
-helm upgrade --install kruntimes-runtimes ./charts/kruntimes-runtimes \
+helm upgrade --install kruntimes-runtimes oci://ghcr.io/kruntimes/charts/kruntimes-runtimes \
+  --version "${KRUNTIMES_VERSION}" \
   --namespace default \
   --create-namespace \
-  --set bash.image=<bash-runtime-image> \
-  --set python.image=<python-runtime-image>
+  --set bash.image=ghcr.io/kruntimes/kruntimes-bash-runtime \
+  --set python.image=ghcr.io/kruntimes/kruntimes-python-runtime
 ```
 
-请使用集群能够拉取的 image references。对于本地 kind 或 minikube 集群，可以把本地
-build 的 images load 进集群，也可以让 chart 指向集群可访问的 registry。
+当 image value 不包含 tag 或 digest 时，chart 会把 chart `appVersion` 追加到 image
+repository 后面。上面的发布版安装路径应使用不带 tag 的 image repository。
 
 检查 control plane 和 Runtime Pods：
 
@@ -50,38 +60,56 @@ kubectl get deploy -n kruntimes-system
 kubectl get runtime,pods -n default
 ```
 
-等待 Bash Runtime Pods ready：
+等待 control plane 和 Bash Runtime Pods ready：
 
 ```bash
-kubectl get pods -n default -l runtime=bash -w
+kubectl wait deployment -n kruntimes-system -l app=kruntimes-controller --for=condition=Available --timeout=120s
+kubectl wait deployment -n kruntimes-system -l app=kruntimes-scheduler --for=condition=Available --timeout=120s
+kubectl wait pod -n default -l runtime=bash --for=condition=Ready --timeout=120s
 ```
 
 ## 执行命令
 
 ```bash
-kubectl apply -f - <<'EOF'
+kubectl apply -n default -f - <<'EOF'
 apiVersion: kruntimes.io/v1alpha1
 kind: Run
 metadata:
   name: hello
 spec:
   runtime: bash
-  args:
-    - echo
-    - hello from kruntimes
+  source:
+    inline: |
+      echo "hello from kruntimes"
+  entrypoint: script
 EOF
 ```
 
 观察状态：
 
 ```bash
-kubectl get run hello -w
+kubectl get run hello -n default -w
 ```
 
 查看最终对象：
 
 ```bash
-kubectl get run hello -o yaml
+kubectl get run hello -n default -o yaml
+```
+
+查看日志。如果已经安装 `krt` CLI，可以使用：
+
+```bash
+krt logs hello -n default
+```
+
+`krt` 的安装命令见 [Installation](installation.md#krt-cli)。如果没有 `krt`，也可以读取
+assigned Runtime Pod 中的结构化 runtimed logs：
+
+```bash
+HELLO_POD="$(kubectl get run hello -n default -o jsonpath='{.status.assignedPod}')"
+HELLO_UID="$(kubectl get run hello -n default -o jsonpath='{.metadata.uid}')"
+kubectl logs "$HELLO_POD" -n default -c runtimed | grep "\"run_uid\":\"${HELLO_UID}\""
 ```
 
 ## 清理
@@ -98,4 +126,5 @@ Helm uninstall 不会删除 kruntimes CRDs。集群卸载细节见
 
 - [Installation](installation.md)
 - [Usage Guide](usage.md)
+- [End-to-End Demos](demos.md)
 - [Troubleshooting](troubleshooting.md)
