@@ -264,7 +264,7 @@ Acceptance criteria:
 
 - [ ] Publish a comparison guide covering kruntimes vs Knative, Argo Workflows,
   Tekton, Volcano, and a worker queue on a Deployment.
-- [ ] Add a "when to use / when not to use" guide that clearly positions
+- [x] Add a "when to use / when not to use" guide that clearly positions
   kruntimes as a warm execution substrate rather than a full serverless
   platform, workflow engine, batch scheduler replacement, or hostile-code
   sandbox.
