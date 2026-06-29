@@ -54,8 +54,8 @@ high-performance batch workloads without creating one Pod per execution.
 - Keep execution environments warm.
 - Preserve Kubernetes-native operations through CRDs, Helm, RBAC, metrics, and
   status conditions.
-- Let teams build low-latency execution above Kubernetes without replacing the
-  Kubernetes scheduler.
+- Let teams build low-latency execution above Kubernetes without taking over the
+  cluster scheduler, image distribution, CNI, CRI, or sandboxing layer.
 - Support hierarchical scheduling for workloads that need Kubernetes-level pool
   management plus fast application-level dispatch.
 
