@@ -29,7 +29,7 @@ The first public release should be positioned as `v0.x experimental`:
   response scope, and supported versions.
 - [x] Add `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SUPPORT.md`.
 - [x] Add maintainer list, `CODEOWNERS`, issue and PR templates.
-- [ ] Enable main branch protection after going public, requiring CI pass
+- [x] Enable main branch protection after going public, requiring CI pass
   and at least one review.
 
 Acceptance criteria:
