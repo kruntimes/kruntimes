@@ -19,4 +19,5 @@ directory so the website and source documentation stay aligned.
 10. [Troubleshooting](troubleshooting/)
 11. [Development Guide](development/)
 12. [Testing Guide](testing/)
-13. [Community and Governance](community/)
+13. [Adoption Signals](adoption-signals/)
+14. [Community and Governance](community/)
