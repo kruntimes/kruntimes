@@ -2,8 +2,8 @@ apiVersion: v2
 name: kruntimes-runtimes
 description: Built-in runtimes for kruntimes
 type: application
-version: 0.0.1
-appVersion: "0.0.1"
+version: 0.0.2
+appVersion: "0.0.2"
 keywords:
   - kruntimes
   - runtime

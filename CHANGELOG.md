@@ -8,6 +8,8 @@ but each release note must call them out explicitly.
 
 ## Unreleased
 
+## 0.0.2 - 2026-06-30
+
 ### Added
 
 - Initial release process documentation for SemVer tags, changelog entries, and
@@ -24,3 +26,11 @@ but each release note must call them out explicitly.
   Runtime CRD template ownership, capacity, and compatibility expectations.
 - GitHub Actions release workflow for publishing Helm OCI charts to GitHub
   Container Registry.
+- GitHub Pages custom domain configuration for `https://kruntimes.io/`.
+
+### Changed
+
+- Decoupled Helm chart package versions from kruntimes application versions
+  while keeping chart `appVersion` aligned with release tags.
+- Improved release image build performance with BuildKit cache reuse and native
+  cross-compilation for Go-based multi-architecture images.
