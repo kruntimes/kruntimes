@@ -14,12 +14,16 @@ breaking API 或行为变更。发布说明必须明确指出这些变更。
   影响和迁移路径时，可能包含 breaking changes。
 - 主版本保留给稳定的 API 兼容性承诺。
 
-发布时保持以下版本一致：
+发布应用版本时保持以下版本一致：
 
 - Git tag：`vX.Y.Z`
-- `charts/kruntimes/Chart.yaml`：`version` 和 `appVersion`
-- `charts/kruntimes-runtimes/Chart.yaml`：`version` 和 `appVersion`
+- `charts/kruntimes/Chart.yaml`：`appVersion`
+- `charts/kruntimes-runtimes/Chart.yaml`：`appVersion`
 - 引用了具体发布版本的 README 示例
+
+Chart `version` 是 Helm package version，不需要等于 `appVersion`。当 chart
+templates、values、dependencies 或 chart metadata 变化时 bump chart `version`。
+当默认安装的 kruntimes application 或 runtime image 版本变化时 bump `appVersion`。
 
 不要复用或移动已发布的 release tags。如果发布产物在发布后有问题，请发布一个新的补丁
 版本，并将有问题的 GitHub release 标记为被取代。

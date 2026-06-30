@@ -15,12 +15,17 @@ make those changes explicit.
   notes describe the impact and migration path.
 - Major releases are reserved for stable API compatibility commitments.
 
-Keep these versions aligned for a release:
+Keep these versions aligned for an application release:
 
 - Git tag: `vX.Y.Z`
-- `charts/kruntimes/Chart.yaml`: `version` and `appVersion`
-- `charts/kruntimes-runtimes/Chart.yaml`: `version` and `appVersion`
+- `charts/kruntimes/Chart.yaml`: `appVersion`
+- `charts/kruntimes-runtimes/Chart.yaml`: `appVersion`
 - README examples that name a concrete released version
+
+Chart `version` is the Helm package version and does not need to equal
+`appVersion`. Bump chart `version` whenever chart templates, values,
+dependencies, or chart metadata change. Bump `appVersion` when the default
+installed kruntimes application or runtime image version changes.
 
 Do not reuse or move published release tags. If a release artifact is bad after
 publication, cut a new patch release and mark the bad GitHub release as

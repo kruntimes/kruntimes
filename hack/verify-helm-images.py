@@ -10,13 +10,15 @@ import sys
 def main() -> int:
     platform = helm_template("kruntimes", "charts/kruntimes")
     runtimes = helm_template("kruntimes-runtimes", "charts/kruntimes-runtimes")
+    platform_app_version = helm_chart_field("charts/kruntimes", "appVersion")
+    runtimes_app_version = helm_chart_field("charts/kruntimes-runtimes", "appVersion")
 
     expected_defaults = [
-        "image: kruntimes-controller:0.1.0",
-        "image: kruntimes-scheduler:0.1.0",
-        "--default-daemon-image=kruntimes-runtimed:0.1.0",
-        "image: kruntimes-bash-runtime:0.1.0",
-        "image: kruntimes-python-runtime:0.1.0",
+        f"image: kruntimes-controller:{platform_app_version}",
+        f"image: kruntimes-scheduler:{platform_app_version}",
+        f"--default-daemon-image=kruntimes-runtimed:{platform_app_version}",
+        f"image: kruntimes-bash-runtime:{runtimes_app_version}",
+        f"image: kruntimes-python-runtime:{runtimes_app_version}",
     ]
     for expected in expected_defaults:
         if expected not in platform and expected not in runtimes:
@@ -68,6 +70,15 @@ def helm_template(release: str, chart: str, *args: str) -> str:
         ["helm", "template", release, chart, "--namespace", "default", *args],
         text=True,
     )
+
+
+def helm_chart_field(chart: str, field: str) -> str:
+    chart_yaml = subprocess.check_output(["helm", "show", "chart", chart], text=True)
+    for line in chart_yaml.splitlines():
+        key, sep, value = line.partition(":")
+        if sep and key == field:
+            return value.strip().strip('"')
+    raise RuntimeError(f"{chart} is missing {field}")
 
 
 if __name__ == "__main__":
