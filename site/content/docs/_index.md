@@ -21,4 +21,5 @@ directory so the website and source documentation stay aligned.
 12. [Development Guide](development/)
 13. [Testing Guide](testing/)
 14. [Adoption Signals](adoption-signals/)
-15. [Community and Governance](community/)
+15. [Target User Validation Playbook](user-validation/)
+16. [Community and Governance](community/)
