@@ -1,7 +1,10 @@
 package krt
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -9,9 +12,13 @@ import (
 
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
@@ -37,6 +44,10 @@ func newLogsCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Schem
 			restConfig, err := restConfigFromConfig(getter)
 			if err != nil {
 				return err
+			}
+			coreClient, err := corev1client.NewForConfig(restConfig)
+			if err != nil {
+				return fmt.Errorf("create core client: %w", err)
 			}
 			namespace := namespaceFromConfig(getter)
 			runName := args[0]
@@ -70,9 +81,17 @@ func newLogsCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Schem
 			uid := string(run.UID)
 
 			if !follow {
-				return showLogsOnce(cmd.Context(), cli, uid, tailLines, cmd.OutOrStdout(), cmd.ErrOrStderr())
+				err := showLogsOnce(cmd.Context(), cli, uid, tailLines, cmd.OutOrStdout(), cmd.ErrOrStderr())
+				if isGRPCCode(err, codes.NotFound) {
+					return showLogsFromRuntimedPod(cmd.Context(), coreClient, run, tailLines, cmd.OutOrStdout(), cmd.ErrOrStderr())
+				}
+				return err
 			}
-			return followLogs(cmd.Context(), cli, uid, tailLines, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			err = followLogs(cmd.Context(), cli, uid, tailLines, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			if isGRPCCode(err, codes.NotFound) {
+				return showLogsFromRuntimedPod(cmd.Context(), coreClient, run, tailLines, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			}
+			return err
 		},
 	}
 
@@ -163,6 +182,9 @@ func followLogs(
 
 		resp, err := cli.Status(ctx, &pb.StatusRequest{Id: uid})
 		if err != nil {
+			if isGRPCCode(err, codes.NotFound) {
+				return fmt.Errorf("status: %w", err)
+			}
 			time.Sleep(time.Second)
 			continue
 		}
@@ -193,4 +215,82 @@ func logOutputSince(output string, offset int) (string, int) {
 		offset = 0
 	}
 	return output[offset:], len(output)
+}
+
+func showLogsFromRuntimedPod(
+	ctx context.Context,
+	coreClient corev1client.CoreV1Interface,
+	run *v1alpha1.Run,
+	tailLines int,
+	stdout,
+	stderr io.Writer,
+) error {
+	req := coreClient.Pods(run.Namespace).GetLogs(run.Status.AssignedPod, &corev1.PodLogOptions{
+		Container: "runtimed",
+	})
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return fmt.Errorf("read runtimed logs from pod %s/%s: %w", run.Namespace, run.Status.AssignedPod, err)
+	}
+	defer stream.Close()
+	if err := writeStructuredRunLogs(stream, string(run.UID), tailLines, stdout, stderr); err != nil {
+		return fmt.Errorf("read logs for run %s/%s: %w", run.Namespace, run.Name, err)
+	}
+	return nil
+}
+
+type runtimedLogLine struct {
+	RunUID  string `json:"run_uid"`
+	Stream  string `json:"stream"`
+	Message string `json:"message"`
+}
+
+func writeStructuredRunLogs(
+	reader io.Reader,
+	runUID string,
+	tailLines int,
+	stdout,
+	stderr io.Writer,
+) error {
+	var stdoutLog strings.Builder
+	var stderrLog strings.Builder
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var line runtimedLogLine
+		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			continue
+		}
+		if line.RunUID != runUID {
+			continue
+		}
+		switch line.Stream {
+		case "stdout":
+			stdoutLog.WriteString(line.Message)
+			stdoutLog.WriteByte('\n')
+		case "stderr":
+			stderrLog.WriteString(line.Message)
+			stderrLog.WriteByte('\n')
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if err := writeLogOutput(stdout, tailOutput(stdoutLog.String(), tailLines)); err != nil {
+		return fmt.Errorf("write stdout: %w", err)
+	}
+	if err := writeLogOutput(stderr, tailOutput(stderrLog.String(), tailLines)); err != nil {
+		return fmt.Errorf("write stderr: %w", err)
+	}
+	return nil
+}
+
+func isGRPCCode(err error, code codes.Code) bool {
+	for err != nil {
+		if status.Code(err) == code {
+			return true
+		}
+		err = errors.Unwrap(err)
+	}
+	return false
 }
