@@ -23,6 +23,23 @@ Common spec fields:
 | `spec.retryPolicy` | Retry attempts and backoff. Execution is at-least-once. |
 | `spec.cancelRequested` | User cancellation request. |
 
+Execution input semantics:
+
+- `spec.source.inline` writes the inline content into the Run workspace. The
+  default file name is `script`.
+- `spec.entrypoint` selects the relative file path inside the workspace to
+  execute. It defaults to `script` for inline source.
+- When an entrypoint file exists, `spec.args` are passed as arguments to that
+  entrypoint.
+- When no source or entrypoint file is prepared, `spec.args` are interpreted by
+  the selected Runtime. Built-in Bash treats a single arg as `bash -c <arg>`,
+  preserves explicit `sh -c ...` and `bash -c ...`, and keeps the legacy
+  multi-arg behavior of joining args as newline-separated Bash script lines.
+  Built-in Python runs `python <args...>`.
+- The `krt run -- <command> [args...]` CLI stores command words directly in
+  `spec.args`. It does not add shell quoting. Use `krt run -- sh -c '...'` for
+  shell evaluation, or use `--file` / `--entrypoint` for source mode.
+
 Common status fields:
 
 | Field | Description |

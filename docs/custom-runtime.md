@@ -163,11 +163,15 @@ This section applies only when you implement a Runtime Server.
 `Execute` starts an execution for the supplied Run ID. The request includes:
 
 - `id`: stable Run UID used as the execution ID,
-- `args`: command or payload arguments,
+- `args`: command or payload arguments. If an entrypoint file exists in the
+  workspace, built-in Runtimes pass these values to the entrypoint. If no
+  source or entrypoint file is prepared, each Runtime documents how it
+  interprets args.
 - `env`: environment variables from the Run spec,
 - `timeout_seconds`: requested timeout from the Run spec,
 - `working_dir`: prepared workspace directory,
-- `entrypoint`: relative entrypoint path inside `working_dir`,
+- `entrypoint`: relative entrypoint path inside `working_dir`; defaults to
+  `script` when runtimed prepares inline source,
 - `handler`: optional `module.function` handler for runtimes that support
   function-style invocation.
 

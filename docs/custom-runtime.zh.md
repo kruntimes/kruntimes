@@ -154,11 +154,14 @@ artifact store volume 不会挂载到用户容器中。
 `Execute` 以提供的 Run ID 启动一次执行。请求包含：
 
 - `id`：用作执行 ID 的稳定 Run UID，
-- `args`：命令或负载参数，
+- `args`：命令或负载参数。当 workspace 中存在 entrypoint 文件时，内置 Runtimes 会将
+  这些值作为 entrypoint 参数传入。当没有准备 source 或 entrypoint 文件时，每个 Runtime
+  需要文档化自己如何解释 args。
 - `env`：Run spec 中的环境变量，
 - `timeout_seconds`：Run spec 中请求的超时时间，
 - `working_dir`：准备好的 workspace 目录，
-- `entrypoint`：`working_dir` 内的相对入口路径，
+- `entrypoint`：`working_dir` 内的相对入口路径；当 runtimed 准备 inline source 时默认是
+  `script`，
 - `handler`：可选的 `module.function` handler，用于支持函数式调用的 runtimes。
 
 Runtime Server 应接受执行并快速返回，或返回 gRPC 错误。长时间运行的工作应异步进行，

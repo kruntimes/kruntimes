@@ -258,6 +258,32 @@ func TestCreateTask_MultipleCommands(t *testing.T) {
 	fmt.Printf("stdout: %s\n", resp.Stdout)
 }
 
+func TestExecuteShellCArgs(t *testing.T) {
+	client, cleanup := startTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_, err := client.Execute(ctx, &pb.ExecuteRequest{
+		Id:   "shell-c",
+		Args: []string{"sh", "-c", `echo "$MESSAGE"`, "ignored-shell-name"},
+		Env:  map[string]string{"MESSAGE": "hello from sh -c"},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	resp := waitForTerminalStatus(t, client, "shell-c")
+	if resp.State != pb.ExecutionState_EXECUTION_STATE_SUCCEEDED {
+		t.Fatalf("state = %v, want succeeded: stderr=%s error=%s", resp.State, resp.Stderr, resp.ErrorMessage)
+	}
+	if resp.Stdout != "hello from sh -c\n" {
+		t.Fatalf("stdout = %q", resp.Stdout)
+	}
+	if strings.Contains(resp.Stderr, "-c: command not found") {
+		t.Fatalf("stderr contains old line-script failure: %q", resp.Stderr)
+	}
+}
+
 func TestExecute_InlineSource(t *testing.T) {
 	client, cleanup := startTestServer(t)
 	defer cleanup()
@@ -293,6 +319,32 @@ func TestExecute_InlineSource(t *testing.T) {
 	}
 	if resp.Stdout != "hello_from_inline\n" {
 		t.Errorf("expected 'hello_from_inline\n', got %q", resp.Stdout)
+	}
+}
+
+func TestExecute_InlineSourceArgs(t *testing.T) {
+	client, cleanup := startTestServer(t)
+	defer cleanup()
+
+	workDir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(workDir, "script"), []byte("printf 'first=%s second=%s\\n' \"$1\" \"$2\""), 0o644)
+
+	ctx := context.Background()
+	_, err := client.Execute(ctx, &pb.ExecuteRequest{
+		Id:         "inline-args",
+		WorkingDir: workDir,
+		Args:       []string{"hello", "world"},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	resp := waitForTerminalStatus(t, client, "inline-args")
+	if resp.State != pb.ExecutionState_EXECUTION_STATE_SUCCEEDED {
+		t.Fatalf("state = %v, want succeeded: stderr=%s error=%s", resp.State, resp.Stderr, resp.ErrorMessage)
+	}
+	if resp.Stdout != "first=hello second=world\n" {
+		t.Fatalf("stdout = %q", resp.Stdout)
 	}
 }
 
