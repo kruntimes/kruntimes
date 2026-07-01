@@ -50,7 +50,6 @@ spec:
   source:
     inline: |
       echo hello
-  entrypoint: script
 ```
 
 The scheduler watches Pending Runs and assigns them to healthy Runtime Pods in
@@ -70,16 +69,34 @@ spec:
   source:
     inline: |
       echo "$MESSAGE"
-  entrypoint: script
 ```
 
 Do not put secrets directly in `Run.spec.env`. Use namespace separation,
 Runtime-controlled mounts, or an admission policy appropriate for your cluster.
 
-## Use Source and Entrypoint
+## Use Inline Source
 
-Run source is prepared into a per-Run workspace. Entrypoints must be relative
-paths and cannot contain `..`.
+Inline source is a standalone script. When `spec.source.inline` is present,
+runtimed writes it to the default `script` file and ignores `spec.entrypoint`
+and `spec.args`.
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: inline-example
+spec:
+  runtime: bash
+  source:
+    inline: |
+      echo "hello from inline source"
+```
+
+## Use Entrypoint and Args
+
+Entrypoints select a relative file path inside the prepared workspace. They are
+used for Git source or files already present in the workspace. Entrypoints must
+be relative paths and cannot contain `..`.
 
 ```yaml
 apiVersion: kruntimes.io/v1alpha1
@@ -89,13 +106,13 @@ metadata:
 spec:
   runtime: bash
   source:
-    inline: |
-      echo "hello from source"
-  entrypoint: script
+    repoURL: https://github.com/example/scripts.git
+    commitSHA: main
+  entrypoint: run.sh
 ```
 
-When the entrypoint file exists, `args` are passed to that file. For the built-in
-Bash Runtime this means:
+When `entrypoint` is used, `args` are passed to that file. For the built-in Bash
+Runtime this means:
 
 ```yaml
 apiVersion: kruntimes.io/v1alpha1
@@ -105,9 +122,9 @@ metadata:
 spec:
   runtime: bash
   source:
-    inline: |
-      echo "first=$1"
-  entrypoint: script
+    repoURL: https://github.com/example/scripts.git
+    commitSHA: main
+  entrypoint: run.sh
   args:
     - hello
 ```
@@ -132,7 +149,7 @@ krt run --runtime bash -- sh -c 'echo "hello from $SHELL"'
 For repeatable scripts, prefer source mode:
 
 ```bash
-krt run --runtime bash --file ./script.sh --entrypoint script
+krt run --runtime bash --file ./script.sh
 ```
 
 ## Outputs

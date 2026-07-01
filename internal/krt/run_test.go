@@ -1,10 +1,49 @@
 package krt
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
+
+func TestValidateRunInputOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    runOptions
+		args    []string
+		wantErr string
+	}{
+		{name: "args without file", args: []string{"echo hello"}},
+		{name: "file only", opts: runOptions{File: "script.sh"}},
+		{
+			name:    "file with entrypoint",
+			opts:    runOptions{File: "script.sh", Entrypoint: "run.sh"},
+			wantErr: "--entrypoint cannot be used with --file",
+		},
+		{
+			name:    "file with args",
+			opts:    runOptions{File: "script.sh"},
+			args:    []string{"hello"},
+			wantErr: "command args cannot be used with --file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRunInputOptions(&tt.opts, tt.args)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateRunInputOptions() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateRunInputOptions() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
 
 func TestRunTerminalResult(t *testing.T) {
 	tests := []struct {

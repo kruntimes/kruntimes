@@ -53,7 +53,6 @@ spec:
     inline: |
       echo "language=bash" >> "$KRUNTIME_OUTPUTS"
       echo "hello from bash"
-  entrypoint: script
 EOF
 ```
 
@@ -73,7 +72,6 @@ spec:
       print("hello from python")
       with open(os.environ["KRUNTIME_OUTPUTS"], "a", encoding="utf-8") as f:
           f.write("language=python\n")
-  entrypoint: script
 EOF
 ```
 
@@ -149,7 +147,6 @@ spec:
       echo "run=$i" >> "\$KRUNTIME_OUTPUTS"
       sleep 2
       echo "done $i"
-  entrypoint: script
 EOF
 done
 ```
@@ -269,7 +266,6 @@ spec:
   source:
     inline: |
       echo '{"runtime":"custom-bash","tool":"jq"}' | jq -r '.runtime + " has " + .tool'
-  entrypoint: script
 EOF
 ```
 

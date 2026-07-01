@@ -322,7 +322,7 @@ func TestExecute_InlineSource(t *testing.T) {
 	}
 }
 
-func TestExecute_InlineSourceArgs(t *testing.T) {
+func TestExecute_EntrypointArgs(t *testing.T) {
 	client, cleanup := startTestServer(t)
 	defer cleanup()
 
@@ -331,7 +331,7 @@ func TestExecute_InlineSourceArgs(t *testing.T) {
 
 	ctx := context.Background()
 	_, err := client.Execute(ctx, &pb.ExecuteRequest{
-		Id:         "inline-args",
+		Id:         "entrypoint-args",
 		WorkingDir: workDir,
 		Args:       []string{"hello", "world"},
 	})
@@ -339,7 +339,7 @@ func TestExecute_InlineSourceArgs(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	resp := waitForTerminalStatus(t, client, "inline-args")
+	resp := waitForTerminalStatus(t, client, "entrypoint-args")
 	if resp.State != pb.ExecutionState_EXECUTION_STATE_SUCCEEDED {
 		t.Fatalf("state = %v, want succeeded: stderr=%s error=%s", resp.State, resp.Stderr, resp.ErrorMessage)
 	}

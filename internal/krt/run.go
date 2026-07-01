@@ -49,6 +49,9 @@ func newRunCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme
 			if opts.File != "" && opts.RepoURL != "" {
 				return fmt.Errorf("-f/--file and --repo-url are mutually exclusive")
 			}
+			if err := validateRunInputOptions(opts, args); err != nil {
+				return err
+			}
 
 			var inline string
 			if opts.File != "" {
@@ -149,7 +152,7 @@ func newRunCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme
 	cmd.Flags().StringVarP(&opts.Runtime, "runtime", "r", "bash", "Runtime environment type")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 0, "Task timeout")
 	cmd.Flags().StringVarP(&opts.File, "file", "f", "", `Read source code from file, or "-" for stdin`)
-	cmd.Flags().StringVar(&opts.Entrypoint, "entrypoint", "", `Entrypoint script file (default "script")`)
+	cmd.Flags().StringVar(&opts.Entrypoint, "entrypoint", "", "Entrypoint script file for non-inline sources")
 	cmd.Flags().StringVar(&opts.Handler, "handler", "", "Handler in module.function format")
 	cmd.Flags().StringVar(&opts.RepoURL, "repo-url", "", "Git repository URL")
 	cmd.Flags().StringVar(&opts.CommitSHA, "commit-sha", "", "Git commit SHA")
@@ -159,6 +162,19 @@ func newRunCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme
 	cmd.Flags().DurationVar(&opts.RetryBackoff, "retry-backoff", 0, "Initial backoff between retries")
 
 	return cmd
+}
+
+func validateRunInputOptions(opts *runOptions, args []string) error {
+	if opts.File == "" {
+		return nil
+	}
+	if opts.Entrypoint != "" {
+		return fmt.Errorf("--entrypoint cannot be used with --file because inline source uses the default script entrypoint")
+	}
+	if len(args) > 0 {
+		return fmt.Errorf("command args cannot be used with --file because inline source ignores args")
+	}
+	return nil
 }
 
 func runTerminalResult(phase v1alpha1.RunPhase) (bool, error) {

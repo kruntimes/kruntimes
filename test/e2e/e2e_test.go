@@ -1579,9 +1579,8 @@ echo "succeeded on attempt $count"
 			Namespace:    testNamespace,
 		},
 		Spec: v1alpha1.RunSpec{
-			Runtime:    "bash",
-			Source:     &v1alpha1.CodeSource{Inline: &inline},
-			Entrypoint: "script.sh",
+			Runtime: "bash",
+			Source:  &v1alpha1.CodeSource{Inline: &inline},
 			RetryPolicy: &v1alpha1.RetryPolicy{
 				MaxAttempts: 5,
 				Backoff:     metav1.Duration{Duration: time.Second},

@@ -78,7 +78,6 @@ spec:
   source:
     inline: |
       echo "hello from kruntimes"
-  entrypoint: script
 EOF
 ```
 

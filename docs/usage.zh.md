@@ -51,7 +51,6 @@ spec:
   source:
     inline: |
       echo hello
-  entrypoint: script
 ```
 
 scheduler 会 watch Pending Runs，并将它们分配到同一 namespace 内健康的 Runtime Pods。
@@ -70,16 +69,32 @@ spec:
   source:
     inline: |
       echo "$MESSAGE"
-  entrypoint: script
 ```
 
 不要把 secrets 直接放在 `Run.spec.env`。请使用 namespace 隔离、Runtime-controlled
 mounts，或适合你的集群的 admission policy。
 
-## 使用 Source 和 Entrypoint
+## 使用 Inline Source
 
-Run source 会被准备到每个 Run 独立的 workspace。Entrypoints 必须是相对路径，
-且不能包含 `..`。
+Inline source 是独立脚本。当 `spec.source.inline` 存在时，runtimed 会把它写入默认
+的 `script` 文件，并忽略 `spec.entrypoint` 和 `spec.args`。
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: inline-example
+spec:
+  runtime: bash
+  source:
+    inline: |
+      echo "hello from inline source"
+```
+
+## 使用 Entrypoint 和 Args
+
+Entrypoint 会选择 prepared workspace 中要执行的相对文件路径，适用于 Git source 或
+workspace 中已经存在的文件。Entrypoints 必须是相对路径，且不能包含 `..`。
 
 ```yaml
 apiVersion: kruntimes.io/v1alpha1
@@ -89,12 +104,12 @@ metadata:
 spec:
   runtime: bash
   source:
-    inline: |
-      echo "hello from source"
-  entrypoint: script
+    repoURL: https://github.com/example/scripts.git
+    commitSHA: main
+  entrypoint: run.sh
 ```
 
-当 entrypoint 文件存在时，`args` 会作为该文件的参数传入。对于内置 Bash Runtime：
+使用 `entrypoint` 时，`args` 会作为参数传给该文件。对于内置 Bash Runtime：
 
 ```yaml
 apiVersion: kruntimes.io/v1alpha1
@@ -104,9 +119,9 @@ metadata:
 spec:
   runtime: bash
   source:
-    inline: |
-      echo "first=$1"
-  entrypoint: script
+    repoURL: https://github.com/example/scripts.git
+    commitSHA: main
+  entrypoint: run.sh
   args:
     - hello
 ```
@@ -129,7 +144,7 @@ krt run --runtime bash -- sh -c 'echo "hello from $SHELL"'
 对于可重复的脚本，优先使用 source mode：
 
 ```bash
-krt run --runtime bash --file ./script.sh --entrypoint script
+krt run --runtime bash --file ./script.sh
 ```
 
 ## Outputs

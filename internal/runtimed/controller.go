@@ -780,7 +780,7 @@ func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
 	if run.Spec.Timeout != nil {
 		timeoutSec = int64(run.Spec.Timeout.Duration.Seconds())
 	}
-	entrypoint, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script")
+	entrypoint, args, err := runtimeExecutionInput(run)
 	if err != nil {
 		return err
 	}
@@ -788,7 +788,7 @@ func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
 	defer cancel()
 	_, err = c.runtimeCli.Execute(rctx, &pb.ExecuteRequest{
 		Id:             string(run.UID),
-		Args:           run.Spec.Args,
+		Args:           args,
 		Env:            env,
 		TimeoutSeconds: timeoutSec,
 		WorkingDir:     ar.workDir,
@@ -987,27 +987,37 @@ func prepareSource(run *v1alpha1.Run) (string, error) {
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir %s: %w", runDir, err)
 	}
-	if _, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script"); err != nil {
-		return "", err
-	}
 	if run.Spec.Source == nil {
+		if _, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script"); err != nil {
+			return "", err
+		}
 		return runDir, nil
 	}
 	if run.Spec.Source.Inline != nil {
-		fileName, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script")
-		if err != nil {
-			return "", err
-		}
-		scriptPath := filepath.Join(runDir, fileName)
+		scriptPath := filepath.Join(runDir, "script")
 		if err := os.WriteFile(scriptPath, []byte(*run.Spec.Source.Inline), 0o644); err != nil {
 			return "", fmt.Errorf("write inline: %w", err)
 		}
 		return runDir, nil
 	}
+	if _, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script"); err != nil {
+		return "", err
+	}
 	if run.Spec.Source.RepoURL != "" {
 		return prepareGitSource(runDir, run.Spec.Source.RepoURL, run.Spec.Source.CommitSHA)
 	}
 	return "", nil
+}
+
+func runtimeExecutionInput(run *v1alpha1.Run) (string, []string, error) {
+	if run.Spec.Source != nil && run.Spec.Source.Inline != nil {
+		return "script", nil, nil
+	}
+	entrypoint, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script")
+	if err != nil {
+		return "", nil, err
+	}
+	return entrypoint, run.Spec.Args, nil
 }
 
 func workDirForRun(run *v1alpha1.Run) string {

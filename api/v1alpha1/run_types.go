@@ -147,7 +147,8 @@ type RetryPolicy struct {
 // +kubebuilder:validation:XValidation:rule="!(has(self.inline) && has(self.repoURL))",message="inline and repoURL are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="!has(self.commitSHA) || has(self.repoURL)",message="commitSHA requires repoURL"
 type CodeSource struct {
-	// Inline is the source code as a string (for simple scripts).
+	// Inline is a standalone script. When set, runtimed writes it to the default
+	// script file and does not pass Entrypoint or Args to the Runtime Server.
 	// Mutually exclusive with RepoURL.
 	// +optional
 	// 256 KiB keeps simple scripts well below the Kubernetes object size limit.
@@ -169,7 +170,7 @@ type CodeSource struct {
 
 // +kubebuilder:object:generate=true
 // RunSpec defines the desired state of Run.
-// +kubebuilder:validation:XValidation:rule="!has(self.entrypoint) || (!self.entrypoint.startsWith('/') && !self.entrypoint.split('/').exists(segment, segment == '..'))",message="entrypoint must be a relative path that does not contain '..'"
+// +kubebuilder:validation:XValidation:rule="!has(self.entrypoint) || (has(self.source) && has(self.source.inline)) || (!self.entrypoint.startsWith('/') && !self.entrypoint.split('/').exists(segment, segment == '..'))",message="entrypoint must be a relative path that does not contain '..'"
 type RunSpec struct {
 	// Runtime is the execution environment type (e.g., "python").
 	// It maps to the "runtime" label on Runtime Pods.
@@ -184,7 +185,8 @@ type RunSpec struct {
 	// +optional
 	Source *CodeSource `json:"source,omitempty"`
 
-	// Entrypoint is the script file to execute (default "script" for inline source).
+	// Entrypoint is the relative script file to execute for non-inline sources.
+	// It is ignored when Source.Inline is set.
 	// +optional
 	// Linux PATH_MAX is 4096 bytes.
 	// +kubebuilder:validation:MaxLength=4096
@@ -196,7 +198,8 @@ type RunSpec struct {
 	// +kubebuilder:validation:MaxLength=512
 	Handler string `json:"handler,omitempty"`
 
-	// Args is the list of arguments passed to the runtime.
+	// Args is the list of arguments passed to the runtime for non-inline sources.
+	// It is ignored when Source.Inline is set.
 	// +optional
 	// +kubebuilder:validation:MaxItems=256
 	// +kubebuilder:validation:items:MaxLength=8192
