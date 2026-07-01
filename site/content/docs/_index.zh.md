@@ -21,4 +21,5 @@ title: "文档"
 13. [开发指南](development/)
 14. [测试指南](testing/)
 15. [Adoption Signals](adoption-signals/)
-16. [社区与治理](community/)
+16. [目标用户验证 Playbook](user-validation/)
+17. [社区与治理](community/)

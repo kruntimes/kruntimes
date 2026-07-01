@@ -35,6 +35,12 @@ kruntimes 基于 Apache License 2.0 发布。详见
 使用问题、bug 报告、功能请求和支持预期见
 [SUPPORT.md](https://github.com/kruntimes/kruntimes/blob/main/SUPPORT.md)。
 
+## 公开验证
+
+公开后的目标用户验证通过 [Adoption Signals](adoption-signals.md) 和
+[目标用户验证 Playbook](user-validation.md) 跟踪。这些文档定义项目如何判断用户是否理解
+价值、是否试用真实 workload，以及第一个产品 wedge 是否被验证或应被否定。
+
 ## 安全
 
 请勿通过公开 issue 报告漏洞。使用
