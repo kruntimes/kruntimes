@@ -1,0 +1,60 @@
+name: Benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: make benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          working-directory: runtimes/python
+          python-version: "3.12"
+          enable-cache: true
+      - uses: azure/setup-helm@v5.0.1
+      - uses: helm/kind-action@v1.14.0
+        with:
+          cluster_name: kruntimes-benchmark
+      - name: Set image tag
+        run: echo "E2E_IMAGE_TAG=benchmark-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+      - name: Set up benchmark environment
+        run: make e2e-setup KIND_CLUSTER_NAME=kruntimes-benchmark
+      - name: Run hot-path benchmark
+        run: make benchmark-run KIND_CLUSTER_NAME=kruntimes-benchmark | tee benchmark-hot.json
+      - name: Publish benchmark summary
+        run: |
+          {
+            echo "## Benchmark result"
+            echo
+            echo "### Hot-path benchmark"
+            echo
+            echo '```json'
+            cat benchmark-hot.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Dump Kubernetes diagnostics
+        if: failure()
+        run: |
+          set +e
+          kubectl get nodes -o wide
+          kubectl get pods,deployments,replicasets,runtimes,runs -A -o wide
+          kubectl describe pods -A
+          kubectl describe runtimes -A
+          kubectl describe runs -A
+          kubectl get events -A --sort-by=.lastTimestamp
+          kubectl logs deploy/kruntimes-controller --all-containers --tail=300 || true
+          kubectl logs -l app=kruntimes-scheduler --all-containers --tail=300 || true

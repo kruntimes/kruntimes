@@ -4,47 +4,87 @@ kruntimes includes an opt-in benchmark harness for measuring scheduler latency,
 completion throughput, Runtime capacity behavior, and control-plane request
 latency against a real Kubernetes cluster.
 
-The benchmark is not part of default CI because results depend on cluster size,
-node pressure, storage, image locality, and API server configuration. Run it
-with the same environment setup used by E2E tests:
+Benchmark numbers depend on cluster size, node pressure, storage, image
+locality, API server configuration, and the benchmark parameters. Always record
+the command, cluster type, Kubernetes version, kruntimes image tags or digests,
+Runtime replica/capacity settings, and the full JSON output when using numbers
+in release notes or comparisons.
+
+## How to Run Benchmarks
+
+### Environment
+
+The benchmark runs on Kubernetes. You can run it against:
+
+- a local kind cluster created by the project E2E setup, or
+- a GitHub Actions runner through the `Benchmark` workflow.
+
+For local runs, use the same setup path as E2E tests:
 
 ```bash
 make benchmark
 ```
 
-`make benchmark` creates a temporary Bash `Runtime`, submits all benchmark
-`Run` objects up front, waits for all terminal phases, and prints a JSON report.
-The default run uses 2 Runtime Pods, 4 concurrent Run slots per pod, 50 total
-Runs, and 10 concurrent create requests. This intentionally creates more Runs
-than the default Runtime capacity so the benchmark covers backlog drain after
-earlier Runs finish.
+`make benchmark` runs `make e2e-setup` first. That builds fresh local images,
+loads them into the configured kind cluster, upgrades the platform chart, and
+then runs the benchmark with the exact images loaded into kind.
 
-`make benchmark` depends on `make e2e-setup`, so it builds images with the
-fresh E2E tag, loads them into the configured kind cluster, upgrades the
-platform chart, and then passes the exact `E2E_IMG_BASH_RUNTIME` and
-`E2E_IMG_RUNTIMED` tags to the benchmark harness. The benchmark Runtime also
-sets the runtime container image pull policy to `IfNotPresent`, so kind uses the
-loaded images instead of trying to pull them from a registry.
-
-Useful overrides:
+If the environment already exists, run only the harness:
 
 ```bash
-KRUNTIMES_BENCHMARK_RUNS=200 \
-KRUNTIMES_BENCHMARK_CONCURRENCY=25 \
-KRUNTIMES_BENCHMARK_REPLICAS=4 \
-KRUNTIMES_BENCHMARK_CAPACITY=8 \
+make benchmark-run
+```
+
+The GitHub `Benchmark` workflow runs the same `e2e-setup` environment in kind
+and records the default hot-path benchmark in the workflow summary.
+
+### Default Parameters
+
+The default benchmark is the no-sleep hot-path case:
+
+| Parameter | Default |
+| --- | ---: |
+| `KRUNTIMES_BENCHMARK_RUNS` | `50` |
+| `KRUNTIMES_BENCHMARK_CONCURRENCY` | `25` |
+| `KRUNTIMES_BENCHMARK_REPLICAS` | `2` |
+| `KRUNTIMES_BENCHMARK_CAPACITY` | `64` |
+| `KRUNTIMES_BENCHMARK_SLEEP` | `0s` |
+| `KRUNTIMES_BENCHMARK_POLL_INTERVAL` | `50ms` |
+| `KRUNTIMES_BENCHMARK_CAPACITY_PROBE` | `false` |
+
+Total Runtime capacity is intentionally higher than the number of Runs, so the
+default result is not dominated by capacity queueing.
+
+### Parameterized Example
+
+To run a backlog/drain case with workload sleep and constrained capacity, pass
+parameters from the outside:
+
+```bash
+KRUNTIMES_BENCHMARK_RUNS=50 \
+KRUNTIMES_BENCHMARK_CONCURRENCY=10 \
+KRUNTIMES_BENCHMARK_REPLICAS=2 \
+KRUNTIMES_BENCHMARK_CAPACITY=4 \
 KRUNTIMES_BENCHMARK_SLEEP=500ms \
-make benchmark
+KRUNTIMES_BENCHMARK_CAPACITY_PROBE=true \
+make benchmark-run
 ```
 
-The output contains:
+This intentionally creates more Runs than Runtime capacity so the benchmark
+covers backlog drain after earlier Runs finish.
 
-- `latency.schedule`: time from local create request start until the scheduler
-  assigns a Runtime Pod.
-- `latency.dispatch`: time from local create request start until runtimed marks
-  the Run started.
-- `latency.complete`: time from local create request start until terminal Run
-  status.
+### Output Fields
+
+- `latency.schedule`: benchmark-observed time from local create request start
+  until the scheduler assigns a Runtime Pod.
+- `latency.dispatch`: benchmark-observed time from local create request start
+  until runtimed marks the Run started.
+- `latency.execution`: benchmark-observed time from Run start to terminal Run
+  status. This excludes benchmark backlog queueing before runtimed starts the
+  Run, but it is still bounded by the benchmark poll interval.
+- `latency.complete`: benchmark-observed time from local create request start
+  until terminal Run status. This is end-to-end latency and includes time
+  waiting for Runtime capacity when the benchmark is capacity constrained.
 - `throughput.runsPerSecond`: successful terminal Runs divided by benchmark wall
   time.
 - `capacity.maxObservedRunningRuns`: maximum concurrent Running Runs observed
@@ -56,130 +96,62 @@ The output contains:
 - `controlPlane.pods`: scheduler/controller readiness and restart counts in the
   configured control-plane namespace.
 
-For release notes, record the benchmark command, cluster type, Kubernetes
-version, kruntimes image tags or digests, Runtime replica/capacity settings, and
-the full JSON output. Do not compare numbers across different clusters without
-calling out the environment difference.
+## Local Results
 
-## Current Local Result
+### Default Hot-Path Result
 
-This result was captured on 2026-06-27 with `make benchmark` against a local
-kind cluster created by `make e2e-setup`. It uses the default benchmark settings:
-2 Runtime Pods, 4 Run slots per pod, 50 total Runs, 10 concurrent create
-requests, and 500 ms workload sleep.
+Command:
 
-```json
-{
-  "benchmarkID": "bench-1782529296",
-  "startedAt": "2026-06-27T11:01:36.424462547+08:00",
-  "completedAt": "2026-06-27T11:01:46.315089871+08:00",
-  "options": {
-    "namespace": "default",
-    "controlPlaneNamespace": "default",
-    "runtimeName": "benchmark-bash",
-    "runs": 50,
-    "concurrency": 10,
-    "replicas": 2,
-    "capacityPerPod": 4,
-    "sleepSeconds": 0.5,
-    "timeoutSeconds": 300
-  },
-  "latency": {
-    "schedule": {
-      "count": 50,
-      "minMs": 33.222,
-      "p50Ms": 4419.55,
-      "p95Ms": 5830.094,
-      "maxMs": 6226.511
-    },
-    "dispatch": {
-      "count": 50,
-      "minMs": 3034.152,
-      "p50Ms": 4615.892,
-      "p95Ms": 6224.137,
-      "maxMs": 6226.511
-    },
-    "complete": {
-      "count": 50,
-      "minMs": 3436.66,
-      "p50Ms": 5112.102,
-      "p95Ms": 6625.569,
-      "maxMs": 7026.797
-    }
-  },
-  "throughput": {
-    "successfulRuns": 50,
-    "failedRuns": 0,
-    "wallSeconds": 9.890627325,
-    "runsPerSecond": 5.055291070730945
-  },
-  "capacity": {
-    "readyRuntimePods": 2,
-    "configuredTotalRunSlots": 8,
-    "maxObservedRunningRuns": 8,
-    "maxObservedRunningByPod": {
-      "runtime-benchmark-bash-785b988db8-7gp57": 4,
-      "runtime-benchmark-bash-785b988db8-qkxfk": 4
-    },
-    "observedPendingAtCapacity": true,
-    "assignedRunsByPod": {
-      "runtime-benchmark-bash-785b988db8-7gp57": 24,
-      "runtime-benchmark-bash-785b988db8-qkxfk": 26
-    },
-    "runtimePodNames": [
-      "runtime-benchmark-bash-785b988db8-7gp57",
-      "runtime-benchmark-bash-785b988db8-qkxfk"
-    ],
-    "runtimePodRestarts": {
-      "runtime-benchmark-bash-785b988db8-7gp57": 0,
-      "runtime-benchmark-bash-785b988db8-qkxfk": 0
-    }
-  },
-  "controlPlane": {
-    "apiCreate": {
-      "count": 50,
-      "minMs": 2.546,
-      "p50Ms": 4.694,
-      "p95Ms": 9.901,
-      "maxMs": 10.801
-    },
-    "apiList": {
-      "count": 36,
-      "minMs": 3.812,
-      "p50Ms": 5.173,
-      "p95Ms": 6.5,
-      "maxMs": 9.064
-    },
-    "apiGet": {
-      "count": 50,
-      "minMs": 1.182,
-      "p50Ms": 1.442,
-      "p95Ms": 1.886,
-      "maxMs": 2.288
-    },
-    "pods": [
-      {
-        "name": "kruntimes-controller-cb4df56ff-lfq8x",
-        "ready": true,
-        "restarts": 0,
-        "component": "controller"
-      },
-      {
-        "name": "kruntimes-scheduler-7476d58d74-585gj",
-        "ready": true,
-        "restarts": 0,
-        "component": "scheduler"
-      },
-      {
-        "name": "kruntimes-scheduler-7476d58d74-q88bv",
-        "ready": true,
-        "restarts": 0,
-        "component": "scheduler"
-      }
-    ]
-  },
-  "terminalPhase": {
-    "Succeeded": 50
-  }
-}
+```bash
+make benchmark-run
 ```
+
+Parameters: 50 Runs, 2 Runtime Pods, 64 Run slots per Pod, 25 concurrent create
+requests, no workload sleep, 50 ms polling, and capacity probe disabled.
+
+| Metric | p50 | p95 | Notes |
+| --- | ---: | ---: | --- |
+| `latency.schedule` | 207.361 ms | 302.429 ms | local create start to assigned Pod observed by benchmark |
+| `latency.dispatch` | 207.456 ms | 322.593 ms | local create start to Running observed by benchmark |
+| `latency.execution` | 372.785 ms | 449.617 ms | Running to terminal observed by benchmark |
+| `latency.complete` | 580.422 ms | 627.611 ms | local create start to terminal observed by benchmark |
+
+Additional observations:
+
+- successful Runs: 50
+- throughput: 11.30 Runs/s
+- configured Runtime capacity: 128 Run slots
+- max observed Running Runs: 50
+- pending at capacity: false
+
+### Backlog/Drain Result with Parameters
+
+Command:
+
+```bash
+KRUNTIMES_BENCHMARK_RUNS=50 \
+KRUNTIMES_BENCHMARK_CONCURRENCY=10 \
+KRUNTIMES_BENCHMARK_REPLICAS=2 \
+KRUNTIMES_BENCHMARK_CAPACITY=4 \
+KRUNTIMES_BENCHMARK_SLEEP=500ms \
+KRUNTIMES_BENCHMARK_CAPACITY_PROBE=true \
+make benchmark-run
+```
+
+Parameters: 50 Runs, 2 Runtime Pods, 4 Run slots per Pod, 10 concurrent create
+requests, 500 ms workload sleep, and capacity probe enabled.
+
+| Metric | p50 | p95 | Notes |
+| --- | ---: | ---: | --- |
+| `latency.schedule` | 4419.550 ms | 5830.094 ms | includes backlog queueing |
+| `latency.dispatch` | 4615.892 ms | 6224.137 ms | includes backlog queueing |
+| `latency.execution` | N/A | N/A | not collected by the older result |
+| `latency.complete` | 5112.102 ms | 6625.569 ms | end-to-end backlog/drain latency |
+
+Additional observations:
+
+- successful Runs: 50
+- throughput: 5.05 Runs/s
+- configured Runtime capacity: 8 Run slots
+- max observed Running Runs: 8
+- pending at capacity: true

@@ -149,7 +149,11 @@ e2e-cleanup: ## Delete the kind cluster.
 	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
 .PHONY: benchmark
-benchmark: e2e-setup ## Run the performance benchmark against the current Kubernetes context.
+benchmark: E2E_IMAGE_TAG := $(E2E_RUN_IMAGE_TAG)
+benchmark: e2e-setup benchmark-run ## Run the default no-sleep hot-path benchmark against a fresh E2E environment.
+
+.PHONY: benchmark-run
+benchmark-run: ## Run the benchmark against the current Kubernetes context. Pass benchmark parameters through KRUNTIMES_BENCHMARK_* env vars.
 	KRUNTIMES_BASH_RUNTIME_IMAGE=$(E2E_IMG_BASH_RUNTIME) \
 	KRUNTIMES_RUNTIMED_IMAGE=$(E2E_IMG_RUNTIMED) \
 	go run ./hack/benchmark

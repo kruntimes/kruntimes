@@ -44,7 +44,9 @@ type options struct {
 	Capacity              int32
 	Sleep                 time.Duration
 	Timeout               time.Duration
+	PollInterval          time.Duration
 	Cleanup               bool
+	CapacityProbe         bool
 }
 
 type report struct {
@@ -69,12 +71,15 @@ type reportOptions struct {
 	CapacityPerPod        int32   `json:"capacityPerPod"`
 	SleepSeconds          float64 `json:"sleepSeconds"`
 	TimeoutSeconds        float64 `json:"timeoutSeconds"`
+	PollIntervalSeconds   float64 `json:"pollIntervalSeconds"`
+	CapacityProbe         bool    `json:"capacityProbe"`
 }
 
 type latencyReport struct {
-	Schedule latencyStats `json:"schedule"`
-	Dispatch latencyStats `json:"dispatch"`
-	Complete latencyStats `json:"complete"`
+	Schedule  latencyStats `json:"schedule"`
+	Dispatch  latencyStats `json:"dispatch"`
+	Execution latencyStats `json:"execution"`
+	Complete  latencyStats `json:"complete"`
 }
 
 type latencyStats struct {
@@ -137,7 +142,7 @@ func main() {
 func parseOptions() options {
 	opts := options{}
 	replicas := envIntOrDefault("KRUNTIMES_BENCHMARK_REPLICAS", 2)
-	capacity := envIntOrDefault("KRUNTIMES_BENCHMARK_CAPACITY", 4)
+	capacity := envIntOrDefault("KRUNTIMES_BENCHMARK_CAPACITY", 64)
 
 	flag.StringVar(&opts.Namespace, "namespace", envOrDefault("NAMESPACE", "default"), "Namespace for benchmark Runtime and Runs.")
 	flag.StringVar(&opts.ControlPlaneNamespace, "control-plane-namespace", envOrDefault("KRUNTIMES_CONTROL_PLANE_NAMESPACE", envOrDefault("NAMESPACE", "default")), "Namespace where scheduler/controller pods run.")
@@ -145,12 +150,14 @@ func parseOptions() options {
 	flag.StringVar(&opts.BashImage, "bash-image", envOrDefault("KRUNTIMES_BASH_RUNTIME_IMAGE", "kruntimes-bash-runtime:latest"), "Bash Runtime image.")
 	flag.StringVar(&opts.RuntimedImage, "runtimed-image", envOrDefault("KRUNTIMES_RUNTIMED_IMAGE", "kruntimes-runtimed:latest"), "Runtimed image injected into the benchmark Runtime.")
 	flag.IntVar(&opts.Runs, "runs", envIntOrDefault("KRUNTIMES_BENCHMARK_RUNS", 50), "Number of Runs to create.")
-	flag.IntVar(&opts.Concurrency, "concurrency", envIntOrDefault("KRUNTIMES_BENCHMARK_CONCURRENCY", 10), "Maximum concurrent Run create requests.")
+	flag.IntVar(&opts.Concurrency, "concurrency", envIntOrDefault("KRUNTIMES_BENCHMARK_CONCURRENCY", 25), "Maximum concurrent Run create requests.")
 	flag.IntVar(&replicas, "replicas", replicas, "Benchmark Runtime replica count.")
 	flag.IntVar(&capacity, "capacity", capacity, "Per-pod runs capacity for the benchmark Runtime.")
-	flag.DurationVar(&opts.Sleep, "sleep", envDurationOrDefault("KRUNTIMES_BENCHMARK_SLEEP", 500*time.Millisecond), "Sleep duration executed by each Run.")
+	flag.DurationVar(&opts.Sleep, "sleep", envDurationOrDefault("KRUNTIMES_BENCHMARK_SLEEP", 0), "Sleep duration executed by each Run.")
 	flag.DurationVar(&opts.Timeout, "timeout", envDurationOrDefault("KRUNTIMES_BENCHMARK_TIMEOUT", 5*time.Minute), "Overall benchmark timeout.")
+	flag.DurationVar(&opts.PollInterval, "poll-interval", envDurationOrDefault("KRUNTIMES_BENCHMARK_POLL_INTERVAL", 50*time.Millisecond), "Interval for polling Run status.")
 	flag.BoolVar(&opts.Cleanup, "cleanup", envBoolOrDefault("KRUNTIMES_BENCHMARK_CLEANUP", true), "Delete benchmark Runs and Runtime after completion.")
+	flag.BoolVar(&opts.CapacityProbe, "capacity-probe", envBoolOrDefault("KRUNTIMES_BENCHMARK_CAPACITY_PROBE", false), "Run a pre-benchmark capacity saturation probe.")
 	flag.Parse()
 
 	opts.Replicas = int32(replicas)
@@ -171,6 +178,9 @@ func validateOptions(opts options) {
 	}
 	if opts.Capacity <= 0 {
 		fail("capacity must be > 0")
+	}
+	if opts.PollInterval <= 0 {
+		fail("poll-interval must be > 0")
 	}
 }
 
@@ -216,9 +226,13 @@ func run(parent context.Context, opts options) error {
 		}()
 	}
 
-	capProbe, err := observeCapacitySaturation(ctx, k8sClient, opts, benchID, runtimePods)
-	if err != nil {
-		return err
+	capProbe := capacityReport{}
+	if opts.CapacityProbe {
+		var err error
+		capProbe, err = observeCapacitySaturation(ctx, k8sClient, opts, benchID, runtimePods)
+		if err != nil {
+			return err
+		}
 	}
 	observations, createLatencies, listLatencies, getLatencies, capReport, err := executeRuns(ctx, k8sClient, opts, benchID, runtimePods)
 	if err != nil {
@@ -436,7 +450,7 @@ func observeCapacitySaturation(ctx context.Context, k8sClient client.Client, opt
 	}
 	defer deleteRuns(context.Background(), k8sClient, opts.Namespace, names)
 
-	err := wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, opts.PollInterval, 30*time.Second, true, func(ctx context.Context) (bool, error) {
 		list := &v1alpha1.RunList{}
 		if err := k8sClient.List(ctx, list, client.InNamespace(opts.Namespace), client.MatchingLabels{benchmarkIDLabel: benchID + "-capacity"}); err != nil {
 			return false, fmt.Errorf("list capacity probe Runs: %w", err)
@@ -471,11 +485,34 @@ func observeCapacitySaturation(ctx context.Context, k8sClient client.Client, opt
 	if err != nil {
 		return out, nil
 	}
+	if err := waitForProbeTerminal(ctx, k8sClient, opts, benchID+"-capacity", len(names)); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 
+func waitForProbeTerminal(ctx context.Context, k8sClient client.Client, opts options, benchID string, want int) error {
+	err := wait.PollUntilContextTimeout(ctx, opts.PollInterval, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+		list := &v1alpha1.RunList{}
+		if err := k8sClient.List(ctx, list, client.InNamespace(opts.Namespace), client.MatchingLabels{benchmarkIDLabel: benchID}); err != nil {
+			return false, fmt.Errorf("list capacity probe Runs: %w", err)
+		}
+		terminal := 0
+		for i := range list.Items {
+			if isTerminal(list.Items[i].Status.Phase) {
+				terminal++
+			}
+		}
+		return terminal >= want, nil
+	})
+	if err != nil {
+		return fmt.Errorf("wait for capacity probe Runs to finish: %w", err)
+	}
+	return nil
+}
+
 func waitForAllTerminal(ctx context.Context, k8sClient client.Client, opts options, benchID string, observations map[string]*runObservation, listLatencies *[]time.Duration, capReport *capacityReport, assignedSeen map[string]struct{}) error {
-	err := wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, opts.Timeout, true, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, opts.PollInterval, opts.Timeout, true, func(ctx context.Context) (bool, error) {
 		list := &v1alpha1.RunList{}
 		start := time.Now()
 		if err := k8sClient.List(ctx, list, client.InNamespace(opts.Namespace), client.MatchingLabels{benchmarkIDLabel: benchID}); err != nil {
@@ -557,6 +594,7 @@ func benchmarkRun(opts options, benchID string, index int, sleep time.Duration) 
 func buildReport(opts options, benchID string, startedAt, completedAt time.Time, observations map[string]*runObservation, createLatencies, listLatencies, getLatencies []time.Duration, capReport capacityReport, controlPlanePods []componentPodInfo) report {
 	schedule := []time.Duration{}
 	dispatch := []time.Duration{}
+	execution := []time.Duration{}
 	complete := []time.Duration{}
 	phases := map[string]int{}
 	successful := 0
@@ -578,6 +616,9 @@ func buildReport(opts options, benchID string, startedAt, completedAt time.Time,
 		}
 		if !obs.StartedAt.IsZero() {
 			dispatch = append(dispatch, obs.StartedAt.Sub(obs.CreatedAt))
+		}
+		if !obs.StartedAt.IsZero() && !obs.FinishedAt.IsZero() && !obs.FinishedAt.Before(obs.StartedAt) {
+			execution = append(execution, obs.FinishedAt.Sub(obs.StartedAt))
 		}
 		if !obs.FinishedAt.IsZero() {
 			complete = append(complete, obs.FinishedAt.Sub(obs.CreatedAt))
@@ -603,11 +644,14 @@ func buildReport(opts options, benchID string, startedAt, completedAt time.Time,
 			CapacityPerPod:        opts.Capacity,
 			SleepSeconds:          opts.Sleep.Seconds(),
 			TimeoutSeconds:        opts.Timeout.Seconds(),
+			PollIntervalSeconds:   opts.PollInterval.Seconds(),
+			CapacityProbe:         opts.CapacityProbe,
 		},
 		Latency: latencyReport{
-			Schedule: summarize(schedule),
-			Dispatch: summarize(dispatch),
-			Complete: summarize(complete),
+			Schedule:  summarize(schedule),
+			Dispatch:  summarize(dispatch),
+			Execution: summarize(execution),
+			Complete:  summarize(complete),
 		},
 		Throughput: throughputReport{
 			SuccessfulRuns: successful,
