@@ -2,8 +2,8 @@ apiVersion: v2
 name: kruntimes
 description: Two-layer scheduling system for CI/CD run warm-up on Kubernetes
 type: application
-version: 0.0.2
-appVersion: "0.0.2"
+version: 0.0.3
+appVersion: "0.0.3"
 keywords:
   - cicd
   - scheduling
