@@ -50,6 +50,10 @@ I'm mainly trying to learn whether this solves a real problem, not to sell a
 finished platform.
 ```
 
+公开的访谈反馈可以通过
+[Target user interview issue template](https://github.com/kruntimes/kruntimes/issues/new?template=target_user_interview.yml)
+记录。这个模板只用于公开、非敏感的摘要。不要在公开 issue 中包含真实公司机密、凭证、私有源代码、客户数据或安全漏洞报告。
+
 ## 访谈脚本
 
 第一次对话聚焦当前行为，而不是让用户描述想要的功能。
@@ -92,7 +96,7 @@ credentials、私有源代码或客户数据。
 
 | Date | User Label | Segment | Workload | Signal | Evidence | Follow-up |
 | --- | --- | --- | --- | --- | --- | --- |
-| YYYY-MM-DD | design-partner-a | AI infra / Platform / CI / Automation | Short description | Comprehension / Trial / Quick start / Rejection | Link to issue, Discussion, notes, or anonymized quote | Next action |
+| YYYY-MM-DD | target-user-a | AI infra / Platform / CI / Automation | Short description | Comprehension / Trial interest / Trial / Quick start / Rejection | Link to interview issue, trial issue, Discussion, notes, or anonymized quote | Next action |
 
 ## Wedge 判断规则
 

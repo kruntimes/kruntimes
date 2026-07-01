@@ -45,6 +45,13 @@ Post-public target-user validation is tracked with
 how the project evaluates whether users understand the value, try real
 workloads, and validate or reject the first product wedge.
 
+Use the public issue templates for non-sensitive evidence:
+
+- [Target user interview](https://github.com/kruntimes/kruntimes/issues/new?template=target_user_interview.yml)
+  for conversation notes and value-comprehension signals.
+- [Design partner trial](https://github.com/kruntimes/kruntimes/issues/new?template=design_partner_trial.yml)
+  for real or representative workload trials.
+
 ## Security
 
 Do not report vulnerabilities through public issues. Use the private reporting
