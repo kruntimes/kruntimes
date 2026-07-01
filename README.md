@@ -62,10 +62,7 @@ Install the platform chart:
 ```bash
 helm upgrade --install kruntimes ./charts/kruntimes \
   --namespace kruntimes-system \
-  --create-namespace \
-  --set scheduler.image=<scheduler-image> \
-  --set controller.image=<controller-image> \
-  --set runtimed.image=<runtimed-image>
+  --create-namespace
 ```
 
 Install built-in Runtime definitions into a workload namespace:
@@ -73,9 +70,7 @@ Install built-in Runtime definitions into a workload namespace:
 ```bash
 helm upgrade --install kruntimes-runtimes ./charts/kruntimes-runtimes \
   --namespace default \
-  --create-namespace \
-  --set bash.image=<bash-runtime-image> \
-  --set python.image=<python-runtime-image>
+  --create-namespace
 ```
 
 Create a Run:

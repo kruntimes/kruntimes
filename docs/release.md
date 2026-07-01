@@ -137,16 +137,16 @@ After checks pass:
 
 Published container images are expected under:
 
-- `ghcr.io/<owner>/kruntimes-scheduler:<version>`
-- `ghcr.io/<owner>/kruntimes-controller:<version>`
-- `ghcr.io/<owner>/kruntimes-runtimed:<version>`
-- `ghcr.io/<owner>/kruntimes-bash-runtime:<version>`
-- `ghcr.io/<owner>/kruntimes-python-runtime:<version>`
+- `ghcr.io/<owner>/scheduler:<version>`
+- `ghcr.io/<owner>/controller:<version>`
+- `ghcr.io/<owner>/runtimed:<version>`
+- `ghcr.io/<owner>/bash-runtime:<version>`
+- `ghcr.io/<owner>/python-runtime:<version>`
 
 Verify signatures with `cosign`:
 
 ```bash
-cosign verify ghcr.io/<owner>/kruntimes-controller:0.1.0 \
+cosign verify ghcr.io/<owner>/controller:0.1.0 \
   --certificate-identity-regexp 'https://github.com/.*/.github/workflows/release-images.yml@refs/tags/v0.1.0' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

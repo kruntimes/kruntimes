@@ -24,7 +24,7 @@ kubectl cluster-info
 设置 Helm charts 和 images 使用的发布版本：
 
 ```bash
-KRUNTIMES_VERSION=0.0.2
+KRUNTIMES_VERSION=0.0.3
 ```
 
 每个集群安装一次 control plane：
@@ -33,10 +33,7 @@ KRUNTIMES_VERSION=0.0.2
 helm upgrade --install kruntimes oci://ghcr.io/kruntimes/charts/kruntimes \
   --version "${KRUNTIMES_VERSION}" \
   --namespace kruntimes-system \
-  --create-namespace \
-  --set scheduler.image=ghcr.io/kruntimes/kruntimes-scheduler \
-  --set controller.image=ghcr.io/kruntimes/kruntimes-controller \
-  --set runtimed.image=ghcr.io/kruntimes/kruntimes-runtimed
+  --create-namespace
 ```
 
 将内置 Runtime definitions 安装到 Runs 将要执行的 namespace：
@@ -45,13 +42,11 @@ helm upgrade --install kruntimes oci://ghcr.io/kruntimes/charts/kruntimes \
 helm upgrade --install kruntimes-runtimes oci://ghcr.io/kruntimes/charts/kruntimes-runtimes \
   --version "${KRUNTIMES_VERSION}" \
   --namespace default \
-  --create-namespace \
-  --set bash.image=ghcr.io/kruntimes/kruntimes-bash-runtime \
-  --set python.image=ghcr.io/kruntimes/kruntimes-python-runtime
+  --create-namespace
 ```
 
-当 image value 不包含 tag 或 digest 时，chart 会把 chart `appVersion` 追加到 image
-repository 后面。上面的发布版安装路径应使用不带 tag 的 image repository。
+charts 默认使用发布在 `ghcr.io/kruntimes/*` 下的镜像仓库，并在 image value 没有 tag
+或 digest 时自动追加 chart `appVersion`。
 
 检查 control plane 和 Runtime Pods：
 

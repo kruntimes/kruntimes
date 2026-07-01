@@ -29,8 +29,8 @@ sidecar 处理。
 下面是一个安装 `jq` 的 Bash Runtime image 示例：
 
 ```dockerfile
-ARG KRUNTIMES_VERSION=0.0.2
-FROM ghcr.io/kruntimes/kruntimes-bash-runtime:${KRUNTIMES_VERSION}
+ARG KRUNTIMES_VERSION=0.0.3
+FROM ghcr.io/kruntimes/bash-runtime:${KRUNTIMES_VERSION}
 
 USER 0
 RUN apt-get update \
@@ -44,7 +44,7 @@ USER 65532
 ```bash
 CUSTOM_BASH_IMAGE=ghcr.io/example/my-bash-runtime:0.1.0
 docker build \
-  --build-arg KRUNTIMES_VERSION=0.0.2 \
+  --build-arg KRUNTIMES_VERSION=0.0.3 \
   -t "${CUSTOM_BASH_IMAGE}" \
   ./my-bash-runtime
 docker push "${CUSTOM_BASH_IMAGE}"

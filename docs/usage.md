@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
         - name: runtime
-          image: kruntimes-bash-runtime:latest
+          image: ghcr.io/kruntimes/bash-runtime:0.0.3
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 19091

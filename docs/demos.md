@@ -8,15 +8,12 @@ requirements and Helm installation details.
 Install the kruntimes control plane from the published Helm OCI chart:
 
 ```bash
-KRUNTIMES_VERSION=0.0.2
+KRUNTIMES_VERSION=0.0.3
 
 kubectl create namespace kruntimes-system
 helm upgrade --install kruntimes oci://ghcr.io/kruntimes/charts/kruntimes \
   --version "${KRUNTIMES_VERSION}" \
-  --namespace kruntimes-system \
-  --set scheduler.image=ghcr.io/kruntimes/kruntimes-scheduler \
-  --set controller.image=ghcr.io/kruntimes/kruntimes-controller \
-  --set runtimed.image=ghcr.io/kruntimes/kruntimes-runtimed
+  --namespace kruntimes-system
 kubectl wait deployment -n kruntimes-system -l app=kruntimes-controller --for=condition=Available --timeout=120s
 kubectl wait deployment -n kruntimes-system -l app=kruntimes-scheduler --for=condition=Available --timeout=120s
 ```
@@ -28,9 +25,7 @@ dedicated to experimentation:
 kubectl create namespace kruntimes-demo
 helm upgrade --install kruntimes-runtimes oci://ghcr.io/kruntimes/charts/kruntimes-runtimes \
   --version "${KRUNTIMES_VERSION}" \
-  --namespace kruntimes-demo \
-  --set bash.image=ghcr.io/kruntimes/kruntimes-bash-runtime \
-  --set python.image=ghcr.io/kruntimes/kruntimes-python-runtime
+  --namespace kruntimes-demo
 kubectl get runtime,pods -n kruntimes-demo
 ```
 
@@ -200,8 +195,8 @@ Create a small Dockerfile that extends the published Bash Runtime image:
 ```bash
 mkdir -p my-bash-runtime
 cat > my-bash-runtime/Dockerfile <<'EOF'
-ARG KRUNTIMES_VERSION=0.0.2
-FROM ghcr.io/kruntimes/kruntimes-bash-runtime:${KRUNTIMES_VERSION}
+ARG KRUNTIMES_VERSION=0.0.3
+FROM ghcr.io/kruntimes/bash-runtime:${KRUNTIMES_VERSION}
 
 USER 0
 RUN apt-get update \
