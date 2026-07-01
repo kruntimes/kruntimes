@@ -86,6 +86,12 @@ Ask each qualified user to try one small workload:
 Do not count a trial as a design-partner success unless the user runs a real or
 representative workload, not only a maintainer-led demo.
 
+Public trial feedback can be recorded with the
+[Design partner trial issue template](https://github.com/kruntimes/kruntimes/issues/new?template=design_partner_trial.yml).
+Private interviews should use the same fields internally and avoid publishing
+company names, credentials, private source code, or customer data without
+explicit approval.
+
 ## Evidence Template
 
 Use one row per conversation or trial. Keep private company and person names out
