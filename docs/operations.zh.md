@@ -15,10 +15,7 @@ metrics Services 和可选的监控资源。
 ```bash
 helm upgrade --install kruntimes ./charts/kruntimes \
   --namespace kruntimes-system \
-  --create-namespace \
-  --set scheduler.image=<scheduler-image> \
-  --set controller.image=<controller-image> \
-  --set runtimed.image=<runtimed-image>
+  --create-namespace
 ```
 
 将内置 Runtime CRs 安装到每个应托管 Runtime Pods 和 Runs 的 namespace：
@@ -26,12 +23,11 @@ helm upgrade --install kruntimes ./charts/kruntimes \
 ```bash
 helm upgrade --install kruntimes-runtimes ./charts/kruntimes-runtimes \
   --namespace default \
-  --create-namespace \
-  --set bash.image=<bash-runtime-image> \
-  --set python.image=<python-runtime-image>
+  --create-namespace
 ```
 
-共享集群请使用显式 image tags 或 digests。除开发外，不要依赖可变的本地镜像名。
+共享集群请使用显式 image tags 或 digests。除开发外，不要依赖可变的本地镜像名。只有
+在使用自定义或本地 build 镜像时才覆盖 chart image values。
 
 ## 升级
 

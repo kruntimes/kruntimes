@@ -28,9 +28,9 @@ Follow the provider's setup guide, then verify access:
 kubectl cluster-info
 ```
 
-For local clusters, make sure the kruntimes images referenced by Helm values are
-available inside the cluster. For example, use a registry reachable from the
-cluster or load locally built images using your cluster tool.
+The released charts default to images published under `ghcr.io/kruntimes/`. For
+local clusters using locally built images, override the image values with tags
+that are available inside the cluster.
 
 ## Platform Chart
 
@@ -39,10 +39,7 @@ Install the platform chart once per cluster:
 ```bash
 helm upgrade --install kruntimes ./charts/kruntimes \
   --namespace kruntimes-system \
-  --create-namespace \
-  --set scheduler.image=<scheduler-image> \
-  --set controller.image=<controller-image> \
-  --set runtimed.image=<runtimed-image>
+  --create-namespace
 ```
 
 The platform chart installs:
@@ -64,7 +61,7 @@ commands.
 Install a released CLI archive for Linux or macOS:
 
 ```bash
-KRUNTIMES_VERSION=0.0.2
+KRUNTIMES_VERSION=0.0.3
 OS="$(uname | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
@@ -94,15 +91,24 @@ Install built-in Runtime CRs into namespaces where Runs should execute:
 ```bash
 helm upgrade --install kruntimes-runtimes ./charts/kruntimes-runtimes \
   --namespace default \
-  --create-namespace \
-  --set bash.image=<bash-runtime-image> \
-  --set python.image=<python-runtime-image>
+  --create-namespace
 ```
 
 ## Image Configuration
 
 Use immutable image tags or digests for shared environments. Avoid mutable tags
 outside local development.
+
+Override chart image values only when you need custom images:
+
+```bash
+helm upgrade --install kruntimes ./charts/kruntimes \
+  --namespace kruntimes-system \
+  --create-namespace \
+  --set scheduler.image=<scheduler-image> \
+  --set controller.image=<controller-image> \
+  --set runtimed.image=<runtimed-image>
+```
 
 ## Multiple Releases
 

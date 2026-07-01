@@ -31,8 +31,8 @@ needs extra tools.
 Example Bash Runtime image with `jq` installed:
 
 ```dockerfile
-ARG KRUNTIMES_VERSION=0.0.2
-FROM ghcr.io/kruntimes/kruntimes-bash-runtime:${KRUNTIMES_VERSION}
+ARG KRUNTIMES_VERSION=0.0.3
+FROM ghcr.io/kruntimes/bash-runtime:${KRUNTIMES_VERSION}
 
 USER 0
 RUN apt-get update \
@@ -46,7 +46,7 @@ Build and push the image to a registry the cluster can pull:
 ```bash
 CUSTOM_BASH_IMAGE=ghcr.io/example/my-bash-runtime:0.1.0
 docker build \
-  --build-arg KRUNTIMES_VERSION=0.0.2 \
+  --build-arg KRUNTIMES_VERSION=0.0.3 \
   -t "${CUSTOM_BASH_IMAGE}" \
   ./my-bash-runtime
 docker push "${CUSTOM_BASH_IMAGE}"

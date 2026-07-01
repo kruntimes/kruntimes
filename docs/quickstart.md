@@ -24,7 +24,7 @@ kubectl cluster-info
 Set the release version used by the Helm charts and images:
 
 ```bash
-KRUNTIMES_VERSION=0.0.2
+KRUNTIMES_VERSION=0.0.3
 ```
 
 Install the control plane once per cluster:
@@ -33,10 +33,7 @@ Install the control plane once per cluster:
 helm upgrade --install kruntimes oci://ghcr.io/kruntimes/charts/kruntimes \
   --version "${KRUNTIMES_VERSION}" \
   --namespace kruntimes-system \
-  --create-namespace \
-  --set scheduler.image=ghcr.io/kruntimes/kruntimes-scheduler \
-  --set controller.image=ghcr.io/kruntimes/kruntimes-controller \
-  --set runtimed.image=ghcr.io/kruntimes/kruntimes-runtimed
+  --create-namespace
 ```
 
 Install the built-in Runtime definitions into the namespace where Runs should
@@ -46,14 +43,12 @@ execute:
 helm upgrade --install kruntimes-runtimes oci://ghcr.io/kruntimes/charts/kruntimes-runtimes \
   --version "${KRUNTIMES_VERSION}" \
   --namespace default \
-  --create-namespace \
-  --set bash.image=ghcr.io/kruntimes/kruntimes-bash-runtime \
-  --set python.image=ghcr.io/kruntimes/kruntimes-python-runtime
+  --create-namespace
 ```
 
-The chart appends the chart `appVersion` to image repositories when the value
-does not already include a tag or digest. Use image repositories without a tag
-for the published release path shown above.
+The charts default to the published `ghcr.io/kruntimes/*` image repositories
+and append the chart `appVersion` when the image value does not already include
+a tag or digest.
 
 Check the control plane and Runtime Pods:
 

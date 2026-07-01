@@ -15,10 +15,7 @@ resources.
 ```bash
 helm upgrade --install kruntimes ./charts/kruntimes \
   --namespace kruntimes-system \
-  --create-namespace \
-  --set scheduler.image=<scheduler-image> \
-  --set controller.image=<controller-image> \
-  --set runtimed.image=<runtimed-image>
+  --create-namespace
 ```
 
 Install built-in Runtime CRs into each namespace that should host Runtime Pods
@@ -27,13 +24,12 @@ and Runs:
 ```bash
 helm upgrade --install kruntimes-runtimes ./charts/kruntimes-runtimes \
   --namespace default \
-  --create-namespace \
-  --set bash.image=<bash-runtime-image> \
-  --set python.image=<python-runtime-image>
+  --create-namespace
 ```
 
 Use explicit image tags or digests for shared clusters. Do not depend on
-mutable local image names outside development.
+mutable local image names outside development. Override chart image values only
+when using custom or locally built images.
 
 ## Upgrade
 
