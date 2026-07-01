@@ -46,6 +46,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newArtifactCmd(configFlags, scheme))
 	root.AddCommand(runtimeCmd)
 	root.AddCommand(workflowCmd)
+	root.AddCommand(newVersionCmd())
 
 	return root
 }

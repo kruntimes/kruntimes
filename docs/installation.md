@@ -75,6 +75,7 @@ curl -L -o /tmp/krt.tar.gz \
   "https://github.com/kruntimes/kruntimes/releases/download/v${KRUNTIMES_VERSION}/krt_v${KRUNTIMES_VERSION}_${OS}_${ARCH}.tar.gz"
 tar -xzf /tmp/krt.tar.gz -C /tmp
 sudo install /tmp/krt /usr/local/bin/krt
+krt version
 krt --help
 ```
 

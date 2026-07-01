@@ -178,7 +178,7 @@ build-controller: generate ## Build controller binary.
 
 .PHONY: build-cli
 build-cli: generate ## Build krt binary.
-	go build -o bin/krt ./cmd/krt
+	go build -ldflags="-X github.com/kruntimes/kruntimes/internal/version.Version=dev" -o bin/krt ./cmd/krt
 
 .PHONY: build-bash-runtime
 build-bash-runtime: proto ## Build bash-runtime binary.
