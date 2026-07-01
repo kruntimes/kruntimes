@@ -8,6 +8,10 @@ but each release note must call them out explicitly.
 
 ## Unreleased
 
+### Added
+
+- Added `krt version` to print the CLI version, commit, and build timestamp.
+
 ## 0.0.3 - 2026-07-01
 
 ### Changed
