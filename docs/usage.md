@@ -47,9 +47,10 @@ metadata:
   name: hello
 spec:
   runtime: bash
-  args:
-    - echo
-    - hello
+  source:
+    inline: |
+      echo hello
+  entrypoint: script
 ```
 
 The scheduler watches Pending Runs and assigns them to healthy Runtime Pods in
@@ -66,10 +67,10 @@ spec:
   runtime: bash
   env:
     MESSAGE: hello
-  args:
-    - sh
-    - -c
-    - echo "$MESSAGE"
+  source:
+    inline: |
+      echo "$MESSAGE"
+  entrypoint: script
 ```
 
 Do not put secrets directly in `Run.spec.env`. Use namespace separation,
@@ -88,11 +89,9 @@ metadata:
 spec:
   runtime: bash
   source:
-    inline:
-      files:
-        main.sh: |
-          echo "hello from source"
-  entrypoint: main.sh
+    inline: |
+      echo "hello from source"
+  entrypoint: script
 ```
 
 ## Outputs

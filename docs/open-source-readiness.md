@@ -241,6 +241,8 @@ Acceptance criteria:
 - [x] Add queue time, dispatch latency, retry, failure, and active Run
   metrics.
 - [x] Chart creates metrics Services and provides optional ServiceMonitor.
+- [ ] Clarify and normalize `args`, `source.inline`, and `entrypoint`
+  semantics across built-in Runtimes, the CLI, API docs, and examples.
 
 ## P2: Release and Contributor Experience
 
@@ -271,7 +273,7 @@ Acceptance criteria:
 - [ ] Recruit 5-8 target users from platform, CI, and AI agent infrastructure
   teams and validate whether they experience Pod cold start, burst throughput,
   or infrastructure-ownership constraints.
-- [ ] Publish three end-to-end demos: low-latency Bash/Python Run, burst
+- [x] Publish three end-to-end demos: low-latency Bash/Python Run, burst
   short-task execution, and custom Runtime skeleton.
 - [x] Define and track public adoption signals: users can explain the value in
   two minutes, at least two design partners try real workloads, and at least one

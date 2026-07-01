@@ -45,9 +45,10 @@ metadata:
   name: hello
 spec:
   runtime: bash
-  args:
-    - echo
-    - hello
+  source:
+    inline: |
+      echo hello
+  entrypoint: script
 ```
 
 ### Runtime

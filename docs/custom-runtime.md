@@ -1,15 +1,71 @@
 # Custom Runtime Development Guide
 
-Custom Runtimes let you plug a new execution environment into kruntimes while
-leaving Kubernetes watches, Run claiming, retries, artifact upload, logs, and
-status updates to the `runtimed` sidecar.
+Custom Runtimes let you bring a workload-specific execution environment to
+kruntimes while leaving Kubernetes watches, Run claiming, retries, artifact
+upload, logs, and status updates to the `runtimed` sidecar.
+
+Most custom Runtimes should start by extending an existing Runtime image. You
+only need to implement the Runtime Server API when the built-in execution
+semantics are not enough.
+
+## Runtime Image Customization
+
+There are two options for customizing a Runtime image:
+
+1. **Extend a built-in Runtime image.** Start from the Bash or Python Runtime
+   image, add packages, internal binaries, certificates, SDKs, or config files,
+   then register that image as a new `Runtime`. This is the recommended first
+   path for most teams.
+2. **Implement a Runtime Server.** Build a server that implements the Runtime
+   gRPC API when you need different execution semantics, a specialized worker,
+   a sandboxing layer, or a non-process execution model.
+
+Both image customization options use the same `Runtime` CRD and the same
+`Runtime.spec.template` Pod template model.
+
+### Option 1: Extend a Built-In Runtime Image
+
+Use this path when Bash or Python execution is enough, but the environment
+needs extra tools.
+
+Example Bash Runtime image with `jq` installed:
+
+```dockerfile
+ARG KRUNTIMES_VERSION=0.0.2
+FROM ghcr.io/kruntimes/kruntimes-bash-runtime:${KRUNTIMES_VERSION}
+
+USER 0
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends jq \
+  && rm -rf /var/lib/apt/lists/*
+USER 65532
+```
+
+Build and push the image to a registry the cluster can pull:
+
+```bash
+CUSTOM_BASH_IMAGE=ghcr.io/example/my-bash-runtime:0.1.0
+docker build \
+  --build-arg KRUNTIMES_VERSION=0.0.2 \
+  -t "${CUSTOM_BASH_IMAGE}" \
+  ./my-bash-runtime
+docker push "${CUSTOM_BASH_IMAGE}"
+```
+
+Use the same pattern to add internal CLIs, model tools, CA certificates, or
+language packages. Keep the final image user compatible with the security
+context you plan to run in.
+
+### Option 2: Implement a Runtime Server Image
+
+Use this path when the built-in Runtime execution model is not enough. A
+Runtime Server is a process that listens inside the Runtime Pod and implements
+`api/runtime/v1/runtime.proto`.
 
 The Runtime Server API is local to a Runtime Pod. It is not exposed as a
 cluster service by default.
 
-## Contract
-
-A Runtime Server must implement `api/runtime/v1/runtime.proto`:
+The server must implement:
 
 ```protobuf
 service Runtime {
@@ -25,7 +81,84 @@ service Runtime {
 The generated Go package is `github.com/kruntimes/kruntimes/api/runtime/v1`.
 Other languages should generate clients and servers from the same proto.
 
-## Execution Semantics
+When packaging the image, expose the Runtime Server on the port referenced by
+`Runtime.spec.port`. The first container in the Runtime Pod template must be
+named `runtime`.
+
+## Register the Runtime
+
+Register either kind of custom image with a `Runtime` object:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Runtime
+metadata:
+  name: my-runtime
+spec:
+  port: 9091
+  replicas: 2
+  capacity:
+    resources:
+      runs: "2"
+  template:
+    spec:
+      serviceAccountName: my-runtime-runtimed
+      containers:
+        - name: runtime
+          image: ghcr.io/example/my-runtime:0.1.0
+          args:
+            - --port=9091
+          env:
+            - name: EXAMPLE_MODE
+              value: production
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+```
+
+`spec.capacity.resources.runs` controls concurrent Runs per Runtime Pod. The
+controller copies static capacity to Pod annotations. The scheduler uses its
+Run cache for fast-changing active usage and only assigns to Pods that are
+Kubernetes Ready, `kruntimes.io/RuntimedReady`, and below capacity. Runtimed
+enforces the same local capacity before claiming a Scheduled Run.
+
+## Customize the Pod Template
+
+`Runtime.spec.template` is a Pod template. Runtime owners can customize:
+
+- runtime container image and args,
+- CPU and memory requests and limits,
+- environment variables,
+- security context,
+- ServiceAccount,
+- image pull secrets,
+- node selectors, tolerations, affinity, and topology spread constraints,
+- init containers,
+- extra volumes and mounts,
+- additional sidecars.
+
+The controller preserves non-conflicting Pod template fields and injects
+kruntimes-managed fields:
+
+- `runtime` and `app` selector labels,
+- `grpc` port on the `runtime` container,
+- `/workspace` mount on the `runtime` and `runtimed` containers,
+- the `runtimed` sidecar,
+- `workspace` and `artifact-store` volumes,
+- Runtime Pod NetworkPolicy,
+- namespace-scoped RBAC for the selected ServiceAccount.
+
+User-provided entries using the reserved names `runtimed`, `workspace`, or
+`artifact-store` are ignored or replaced. The artifact store volume is not
+mounted into user containers.
+
+## Runtime Server Semantics
+
+This section applies only when you implement a Runtime Server.
 
 `Execute` starts an execution for the supplied Run ID. The request includes:
 
@@ -48,56 +181,18 @@ the previous execution; the built-in Python Runtime rejects duplicates. Custom
 Runtime authors should document the behavior and make it safe for at-least-once
 `Execute` delivery.
 
-## Status
-
-`Status` returns the latest retained state:
-
-- `EXECUTION_STATE_PENDING` when work has been accepted but not started,
-- `EXECUTION_STATE_RUNNING` while work is active,
-- `EXECUTION_STATE_SUCCEEDED` after successful completion,
-- `EXECUTION_STATE_FAILED` after runtime-level failure.
-
+`Status` returns retained state: pending, running, succeeded, or failed.
 Timeout and cancellation are represented by runtimed at the Run status layer.
 The Runtime Server should still terminate work when its own timeout expires or
 when `Cancel` is received.
 
-`stdout`, `stderr`, and `error_message` must be bounded. Do not retain
-unbounded output in memory. Large artifacts should be written to
-`$KRUNTIME_ARTIFACTS_DIR`; compact structured outputs should be written to
-`$KRUNTIME_OUTPUTS`.
-
-## List and Recovery
-
-`List` returns all retained executions. Runtimed calls it after restart to
-rebuild local active Run state.
-
-Runtime Servers should retain running and terminal executions until runtimed
-calls `Forget`. If a Runtime Server loses a running execution before runtimed
-observes a terminal state, runtimed treats it as `ExecutionLost` and applies
-normal retry or terminal failure policy.
-
-## Cancel
+`List` returns retained executions so runtimed can recover active Runs after a
+restart. Runtime Servers should retain running and terminal executions until
+runtimed calls `Forget`. `Forget` releases terminal execution state after
+runtimed has persisted Run status and uploaded artifacts.
 
 `Cancel` should make a best effort to stop the execution and any child
 processes. It should be safe to call multiple times.
-
-Recommended behavior:
-
-- return `NotFound` when the execution ID is unknown,
-- terminate the whole process group or equivalent execution tree,
-- wait briefly for graceful termination,
-- force kill when graceful termination does not complete,
-- release active execution resources after cancellation completes.
-
-## Forget
-
-`Forget` releases retained terminal execution state and output after runtimed
-has persisted terminal Run status and uploaded artifacts.
-
-Runtime Servers should reject `Forget` for active executions with
-`FailedPrecondition`. `NotFound` is treated by runtimed as already released.
-
-## Health
 
 `Health` is used by runtimed readiness checks and Kubernetes probes. Return
 `healthy=false` with a short message when the Runtime Server cannot accept new
@@ -119,65 +214,6 @@ Reserved files:
 Runtime Servers should not write large logs, artifacts, or progress streams to
 Run status. Runtimed owns artifact upload and status updates.
 
-## Runtime CRD
-
-Deploy a Runtime Server with a `Runtime` object. The first container in the
-template must be named `runtime`.
-
-```yaml
-apiVersion: kruntimes.io/v1alpha1
-kind: Runtime
-metadata:
-  name: my-runtime
-spec:
-  port: 9091
-  replicas: 2
-  capacity:
-    resources:
-      runs: "2"
-  template:
-    spec:
-      serviceAccountName: my-runtime-runtimed
-      containers:
-        - name: runtime
-          image: ghcr.io/example/my-runtime:0.1.0
-          args:
-            - --port=9091
-          resources:
-            requests:
-              cpu: 250m
-              memory: 256Mi
-            limits:
-              cpu: "2"
-              memory: 2Gi
-```
-
-The controller owns or injects:
-
-- `runtime` and `app` selector labels,
-- `grpc` port on the `runtime` container,
-- `/workspace` mount on the `runtime` and `runtimed` containers,
-- the `runtimed` sidecar,
-- `workspace` and `artifact-store` volumes,
-- Runtime Pod NetworkPolicy,
-- namespace-scoped RBAC for the selected ServiceAccount.
-
-User-provided entries using the reserved names `runtimed`, `workspace`, or
-`artifact-store` are ignored or replaced. The artifact store volume is not
-mounted into user containers.
-
-The controller preserves custom probes, resources, security contexts, labels,
-annotations, scheduling constraints, image pull secrets, init containers, and
-additional sidecars when they do not conflict with reserved fields.
-
-## Capacity
-
-Set `spec.capacity.resources.runs` to control concurrent Runs per Runtime Pod.
-The controller copies static capacity to Pod annotations. The scheduler uses
-its Run cache for fast-changing active usage and only assigns to Pods that are
-Kubernetes Ready, `kruntimes.io/RuntimedReady`, and below capacity. Runtimed
-enforces the same local capacity before claiming a Scheduled Run.
-
 ## Security Boundary
 
 Built-in and custom Runtime Servers run trusted code inside warm Runtime Pods
@@ -189,12 +225,12 @@ Do not put credentials in `Run.spec.env`. Prefer Kubernetes Secrets mounted by
 trusted Runtime Pods or backend-specific credentials managed outside Run
 objects.
 
-## Compatibility
+## Compatibility and Testing
 
-Custom Runtime authors should treat the proto service and Run lifecycle
-semantics as the compatibility surface for `v0.x`. Because the CRDs are
-`v1alpha1`, minor releases may still change fields or behavior. Release notes
-must call out breaking changes and migration steps.
+Custom Runtime authors should treat the Runtime CRD template contract, proto
+service, and Run lifecycle semantics as the compatibility surface for `v0.x`.
+Because the CRDs are `v1alpha1`, minor releases may still change fields or
+behavior. Release notes must call out breaking changes and migration steps.
 
 Before publishing a Runtime image, test:
 

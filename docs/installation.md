@@ -54,6 +54,39 @@ The platform chart installs:
 - metrics Services,
 - optional ServiceMonitor.
 
+## krt CLI
+
+The `krt` CLI is optional for basic Kubernetes operation, but it is the easiest
+way to inspect Run logs, download artifacts, cancel Runs, and follow Run
+status. The end-to-end demos use `krt logs` alongside equivalent `kubectl`
+commands.
+
+Install a released CLI archive for Linux or macOS:
+
+```bash
+KRUNTIMES_VERSION=0.0.2
+OS="$(uname | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+
+case "${ARCH}" in
+  x86_64) ARCH=amd64 ;;
+  arm64|aarch64) ARCH=arm64 ;;
+  *) echo "unsupported architecture: ${ARCH}" >&2; exit 1 ;;
+esac
+
+curl -L -o /tmp/krt.tar.gz \
+  "https://github.com/kruntimes/kruntimes/releases/download/v${KRUNTIMES_VERSION}/krt_v${KRUNTIMES_VERSION}_${OS}_${ARCH}.tar.gz"
+tar -xzf /tmp/krt.tar.gz -C /tmp
+sudo install /tmp/krt /usr/local/bin/krt
+krt --help
+```
+
+For Windows, download `krt_v${KRUNTIMES_VERSION}_windows_amd64.tar.gz` from the
+GitHub release page and place `krt.exe` on `PATH`.
+
+Checksum and provenance verification are covered in
+[Release Process](release.md#krt-cli).
+
 ## Built-In Runtime Chart
 
 Install built-in Runtime CRs into namespaces where Runs should execute:
