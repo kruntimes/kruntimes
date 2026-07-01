@@ -49,11 +49,34 @@ Still validating:
 
 ### v0.x Experimental
 
-- Keep public documentation aligned with implementation.
-- Harden E2E coverage for scheduling, artifact cleanup, and workflow behavior.
-- Improve CLI ergonomics and examples.
-- Expand custom Runtime examples.
-- Continue supply-chain and security hardening.
+The next development phase is focused on turning the public `v0.x` release into
+a coherent experimental product. The current execution order is:
+
+- [x] Release/package hygiene: rename published image packages to remove the
+  redundant `kruntimes-` prefix, publish a new release, clean up old packages,
+  and align installation, demo, and release documentation.
+- [ ] Run input semantics: audit and stabilize `inline`, `entrypoint`, and
+  `args` behavior across API, runtimes, CLI examples, docs, and tests. The
+  intended model is: `inline` is a standalone script and takes precedence over
+  `entrypoint` and `args`; `entrypoint` points to a script file and receives
+  `args` as parameters; when `entrypoint` is absent, `args` execute as shell
+  commands for shell-style runtimes.
+- [x] Docs usability: add copy buttons for user-executed commands, remove
+  unnecessary Helm overrides from examples, and make `krt` installation visible
+  before demos use `krt` commands.
+- [ ] CLI baseline: add `krt version` so users and maintainers can report the
+  installed CLI version, commit, and build timestamp.
+- [ ] Benchmark correctness: diagnose why `latency.complete` is much higher
+  than a manually observed single Run, and clarify whether benchmarks measure
+  end-to-end latency, scheduling latency, watch/update latency, or runtime
+  execution time.
+- [ ] v0.x examples: add LLM agent and workflow examples, then use those
+  examples to identify missing product and API capabilities.
+- [ ] Dashboard: design and build a read-only web dashboard, similar in spirit
+  to Tekton Dashboard, that can browse Runs by namespace and inspect status and
+  logs.
+- [ ] Continue supply-chain, security, compatibility, and operational
+  hardening as the installation surface stabilizes.
 
 ### Toward v1.0
 
