@@ -1,0 +1,93 @@
+name: Target user interview
+description: Record public, non-sensitive feedback from a target-user conversation
+title: "[Interview]: "
+labels:
+  - validation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for public, non-sensitive interview notes. Do not include
+        credentials, private source code, customer data, confidential company
+        details, or security vulnerabilities. Report security issues privately
+        through GitHub Security Advisories.
+  - type: dropdown
+    id: segment
+    attributes:
+      label: Target segment
+      description: Pick the closest segment for this conversation.
+      options:
+        - AI agent infrastructure
+        - Platform engineering
+        - CI infrastructure
+        - Automation platform
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: workload
+    attributes:
+      label: Current workload
+      description: Describe the short-lived execution workload the user runs today.
+      placeholder: Trusted AI tool execution, short CI step, internal automation script, etc.
+    validations:
+      required: true
+  - type: dropdown
+    id: current_model
+    attributes:
+      label: Current execution model
+      options:
+        - One Kubernetes Pod per task
+        - Warm workers or queue consumers
+        - Existing workflow or CI system
+        - Internal platform
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: pain
+    attributes:
+      label: Pain points observed
+      options:
+        - label: Pod startup latency affects users or pipelines.
+        - label: Burst queue drain time is a current problem.
+        - label: Runtime image, ServiceAccount, resource, or policy ownership is unclear or expensive.
+        - label: Logs, artifacts, cancellation, retry, or status semantics are hard to provide.
+        - label: The user does not experience these problems.
+  - type: textarea
+    id: value_signal
+    attributes:
+      label: Value signal
+      description: Record how the user explained kruntimes back in their own words.
+    validations:
+      required: true
+  - type: textarea
+    id: objections
+    attributes:
+      label: Objections or non-goals
+      description: Capture why kruntimes may not fit, including security, workflow UI, serving, or batch-policy needs.
+  - type: dropdown
+    id: trial_interest
+    attributes:
+      label: Trial interest
+      description: Would the user try kruntimes on a real or representative non-production workload?
+      options:
+        - Yes, with a clear candidate workload
+        - Maybe, after specific blockers are addressed
+        - No
+    validations:
+      required: true
+  - type: textarea
+    id: follow_up
+    attributes:
+      label: Follow-up
+      description: Link to a trial issue, notes, blocker issue, or next action.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I removed credentials, private source code, sensitive data, and confidential company details.
+          required: true
+        - label: This issue does not report a security vulnerability.
+          required: true

@@ -2,7 +2,7 @@ blank_issues_enabled: false
 contact_links:
   - name: Target user validation playbook
     url: https://github.com/kruntimes/kruntimes/blob/main/docs/user-validation.md
-    about: Review how design partner trials are evaluated
+    about: Review how interviews and design partner trials are evaluated
   - name: Security vulnerability
     url: https://github.com/kruntimes/kruntimes/security/advisories/new
     about: Report vulnerabilities privately

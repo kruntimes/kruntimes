@@ -41,6 +41,13 @@ kruntimes 基于 Apache License 2.0 发布。详见
 [目标用户验证 Playbook](user-validation.md) 跟踪。这些文档定义项目如何判断用户是否理解
 价值、是否试用真实 workload，以及第一个产品 wedge 是否被验证或应被否定。
 
+公开、非敏感的 evidence 可以使用以下 issue templates：
+
+- [Target user interview](https://github.com/kruntimes/kruntimes/issues/new?template=target_user_interview.yml)
+  用于记录访谈摘要和 value-comprehension signals。
+- [Design partner trial](https://github.com/kruntimes/kruntimes/issues/new?template=design_partner_trial.yml)
+  用于记录真实或有代表性的 workload trial。
+
 ## 安全
 
 请勿通过公开 issue 报告漏洞。使用

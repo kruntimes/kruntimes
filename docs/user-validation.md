@@ -48,6 +48,12 @@ I'm mainly trying to learn whether this solves a real problem, not to sell a
 finished platform.
 ```
 
+Public interview feedback can be recorded with the
+[Target user interview issue template](https://github.com/kruntimes/kruntimes/issues/new?template=target_user_interview.yml).
+Use the template for public, non-sensitive summaries only. Keep private company
+details, credentials, private source code, customer data, and security reports
+out of public issues.
+
 ## Interview Script
 
 Keep the first conversation focused on current behavior, not desired features.
@@ -99,7 +105,7 @@ of public docs unless the user explicitly approves attribution.
 
 | Date | User Label | Segment | Workload | Signal | Evidence | Follow-up |
 | --- | --- | --- | --- | --- | --- | --- |
-| YYYY-MM-DD | design-partner-a | AI infra / Platform / CI / Automation | Short description | Comprehension / Trial / Quick start / Rejection | Link to issue, Discussion, notes, or anonymized quote | Next action |
+| YYYY-MM-DD | target-user-a | AI infra / Platform / CI / Automation | Short description | Comprehension / Trial interest / Trial / Quick start / Rejection | Link to interview issue, trial issue, Discussion, notes, or anonymized quote | Next action |
 
 ## Wedge Decision Rules
 
