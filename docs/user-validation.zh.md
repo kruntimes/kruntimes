@@ -80,6 +80,11 @@ finished platform.
 只有用户运行了真实或有代表性的 workload，才把 trial 计为 design-partner success。只看
 maintainer 演示不算。
 
+公开 trial feedback 可以通过
+[Design partner trial issue template](https://github.com/kruntimes/kruntimes/issues/new?template=design_partner_trial.yml)
+记录。私下访谈应在内部使用同样字段，并且不要在未经明确同意的情况下公开公司名称、
+credentials、私有源代码或客户数据。
+
 ## 证据模板
 
 每次对话或 trial 记录一行。除非用户明确同意公开引用，不要在公开文档中写真实公司或个人

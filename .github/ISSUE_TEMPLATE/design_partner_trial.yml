@@ -1,0 +1,76 @@
+name: Design partner trial
+description: Share results from trying kruntimes on a real or representative workload
+title: "[Trial]: "
+labels:
+  - validation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for public, non-sensitive trial feedback. Do not include
+        credentials, private source code, customer data, or security vulnerabilities.
+        Report security issues privately through GitHub Security Advisories.
+  - type: dropdown
+    id: segment
+    attributes:
+      label: Target segment
+      description: Pick the closest segment for this workload.
+      options:
+        - AI agent infrastructure
+        - Platform engineering
+        - CI infrastructure
+        - Automation platform
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: workload
+    attributes:
+      label: Workload
+      description: Describe the real or representative workload you tried.
+      placeholder: Trusted AI tool execution, short CI step, internal automation script, etc.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Kubernetes version, cluster type, kruntimes version, and install method.
+      placeholder: kind v1.32, kruntimes v0.0.2, Helm OCI chart
+    validations:
+      required: true
+  - type: checkboxes
+    id: activities
+    attributes:
+      label: Activities completed
+      options:
+        - label: I completed the Quick Start.
+        - label: I ran at least one end-to-end demo.
+        - label: I replaced the demo command with a real or representative workload.
+        - label: I inspected Run status, outputs, and logs.
+  - type: textarea
+    id: results
+    attributes:
+      label: Results
+      description: Summarize what worked, what failed, and whether the warm Runtime pool model helped.
+    validations:
+      required: true
+  - type: textarea
+    id: blockers
+    attributes:
+      label: Blockers or missing capabilities
+      description: List setup issues, permission gaps, confusing docs, missing features, or operational concerns.
+  - type: textarea
+    id: value
+    attributes:
+      label: Value signal
+      description: Explain kruntimes in your own words, and whether it solves a current problem for you.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I removed credentials, private source code, and sensitive data.
+          required: true
+        - label: This issue does not report a security vulnerability.
+          required: true
