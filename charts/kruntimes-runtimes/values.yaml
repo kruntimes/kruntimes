@@ -5,7 +5,7 @@ workspace:
   sizeLimit: 10Gi
 
 bash:
-  image: kruntimes-bash-runtime
+  image: ghcr.io/kruntimes/bash-runtime
   port: 9091
   replicas: 2
   capacity:
@@ -20,7 +20,7 @@ bash:
       memory: 2Gi
 
 python:
-  image: kruntimes-python-runtime
+  image: ghcr.io/kruntimes/python-runtime
   port: 9092
   replicas: 2
   capacity:

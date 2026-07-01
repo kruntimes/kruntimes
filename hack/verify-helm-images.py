@@ -14,11 +14,11 @@ def main() -> int:
     runtimes_app_version = helm_chart_field("charts/kruntimes-runtimes", "appVersion")
 
     expected_defaults = [
-        f"image: kruntimes-controller:{platform_app_version}",
-        f"image: kruntimes-scheduler:{platform_app_version}",
-        f"--default-daemon-image=kruntimes-runtimed:{platform_app_version}",
-        f"image: kruntimes-bash-runtime:{runtimes_app_version}",
-        f"image: kruntimes-python-runtime:{runtimes_app_version}",
+        f"image: ghcr.io/kruntimes/controller:{platform_app_version}",
+        f"image: ghcr.io/kruntimes/scheduler:{platform_app_version}",
+        f"--default-daemon-image=ghcr.io/kruntimes/runtimed:{platform_app_version}",
+        f"image: ghcr.io/kruntimes/bash-runtime:{runtimes_app_version}",
+        f"image: ghcr.io/kruntimes/python-runtime:{runtimes_app_version}",
     ]
     for expected in expected_defaults:
         if expected not in platform and expected not in runtimes:

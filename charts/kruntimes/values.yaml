@@ -1,7 +1,7 @@
 imagePullSecrets: []
 
 scheduler:
-  image: kruntimes-scheduler
+  image: ghcr.io/kruntimes/scheduler
   imagePullPolicy: IfNotPresent
   replicas: 2
   leaderElect: true
@@ -34,7 +34,7 @@ scheduler:
       memory: 256Mi
 
 controller:
-  image: kruntimes-controller
+  image: ghcr.io/kruntimes/controller
   imagePullPolicy: IfNotPresent
   replicas: 1
   leaderElect: true
@@ -67,7 +67,7 @@ controller:
       memory: 256Mi
 
 runtimed:
-  image: kruntimes-runtimed
+  image: ghcr.io/kruntimes/runtimed
 
 workspace:
   sizeLimit: 10Gi

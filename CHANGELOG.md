@@ -8,6 +8,17 @@ but each release note must call them out explicitly.
 
 ## Unreleased
 
+## 0.0.3 - 2026-07-01
+
+### Changed
+
+- Renamed published container image packages to remove the redundant
+  `kruntimes-` prefix. New images are published as `scheduler`, `controller`,
+  `runtimed`, `bash-runtime`, and `python-runtime` under
+  `ghcr.io/kruntimes/`.
+- Updated Helm chart defaults to use the published `ghcr.io/kruntimes/*`
+  image repositories directly.
+
 ## 0.0.2 - 2026-06-30
 
 ### Added
