@@ -29,9 +29,10 @@ batch workloads where many short executions need to start quickly.
 
 Cold-start optimizations such as image caching, lazy image loading, node
 pre-warming, Firecracker, or custom runtimes can help, but they often require
-infrastructure-level ownership. Many platform teams can deploy applications on
-Kubernetes, but cannot replace the cluster scheduler, CNI, CRI, snapshotter, or
-node image policy.
+infrastructure-level ownership and the budget to operate those optimizations
+over time. Many platform teams can deploy applications on Kubernetes, but
+cannot replace or continuously maintain custom behavior in the cluster
+scheduler, CNI, CRI, snapshotter, or node image policy.
 
 kruntimes keeps Kubernetes as the coarse-grained resource substrate and moves
 fine-grained execution scheduling into the application layer:

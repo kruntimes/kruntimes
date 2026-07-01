@@ -1,4 +1,20 @@
 <aside class="docs-sidebar" aria-label="Documentation">
+  <div
+    class="docs-search"
+    data-docs-search
+    data-index-url="{{ "index.json" | relLangURL }}"
+    data-empty-text="{{ if eq site.Language.Lang "zh" }}没有找到匹配结果{{ else }}No matching results{{ end }}"
+  >
+    <label for="docs-search-input">{{ if eq site.Language.Lang "zh" }}搜索文档{{ else }}Search docs{{ end }}</label>
+    <input
+      id="docs-search-input"
+      type="search"
+      autocomplete="off"
+      placeholder="{{ if eq site.Language.Lang "zh" }}搜索文档...{{ else }}Search docs...{{ end }}"
+      aria-label="{{ if eq site.Language.Lang "zh" }}搜索文档{{ else }}Search documentation{{ end }}"
+    >
+    <div class="docs-search-results" role="list" aria-live="polite"></div>
+  </div>
   <nav>
     {{ if eq site.Language.Lang "zh" }}
     <a href="{{ "docs/overview/" | relLangURL }}">项目概览</a>

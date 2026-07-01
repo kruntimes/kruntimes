@@ -27,7 +27,8 @@ latency-sensitive, or part of a larger batch pipeline.
 
 Infrastructure-level optimizations can reduce parts of this cost, but they
 often require ownership of the cluster scheduler, node runtime, image
-distribution, CNI, or sandboxing layer. kruntimes is designed for platform teams
+distribution, CNI, or sandboxing layer, plus the engineering budget to optimize
+and maintain those layers over time. kruntimes is designed for platform teams
 that need faster execution semantics while staying above Kubernetes internals.
 
 ## Approach
@@ -54,8 +55,9 @@ high-performance batch workloads without creating one Pod per execution.
 - Keep execution environments warm.
 - Preserve Kubernetes-native operations through CRDs, Helm, RBAC, metrics, and
   status conditions.
-- Let teams build low-latency execution above Kubernetes without taking over the
-  cluster scheduler, image distribution, CNI, CRI, or sandboxing layer.
+- Let teams build low-latency execution above Kubernetes without taking over and
+  maintaining custom behavior in the cluster scheduler, image distribution,
+  CNI, CRI, or sandboxing layer.
 - Support hierarchical scheduling for workloads that need Kubernetes-level pool
   management plus fast application-level dispatch.
 
