@@ -28,15 +28,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: kruntimes-scheduler
+          - image: scheduler
             dockerfile: Dockerfile.scheduler
-          - image: kruntimes-controller
+          - image: controller
             dockerfile: Dockerfile.controller
-          - image: kruntimes-runtimed
+          - image: runtimed
             dockerfile: Dockerfile.runtimed
-          - image: kruntimes-bash-runtime
+          - image: bash-runtime
             dockerfile: Dockerfile.bash-runtime
-          - image: kruntimes-python-runtime
+          - image: python-runtime
             dockerfile: Dockerfile.python-runtime
 
     steps:
