@@ -25,6 +25,20 @@ kruntimes 暴露 Kubernetes CRDs 和本地 Runtime Server gRPC API。
 | `spec.retryPolicy` | retry 次数和 backoff。执行语义是 at-least-once。 |
 | `spec.cancelRequested` | 用户取消请求。 |
 
+执行输入语义：
+
+- `spec.source.inline` 会把 inline 内容写入 Run workspace。默认文件名是 `script`。
+- `spec.entrypoint` 选择 workspace 内要执行的相对文件路径。对于 inline source，默认是
+  `script`。
+- 当 entrypoint 文件存在时，`spec.args` 会作为该 entrypoint 的参数传入。
+- 当没有准备 source 或 entrypoint 文件时，`spec.args` 由所选 Runtime 解释。内置 Bash
+  会将单个 arg 作为 `bash -c <arg>` 执行，保留显式 `sh -c ...` 和 `bash -c ...` 的
+  shell invocation，并保持旧的多 arg 行为：把 args 拼成以换行分隔的 Bash script lines。
+  内置 Python 会执行 `python <args...>`。
+- `krt run -- <command> [args...]` CLI 会把 command words 原样存入 `spec.args`，不会额外
+  添加 shell quoting。需要 shell evaluation 时使用 `krt run -- sh -c '...'`，或者使用
+  `--file` / `--entrypoint` 的 source mode。
+
 常见 status 字段：
 
 | Field | Description |

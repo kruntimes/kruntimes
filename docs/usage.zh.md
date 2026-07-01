@@ -94,6 +94,44 @@ spec:
   entrypoint: script
 ```
 
+当 entrypoint 文件存在时，`args` 会作为该文件的参数传入。对于内置 Bash Runtime：
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: script-args-example
+spec:
+  runtime: bash
+  source:
+    inline: |
+      echo "first=$1"
+  entrypoint: script
+  args:
+    - hello
+```
+
+## 不使用 Source 时使用 Args
+
+当没有准备 source 或 entrypoint 文件时，`args` 由所选 Runtime 解释：
+
+- 内置 Bash 会将一个 arg 作为 `bash -c <arg>` 执行。
+- 内置 Bash 会保留显式 `sh -c ...` 和 `bash -c ...` invocation。
+- 内置 Bash 保持旧的多 arg 行为：把 args 拼成以换行分隔的 Bash script lines。
+- 内置 Python 会执行 `python <args...>`。
+
+通过 CLI 使用 shell 行为时，请显式传 shell：
+
+```bash
+krt run --runtime bash -- sh -c 'echo "hello from $SHELL"'
+```
+
+对于可重复的脚本，优先使用 source mode：
+
+```bash
+krt run --runtime bash --file ./script.sh --entrypoint script
+```
+
 ## Outputs
 
 workload 以 `KEY=VALUE` 行的形式将结构化 outputs 写入 `$KRUNTIME_OUTPUTS`。

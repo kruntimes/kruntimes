@@ -94,6 +94,47 @@ spec:
   entrypoint: script
 ```
 
+When the entrypoint file exists, `args` are passed to that file. For the built-in
+Bash Runtime this means:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: script-args-example
+spec:
+  runtime: bash
+  source:
+    inline: |
+      echo "first=$1"
+  entrypoint: script
+  args:
+    - hello
+```
+
+## Use Args Without Source
+
+When no source or entrypoint file is prepared, `args` are interpreted by the
+selected Runtime:
+
+- Built-in Bash treats one arg as `bash -c <arg>`.
+- Built-in Bash preserves explicit `sh -c ...` and `bash -c ...` invocations.
+- Built-in Bash keeps legacy multi-arg behavior by joining args as
+  newline-separated Bash script lines.
+- Built-in Python runs `python <args...>`.
+
+For shell behavior through the CLI, pass the shell explicitly:
+
+```bash
+krt run --runtime bash -- sh -c 'echo "hello from $SHELL"'
+```
+
+For repeatable scripts, prefer source mode:
+
+```bash
+krt run --runtime bash --file ./script.sh --entrypoint script
+```
+
 ## Outputs
 
 Structured outputs are written by the workload as `KEY=VALUE` lines to

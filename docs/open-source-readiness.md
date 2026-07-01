@@ -241,7 +241,7 @@ Acceptance criteria:
 - [x] Add queue time, dispatch latency, retry, failure, and active Run
   metrics.
 - [x] Chart creates metrics Services and provides optional ServiceMonitor.
-- [ ] Clarify and normalize `args`, `source.inline`, and `entrypoint`
+- [x] Clarify and normalize `args`, `source.inline`, and `entrypoint`
   semantics across built-in Runtimes, the CLI, API docs, and examples.
 
 ## P2: Release and Contributor Experience

@@ -309,6 +309,9 @@ func buildCommand(req *pb.ExecuteRequest, workDir string) (*exec.Cmd, error) {
 	if _, err := os.Stat(scriptPath); err == nil {
 		return exec.Command("bash", append([]string{scriptPath}, req.Args...)...), nil
 	}
+	if isExplicitShellCommand(req.Args) {
+		return exec.Command(req.Args[0], req.Args[1:]...), nil
+	}
 	switch len(req.Args) {
 	case 0:
 		return nil, errors.New("no args or script provided")
@@ -317,6 +320,10 @@ func buildCommand(req *pb.ExecuteRequest, workDir string) (*exec.Cmd, error) {
 	default:
 		return exec.Command("bash", "-c", strings.Join(req.Args, "\n")+"\n"), nil
 	}
+}
+
+func isExplicitShellCommand(args []string) bool {
+	return len(args) >= 3 && (args[0] == "sh" || args[0] == "bash") && args[1] == "-c"
 }
 
 func executionContext(timeoutSeconds int64) (context.Context, context.CancelFunc) {
