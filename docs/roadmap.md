@@ -55,7 +55,7 @@ a coherent experimental product. The current execution order is:
 - [x] Release/package hygiene: rename published image packages to remove the
   redundant `kruntimes-` prefix, publish a new release, clean up old packages,
   and align installation, demo, and release documentation.
-- [ ] Run input semantics: audit and stabilize `inline`, `entrypoint`, and
+- [x] Run input semantics: audit and stabilize `inline`, `entrypoint`, and
   `args` behavior across API, runtimes, CLI examples, docs, and tests. The
   intended model is: `inline` is a standalone script and takes precedence over
   `entrypoint` and `args`; `entrypoint` points to a script file and receives
@@ -64,7 +64,9 @@ a coherent experimental product. The current execution order is:
 - [x] Docs usability: add copy buttons for user-executed commands, remove
   unnecessary Helm overrides from examples, and make `krt` installation visible
   before demos use `krt` commands.
-- [ ] CLI baseline: add `krt version` so users and maintainers can report the
+- [ ] Docs theme support: let readers choose light theme, dark theme, or sync
+  with system preference on the documentation site.
+- [x] CLI baseline: add `krt version` so users and maintainers can report the
   installed CLI version, commit, and build timestamp.
 - [ ] Benchmark correctness: diagnose why `latency.complete` is much higher
   than a manually observed single Run, and clarify whether benchmarks measure

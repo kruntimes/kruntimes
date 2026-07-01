@@ -55,7 +55,9 @@ spec:
             description: RunSpec defines the desired state of Run.
             properties:
               args:
-                description: Args is the list of arguments passed to the runtime.
+                description: |-
+                  Args is the list of arguments passed to the runtime for non-inline sources.
+                  It is ignored when Source.Inline is set.
                 items:
                   maxLength: 8192
                   type: string
@@ -67,7 +69,8 @@ spec:
                 type: boolean
               entrypoint:
                 description: |-
-                  Entrypoint is the script file to execute (default "script" for inline source).
+                  Entrypoint is the relative script file to execute for non-inline sources.
+                  It is ignored when Source.Inline is set.
                   Linux PATH_MAX is 4096 bytes.
                 maxLength: 4096
                 type: string
@@ -283,7 +286,8 @@ spec:
                     type: string
                   inline:
                     description: |-
-                      Inline is the source code as a string (for simple scripts).
+                      Inline is a standalone script. When set, runtimed writes it to the default
+                      script file and does not pass Entrypoint or Args to the Runtime Server.
                       Mutually exclusive with RepoURL.
                       256 KiB keeps simple scripts well below the Kubernetes object size limit.
                     maxLength: 262144
@@ -318,8 +322,9 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: entrypoint must be a relative path that does not contain '..'
-              rule: '!has(self.entrypoint) || (!self.entrypoint.startsWith(''/'')
-                && !self.entrypoint.split(''/'').exists(segment, segment == ''..''))'
+              rule: '!has(self.entrypoint) || (has(self.source) && has(self.source.inline))
+                || (!self.entrypoint.startsWith(''/'') && !self.entrypoint.split(''/'').exists(segment,
+                segment == ''..''))'
           status:
             description: RunStatus defines the observed state of Run.
             properties:

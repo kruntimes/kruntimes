@@ -25,11 +25,12 @@ Common spec fields:
 
 Execution input semantics:
 
-- `spec.source.inline` writes the inline content into the Run workspace. The
-  default file name is `script`.
+- `spec.source.inline` is a standalone script. When it is present, runtimed
+  writes it to the default `script` file and does not pass `spec.entrypoint` or
+  `spec.args` to the Runtime Server.
 - `spec.entrypoint` selects the relative file path inside the workspace to
-  execute. It defaults to `script` for inline source.
-- When an entrypoint file exists, `spec.args` are passed as arguments to that
+  execute for Git source or files already present in the workspace.
+- When `spec.entrypoint` is used, `spec.args` are passed as arguments to that
   entrypoint.
 - When no source or entrypoint file is prepared, `spec.args` are interpreted by
   the selected Runtime. Built-in Bash treats a single arg as `bash -c <arg>`,
@@ -38,7 +39,7 @@ Execution input semantics:
   Built-in Python runs `python <args...>`.
 - The `krt run -- <command> [args...]` CLI stores command words directly in
   `spec.args`. It does not add shell quoting. Use `krt run -- sh -c '...'` for
-  shell evaluation, or use `--file` / `--entrypoint` for source mode.
+  shell evaluation, or use `--file` for inline source mode.
 
 Common status fields:
 
@@ -63,7 +64,6 @@ spec:
   source:
     inline: |
       echo hello
-  entrypoint: script
 ```
 
 ### Runtime

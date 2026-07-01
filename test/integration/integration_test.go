@@ -399,6 +399,24 @@ func TestCRDValidationRejectsInvalidRunEntrypoint(t *testing.T) {
 	}
 }
 
+func TestCRDValidationAllowsIgnoredInlineEntrypoint(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-run-validation-")
+	inline := "echo inline"
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "ignored-entrypoint", Namespace: ns.Name},
+		Spec: v1alpha1.RunSpec{
+			Runtime:    "bash",
+			Source:     &v1alpha1.CodeSource{Inline: &inline},
+			Entrypoint: "/ignored",
+		},
+	}
+	if err := k8sClient.Create(ctx, run); err != nil {
+		t.Fatalf("inline run with ignored entrypoint should be valid: %v", err)
+	}
+}
+
 func TestCRDValidationRejectsInvalidWorkflowNeeds(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-workflow-validation-")

@@ -12,6 +12,12 @@ but each release note must call them out explicitly.
 
 - Added `krt version` to print the CLI version, commit, and build timestamp.
 
+### Changed
+
+- Stabilized Run input semantics so `source.inline` executes as a standalone
+  script, while `entrypoint` and `args` apply only to non-inline execution
+  paths.
+
 ## 0.0.3 - 2026-07-01
 
 ### Changed

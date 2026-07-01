@@ -98,7 +98,10 @@ func TestPrepareSource_Inline(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scriptPath := filepath.Join(workDir, "run.sh")
+	if _, err := os.Stat(filepath.Join(workDir, "run.sh")); !os.IsNotExist(err) {
+		t.Fatalf("inline source should ignore entrypoint, stat err = %v", err)
+	}
+	scriptPath := filepath.Join(workDir, "script")
 	data, err := os.ReadFile(scriptPath)
 	if err != nil {
 		t.Fatalf("read script: %v", err)
@@ -131,7 +134,7 @@ func TestPrepareSource_InlineDefaultEntrypoint(t *testing.T) {
 	}
 }
 
-func TestPrepareSource_RejectsEscapingEntrypoint(t *testing.T) {
+func TestPrepareSource_InlineIgnoresEscapingEntrypoint(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath = dir
 
@@ -144,11 +147,15 @@ func TestPrepareSource_RejectsEscapingEntrypoint(t *testing.T) {
 	}
 	run.UID = "test-uid"
 
-	if _, err := prepareSource(run); err == nil || !strings.Contains(err.Error(), "entrypoint") {
-		t.Fatalf("prepareSource error = %v, want entrypoint validation error", err)
+	workDir, err := prepareSource(run)
+	if err != nil {
+		t.Fatalf("prepareSource: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "escape.sh")); !os.IsNotExist(err) {
 		t.Fatalf("escape target should not exist, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "script")); err != nil {
+		t.Fatalf("inline script should be written to default script path: %v", err)
 	}
 }
 
@@ -936,6 +943,60 @@ func TestStartExecutionWaitsForRuntimeReady(t *testing.T) {
 	}
 	if got := runtimeClient.executeRequest.Env[artifact.OutputsEnv]; got != outputsPath(ar.workDir) {
 		t.Fatalf("%s = %q, want %q", artifact.OutputsEnv, got, outputsPath(ar.workDir))
+	}
+}
+
+func TestStartExecutionInlineIgnoresEntrypointAndArgs(t *testing.T) {
+	inline := "echo inline"
+	runtimeClient := &fakeRuntimeClient{}
+	c := &Controller{runtimeCli: runtimeClient}
+	ar := &activeRun{
+		run: &v1alpha1.Run{
+			ObjectMeta: metav1.ObjectMeta{UID: "run-uid"},
+			Spec: v1alpha1.RunSpec{
+				Runtime:    "bash",
+				Source:     &v1alpha1.CodeSource{Inline: &inline},
+				Entrypoint: "custom.sh",
+				Args:       []string{"ignored"},
+			},
+		},
+		workDir: t.TempDir(),
+	}
+
+	if err := c.startExecution(t.Context(), ar); err != nil {
+		t.Fatalf("startExecution: %v", err)
+	}
+	if got := runtimeClient.executeRequest.Entrypoint; got != "script" {
+		t.Fatalf("entrypoint = %q, want script", got)
+	}
+	if got := runtimeClient.executeRequest.Args; len(got) != 0 {
+		t.Fatalf("args = %v, want empty for inline source", got)
+	}
+}
+
+func TestStartExecutionEntrypointReceivesArgs(t *testing.T) {
+	runtimeClient := &fakeRuntimeClient{}
+	c := &Controller{runtimeCli: runtimeClient}
+	ar := &activeRun{
+		run: &v1alpha1.Run{
+			ObjectMeta: metav1.ObjectMeta{UID: "run-uid"},
+			Spec: v1alpha1.RunSpec{
+				Runtime:    "bash",
+				Entrypoint: "scripts/run.sh",
+				Args:       []string{"first", "second"},
+			},
+		},
+		workDir: t.TempDir(),
+	}
+
+	if err := c.startExecution(t.Context(), ar); err != nil {
+		t.Fatalf("startExecution: %v", err)
+	}
+	if got := runtimeClient.executeRequest.Entrypoint; got != "scripts/run.sh" {
+		t.Fatalf("entrypoint = %q, want scripts/run.sh", got)
+	}
+	if got := runtimeClient.executeRequest.Args; strings.Join(got, ",") != "first,second" {
+		t.Fatalf("args = %v, want [first second]", got)
 	}
 }
 
