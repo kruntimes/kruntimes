@@ -272,15 +272,18 @@ Acceptance criteria:
   sandbox.
 - [ ] Recruit 5-8 target users from platform, CI, and AI agent infrastructure
   teams and validate whether they experience Pod cold start, burst throughput,
-  or infrastructure-ownership constraints.
+  or infrastructure-ownership constraints. Use the
+  [Target User Validation Playbook](user-validation.md) to run and record this
+  process.
 - [x] Publish three end-to-end demos: low-latency Bash/Python Run, burst
-  short-task execution, and custom Runtime skeleton.
+  short-task execution, and custom Bash Runtime image.
 - [x] Define and track public adoption signals: users can explain the value in
   two minutes, at least two design partners try real workloads, and at least one
   non-maintainer completes the quick start.
 - [ ] Validate the first primary wedge. The current hypothesis is AI agent
   tools and trusted internal code-execution sandboxes, with CI micro-steps and
-  automation tasks as secondary use cases.
+  automation tasks as secondary use cases. Apply the decision rules in the
+  [Target User Validation Playbook](user-validation.md).
 
 ## Suggested PR Sequence
 

@@ -37,6 +37,14 @@ Usage questions, bug reports, feature requests, and support expectations are
 described in
 [SUPPORT.md](https://github.com/kruntimes/kruntimes/blob/main/SUPPORT.md).
 
+## Public Validation
+
+Post-public target-user validation is tracked with
+[Adoption Signals](adoption-signals.md) and the
+[Target User Validation Playbook](user-validation.md). These documents define
+how the project evaluates whether users understand the value, try real
+workloads, and validate or reject the first product wedge.
+
 ## Security
 
 Do not report vulnerabilities through public issues. Use the private reporting
