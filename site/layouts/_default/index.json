@@ -1,0 +1,14 @@
+{{- $pages := slice -}}
+{{- range where .Site.RegularPages "Section" "docs" -}}
+  {{- $title := .Title -}}
+  {{- if and (not $title) .File -}}
+    {{- $title = .File.BaseFileName | humanize | title -}}
+  {{- end -}}
+  {{- $pages = $pages | append (dict
+    "title" $title
+    "url" .RelPermalink
+    "summary" (.Summary | plainify)
+    "content" (.Plain | plainify | truncate 4000)
+  ) -}}
+{{- end -}}
+{{- $pages | jsonify -}}
