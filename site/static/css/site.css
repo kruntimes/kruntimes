@@ -459,11 +459,38 @@ a:hover {
 }
 
 .content pre {
+  position: relative;
   overflow-x: auto;
   padding: 16px;
   border-radius: 6px;
   background: #121722;
   color: #f5f7fb;
+}
+
+.content pre.has-copy-button {
+  padding-top: 44px;
+}
+
+.copy-code-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  min-width: 64px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(245, 247, 251, 0.28);
+  border-radius: 6px;
+  background: rgba(245, 247, 251, 0.08);
+  color: #f5f7fb;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.copy-code-button:hover,
+.copy-code-button:focus-visible {
+  background: rgba(245, 247, 251, 0.16);
 }
 
 .content pre code {
