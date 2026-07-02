@@ -8,6 +8,28 @@
   --accent: #0969da;
   --accent-strong: #054da3;
   --code-bg: #eef2f7;
+  --header-bg: rgba(255, 255, 255, 0.92);
+  --shadow: rgba(21, 25, 34, 0.14);
+  --focus-ring: rgba(9, 105, 218, 0.18);
+  --pre-bg: #121722;
+  --pre-text: #f5f7fb;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1218;
+  --panel: #171b24;
+  --text: #eef2f8;
+  --muted: #a8b2c3;
+  --line: #2d3441;
+  --accent: #6ba7ff;
+  --accent-strong: #9fc5ff;
+  --code-bg: #222938;
+  --header-bg: rgba(15, 18, 24, 0.92);
+  --shadow: rgba(0, 0, 0, 0.36);
+  --focus-ring: rgba(107, 167, 255, 0.24);
+  --pre-bg: #090c12;
+  --pre-text: #f5f7fb;
 }
 
 * {
@@ -40,7 +62,7 @@ a:hover {
   min-height: 64px;
   padding: 0 32px;
   border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--header-bg);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -72,6 +94,39 @@ a:hover {
 .site-nav a {
   color: var(--muted);
   font-weight: 600;
+}
+
+.theme-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.theme-switcher span {
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.theme-switcher select {
+  min-height: 36px;
+  padding: 6px 30px 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.theme-switcher select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  border-color: var(--accent);
 }
 
 .language-switcher {
@@ -120,7 +175,7 @@ a:hover {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: 0 14px 32px rgba(21, 25, 34, 0.14);
+  box-shadow: 0 14px 32px var(--shadow);
 }
 
 .language-menu a {
@@ -291,7 +346,7 @@ a:hover {
 }
 
 .docs-search input:focus {
-  outline: 2px solid rgba(9, 105, 218, 0.18);
+  outline: 2px solid var(--focus-ring);
   border-color: var(--accent);
 }
 
@@ -308,7 +363,7 @@ a:hover {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: 0 14px 32px rgba(21, 25, 34, 0.14);
+  box-shadow: 0 14px 32px var(--shadow);
 }
 
 .docs-search[data-has-results="true"] .docs-search-results {
@@ -463,8 +518,8 @@ a:hover {
   overflow-x: auto;
   padding: 16px;
   border-radius: 6px;
-  background: #121722;
-  color: #f5f7fb;
+  background: var(--pre-bg);
+  color: var(--pre-text);
 }
 
 .content pre.has-copy-button {
