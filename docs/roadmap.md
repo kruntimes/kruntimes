@@ -64,11 +64,11 @@ a coherent experimental product. The current execution order is:
 - [x] Docs usability: add copy buttons for user-executed commands, remove
   unnecessary Helm overrides from examples, and make `krt` installation visible
   before demos use `krt` commands.
-- [ ] Docs theme support: let readers choose light theme, dark theme, or sync
+- [x] Docs theme support: let readers choose light theme, dark theme, or sync
   with system preference on the documentation site.
 - [x] CLI baseline: add `krt version` so users and maintainers can report the
   installed CLI version, commit, and build timestamp.
-- [ ] Benchmark correctness: diagnose why `latency.complete` is much higher
+- [x] Benchmark correctness: diagnose why `latency.complete` is much higher
   than a manually observed single Run, and clarify whether benchmarks measure
   end-to-end latency, scheduling latency, watch/update latency, or runtime
   execution time.

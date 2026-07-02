@@ -13,6 +13,8 @@ but each release note must call them out explicitly.
 - Added `krt version` to print the CLI version, commit, and build timestamp.
 - Added a GitHub Benchmark workflow that runs the default hot-path benchmark in
   the same kind-based environment as E2E.
+- Added documentation site theme controls for light, dark, and system
+  preference modes.
 
 ### Changed
 
@@ -21,9 +23,6 @@ but each release note must call them out explicitly.
   contaminating measured samples.
 - Changed default benchmark parameters to a no-sleep hot-path case with enough
   Runtime capacity for all Runs.
-
-### Changed
-
 - Stabilized Run input semantics so `source.inline` executes as a standalone
   script, while `entrypoint` and `args` apply only to non-inline execution
   paths.
