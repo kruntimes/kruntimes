@@ -11,6 +11,16 @@ but each release note must call them out explicitly.
 ### Added
 
 - Added `krt version` to print the CLI version, commit, and build timestamp.
+- Added a GitHub Benchmark workflow that runs the default hot-path benchmark in
+  the same kind-based environment as E2E.
+
+### Changed
+
+- Improved benchmark correctness by separating execution latency from
+  end-to-end backlog latency and preventing capacity probe Runs from
+  contaminating measured samples.
+- Changed default benchmark parameters to a no-sleep hot-path case with enough
+  Runtime capacity for all Runs.
 
 ### Changed
 
