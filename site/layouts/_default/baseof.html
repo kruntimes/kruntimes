@@ -19,7 +19,27 @@
     <title>{{ $fullTitle }}</title>
     <link rel="icon" type="image/png" sizes="200x200" href="{{ "img/icon.png" | relURL }}">
     <link rel="apple-touch-icon" href="{{ "img/icon.png" | relURL }}">
+    <script>
+      (function () {
+        var key = "kruntimes-docs-theme";
+        var theme = "system";
+        try {
+          theme = localStorage.getItem(key) || "system";
+        } catch (error) {
+          theme = "system";
+        }
+        if (theme !== "light" && theme !== "dark" && theme !== "system") {
+          theme = "system";
+        }
+        if (theme !== "light" && theme !== "dark") {
+          theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
     <link rel="stylesheet" href="{{ "css/site.css" | relURL }}">
+    <script src="{{ "js/theme.js" | relURL }}" defer></script>
     <script src="{{ "js/search.js" | relURL }}" defer></script>
     <script src="{{ "js/copy-code.js" | relURL }}" defer></script>
   </head>
@@ -34,6 +54,14 @@
         <a href="{{ "community/" | relLangURL }}">{{ if eq site.Language.Lang "zh" }}社区{{ else }}Community{{ end }}</a>
         <a href="{{ "blog/" | relLangURL }}">{{ if eq site.Language.Lang "zh" }}博客{{ else }}Blog{{ end }}</a>
         <a href="https://github.com/kruntimes/kruntimes">GitHub</a>
+        <label class="theme-switcher">
+          <span>{{ if eq site.Language.Lang "zh" }}主题{{ else }}Theme{{ end }}</span>
+          <select data-theme-select aria-label="{{ if eq site.Language.Lang "zh" }}主题{{ else }}Theme{{ end }}">
+            <option value="system">{{ if eq site.Language.Lang "zh" }}跟随系统{{ else }}System{{ end }}</option>
+            <option value="light">{{ if eq site.Language.Lang "zh" }}浅色{{ else }}Light{{ end }}</option>
+            <option value="dark">{{ if eq site.Language.Lang "zh" }}深色{{ else }}Dark{{ end }}</option>
+          </select>
+        </label>
         {{ if gt (len .AllTranslations) 1 }}
         <details class="language-switcher">
           <summary>{{ site.Language.LanguageName }}</summary>
