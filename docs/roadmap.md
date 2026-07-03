@@ -74,6 +74,54 @@ a coherent experimental product. The current execution order is:
   execution time.
 - [ ] v0.x examples: add LLM agent and workflow examples, then use those
   examples to identify missing product and API capabilities.
+- [ ] Workflow data sharing: design and implement first-class cross-Run storage
+  semantics discovered from the workflow demo. Target model:
+  - job-to-job data moves through ArtifactStore-backed step outputs and inputs;
+  - Run-to-Run data inside one Workflow job can share a `PersistentWorkspace`;
+  - `PersistentWorkspace` is a namespace-scoped CRD that represents a workspace
+    boundary, lifecycle, status, cleanup policy, and optional Runtime binding;
+  - Run affinity/anti-affinity should follow Kubernetes-style affinity concepts
+    so users can understand co-location without learning internal sticky keys;
+  - scheduler and runtimed must stay workflow-agnostic. They should expose
+    generic placement and workspace primitives; Workflow controller composes
+    those primitives for job-local workspace sharing;
+  - demos should drive the implementation and keep exposing gaps before the API
+    is treated as stable.
+  Initial implementation TODO:
+  - add a design document covering API shape, lifecycle, failure modes, cleanup,
+    security, and compatibility;
+  - add `PersistentWorkspace` API types, CRD validation, status, and controller;
+  - add Run fields for workspace reference and Kubernetes-style Run affinity;
+  - update scheduler placement to respect required/preferred Run affinity while
+    keeping no-capacity Runs Pending;
+  - update runtimed workspace preparation and cleanup to support referenced
+    persistent workspaces without knowing Workflow semantics;
+  - promote child Run artifact refs into Workflow status and add explicit step
+    artifact inputs;
+  - add E2E coverage for job-local workspace sharing, job-to-job artifact
+    passing, Runtime Pod loss, cleanup, and permission boundaries.
+- [ ] Workflow reuse model: split execution instances from reusable
+  definitions before Workflow APIs stabilize. Target model:
+  - replace the current execution-instance `Workflow` API with `WorkflowRun`;
+  - `WorkflowRun.spec` supports either inline `jobs` or top-level `uses` plus
+    `with` inputs;
+  - add a reusable `Workflow` CRD whose jobs can be called from a
+    `WorkflowRun` job with `uses: <workflow-name>` and optional `with`;
+  - add a reusable `Action` CRD whose steps can be called from a
+    `WorkflowRun` or `Workflow` step with `uses: <action-name>` and optional
+    `with`;
+  - keep names namespace-local in the first version; avoid verbose
+    `workflowRef` and `actionRef` fields until cross-namespace or remote
+    references are required;
+  - validation must enforce mutually exclusive shapes: top-level `uses` vs
+    inline `jobs`, job `uses` vs `steps`, and step `uses` vs `run`;
+  - Actions run inside the caller job context and share that job runtime,
+    workspace, artifacts, and environment unless a future API explicitly
+    overrides them;
+  - reusable Workflow jobs have their own job/workspace/artifact boundary and
+    communicate with callers through inputs, outputs, and artifacts;
+  - update CRDs, controller reconciliation, CLI verbs, docs, and E2E around the
+    new `WorkflowRun`, `Workflow`, and `Action` split.
 - [ ] Dashboard: design and build a read-only web dashboard, similar in spirit
   to Tekton Dashboard, that can browse Runs by namespace and inspect status and
   logs.
