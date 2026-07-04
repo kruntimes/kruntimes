@@ -34,7 +34,7 @@ jobs:
           cache: true
       - name: Build
         run: make site-build HUGO_BASE_URL="${{ steps.pages.outputs.base_url }}/"
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site/public
 
