@@ -72,6 +72,49 @@ a coherent experimental product. The current execution order is:
   than a manually observed single Run, and clarify whether benchmarks measure
   end-to-end latency, scheduling latency, watch/update latency, or runtime
   execution time.
+- [ ] Function-mode Runs for agent sandboxes: define `Run.spec.mode=Function`
+  semantics so a Run can reserve a pre-warmed Runtime Pod, register a callable
+  function with runtimed/runtime-server, stay ready for repeated low-latency
+  invocations, and release the reservation on deletion or idle timeout. This
+  should use a dataplane invoke path rather than a per-invocation Kubernetes
+  object.
+- [ ] Runtime gateway invoke path: create one gateway Service per Runtime, use
+  that Service as the stable Run invoke endpoint, route requests to the
+  runtimed that owns the assigned Runtime Pod, and rely on runtimed's in-memory
+  ownership/readiness cache instead of synchronous Kubernetes API reads on the
+  invoke path.
+- [ ] Function-mode API cleanup: revisit the existing `Run.spec.handler` field.
+  It was added before function mode was fully designed; after
+  `Run.spec.mode=Function` is defined, either migrate `handler` into the new
+  function registration model or remove it before the API stabilizes.
+- [ ] Function-mode runtime contract: add runtime-server register, invoke, and
+  unregister APIs; define bounded invoke request inputs, response outputs,
+  artifact references, and log access without writing high-frequency invocation
+  history into Run status.
+- [ ] Function-mode reliability and isolation: cover function registration,
+  ready status, local and proxied invoke, repeated invocation, artifact reuse,
+  idle timeout, explicit release, runtime pod restart recovery, cleanup, service
+  account selection, runtime pod security context, resource limits, network
+  policy guidance, and future stronger runtimes such as gVisor, Kata, or
+  Firecracker.
+- [ ] Agent sandbox SDKs: provide first-class SDKs for agent developers,
+  starting with Python and Go. The SDK should hide Kubernetes object creation,
+  readiness polling, gateway discovery, port-forward fallback for local
+  development, direct in-cluster URLs, invoke calls, bounded outputs/artifacts,
+  timeouts, retries for idempotent operations, auto-cleanup, disconnect/reconnect
+  behavior, and typed errors.
+- [ ] Agent sandbox workspace and file APIs: define how agents upload generated
+  scripts or inputs, read files, list workspace content, fetch artifacts, and
+  stream or retrieve logs without treating every operation as a Kubernetes
+  reconciliation loop.
+- [ ] Agent framework integration: design a thin integration layer for agent
+  frameworks and MCP-style tool servers so a tool call can acquire or reuse a
+  function-mode Run, invoke it through the gateway, return structured results,
+  and clean up or preserve the sandbox according to the agent session policy.
+- [ ] Agent sandbox identity and connectivity: document and implement the model
+  for stable Run identity, gateway addressing, in-cluster and external access,
+  service account/RBAC boundaries, network policy, and multi-tenant naming so
+  agent platforms can safely hand a sandbox handle to sub-agents.
 - [ ] v0.x examples: add LLM agent and workflow examples, then use those
   examples to identify missing product and API capabilities.
 - [ ] Workflow data sharing: design and implement first-class cross-Run storage
