@@ -72,21 +72,23 @@ a coherent experimental product. The current execution order is:
   than a manually observed single Run, and clarify whether benchmarks measure
   end-to-end latency, scheduling latency, watch/update latency, or runtime
   execution time.
-- [ ] Function-mode Runs for agent sandboxes: define `Run.spec.mode=Function`
-  semantics so a Run can reserve a pre-warmed Runtime Pod, register a callable
-  function with runtimed/runtime-server, stay ready for repeated low-latency
-  invocations, and release the reservation on deletion or idle timeout. This
-  should use a dataplane invoke path rather than a per-invocation Kubernetes
-  object.
+- [ ] Function-mode Runs for agent sandboxes: define mutually exclusive
+  `Run.spec.mode.task` and `Run.spec.mode.function` semantics so a function Run
+  can reserve a pre-warmed Runtime Pod, register a callable function with
+  runtimed/runtime-server, stay ready for repeated low-latency invocations, and
+  release the reservation on deletion or idle timeout. Function-mode Runs still
+  obey normal Runtime capacity, so multiple function Runs can share one Runtime
+  Pod when capacity allows it. This should use a dataplane invoke path rather
+  than a per-invocation Kubernetes object.
 - [ ] Runtime gateway invoke path: create one gateway Service per Runtime, use
   that Service as the stable Run invoke endpoint, route requests to the
   runtimed that owns the assigned Runtime Pod, and rely on runtimed's in-memory
   ownership/readiness cache instead of synchronous Kubernetes API reads on the
   invoke path.
-- [ ] Function-mode API cleanup: revisit the existing `Run.spec.handler` field.
-  It was added before function mode was fully designed; after
-  `Run.spec.mode=Function` is defined, either migrate `handler` into the new
-  function registration model or remove it before the API stabilizes.
+- [ ] Function-mode API cleanup: move the existing top-level
+  `Run.spec.handler` field into `Run.spec.mode.function.handler` before the API
+  stabilizes. Handler remains a useful FaaS concept, but it should not sit next
+  to task-only `entrypoint` and `args` fields in the top-level Run spec.
 - [ ] Function-mode runtime contract: add runtime-server register, invoke, and
   unregister APIs; define bounded invoke request inputs, response outputs,
   artifact references, and log access without writing high-frequency invocation
@@ -98,19 +100,24 @@ a coherent experimental product. The current execution order is:
   policy guidance, and future stronger runtimes such as gVisor, Kata, or
   Firecracker.
 - [ ] Agent sandbox SDKs: provide first-class SDKs for agent developers,
-  starting with Python and Go. The SDK should hide Kubernetes object creation,
-  readiness polling, gateway discovery, port-forward fallback for local
-  development, direct in-cluster URLs, invoke calls, bounded outputs/artifacts,
-  timeouts, retries for idempotent operations, auto-cleanup, disconnect/reconnect
-  behavior, and typed errors.
+  starting with Python and Go. The SDK should expose sandbox-facing semantics
+  such as create/open/reattach/disconnect/terminate, command or tool execution,
+  file operations, logs, artifacts, and identity metadata while hiding the
+  underlying function-mode Run unless low-level metadata is requested. It should
+  also hide readiness polling, gateway discovery, port-forward fallback for
+  local development, direct in-cluster URLs, bounded outputs/artifacts,
+  timeouts, retries for idempotent operations, typed errors, and guardrails that
+  recommend or verify one Run per Runtime Pod for AgentSandbox-style
+  integrations.
 - [ ] Agent sandbox workspace and file APIs: define how agents upload generated
   scripts or inputs, read files, list workspace content, fetch artifacts, and
   stream or retrieve logs without treating every operation as a Kubernetes
   reconciliation loop.
 - [ ] Agent framework integration: design a thin integration layer for agent
   frameworks and MCP-style tool servers so a tool call can acquire or reuse a
-  function-mode Run, invoke it through the gateway, return structured results,
-  and clean up or preserve the sandbox according to the agent session policy.
+  sandbox handle backed by a function-mode Run, invoke it through the gateway,
+  return structured results, and clean up, disconnect, reattach, or preserve the
+  sandbox according to the agent session policy.
 - [ ] Agent sandbox identity and connectivity: document and implement the model
   for stable Run identity, gateway addressing, in-cluster and external access,
   service account/RBAC boundaries, network policy, and multi-tenant naming so
