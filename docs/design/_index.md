@@ -8,3 +8,4 @@ implemented.
 ## Documents
 
 - [Function Mode and Agent Sandboxes](function-mode/)
+- [Workflow Data Sharing](workflow-data-sharing/)

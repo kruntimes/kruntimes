@@ -6,3 +6,4 @@
 ## 文档列表
 
 - [Function Mode 和 Agent Sandboxes](function-mode/)
+- [Workflow Data Sharing](workflow-data-sharing/)

@@ -138,8 +138,10 @@ a coherent experimental product. The current execution order is:
   - demos should drive the implementation and keep exposing gaps before the API
     is treated as stable.
   Initial implementation TODO:
-  - add a design document covering API shape, lifecycle, failure modes, cleanup,
-    security, and compatibility;
+  - [x] add a design document covering API shape, lifecycle, failure modes,
+    cleanup, security, and compatibility;
+  - extend `Runtime.spec.workspace` to support Kubernetes `VolumeSource` while
+    keeping the current emptyDir default and sizeLimit behavior;
   - add `PersistentWorkspace` API types, CRD validation, status, and controller;
   - add Run fields for workspace reference and Kubernetes-style Run affinity;
   - update scheduler placement to respect required/preferred Run affinity while
@@ -148,8 +150,9 @@ a coherent experimental product. The current execution order is:
     persistent workspaces without knowing Workflow semantics;
   - promote child Run artifact refs into Workflow status and add explicit step
     artifact inputs;
-  - add E2E coverage for job-local workspace sharing, job-to-job artifact
-    passing, Runtime Pod loss, cleanup, and permission boundaries.
+  - add E2E coverage for Runtime workspace volume sources, job-local workspace
+    sharing, job-to-job artifact passing, Runtime Pod loss, cleanup, and
+    permission boundaries.
 - [ ] Workflow reuse model: split execution instances from reusable
   definitions before Workflow APIs stabilize. Target model:
   - replace the current execution-instance `Workflow` API with `WorkflowRun`;
