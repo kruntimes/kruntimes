@@ -299,8 +299,8 @@ job 正在等待本地 workspace capacity，或者因为 controller-owned worksp
 ## 实现顺序
 
 1. 增加本文档并 review API shape。
-2. 扩展 `Runtime.spec.workspace` 以支持 Kubernetes `VolumeSource`，同时保留当前 emptyDir
-   默认行为和 sizeLimit 语义。
+2. 扩展 `Runtime.spec.workspace` 以 inline Kubernetes `VolumeSource` 字段，同时保留当前
+   emptyDir 默认行为和 sizeLimit 语义。
 3. 增加 `PersistentWorkspace` API types、CRD validation、status 和 controller。
 4. 增加 Run `workspace` reference fields。
 5. 增加 Kubernetes-style Run affinity/anti-affinity fields。

@@ -7,3 +7,4 @@
 
 - [Function Mode 和 Agent Sandboxes](function-mode/)
 - [Workflow Data Sharing](workflow-data-sharing/)
+- [Workflow Reuse](workflow-reuse/)
