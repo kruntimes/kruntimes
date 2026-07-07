@@ -316,8 +316,8 @@ Required safeguards:
 ## Implementation Sequence
 
 1. Add this design document and review the API shape.
-2. Extend `Runtime.spec.workspace` to support Kubernetes `VolumeSource`, while
-   preserving the current emptyDir default and sizeLimit behavior.
+2. Extend `Runtime.spec.workspace` to inline Kubernetes `VolumeSource` fields,
+   while preserving the current emptyDir default and sizeLimit behavior.
 3. Add `PersistentWorkspace` API types, CRD validation, status, and controller.
 4. Add Run `workspace` reference fields.
 5. Add Kubernetes-style Run affinity/anti-affinity fields.

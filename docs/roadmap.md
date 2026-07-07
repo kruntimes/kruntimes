@@ -175,6 +175,19 @@ a coherent experimental product. The current execution order is:
     communicate with callers through inputs, outputs, and artifacts;
   - update CRDs, controller reconciliation, CLI verbs, docs, and E2E around the
     new `WorkflowRun`, `Workflow`, and `Action` split.
+  Initial implementation TODO:
+  - [x] add a design document covering API shape, validation, status,
+    component boundaries, and breaking-change scope;
+  - add `WorkflowRun` API types, CRD validation, status, and controller
+    skeleton;
+  - change `Workflow` API types to reusable definitions;
+  - add `Action` API types, CRD validation, status, and controller skeleton;
+  - implement namespace-local `uses` resolution for top-level, job, and step
+    calls;
+  - implement input binding, expression context, and output propagation;
+  - update CLI verbs and docs so execution uses `WorkflowRun`;
+  - add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
+    calls, validation failures, and output propagation.
 - [ ] Dashboard: design and build a read-only web dashboard, similar in spirit
   to Tekton Dashboard, that can browse Runs by namespace and inspect status and
   logs.
