@@ -169,8 +169,56 @@ type CodeSource struct {
 }
 
 // +kubebuilder:object:generate=true
+// RunMode contains mutually exclusive execution-mode-specific configuration.
+// +kubebuilder:validation:XValidation:rule="has(self.task) != has(self.function)",message="exactly one of task or function must be set"
+type RunMode struct {
+	// Task configures one-shot process execution.
+	// +optional
+	Task *RunTaskMode `json:"task,omitempty"`
+
+	// Function configures callable function execution.
+	// +optional
+	Function *RunFunctionMode `json:"function,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// RunTaskMode configures one-shot process execution.
+type RunTaskMode struct {
+	// Entrypoint is the relative script file to execute for non-inline sources.
+	// It is ignored when Source.Inline is set.
+	// +optional
+	// Linux PATH_MAX is 4096 bytes.
+	// +kubebuilder:validation:MaxLength=4096
+	Entrypoint string `json:"entrypoint,omitempty"`
+
+	// Args is the list of arguments passed to the runtime for non-inline sources.
+	// It is ignored when Source.Inline is set.
+	// +optional
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=8192
+	Args []string `json:"args,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// RunFunctionMode configures callable function execution.
+type RunFunctionMode struct {
+	// Handler is the module.function to call.
+	// The runtime imports and calls the function instead of running a script.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	Handler string `json:"handler,omitempty"`
+
+	// IdleTimeoutSeconds is the duration after the last invocation before the
+	// function reservation can be released. This field is reserved for the
+	// function-mode lifecycle implementation.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	IdleTimeoutSeconds *int32 `json:"idleTimeoutSeconds,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
 // RunSpec defines the desired state of Run.
-// +kubebuilder:validation:XValidation:rule="!has(self.entrypoint) || (has(self.source) && has(self.source.inline)) || (!self.entrypoint.startsWith('/') && !self.entrypoint.split('/').exists(segment, segment == '..'))",message="entrypoint must be a relative path that does not contain '..'"
+// +kubebuilder:validation:XValidation:rule="!has(self.mode.task) || !has(self.mode.task.entrypoint) || (has(self.source) && has(self.source.inline)) || (!self.mode.task.entrypoint.startsWith('/') && !self.mode.task.entrypoint.split('/').exists(segment, segment == '..'))",message="mode.task.entrypoint must be a relative path that does not contain '..'"
 type RunSpec struct {
 	// Runtime is the execution environment type (e.g., "python").
 	// It maps to the "runtime" label on Runtime Pods.
@@ -185,25 +233,9 @@ type RunSpec struct {
 	// +optional
 	Source *CodeSource `json:"source,omitempty"`
 
-	// Entrypoint is the relative script file to execute for non-inline sources.
-	// It is ignored when Source.Inline is set.
-	// +optional
-	// Linux PATH_MAX is 4096 bytes.
-	// +kubebuilder:validation:MaxLength=4096
-	Entrypoint string `json:"entrypoint,omitempty"`
-
-	// Handler is the module.function to call (FaaS mode).
-	// When set, the runtime imports and calls the function instead of running a script.
-	// +optional
-	// +kubebuilder:validation:MaxLength=512
-	Handler string `json:"handler,omitempty"`
-
-	// Args is the list of arguments passed to the runtime for non-inline sources.
-	// It is ignored when Source.Inline is set.
-	// +optional
-	// +kubebuilder:validation:MaxItems=256
-	// +kubebuilder:validation:items:MaxLength=8192
-	Args []string `json:"args,omitempty"`
+	// Mode contains execution-mode-specific configuration.
+	// +kubebuilder:validation:Required
+	Mode RunMode `json:"mode"`
 
 	// Env is the list of environment variables to set for execution.
 	// +optional
@@ -229,6 +261,33 @@ type RunSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
+}
+
+// EffectiveEntrypoint returns the task entrypoint after applying the Run mode
+// compatibility rules.
+func (s RunSpec) EffectiveEntrypoint() string {
+	if s.Mode.Task != nil {
+		return s.Mode.Task.Entrypoint
+	}
+	return ""
+}
+
+// EffectiveArgs returns the task args after applying the Run mode compatibility
+// rules.
+func (s RunSpec) EffectiveArgs() []string {
+	if s.Mode.Task != nil {
+		return s.Mode.Task.Args
+	}
+	return nil
+}
+
+// EffectiveHandler returns the function handler after applying the Run mode
+// compatibility rules.
+func (s RunSpec) EffectiveHandler() string {
+	if s.Mode.Function != nil {
+		return s.Mode.Function.Handler
+	}
+	return ""
 }
 
 // +kubebuilder:object:generate=true

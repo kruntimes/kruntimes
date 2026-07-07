@@ -15,10 +15,11 @@ Common spec fields:
 | Field | Description |
 | --- | --- |
 | `spec.runtime` | Runtime name to execute on. Scheduler only considers Runtime Pods in the same namespace. |
-| `spec.args` | Arguments or command payload passed to the Runtime Server. |
 | `spec.env` | Environment variables for the execution. Do not store secrets directly here. |
 | `spec.source` | Optional source files or Git source prepared into the workspace. |
-| `spec.entrypoint` | Relative path inside the workspace. Absolute paths and `..` are rejected. |
+| `spec.mode.task.entrypoint` | Relative path inside the workspace for one-shot task execution. Absolute paths and `..` are rejected. |
+| `spec.mode.task.args` | Arguments or command payload passed to the Runtime Server for one-shot task execution. |
+| `spec.mode.function.handler` | Callable `module.function` entrypoint for function-mode Runs. |
 | `spec.timeoutSeconds` | Execution timeout. Timeout terminal phase is `Timeout`. |
 | `spec.retryPolicy` | Retry attempts and backoff. Execution is at-least-once. |
 | `spec.cancelRequested` | User cancellation request. |
@@ -26,20 +27,24 @@ Common spec fields:
 Execution input semantics:
 
 - `spec.source.inline` is a standalone script. When it is present, runtimed
-  writes it to the default `script` file and does not pass `spec.entrypoint` or
-  `spec.args` to the Runtime Server.
-- `spec.entrypoint` selects the relative file path inside the workspace to
-  execute for Git source or files already present in the workspace.
-- When `spec.entrypoint` is used, `spec.args` are passed as arguments to that
-  entrypoint.
-- When no source or entrypoint file is prepared, `spec.args` are interpreted by
+  writes it to the default `script` file and does not pass task `entrypoint` or
+  `args` to the Runtime Server.
+- `spec.mode.task.entrypoint` selects the relative file path inside the
+  workspace to execute for Git source or files already present in the
+  workspace.
+- When `spec.mode.task.entrypoint` is used, `spec.mode.task.args` are passed as
+  arguments to that entrypoint.
+- When no source or entrypoint file is prepared, task args are interpreted by
   the selected Runtime. Built-in Bash treats a single arg as `bash -c <arg>`,
   preserves explicit `sh -c ...` and `bash -c ...`, and keeps the legacy
   multi-arg behavior of joining args as newline-separated Bash script lines.
   Built-in Python runs `python <args...>`.
+- `spec.mode` is required. Exactly one of `spec.mode.task` or
+  `spec.mode.function` must be set.
 - The `krt run -- <command> [args...]` CLI stores command words directly in
-  `spec.args`. It does not add shell quoting. Use `krt run -- sh -c '...'` for
-  shell evaluation, or use `--file` for inline source mode.
+  `spec.mode.task.args`. It does not add shell quoting. Use
+  `krt run -- sh -c '...'` for shell evaluation, or use `--file` for inline
+  source mode.
 
 Common status fields:
 
@@ -65,6 +70,26 @@ spec:
     inline: |
       echo hello
 ```
+
+Task mode example:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: hello-task
+spec:
+  runtime: bash
+  mode:
+    task:
+      args:
+        - echo hello
+```
+
+Function mode is experimental. The API shape is present so handler
+configuration lives under function mode, but repeated low-latency invocation
+requires the runtime gateway and function runtime contract work tracked in the
+roadmap.
 
 ### Runtime
 

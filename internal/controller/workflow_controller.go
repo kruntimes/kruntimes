@@ -277,7 +277,11 @@ func (r *WorkflowReconciler) buildRun(wf *v1alpha1.Workflow, jobName string, job
 
 	runSpec := v1alpha1.RunSpec{
 		Runtime: rt,
-		Args:    resolvedArgs,
+		Mode: v1alpha1.RunMode{
+			Task: &v1alpha1.RunTaskMode{
+				Args: resolvedArgs,
+			},
+		},
 	}
 	if resolvedRun != "" {
 		runSpec.Source = &v1alpha1.CodeSource{Inline: &resolvedRun}

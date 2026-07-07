@@ -54,26 +54,10 @@ spec:
           spec:
             description: RunSpec defines the desired state of Run.
             properties:
-              args:
-                description: |-
-                  Args is the list of arguments passed to the runtime for non-inline sources.
-                  It is ignored when Source.Inline is set.
-                items:
-                  maxLength: 8192
-                  type: string
-                maxItems: 256
-                type: array
               cancelRequested:
                 description: CancelRequested is set to true to request cancellation
                   of a running Run.
                 type: boolean
-              entrypoint:
-                description: |-
-                  Entrypoint is the relative script file to execute for non-inline sources.
-                  It is ignored when Source.Inline is set.
-                  Linux PATH_MAX is 4096 bytes.
-                maxLength: 4096
-                type: string
               env:
                 description: Env is the list of environment variables to set for execution.
                 items:
@@ -232,12 +216,51 @@ spec:
                   type: object
                 maxItems: 256
                 type: array
-              handler:
-                description: |-
-                  Handler is the module.function to call (FaaS mode).
-                  When set, the runtime imports and calls the function instead of running a script.
-                maxLength: 512
-                type: string
+              mode:
+                description: Mode contains execution-mode-specific configuration.
+                properties:
+                  function:
+                    description: Function configures callable function execution.
+                    properties:
+                      handler:
+                        description: |-
+                          Handler is the module.function to call.
+                          The runtime imports and calls the function instead of running a script.
+                        maxLength: 512
+                        type: string
+                      idleTimeoutSeconds:
+                        description: |-
+                          IdleTimeoutSeconds is the duration after the last invocation before the
+                          function reservation can be released. This field is reserved for the
+                          function-mode lifecycle implementation.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    type: object
+                  task:
+                    description: Task configures one-shot process execution.
+                    properties:
+                      args:
+                        description: |-
+                          Args is the list of arguments passed to the runtime for non-inline sources.
+                          It is ignored when Source.Inline is set.
+                        items:
+                          maxLength: 8192
+                          type: string
+                        maxItems: 256
+                        type: array
+                      entrypoint:
+                        description: |-
+                          Entrypoint is the relative script file to execute for non-inline sources.
+                          It is ignored when Source.Inline is set.
+                          Linux PATH_MAX is 4096 bytes.
+                        maxLength: 4096
+                        type: string
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one of task or function must be set
+                  rule: has(self.task) != has(self.function)
               retryPolicy:
                 description: RetryPolicy is the retry strategy for the Run. If nil,
                   no retries are attempted.
@@ -318,13 +341,16 @@ spec:
                 minimum: 0
                 type: integer
             required:
+            - mode
             - runtime
             type: object
             x-kubernetes-validations:
-            - message: entrypoint must be a relative path that does not contain '..'
-              rule: '!has(self.entrypoint) || (has(self.source) && has(self.source.inline))
-                || (!self.entrypoint.startsWith(''/'') && !self.entrypoint.split(''/'').exists(segment,
-                segment == ''..''))'
+            - message: mode.task.entrypoint must be a relative path that does not
+                contain '..'
+              rule: '!has(self.mode.task) || !has(self.mode.task.entrypoint) || (has(self.source)
+                && has(self.source.inline)) || (!self.mode.task.entrypoint.startsWith(''/'')
+                && !self.mode.task.entrypoint.split(''/'').exists(segment, segment
+                == ''..''))'
           status:
             description: RunStatus defines the observed state of Run.
             properties:

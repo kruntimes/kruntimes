@@ -77,7 +77,7 @@ mounts，或适合你的集群的 admission policy。
 ## 使用 Inline Source
 
 Inline source 是独立脚本。当 `spec.source.inline` 存在时，runtimed 会把它写入默认
-的 `script` 文件，并忽略 `spec.entrypoint` 和 `spec.args`。
+的 `script` 文件，并忽略 task `entrypoint` 和 `args`。
 
 ```yaml
 apiVersion: kruntimes.io/v1alpha1
@@ -106,7 +106,9 @@ spec:
   source:
     repoURL: https://github.com/example/scripts.git
     commitSHA: main
-  entrypoint: run.sh
+  mode:
+    task:
+      entrypoint: run.sh
 ```
 
 使用 `entrypoint` 时，`args` 会作为参数传给该文件。对于内置 Bash Runtime：
@@ -121,14 +123,16 @@ spec:
   source:
     repoURL: https://github.com/example/scripts.git
     commitSHA: main
-  entrypoint: run.sh
-  args:
-    - hello
+  mode:
+    task:
+      entrypoint: run.sh
+      args:
+        - hello
 ```
 
 ## 不使用 Source 时使用 Args
 
-当没有准备 source 或 entrypoint 文件时，`args` 由所选 Runtime 解释：
+当没有准备 source 或 entrypoint 文件时，`mode.task.args` 由所选 Runtime 解释：
 
 - 内置 Bash 会将一个 arg 作为 `bash -c <arg>` 执行。
 - 内置 Bash 会保留显式 `sh -c ...` 和 `bash -c ...` invocation。
@@ -140,6 +144,8 @@ spec:
 ```bash
 krt run --runtime bash -- sh -c 'echo "hello from $SHELL"'
 ```
+
+CLI 会把 command words 存入 `spec.mode.task.args`。
 
 对于可重复的脚本，优先使用 source mode：
 

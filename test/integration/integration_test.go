@@ -148,7 +148,9 @@ func TestSchedulerReconcile(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: "bash",
-			Args:    []string{"echo hello"},
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{Args: []string{"echo hello"}},
+			},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -185,7 +187,9 @@ func TestRuntimedClaimAndExecute(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: "bash",
-			Args:    []string{"echo hello"},
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{Args: []string{"echo hello"}},
+			},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -238,7 +242,9 @@ func TestSchedulerKeepsPendingWhenNoMatchingPod(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: "nonexistent-runtime",
-			Args:    []string{"echo hello"},
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{Args: []string{"echo hello"}},
+			},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -303,7 +309,9 @@ func TestSchedulerSkipsNotReadyPod(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: "bash",
-			Args:    []string{"echo hello"},
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{Args: []string{"echo hello"}},
+			},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -340,7 +348,10 @@ func TestRunArtifactRefValidation(t *testing.T) {
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{Name: "artifact-ref", Namespace: ns.Name},
-		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Mode:    v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+		},
 	}
 	if err := k8sClient.Create(ctx, run); err != nil {
 		t.Fatalf("create run: %v", err)
@@ -383,15 +394,17 @@ func TestRunArtifactRefValidation(t *testing.T) {
 	}
 }
 
-func TestCRDValidationRejectsInvalidRunEntrypoint(t *testing.T) {
+func TestCRDValidationRejectsInvalidRunModeTaskEntrypoint(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-run-validation-")
 
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{Name: "invalid-entrypoint", Namespace: ns.Name},
 		Spec: v1alpha1.RunSpec{
-			Runtime:    "bash",
-			Entrypoint: "/escape",
+			Runtime: "bash",
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{Entrypoint: "/escape"},
+			},
 		},
 	}
 	if err := k8sClient.Create(ctx, run); !apierrors.IsInvalid(err) {
@@ -399,7 +412,7 @@ func TestCRDValidationRejectsInvalidRunEntrypoint(t *testing.T) {
 	}
 }
 
-func TestCRDValidationAllowsIgnoredInlineEntrypoint(t *testing.T) {
+func TestCRDValidationAllowsIgnoredInlineRunModeTaskEntrypoint(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-run-validation-")
 	inline := "echo inline"
@@ -407,13 +420,85 @@ func TestCRDValidationAllowsIgnoredInlineEntrypoint(t *testing.T) {
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{Name: "ignored-entrypoint", Namespace: ns.Name},
 		Spec: v1alpha1.RunSpec{
-			Runtime:    "bash",
-			Source:     &v1alpha1.CodeSource{Inline: &inline},
-			Entrypoint: "/ignored",
+			Runtime: "bash",
+			Source:  &v1alpha1.CodeSource{Inline: &inline},
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{Entrypoint: "/ignored"},
+			},
 		},
 	}
 	if err := k8sClient.Create(ctx, run); err != nil {
 		t.Fatalf("inline run with ignored entrypoint should be valid: %v", err)
+	}
+}
+
+func TestCRDValidationRejectsRunWithoutMode(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-run-validation-")
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "missing-mode", Namespace: ns.Name},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+	}
+	if err := k8sClient.Create(ctx, run); !apierrors.IsInvalid(err) {
+		t.Fatalf("missing run mode error = %v, want Invalid", err)
+	}
+}
+
+func TestCRDValidationRejectsRunModeWithBothTaskAndFunction(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-run-validation-")
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "mixed-mode", Namespace: ns.Name},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Mode: v1alpha1.RunMode{
+				Task:     &v1alpha1.RunTaskMode{Args: []string{"echo hello"}},
+				Function: &v1alpha1.RunFunctionMode{Handler: "main.invoke"},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, run); !apierrors.IsInvalid(err) {
+		t.Fatalf("mixed run mode error = %v, want Invalid", err)
+	}
+}
+
+func TestCRDValidationRejectsInvalidRunModeTaskEntrypointTraversal(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-run-validation-")
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-mode-entrypoint", Namespace: ns.Name},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{Entrypoint: "../escape"},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, run); !apierrors.IsInvalid(err) {
+		t.Fatalf("invalid mode task entrypoint error = %v, want Invalid", err)
+	}
+}
+
+func TestCRDValidationAllowsIgnoredInlineRunModeTaskEntrypointTraversal(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-run-validation-")
+	inline := "echo inline"
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "ignored-mode-entrypoint", Namespace: ns.Name},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Source:  &v1alpha1.CodeSource{Inline: &inline},
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{Entrypoint: "/ignored"},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, run); err != nil {
+		t.Fatalf("inline run with ignored mode task entrypoint should be valid: %v", err)
 	}
 }
 

@@ -17,10 +17,11 @@ kruntimes 暴露 Kubernetes CRDs 和本地 Runtime Server gRPC API。
 | Field | Description |
 | --- | --- |
 | `spec.runtime` | 要执行的 Runtime 名称。scheduler 只会考虑同一 namespace 内的 Runtime Pods。 |
-| `spec.args` | 传递给 Runtime Server 的参数或命令 payload。 |
 | `spec.env` | 执行环境变量。不要直接在这里存储 secrets。 |
 | `spec.source` | 可选的 source files 或 Git source，会被准备到 workspace。 |
-| `spec.entrypoint` | workspace 内的相对路径。绝对路径和 `..` 会被拒绝。 |
+| `spec.mode.task.entrypoint` | one-shot task execution 使用的 workspace 内相对路径。绝对路径和 `..` 会被拒绝。 |
+| `spec.mode.task.args` | one-shot task execution 传递给 Runtime Server 的参数或命令 payload。 |
+| `spec.mode.function.handler` | function-mode Runs 使用的 callable `module.function` 入口。 |
 | `spec.timeoutSeconds` | 执行 timeout。timeout 的终态 phase 是 `Timeout`。 |
 | `spec.retryPolicy` | retry 次数和 backoff。执行语义是 at-least-once。 |
 | `spec.cancelRequested` | 用户取消请求。 |
@@ -28,16 +29,19 @@ kruntimes 暴露 Kubernetes CRDs 和本地 Runtime Server gRPC API。
 执行输入语义：
 
 - `spec.source.inline` 是独立脚本。存在时，runtimed 会把它写入默认的 `script` 文件，
-  并且不会把 `spec.entrypoint` 或 `spec.args` 传给 Runtime Server。
-- `spec.entrypoint` 为 Git source 或 workspace 中已经存在的文件选择要执行的相对路径。
-- 使用 `spec.entrypoint` 时，`spec.args` 会作为参数传给该 entrypoint。
-- 当没有准备 source 或 entrypoint 文件时，`spec.args` 由所选 Runtime 解释。内置 Bash
+  并且不会把 task `entrypoint` 或 `args` 传给 Runtime Server。
+- `spec.mode.task.entrypoint` 为 Git source 或 workspace 中已经存在的文件选择要执行的
+  相对路径。
+- 使用 `spec.mode.task.entrypoint` 时，`spec.mode.task.args` 会作为参数传给该
+  entrypoint。
+- 当没有准备 source 或 entrypoint 文件时，task args 由所选 Runtime 解释。内置 Bash
   会将单个 arg 作为 `bash -c <arg>` 执行，保留显式 `sh -c ...` 和 `bash -c ...` 的
   shell invocation，并保持旧的多 arg 行为：把 args 拼成以换行分隔的 Bash script lines。
   内置 Python 会执行 `python <args...>`。
-- `krt run -- <command> [args...]` CLI 会把 command words 原样存入 `spec.args`，不会额外
-  添加 shell quoting。需要 shell evaluation 时使用 `krt run -- sh -c '...'`，或者使用
-  `--file` 的 inline source mode。
+- `spec.mode` 是必填字段。`spec.mode.task` 和 `spec.mode.function` 必须且只能设置一个。
+- `krt run -- <command> [args...]` CLI 会把 command words 原样存入
+  `spec.mode.task.args`，不会额外添加 shell quoting。需要 shell evaluation 时使用
+  `krt run -- sh -c '...'`，或者使用 `--file` 的 inline source mode。
 
 常见 status 字段：
 
@@ -63,6 +67,25 @@ spec:
     inline: |
       echo hello
 ```
+
+Task mode 示例：
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: hello-task
+spec:
+  runtime: bash
+  mode:
+    task:
+      args:
+        - echo hello
+```
+
+Function mode 仍然是 experimental。当前 API shape 已经存在，因此 handler configuration
+可以放在 function mode 下；但 repeated low-latency invocation 还需要 roadmap 中的 runtime
+gateway 和 function runtime contract 工作。
 
 ### Runtime
 

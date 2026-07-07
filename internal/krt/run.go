@@ -69,10 +69,20 @@ func newRunCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme
 			}
 
 			spec := v1alpha1.RunSpec{
-				Runtime:    opts.Runtime,
-				Entrypoint: opts.Entrypoint,
-				Handler:    opts.Handler,
-				Args:       args,
+				Runtime: opts.Runtime,
+				Mode: v1alpha1.RunMode{
+					Task: &v1alpha1.RunTaskMode{
+						Entrypoint: opts.Entrypoint,
+						Args:       args,
+					},
+				},
+			}
+			if opts.Handler != "" {
+				spec.Mode = v1alpha1.RunMode{
+					Function: &v1alpha1.RunFunctionMode{
+						Handler: opts.Handler,
+					},
+				}
 			}
 
 			if inline != "" {
@@ -165,6 +175,14 @@ func newRunCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme
 }
 
 func validateRunInputOptions(opts *runOptions, args []string) error {
+	if opts.Handler != "" {
+		if opts.Entrypoint != "" {
+			return fmt.Errorf("--entrypoint cannot be used with --handler")
+		}
+		if len(args) > 0 {
+			return fmt.Errorf("command args cannot be used with --handler")
+		}
+	}
 	if opts.File == "" {
 		return nil
 	}

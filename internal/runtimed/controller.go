@@ -793,7 +793,7 @@ func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
 		TimeoutSeconds: timeoutSec,
 		WorkingDir:     ar.workDir,
 		Entrypoint:     entrypoint,
-		Handler:        run.Spec.Handler,
+		Handler:        run.Spec.EffectiveHandler(),
 	}, grpc.WaitForReady(true))
 	return err
 }
@@ -988,7 +988,7 @@ func prepareSource(run *v1alpha1.Run) (string, error) {
 		return "", fmt.Errorf("mkdir %s: %w", runDir, err)
 	}
 	if run.Spec.Source == nil {
-		if _, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script"); err != nil {
+		if _, err := execpath.ResolveEntrypoint(run.Spec.EffectiveEntrypoint(), "script"); err != nil {
 			return "", err
 		}
 		return runDir, nil
@@ -1000,7 +1000,7 @@ func prepareSource(run *v1alpha1.Run) (string, error) {
 		}
 		return runDir, nil
 	}
-	if _, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script"); err != nil {
+	if _, err := execpath.ResolveEntrypoint(run.Spec.EffectiveEntrypoint(), "script"); err != nil {
 		return "", err
 	}
 	if run.Spec.Source.RepoURL != "" {
@@ -1013,11 +1013,11 @@ func runtimeExecutionInput(run *v1alpha1.Run) (string, []string, error) {
 	if run.Spec.Source != nil && run.Spec.Source.Inline != nil {
 		return "script", nil, nil
 	}
-	entrypoint, err := execpath.ResolveEntrypoint(run.Spec.Entrypoint, "script")
+	entrypoint, err := execpath.ResolveEntrypoint(run.Spec.EffectiveEntrypoint(), "script")
 	if err != nil {
 		return "", nil, err
 	}
-	return entrypoint, run.Spec.Args, nil
+	return entrypoint, run.Spec.EffectiveArgs(), nil
 }
 
 func workDirForRun(run *v1alpha1.Run) string {

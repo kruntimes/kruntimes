@@ -77,8 +77,8 @@ Runtime-controlled mounts, or an admission policy appropriate for your cluster.
 ## Use Inline Source
 
 Inline source is a standalone script. When `spec.source.inline` is present,
-runtimed writes it to the default `script` file and ignores `spec.entrypoint`
-and `spec.args`.
+runtimed writes it to the default `script` file and ignores task `entrypoint`
+and `args`.
 
 ```yaml
 apiVersion: kruntimes.io/v1alpha1
@@ -108,7 +108,9 @@ spec:
   source:
     repoURL: https://github.com/example/scripts.git
     commitSHA: main
-  entrypoint: run.sh
+  mode:
+    task:
+      entrypoint: run.sh
 ```
 
 When `entrypoint` is used, `args` are passed to that file. For the built-in Bash
@@ -124,15 +126,17 @@ spec:
   source:
     repoURL: https://github.com/example/scripts.git
     commitSHA: main
-  entrypoint: run.sh
-  args:
-    - hello
+  mode:
+    task:
+      entrypoint: run.sh
+      args:
+        - hello
 ```
 
 ## Use Args Without Source
 
-When no source or entrypoint file is prepared, `args` are interpreted by the
-selected Runtime:
+When no source or entrypoint file is prepared, `mode.task.args` are interpreted
+by the selected Runtime:
 
 - Built-in Bash treats one arg as `bash -c <arg>`.
 - Built-in Bash preserves explicit `sh -c ...` and `bash -c ...` invocations.
@@ -145,6 +149,8 @@ For shell behavior through the CLI, pass the shell explicitly:
 ```bash
 krt run --runtime bash -- sh -c 'echo "hello from $SHELL"'
 ```
+
+The CLI stores command words in `spec.mode.task.args`.
 
 For repeatable scripts, prefer source mode:
 
