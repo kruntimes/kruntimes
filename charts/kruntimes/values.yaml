@@ -70,7 +70,8 @@ runtimed:
   image: ghcr.io/kruntimes/runtimed
 
 workspace:
-  sizeLimit: 10Gi
+  emptyDir:
+    sizeLimit: 10Gi
 
 metrics:
   service:

@@ -2,7 +2,6 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -145,10 +144,12 @@ type RuntimeCapacity struct {
 
 // +kubebuilder:object:generate=true
 // RuntimeWorkspaceSpec configures the shared workspace volume used by Runs.
+// +kubebuilder:validation:XValidation:rule="(has(self.hostPath)?1:0) + (has(self.emptyDir)?1:0) + (has(self.gcePersistentDisk)?1:0) + (has(self.awsElasticBlockStore)?1:0) + (has(self.gitRepo)?1:0) + (has(self.secret)?1:0) + (has(self.nfs)?1:0) + (has(self.iscsi)?1:0) + (has(self.glusterfs)?1:0) + (has(self.persistentVolumeClaim)?1:0) + (has(self.rbd)?1:0) + (has(self.flexVolume)?1:0) + (has(self.cinder)?1:0) + (has(self.cephfs)?1:0) + (has(self.flocker)?1:0) + (has(self.downwardAPI)?1:0) + (has(self.fc)?1:0) + (has(self.azureFile)?1:0) + (has(self.configMap)?1:0) + (has(self.vsphereVolume)?1:0) + (has(self.quobyte)?1:0) + (has(self.azureDisk)?1:0) + (has(self.photonPersistentDisk)?1:0) + (has(self.projected)?1:0) + (has(self.portworxVolume)?1:0) + (has(self.scaleIO)?1:0) + (has(self.storageos)?1:0) + (has(self.csi)?1:0) + (has(self.ephemeral)?1:0) + (has(self.image)?1:0) <= 1",message="at most one workspace volume source may be set"
 type RuntimeWorkspaceSpec struct {
-	// SizeLimit applies an EmptyDir size limit to the shared workspace volume.
-	// +optional
-	SizeLimit *resource.Quantity `json:"sizeLimit,omitempty"`
+	// VolumeSource configures the Kubernetes volume backing the shared workspace.
+	// The fields are inlined so Runtime specs can use the same shape as
+	// corev1.VolumeSource, for example workspace.persistentVolumeClaim.
+	corev1.VolumeSource `json:",inline"`
 }
 
 // +kubebuilder:object:generate=true

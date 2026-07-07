@@ -118,8 +118,8 @@ spec:
 
 更推荐的 API 是把 Kubernetes `corev1.VolumeSource` 字段 inline 到 `spec.workspace` 下，而不是发明一套单独的
 workspace volume model，或再包一层 `volumeSource` object。当没有显式 workspace volume
-source 时，`emptyDir` 仍然是默认行为。现有 `workspace.sizeLimit` 可以迁移到，或作为
-shorthand 映射到，`workspace.emptyDir`。
+source 时，`emptyDir` 仍然是默认行为。`emptyDir` 选项，例如 `sizeLimit`，应使用原生的
+`workspace.emptyDir.sizeLimit` 形态，而不是 kruntimes-specific shorthand。
 
 Runtime workspace volume 的扩展是 durable 或 PVC-backed `PersistentWorkspace` 的前置工作。
 第一版仍可以基于现有 `emptyDir` 行为实现 `RuntimePodLocal`，但设计上不应把 emptyDir 固化为
@@ -300,7 +300,7 @@ job 正在等待本地 workspace capacity，或者因为 controller-owned worksp
 
 1. 增加本文档并 review API shape。
 2. 扩展 `Runtime.spec.workspace` 以 inline Kubernetes `VolumeSource` 字段，同时保留当前
-   emptyDir 默认行为和 sizeLimit 语义。
+   emptyDir 默认行为。
 3. 增加 `PersistentWorkspace` API types、CRD validation、status 和 controller。
 4. 增加 Run `workspace` reference fields。
 5. 增加 Kubernetes-style Run affinity/anti-affinity fields。

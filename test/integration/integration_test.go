@@ -623,6 +623,33 @@ func TestCRDValidationRejectsInvalidRuntimeServiceAccountName(t *testing.T) {
 	}
 }
 
+func TestCRDValidationRejectsMultipleRuntimeWorkspaceVolumeSources(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-runtime-workspace-validation-")
+
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-workspace", Namespace: ns.Name},
+		Spec: v1alpha1.RuntimeSpec{
+			Workspace: &v1alpha1.RuntimeWorkspaceSpec{
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "workspace",
+					},
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "runtime", Image: "runtime:latest"}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, rt); !apierrors.IsInvalid(err) {
+		t.Fatalf("multiple runtime workspace volume sources error = %v, want Invalid", err)
+	}
+}
+
 func testNamespace(t *testing.T, generateName string) *corev1.Namespace {
 	t.Helper()
 	ns := &corev1.Namespace{}
