@@ -119,15 +119,15 @@ metadata:
   name: bash
 spec:
   workspace:
-    volumeSource:
-      persistentVolumeClaim:
-        claimName: bash-workspace
+    persistentVolumeClaim:
+      claimName: bash-workspace
 ```
 
-The preferred API should reuse Kubernetes `corev1.VolumeSource` shape instead
-of inventing a separate workspace volume model. `emptyDir` remains the default
-when `workspace.volumeSource` is unset. Existing `workspace.sizeLimit` can be
-migrated into, or treated as shorthand for, `workspace.volumeSource.emptyDir`.
+The preferred API should inline Kubernetes `corev1.VolumeSource` fields under
+`spec.workspace` instead of inventing a separate workspace volume model or
+nesting another `volumeSource` object. `emptyDir` remains the default when no
+explicit workspace volume source is set. Existing `workspace.sizeLimit` can be
+migrated into, or treated as shorthand for, `workspace.emptyDir`.
 
 This Runtime workspace volume work is a prerequisite for durable or
 PVC-backed `PersistentWorkspace` behavior. The first implementation can still

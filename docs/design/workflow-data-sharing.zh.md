@@ -112,15 +112,14 @@ metadata:
   name: bash
 spec:
   workspace:
-    volumeSource:
-      persistentVolumeClaim:
-        claimName: bash-workspace
+    persistentVolumeClaim:
+      claimName: bash-workspace
 ```
 
-更推荐的 API 是复用 Kubernetes `corev1.VolumeSource` 形态，而不是发明一套单独的 workspace
-volume model。当 `workspace.volumeSource` 为空时，`emptyDir` 仍然是默认行为。现有
-`workspace.sizeLimit` 可以迁移到，或作为 shorthand 映射到，
-`workspace.volumeSource.emptyDir`。
+更推荐的 API 是把 Kubernetes `corev1.VolumeSource` 字段 inline 到 `spec.workspace` 下，而不是发明一套单独的
+workspace volume model，或再包一层 `volumeSource` object。当没有显式 workspace volume
+source 时，`emptyDir` 仍然是默认行为。现有 `workspace.sizeLimit` 可以迁移到，或作为
+shorthand 映射到，`workspace.emptyDir`。
 
 Runtime workspace volume 的扩展是 durable 或 PVC-backed `PersistentWorkspace` 的前置工作。
 第一版仍可以基于现有 `emptyDir` 行为实现 `RuntimePodLocal`，但设计上不应把 emptyDir 固化为
