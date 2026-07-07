@@ -80,15 +80,22 @@ a coherent experimental product. The current execution order is:
   obey normal Runtime capacity, so multiple function Runs can share one Runtime
   Pod when capacity allows it. This should use a dataplane invoke path rather
   than a per-invocation Kubernetes object.
+  Initial implementation TODO:
+  - [x] add `Run.spec.mode.task` and `Run.spec.mode.function` API fields, CRD
+    validation, and runtime helpers;
+  - [x] remove top-level `entrypoint`, `args`, and `handler` before API
+    stabilization;
+  - [x] migrate CLI creation and high-level user docs to use `spec.mode.task`;
+  - add function-mode ready status, endpoint status, and dataplane lifecycle
+    fields;
 - [ ] Runtime gateway invoke path: create one gateway Service per Runtime, use
   that Service as the stable Run invoke endpoint, route requests to the
   runtimed that owns the assigned Runtime Pod, and rely on runtimed's in-memory
   ownership/readiness cache instead of synchronous Kubernetes API reads on the
   invoke path.
-- [ ] Function-mode API cleanup: move the existing top-level
-  `Run.spec.handler` field into `Run.spec.mode.function.handler` before the API
-  stabilizes. Handler remains a useful FaaS concept, but it should not sit next
-  to task-only `entrypoint` and `args` fields in the top-level Run spec.
+- [x] Function-mode API cleanup: remove top-level `Run.spec.handler`,
+  `Run.spec.entrypoint`, and `Run.spec.args`; keep handler under
+  `Run.spec.mode.function.handler` and task input under `Run.spec.mode.task`.
 - [ ] Function-mode runtime contract: add runtime-server register, invoke, and
   unregister APIs; define bounded invoke request inputs, response outputs,
   artifact references, and log access without writing high-frequency invocation

@@ -567,6 +567,12 @@ func waitForWorkflowChildRun(t *testing.T, workflowName, jobName, stepName strin
 	}
 }
 
+func taskMode(args ...string) v1alpha1.RunMode {
+	return v1alpha1.RunMode{
+		Task: &v1alpha1.RunTaskMode{Args: args},
+	}
+}
+
 func TestFullRunLifecycle(t *testing.T) {
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
@@ -578,7 +584,7 @@ func TestFullRunLifecycle(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: "bash",
-			Args:    []string{"echo " + stdout},
+			Mode:    taskMode("echo " + stdout),
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -607,9 +613,9 @@ func TestFilesystemArtifacts(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Args: []string{
+			Mode: taskMode(
 				`mkdir -p "$KRUNTIME_ARTIFACTS_DIR/bundle"; printf report > "$KRUNTIME_ARTIFACTS_DIR/report.txt"; printf nested > "$KRUNTIME_ARTIFACTS_DIR/bundle/data.txt"`,
-			},
+			),
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -801,7 +807,7 @@ func TestRunTimeout(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Args:    []string{"sleep 10; echo should_not_print"},
+			Mode:    taskMode("sleep 10; echo should_not_print"),
 			Timeout: &metav1.Duration{Duration: time.Second},
 		},
 	}
@@ -853,7 +859,7 @@ func TestCompletedRunTTLGCDeletesFinishedRun(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime:                 runtimeName,
-			Args:                    []string{"echo ttl-gc"},
+			Mode:                    taskMode("echo ttl-gc"),
 			TTLSecondsAfterFinished: &ttlSeconds,
 		},
 	}
@@ -880,7 +886,7 @@ func TestRuntimedRecoversRunningRunAfterRestart(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Args:    []string{"sleep 20; echo recovered"},
+			Mode:    taskMode("sleep 20; echo recovered"),
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -925,7 +931,7 @@ func TestCancelPendingRunWithoutRuntimePod(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Args:    []string{"sleep 10"},
+			Mode:    taskMode("sleep 10"),
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -966,7 +972,7 @@ func TestCancelRunningRunDoesNotRetry(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Args:    []string{"sleep 30; echo should_not_finish"},
+			Mode:    taskMode("sleep 30; echo should_not_finish"),
 			RetryPolicy: &v1alpha1.RetryPolicy{
 				MaxAttempts: 3,
 				Backoff:     metav1.Duration{Duration: time.Second},
@@ -1014,7 +1020,7 @@ func TestCancelNearCompletionHasStableTerminalPhase(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Args:    []string{"sleep 1; echo boundary_done"},
+			Mode:    taskMode("sleep 1; echo boundary_done"),
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -1071,7 +1077,7 @@ func TestSchedulerResponsiveness(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: "bash",
-			Args:    []string{"echo hello"},
+			Mode:    taskMode("echo hello"),
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -1113,7 +1119,7 @@ func TestSchedulerKeepsRunPendingWithoutRuntimePod(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Args:    []string{"echo hello"},
+			Mode:    taskMode("echo hello"),
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -1162,7 +1168,7 @@ func TestSchedulerKeepsRunPendingWhenRuntimeAtCapacity(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Args:    []string{"sleep 10; echo first"},
+			Mode:    taskMode("sleep 10; echo first"),
 		},
 	}
 	if err := k8sClient.Create(context.Background(), first); err != nil {
@@ -1194,7 +1200,7 @@ func TestSchedulerKeepsRunPendingWhenRuntimeAtCapacity(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Args:    []string{"echo second"},
+			Mode:    taskMode("echo second"),
 		},
 	}
 	if err := k8sClient.Create(context.Background(), second); err != nil {
@@ -1309,6 +1315,7 @@ func TestPythonInlineRun(t *testing.T) {
 		Spec: v1alpha1.RunSpec{
 			Runtime: "python",
 			Source:  &v1alpha1.CodeSource{Inline: &inline},
+			Mode:    taskMode(),
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -1493,7 +1500,7 @@ func TestRunInvalidOutputsDoesNotRetry(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: "bash",
-			Args:    []string{`printf 'invalid\n' > "$KRUNTIME_OUTPUTS"`},
+			Mode:    taskMode(`printf 'invalid\n' > "$KRUNTIME_OUTPUTS"`),
 			RetryPolicy: &v1alpha1.RetryPolicy{
 				MaxAttempts: 3,
 				Backoff:     metav1.Duration{Duration: time.Second},
@@ -1518,9 +1525,9 @@ func TestRunOversizedOutputsDoesNotRetry(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: "bash",
-			Args: []string{
+			Mode: taskMode(
 				`printf 'value=' > "$KRUNTIME_OUTPUTS"; head -c 8193 /dev/zero | tr '\0' x >> "$KRUNTIME_OUTPUTS"`,
-			},
+			),
 			RetryPolicy: &v1alpha1.RetryPolicy{
 				MaxAttempts: 3,
 				Backoff:     metav1.Duration{Duration: time.Second},
@@ -1581,6 +1588,7 @@ echo "succeeded on attempt $count"
 		Spec: v1alpha1.RunSpec{
 			Runtime: "bash",
 			Source:  &v1alpha1.CodeSource{Inline: &inline},
+			Mode:    taskMode(),
 			RetryPolicy: &v1alpha1.RetryPolicy{
 				MaxAttempts: 5,
 				Backoff:     metav1.Duration{Duration: time.Second},
@@ -1655,7 +1663,7 @@ func TestStaleRunNoRetry(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Args:    []string{"sleep 300"},
+			Mode:    taskMode("sleep 300"),
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {
@@ -1730,7 +1738,7 @@ func TestStaleRunWithRetry(t *testing.T) {
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Args:    []string{"sleep 300"},
+			Mode:    taskMode("sleep 300"),
 			RetryPolicy: &v1alpha1.RetryPolicy{
 				MaxAttempts: 3,
 				Backoff:     metav1.Duration{Duration: time.Second},

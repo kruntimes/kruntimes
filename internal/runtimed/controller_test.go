@@ -87,8 +87,10 @@ func TestPrepareSource_Inline(t *testing.T) {
 	inline := "#!/bin/bash\necho hello"
 	run := &v1alpha1.Run{
 		Spec: v1alpha1.RunSpec{
-			Entrypoint: "run.sh",
-			Source:     &v1alpha1.CodeSource{Inline: &inline},
+			Source: &v1alpha1.CodeSource{Inline: &inline},
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{Entrypoint: "run.sh"},
+			},
 		},
 	}
 	run.UID = "test-uid"
@@ -119,6 +121,7 @@ func TestPrepareSource_InlineDefaultEntrypoint(t *testing.T) {
 	run := &v1alpha1.Run{
 		Spec: v1alpha1.RunSpec{
 			Source: &v1alpha1.CodeSource{Inline: &inline},
+			Mode:   v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
 		},
 	}
 	run.UID = "test-uid"
@@ -141,8 +144,10 @@ func TestPrepareSource_InlineIgnoresEscapingEntrypoint(t *testing.T) {
 	inline := "echo escape"
 	run := &v1alpha1.Run{
 		Spec: v1alpha1.RunSpec{
-			Entrypoint: "../escape.sh",
-			Source:     &v1alpha1.CodeSource{Inline: &inline},
+			Source: &v1alpha1.CodeSource{Inline: &inline},
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{Entrypoint: "../escape.sh"},
+			},
 		},
 	}
 	run.UID = "test-uid"
@@ -156,6 +161,50 @@ func TestPrepareSource_InlineIgnoresEscapingEntrypoint(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "script")); err != nil {
 		t.Fatalf("inline script should be written to default script path: %v", err)
+	}
+}
+
+func TestPrepareSource_ModeTaskRejectsEscapingEntrypoint(t *testing.T) {
+	dir := t.TempDir()
+	workspacePath = dir
+
+	run := &v1alpha1.Run{
+		Spec: v1alpha1.RunSpec{
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{
+					Entrypoint: "../escape.sh",
+				},
+			},
+		},
+	}
+	run.UID = "test-uid"
+
+	if _, err := prepareSource(run); err == nil {
+		t.Fatal("prepareSource() error = nil, want escaping entrypoint error")
+	}
+}
+
+func TestRuntimeExecutionInput_ModeTask(t *testing.T) {
+	run := &v1alpha1.Run{
+		Spec: v1alpha1.RunSpec{
+			Mode: v1alpha1.RunMode{
+				Task: &v1alpha1.RunTaskMode{
+					Entrypoint: "scripts/run.sh",
+					Args:       []string{"first", "second"},
+				},
+			},
+		},
+	}
+
+	entrypoint, args, err := runtimeExecutionInput(run)
+	if err != nil {
+		t.Fatalf("runtimeExecutionInput: %v", err)
+	}
+	if entrypoint != "scripts/run.sh" {
+		t.Fatalf("entrypoint = %q, want scripts/run.sh", entrypoint)
+	}
+	if len(args) != 2 || args[0] != "first" || args[1] != "second" {
+		t.Fatalf("args = %v, want [first second]", args)
 	}
 }
 
@@ -954,10 +1003,14 @@ func TestStartExecutionInlineIgnoresEntrypointAndArgs(t *testing.T) {
 		run: &v1alpha1.Run{
 			ObjectMeta: metav1.ObjectMeta{UID: "run-uid"},
 			Spec: v1alpha1.RunSpec{
-				Runtime:    "bash",
-				Source:     &v1alpha1.CodeSource{Inline: &inline},
-				Entrypoint: "custom.sh",
-				Args:       []string{"ignored"},
+				Runtime: "bash",
+				Source:  &v1alpha1.CodeSource{Inline: &inline},
+				Mode: v1alpha1.RunMode{
+					Task: &v1alpha1.RunTaskMode{
+						Entrypoint: "custom.sh",
+						Args:       []string{"ignored"},
+					},
+				},
 			},
 		},
 		workDir: t.TempDir(),
@@ -981,9 +1034,13 @@ func TestStartExecutionEntrypointReceivesArgs(t *testing.T) {
 		run: &v1alpha1.Run{
 			ObjectMeta: metav1.ObjectMeta{UID: "run-uid"},
 			Spec: v1alpha1.RunSpec{
-				Runtime:    "bash",
-				Entrypoint: "scripts/run.sh",
-				Args:       []string{"first", "second"},
+				Runtime: "bash",
+				Mode: v1alpha1.RunMode{
+					Task: &v1alpha1.RunTaskMode{
+						Entrypoint: "scripts/run.sh",
+						Args:       []string{"first", "second"},
+					},
+				},
 			},
 		},
 		workDir: t.TempDir(),

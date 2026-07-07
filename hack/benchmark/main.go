@@ -585,7 +585,7 @@ func benchmarkRun(opts options, benchID string, index int, sleep time.Duration) 
 		},
 		Spec: v1alpha1.RunSpec{
 			Runtime:                 opts.RuntimeName,
-			Args:                    []string{fmt.Sprintf("sleep %.3f; echo benchmark-run-%d", sleep.Seconds(), index)},
+			Mode:                    v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{Args: []string{fmt.Sprintf("sleep %.3f; echo benchmark-run-%d", sleep.Seconds(), index)}}},
 			TTLSecondsAfterFinished: &ttl,
 		},
 	}

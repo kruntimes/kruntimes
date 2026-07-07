@@ -69,9 +69,7 @@ type FunctionMode struct {
 }
 ```
 
-Exactly one of `mode.task` or `mode.function` should be set. If `mode` is
-omitted, the Run defaults to task mode for compatibility with existing
-one-shot Runs.
+Exactly one of `mode.task` or `mode.function` must be set.
 
 One-shot task Runs remain the default. `entrypoint` and `args` belong to task
 mode because they describe how to start a process once:
@@ -171,9 +169,9 @@ offer a helper that creates or selects a dedicated Runtime configured with
 `runs: "1"`. The guardrail should live in the SDK or higher-level integration;
 the scheduler should continue to enforce only the generic capacity contract.
 
-## Handler Field Cleanup
+## Handler Field Placement
 
-`Run.spec.handler` exists today as an early FaaS-related top-level field:
+Earlier drafts used a top-level handler field:
 
 ```yaml
 spec:
@@ -186,7 +184,7 @@ problem is its location. A top-level `handler` sits next to task-only concepts
 such as `entrypoint` and `args`, which makes the execution model harder to
 understand.
 
-The target API should move handler under function mode:
+The API keeps handler under function mode:
 
 ```yaml
 spec:
@@ -199,10 +197,9 @@ spec:
       handler: diagnose.invoke
 ```
 
-The API design should migrate or replace the current top-level
-`Run.spec.handler` with `Run.spec.mode.function.handler` before stabilization.
-Task mode should keep `entrypoint` and `args` under `mode.task`, while function
-mode should keep `handler` under `mode.function`.
+Top-level `handler`, `entrypoint`, and `args` fields are not part of the target
+Run API. Task mode keeps `entrypoint` and `args` under `mode.task`, while
+function mode keeps `handler` under `mode.function`.
 
 ## Runtime Gateway
 
@@ -411,8 +408,9 @@ fit behind the same Runtime abstraction.
 
 1. Add the API design and validation for mutually exclusive `spec.mode.task`
    and `spec.mode.function`.
-2. Migrate or replace top-level `Run.spec.handler` with
-   `Run.spec.mode.function.handler`.
+2. Remove top-level `Run.spec.handler`, `Run.spec.entrypoint`, and
+   `Run.spec.args`; use `Run.spec.mode.function.handler` and
+   `Run.spec.mode.task` instead.
 3. Add runtime gateway Service reconciliation for each Runtime.
 4. Add runtimed ownership cache and invoke routing.
 5. Add Runtime Server register, invoke, unregister, and status APIs.

@@ -43,12 +43,12 @@ func newGetCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme
 			fmt.Fprintf(w, "Phase:\t%s\n", run.Status.Phase)
 			fmt.Fprintf(w, "Assigned Pod:\t%s\n", run.Status.AssignedPod)
 			fmt.Fprintf(w, "Message:\t%s\n", run.Status.Message)
-			fmt.Fprintf(w, "Args:\t%v\n", run.Spec.Args)
-			if run.Spec.Entrypoint != "" {
-				fmt.Fprintf(w, "Entrypoint:\t%s\n", run.Spec.Entrypoint)
+			fmt.Fprintf(w, "Args:\t%v\n", run.Spec.EffectiveArgs())
+			if entrypoint := run.Spec.EffectiveEntrypoint(); entrypoint != "" {
+				fmt.Fprintf(w, "Entrypoint:\t%s\n", entrypoint)
 			}
-			if run.Spec.Handler != "" {
-				fmt.Fprintf(w, "Handler:\t%s\n", run.Spec.Handler)
+			if handler := run.Spec.EffectiveHandler(); handler != "" {
+				fmt.Fprintf(w, "Handler:\t%s\n", handler)
 			}
 			if run.Spec.Source != nil {
 				if run.Spec.Source.Inline != nil {
