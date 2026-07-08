@@ -201,7 +201,9 @@ wiring from accumulating avoidable conflicts.
   - implement namespace-local `uses` resolution for top-level, job, and step
     calls;
   - implement input binding, expression context, and output propagation;
-  - update CLI verbs and docs so execution uses `WorkflowRun`;
+  - [x] add workflow-oriented `krt wf` verbs for reusable Workflow definitions
+    and WorkflowRun skeletons;
+  - [x] update CLI verbs and docs so execution uses `WorkflowRun`;
   - add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
     calls, validation failures, and output propagation.
 - [ ] Dashboard: design and build a read-only web dashboard, similar in spirit

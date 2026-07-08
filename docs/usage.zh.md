@@ -195,6 +195,68 @@ Retry 语义是 at-least-once。Runtime Servers 必须让重复 `Execute` delive
 完整 stdout 和 stderr 通过带 Run UID 的结构化 runtimed logs 暴露。它们不会被完整复制到
 `status.message`。
 
+## WorkflowRun Skeleton
+
+`WorkflowRun` 是 reusable workflow model 的目标 execution-instance API。当前 v0.x
+skeleton 接受 inline jobs，或 namespace-local reusable Workflow reference，但尚未实现
+执行逻辑。
+
+创建一个 inline WorkflowRun manifest：
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  name: ci-demo
+spec:
+  jobs:
+    test:
+      runs-on: bash
+      steps:
+        - name: unit
+          run: make test
+```
+
+使用 `krt` 提交并查看：
+
+```bash
+krt wf run -f workflowrun.yaml -n default
+krt wf run ls -n default
+krt wf run get ci-demo -n default
+krt wf run delete ci-demo -n default
+```
+
+创建一个引用 reusable Workflow 的 WorkflowRun：
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  name: release-demo
+spec:
+  uses: build-and-test
+  with:
+    ref: main
+```
+
+`krt wf run -f` 也接受一个小型 GitHub Actions 风格 workflow file，并将其转换为 inline
+`WorkflowRun`。
+
+对于 reusable Workflow definitions：
+
+```bash
+krt wf create -f workflow.yaml -n default
+krt wf ls -n default
+krt wf trigger build-and-test --set ref=main -n default
+krt wf delete build-and-test -n default
+```
+
+`krt wf trigger` 会创建一个 `spec.uses` 指向 reusable Workflow 的 `WorkflowRun`。在
+WorkflowRun execution 实现前，创建出来的 `WorkflowRun` 会保持 pending。
+
+`krt wf run cancel` 是为未来 cancellation API 预留的命令；当前会返回明确的 unsupported
+error。
+
 ## CLI
 
 `krt` CLI 支持 kubeconfig/context、namespace 选择、等待、输出格式、logs、取消和结果查看。

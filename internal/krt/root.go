@@ -31,12 +31,16 @@ func NewRootCmd() *cobra.Command {
 	runtimeCmd.AddCommand(newRuntimeGetCmd(configFlags, scheme))
 
 	workflowCmd := &cobra.Command{
-		Use:   "workflow",
-		Short: "Manage workflows.",
+		Use:     "workflow",
+		Aliases: []string{"wf"},
+		Short:   "Manage reusable workflows and workflow runs.",
 	}
 	workflowCmd.AddCommand(newWorkflowCreateCmd(configFlags, scheme))
 	workflowCmd.AddCommand(newWorkflowListCmd(configFlags, scheme))
 	workflowCmd.AddCommand(newWorkflowGetCmd(configFlags, scheme))
+	workflowCmd.AddCommand(newWorkflowDeleteCmd(configFlags, scheme))
+	workflowCmd.AddCommand(newWorkflowTriggerCmd(configFlags, scheme))
+	workflowCmd.AddCommand(newWorkflowRunCmd(configFlags, scheme))
 
 	root.AddCommand(newRunCmd(configFlags, scheme))
 	root.AddCommand(newGetCmd(configFlags, scheme))

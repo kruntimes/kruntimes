@@ -58,12 +58,10 @@ func newWorkflowCreateCmd(getter genericclioptions.RESTClientGetter, scheme *run
 				return fmt.Errorf("read file %s: %w", filePath, err)
 			}
 
-			gh := &ghWorkflow{}
-			if err := yaml.Unmarshal(data, gh); err != nil {
-				return fmt.Errorf("parse workflow: %w", err)
+			wf, err := parseWorkflow(data, namespace)
+			if err != nil {
+				return err
 			}
-
-			wf := convertWorkflow(gh, namespace)
 			if err := c.Create(cmd.Context(), wf); err != nil {
 				return fmt.Errorf("create workflow: %w", err)
 			}
@@ -72,8 +70,34 @@ func newWorkflowCreateCmd(getter genericclioptions.RESTClientGetter, scheme *run
 		},
 	}
 
-	cmd.Flags().StringVarP(&filePath, "file", "f", "", "Path to GitHub Actions workflow YAML file (required)")
+	cmd.Flags().StringVarP(&filePath, "file", "f", "", "Path to Workflow or GitHub Actions workflow YAML file (required)")
 	return cmd
+}
+
+func parseWorkflow(data []byte, namespace string) (*v1alpha1.Workflow, error) {
+	meta := &metav1.TypeMeta{}
+	if err := yaml.Unmarshal(data, meta); err != nil {
+		return nil, fmt.Errorf("parse workflow metadata: %w", err)
+	}
+	if meta.Kind == "Workflow" {
+		wf := &v1alpha1.Workflow{}
+		if err := yaml.Unmarshal(data, wf); err != nil {
+			return nil, fmt.Errorf("parse workflow: %w", err)
+		}
+		if wf.Namespace == "" {
+			wf.Namespace = namespace
+		}
+		return wf, nil
+	}
+
+	gh := &ghWorkflow{}
+	if err := yaml.Unmarshal(data, gh); err != nil {
+		return nil, fmt.Errorf("parse workflow: %w", err)
+	}
+	if len(gh.Jobs) == 0 {
+		return nil, fmt.Errorf("workflow file must contain kind: Workflow or GitHub Actions jobs")
+	}
+	return convertWorkflow(gh, namespace), nil
 }
 
 func convertWorkflow(gh *ghWorkflow, namespace string) *v1alpha1.Workflow {

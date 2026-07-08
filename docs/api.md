@@ -181,7 +181,8 @@ tracked in the roadmap.
 
 `WorkflowRun` is the target execution-instance API for the reusable workflow
 model. It is a skeleton in the current release: the API, CRD validation, status,
-and controller wiring exist, but execution is not implemented yet.
+controller wiring, and workflow-oriented `krt wf` CLI verbs exist, but
+execution is not implemented yet.
 
 Current spec shape:
 
