@@ -52,6 +52,13 @@ Still validating:
 The next development phase is focused on turning the public `v0.x` release into
 a coherent experimental product. The current execution order is:
 
+Implementation sequencing note: API skeleton PRs that add CRDs, generated
+deepcopy code, controller manager wiring, Helm RBAC, or integration validation
+should merge one at a time. After one lands, rebase the next API skeleton PR on
+`main`, regenerate manifests, and rerun `make test`, `make test-integration`,
+and `make test-helm`. This keeps generated files and hand-written controller
+wiring from accumulating avoidable conflicts.
+
 - [x] Release/package hygiene: rename published image packages to remove the
   redundant `kruntimes-` prefix, publish a new release, clean up old packages,
   and align installation, demo, and release documentation.
