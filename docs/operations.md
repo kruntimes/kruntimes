@@ -77,11 +77,17 @@ helm uninstall kruntimes --namespace kruntimes-system --ignore-not-found
 ```
 
 The platform uninstall does not delete CRDs by default. This is intentional:
-deleting CRDs deletes all `Runtime`, `Run`, and `Workflow` objects cluster-wide.
-Only remove CRDs after backing up or intentionally discarding those objects:
+deleting CRDs deletes all kruntimes custom resources cluster-wide. Only remove
+CRDs after backing up or intentionally discarding those objects:
 
 ```bash
-kubectl delete crd runs.kruntimes.io runtimes.kruntimes.io workflows.kruntimes.io
+kubectl delete crd \
+  runtimes.kruntimes.io \
+  runs.kruntimes.io \
+  workflows.kruntimes.io \
+  workflowruns.kruntimes.io \
+  actions.kruntimes.io \
+  persistentworkspaces.kruntimes.io
 ```
 
 External artifact stores, object buckets, PVC contents, and external logging
@@ -92,8 +98,7 @@ systems are not deleted by Helm uninstall.
 At minimum, back up:
 
 - Helm release values for the platform and Runtime charts.
-- `Runtime`, `Run`, and `Workflow` custom resources from namespaces you intend
-  to restore.
+- kruntimes custom resources from namespaces you intend to restore.
 - Secrets referenced by Runtime artifact stores or custom Runtime Pod
   templates.
 - PVCs or object storage buckets used by artifact stores.
@@ -101,7 +106,7 @@ At minimum, back up:
 Example Kubernetes object backup:
 
 ```bash
-kubectl get runtime,runs,workflows -A -o yaml > kruntimes-objects.yaml
+kubectl get runtime,runs,workflows,workflowruns,actions,persistentworkspaces -A -o yaml > kruntimes-objects.yaml
 helm get values kruntimes -n kruntimes-system --all > kruntimes-values.yaml
 helm get values kruntimes-runtimes -n default --all > kruntimes-runtimes-values.yaml
 ```

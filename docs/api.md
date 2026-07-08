@@ -155,8 +155,27 @@ binding, Run workspace references, and cleanup are tracked in the roadmap.
 
 ### Workflow
 
-`Workflow` orchestrates child Runs. Workflow docs are still intentionally
-minimal while the API remains experimental.
+`Workflow` defines a reusable workflow. It is a definition object, not an
+execution instance. Create `WorkflowRun` objects to execute inline jobs or to
+call reusable Workflows.
+
+Current spec fields:
+
+| Field | Description |
+| --- | --- |
+| `spec.inputs` | Optional typed string inputs accepted by this Workflow. |
+| `spec.outputs` | Optional expression-based outputs exposed by this Workflow. |
+| `spec.jobs` | Reusable jobs. Each job currently supports either inline `steps` or namespace-local `uses`. |
+
+Current status fields:
+
+| Field | Description |
+| --- | --- |
+| `status.conditions` | Definition-level readiness and validation conditions. The skeleton controller records `Ready=True`. |
+
+Workflow execution moved to the `WorkflowRun` API. Namespace-local `uses`
+resolution, input binding, output propagation, and WorkflowRun execution are
+tracked in the roadmap.
 
 ### WorkflowRun
 

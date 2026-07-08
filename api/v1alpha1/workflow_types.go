@@ -2,7 +2,7 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// WorkflowPhase is the lifecycle phase of a Workflow.
+// WorkflowPhase is the lifecycle phase of a WorkflowRun execution.
 // +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed
 type WorkflowPhase string
 
@@ -37,12 +37,52 @@ const (
 )
 
 // +kubebuilder:object:generate=true
-// WorkflowSpec defines the desired state of Workflow.
+// WorkflowInputSpec defines one reusable Workflow input.
+type WorkflowInputSpec struct {
+	// Type is the input type.
+	// +kubebuilder:default=string
+	// +kubebuilder:validation:Enum=string
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// Required marks the input as required.
+	// +optional
+	Required bool `json:"required,omitempty"`
+
+	// Default is the default string value used when the caller does not pass this input.
+	// +optional
+	// +kubebuilder:validation:MaxLength=8192
+	Default string `json:"default,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// WorkflowOutputSpec defines one reusable Workflow output.
+type WorkflowOutputSpec struct {
+	// Value is a ${{ }} expression evaluated after the Workflow jobs run.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=8192
+	Value string `json:"value"`
+}
+
+// +kubebuilder:object:generate=true
+// WorkflowSpec defines a reusable Workflow definition.
 // +kubebuilder:validation:XValidation:rule="self.jobs.all(name, !has(self.jobs[name].needs) || self.jobs[name].needs.all(need, need in self.jobs && need != name))",message="each dependency must name another job in this workflow"
 type WorkflowSpec struct {
-	// Jobs is a map of job names to job specs. Jobs run in parallel unless
-	// constrained by needs; the map order is not significant.
-	// Job names become Kubernetes label values on child Runs.
+	// Inputs defines parameters accepted by this Workflow.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=64
+	Inputs map[string]WorkflowInputSpec `json:"inputs,omitempty"`
+
+	// Outputs defines values exposed by this Workflow after its jobs complete.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=64
+	Outputs map[string]WorkflowOutputSpec `json:"outputs,omitempty"`
+
+	// Jobs is a map of reusable job names to job specs. Jobs run in parallel
+	// unless constrained by needs; the map order is not significant.
+	// Job names become Kubernetes label values on child Runs when a WorkflowRun
+	// executes this definition.
 	// +kubebuilder:validation:MinProperties=1
 	// +kubebuilder:validation:MaxProperties=64
 	// +kubebuilder:validation:XValidation:rule="self.all(name, size(name) <= 63 && name.matches('^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$'))",message="job names must be valid Kubernetes label values with at most 63 characters"
@@ -51,14 +91,16 @@ type WorkflowSpec struct {
 
 // +kubebuilder:object:generate=true
 // JobSpec defines a single job within a workflow.
+// +kubebuilder:validation:XValidation:rule="has(self.steps) != has(self.uses)",message="exactly one of steps or uses must be set"
+// +kubebuilder:validation:XValidation:rule="!has(self.with) || has(self.uses)",message="with can only be set when uses is set"
 type JobSpec struct {
 	// RunsOn is the runtime to use for all steps in this job (e.g., "bash", "python").
-	// +kubebuilder:validation:Required
 	// Runtime names are propagated to Kubernetes label values.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
-	RunsOn string `json:"runs-on"`
+	RunsOn string `json:"runs-on,omitempty"`
 
 	// Needs is the list of job names that must complete before this job starts.
 	// +optional
@@ -67,9 +109,22 @@ type JobSpec struct {
 	Needs []string `json:"needs,omitempty"`
 
 	// Steps is the list of steps to run sequentially within the job.
+	// +optional
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=128
-	Steps []StepSpec `json:"steps"`
+	Steps []StepSpec `json:"steps,omitempty"`
+
+	// Uses references a reusable Workflow in the same namespace.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Uses string `json:"uses,omitempty"`
+
+	// With passes string inputs to the reusable Workflow referenced by Uses.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=256
+	With map[string]string `json:"with,omitempty"`
 
 	// Outputs maps job-level output names to ${{ }} expressions.
 	// +optional
@@ -118,23 +173,9 @@ type StepSpec struct {
 }
 
 // +kubebuilder:object:generate=true
-// WorkflowStatus defines the observed state of Workflow.
+// WorkflowStatus defines the observed state of a reusable Workflow definition.
 type WorkflowStatus struct {
-	// Phase is the current lifecycle phase of the workflow.
-	// +kubebuilder:default=Pending
-	Phase WorkflowPhase `json:"phase"`
-
-	// Jobs tracks the status of each job by name.
-	// +optional
-	// +kubebuilder:validation:MaxProperties=64
-	Jobs map[string]JobStatus `json:"jobs,omitempty"`
-
-	// Message is a human-readable status or error message.
-	// +optional
-	// +kubebuilder:validation:MaxLength=4096
-	Message string `json:"message,omitempty"`
-
-	// Conditions represent the current state of the Workflow's lifecycle conditions.
+	// Conditions represent definition-level validation and readiness.
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
 	// +listType=map
@@ -172,11 +213,11 @@ type StepStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
+// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:resource:path=workflows,scope=Namespaced,shortName=wf
 
-// Workflow is the Schema for the workflows API.
+// Workflow is the Schema for reusable workflow definitions.
 type Workflow struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

@@ -297,3 +297,11 @@ the implementation lands.
 8. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
    calls, validation failures, and output propagation.
 9. Update the final v0.x demos after the reusable model is implemented.
+
+Current implementation status:
+
+- `WorkflowRun`, `Workflow`, and `Action` API skeletons exist.
+- `Workflow` is now a reusable definition skeleton and no longer executes
+  child Runs.
+- Old Workflow execution E2E coverage is skipped until WorkflowRun execution
+  lands.

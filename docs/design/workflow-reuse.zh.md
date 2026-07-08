@@ -287,3 +287,9 @@ status:
 8. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
    validation failures 和 output propagation。
 9. reusable model 实现后，更新最终 v0.x demos。
+
+当前实现状态：
+
+- `WorkflowRun`、`Workflow` 和 `Action` API skeletons 已存在。
+- `Workflow` 现在是 reusable definition skeleton，不再执行 child Runs。
+- 旧 Workflow execution E2E coverage 暂时 skip，等待 WorkflowRun execution 实现后恢复。

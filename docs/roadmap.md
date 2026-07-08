@@ -195,7 +195,7 @@ wiring from accumulating avoidable conflicts.
     component boundaries, and breaking-change scope;
   - [x] add `WorkflowRun` API types, CRD validation, status, and controller
     skeleton;
-  - change `Workflow` API types to reusable definitions;
+  - [x] change `Workflow` API types to reusable definitions;
   - [x] add `Action` API types, CRD validation, status, and controller
     skeleton;
   - implement namespace-local `uses` resolution for top-level, job, and step
