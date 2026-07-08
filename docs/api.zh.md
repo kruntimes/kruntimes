@@ -153,6 +153,27 @@ references 和 cleanup 仍在 roadmap 中跟踪。
 
 `Workflow` 编排 child Runs。由于 API 仍然 experimental，Workflow 文档目前刻意保持最小化。
 
+### WorkflowRun
+
+`WorkflowRun` 是 reusable workflow model 的目标 execution-instance API。当前版本只是
+skeleton：API、CRD validation、status 和 controller wiring 已存在，但尚未实现执行逻辑。
+
+当前 spec 形状：
+
+| Field | Description |
+| --- | --- |
+| `spec.jobs` | Inline jobs。`spec.jobs` 和 `spec.uses` 必须且只能设置一个。 |
+| `spec.uses` | 后续要执行的 namespace-local reusable Workflow 名称。`spec.jobs` 和 `spec.uses` 必须且只能设置一个。 |
+| `spec.with` | 传给 `spec.uses` 引用的 reusable Workflow 的 string inputs。 |
+
+当前 status 字段：
+
+| Field | Description |
+| --- | --- |
+| `status.phase` | Lifecycle phase。skeleton controller 会初始化为 `Pending`。 |
+| `status.jobs` | 未来按 job name 记录 job execution status。 |
+| `status.conditions` | Lifecycle conditions。skeleton controller 会记录 `Accepted=True`。 |
+
 ### Action
 
 `Action` 为目标 WorkflowRun model 定义可复用 step group。它是 definition object，

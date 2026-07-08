@@ -158,6 +158,28 @@ binding, Run workspace references, and cleanup are tracked in the roadmap.
 `Workflow` orchestrates child Runs. Workflow docs are still intentionally
 minimal while the API remains experimental.
 
+### WorkflowRun
+
+`WorkflowRun` is the target execution-instance API for the reusable workflow
+model. It is a skeleton in the current release: the API, CRD validation, status,
+and controller wiring exist, but execution is not implemented yet.
+
+Current spec shape:
+
+| Field | Description |
+| --- | --- |
+| `spec.jobs` | Inline jobs to execute. Exactly one of `spec.jobs` or `spec.uses` must be set. |
+| `spec.uses` | Namespace-local reusable Workflow name to execute later. Exactly one of `spec.jobs` or `spec.uses` must be set. |
+| `spec.with` | String inputs passed to the reusable Workflow named by `spec.uses`. |
+
+Current status fields:
+
+| Field | Description |
+| --- | --- |
+| `status.phase` | Lifecycle phase. The skeleton controller initializes it to `Pending`. |
+| `status.jobs` | Future job execution status keyed by job name. |
+| `status.conditions` | Lifecycle conditions. The skeleton controller records `Accepted=True`. |
+
 ### Action
 
 `Action` defines a reusable step group for the target WorkflowRun model. It is a

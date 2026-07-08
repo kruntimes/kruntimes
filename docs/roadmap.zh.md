@@ -166,7 +166,7 @@ controller wiring 累积不必要的冲突。
   初始实现 TODO：
   - [x] 增加设计文档，覆盖 API shape、validation、status、component boundaries 和
     breaking-change scope；
-  - 增加 `WorkflowRun` API types、CRD validation、status 和 controller skeleton；
+  - [x] 增加 `WorkflowRun` API types、CRD validation、status 和 controller skeleton；
   - 将 `Workflow` API types 改为 reusable definitions；
   - [x] 增加 `Action` API types、CRD validation、status 和 controller skeleton；
   - 实现 top-level、job 和 step calls 的 namespace-local `uses` resolution；

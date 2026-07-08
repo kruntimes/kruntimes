@@ -547,6 +547,110 @@ func TestCRDValidationAllowsWorkflowWithoutNeeds(t *testing.T) {
 	}
 }
 
+func TestCRDValidationAllowsInlineWorkflowRun(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-workflowrun-validation-")
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "inline", Namespace: ns.Name},
+		Spec: v1alpha1.WorkflowRunSpec{
+			Jobs: map[string]v1alpha1.JobSpec{
+				"test": {
+					RunsOn: "bash",
+					Steps:  []v1alpha1.StepSpec{{Name: "unit", Run: "make test"}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, workflowRun); err != nil {
+		t.Fatalf("create inline workflowrun: %v", err)
+	}
+}
+
+func TestCRDValidationAllowsWorkflowRunUses(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-workflowrun-uses-validation-")
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "reusable", Namespace: ns.Name},
+		Spec: v1alpha1.WorkflowRunSpec{
+			Uses: "build-and-test",
+			With: map[string]string{
+				"ref": "main",
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, workflowRun); err != nil {
+		t.Fatalf("create workflowrun uses: %v", err)
+	}
+}
+
+func TestCRDValidationRejectsInvalidWorkflowRunShape(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-workflowrun-shape-validation-")
+
+	tests := []struct {
+		name string
+		spec v1alpha1.WorkflowRunSpec
+	}{
+		{
+			name: "missing-jobs-and-uses",
+			spec: v1alpha1.WorkflowRunSpec{},
+		},
+		{
+			name: "jobs-and-uses",
+			spec: v1alpha1.WorkflowRunSpec{
+				Uses: "build-and-test",
+				Jobs: map[string]v1alpha1.JobSpec{
+					"test": {
+						RunsOn: "bash",
+						Steps:  []v1alpha1.StepSpec{{Name: "unit", Run: "make test"}},
+					},
+				},
+			},
+		},
+		{
+			name: "inline-with-inputs",
+			spec: v1alpha1.WorkflowRunSpec{
+				With: map[string]string{"ref": "main"},
+				Jobs: map[string]v1alpha1.JobSpec{
+					"test": {
+						RunsOn: "bash",
+						Steps:  []v1alpha1.StepSpec{{Name: "unit", Run: "make test"}},
+					},
+				},
+			},
+		},
+		{
+			name: "invalid-uses-name",
+			spec: v1alpha1.WorkflowRunSpec{Uses: "bad/name"},
+		},
+		{
+			name: "unknown-need",
+			spec: v1alpha1.WorkflowRunSpec{
+				Jobs: map[string]v1alpha1.JobSpec{
+					"test": {
+						RunsOn: "bash",
+						Needs:  []string{"missing"},
+						Steps:  []v1alpha1.StepSpec{{Name: "unit", Run: "make test"}},
+					},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workflowRun := &v1alpha1.WorkflowRun{
+				ObjectMeta: metav1.ObjectMeta{Name: tt.name, Namespace: ns.Name},
+				Spec:       tt.spec,
+			}
+			if err := k8sClient.Create(ctx, workflowRun); !apierrors.IsInvalid(err) {
+				t.Fatalf("invalid workflowrun error = %v, want Invalid", err)
+			}
+		})
+	}
+}
+
 func TestCRDValidationRejectsUnsupportedWorkflowStepShape(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-step-validation-")
