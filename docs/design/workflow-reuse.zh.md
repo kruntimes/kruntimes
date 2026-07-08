@@ -279,6 +279,8 @@ status:
 2. 增加 `WorkflowRun` API types、CRD validation、status 和 controller skeleton。
 3. 将 `Workflow` API types 改为 reusable definitions。
 4. 增加 `Action` API types、CRD validation、status 和 controller skeleton。
+   Namespace-local resolution、input binding、output propagation 和 WorkflowRun
+   execution 是后续独立实现步骤。
 5. 实现 top-level、job 和 step `uses` 的 namespace-local reference resolution。
 6. 实现 input binding、expression context 和 output propagation。
 7. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。

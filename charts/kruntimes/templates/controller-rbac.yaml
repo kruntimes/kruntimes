@@ -58,6 +58,24 @@ rules:
   - apiGroups:
       - kruntimes.io
     resources:
+      - actions
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+      - patch
+  - apiGroups:
+      - kruntimes.io
+    resources:
+      - actions/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - kruntimes.io
+    resources:
       - runs
     verbs:
       - get

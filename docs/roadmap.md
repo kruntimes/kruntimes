@@ -189,7 +189,8 @@ a coherent experimental product. The current execution order is:
   - add `WorkflowRun` API types, CRD validation, status, and controller
     skeleton;
   - change `Workflow` API types to reusable definitions;
-  - add `Action` API types, CRD validation, status, and controller skeleton;
+  - [x] add `Action` API types, CRD validation, status, and controller
+    skeleton;
   - implement namespace-local `uses` resolution for top-level, job, and step
     calls;
   - implement input binding, expression context, and output propagation;

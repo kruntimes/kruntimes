@@ -153,6 +153,28 @@ references 和 cleanup 仍在 roadmap 中跟踪。
 
 `Workflow` 编排 child Runs。由于 API 仍然 experimental，Workflow 文档目前刻意保持最小化。
 
+### Action
+
+`Action` 为目标 WorkflowRun model 定义可复用 step group。它是 definition object，
+不是 execution instance。
+
+当前 spec 字段：
+
+| Field | Description |
+| --- | --- |
+| `spec.inputs` | Action 接受的可选 typed string inputs。 |
+| `spec.outputs` | Action 暴露的可选 expression-based outputs。 |
+| `spec.steps` | 有序 reusable steps。第一版只支持 `run` steps。 |
+
+当前 status 字段：
+
+| Field | Description |
+| --- | --- |
+| `status.conditions` | definition-level readiness 和 validation conditions。 |
+
+初始 controller 只记录 definition readiness。Namespace-local `uses` resolution、input
+binding、output propagation 和 WorkflowRun execution 仍在 roadmap 中跟踪。
+
 ## Runtime Server gRPC API
 
 Runtime Servers 实现 `api/runtime/v1/runtime.proto`：

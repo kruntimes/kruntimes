@@ -288,6 +288,8 @@ the implementation lands.
 2. Add `WorkflowRun` API types, CRD validation, status, and controller skeleton.
 3. Change `Workflow` API types to reusable definitions.
 4. Add `Action` API types, CRD validation, status, and controller skeleton.
+   Namespace-local resolution, input binding, output propagation, and
+   WorkflowRun execution are separate follow-up implementation steps.
 5. Implement namespace-local reference resolution for top-level, job, and step
    `uses`.
 6. Implement input binding, expression context, and output propagation.
