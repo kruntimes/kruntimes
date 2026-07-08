@@ -104,9 +104,26 @@ Common spec fields:
 | `spec.template` | `PodTemplateSpec` for Runtime Pods. |
 | `spec.daemonImage` | Optional override for the injected `runtimed` sidecar image. |
 | `spec.artifactStore` | Artifact backend configuration snapshot used by runtimed and maintainers. |
+| `spec.workspace` | Shared workspace volume. It defaults to an `emptyDir`; it can inline Kubernetes `VolumeSource` fields such as `persistentVolumeClaim`. |
 
 The controller owns reserved Runtime Pod fields needed by kruntimes, including
 the injected `runtimed` container and control-plane labels/annotations.
+
+Workspace examples:
+
+```yaml
+spec:
+  workspace:
+    emptyDir:
+      sizeLimit: 10Gi
+```
+
+```yaml
+spec:
+  workspace:
+    persistentVolumeClaim:
+      claimName: bash-workspace
+```
 
 ### Workflow
 

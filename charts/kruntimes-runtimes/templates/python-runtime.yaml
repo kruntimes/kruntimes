@@ -11,7 +11,7 @@ spec:
   capacity:
     {{- toYaml .Values.python.capacity | nindent 4 }}
   workspace:
-    sizeLimit: {{ .Values.workspace.sizeLimit | quote }}
+    {{- toYaml .Values.workspace | nindent 4 }}
   template:
     spec:
       containers:

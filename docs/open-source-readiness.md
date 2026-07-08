@@ -80,7 +80,7 @@ The Bash Runtime had real data races between execution goroutines and
 - [x] Fix concurrent access to shared task state in the Python Runtime.
 - [x] Clarify the isolation approach for Python handler mode; mark as
   trusted-code only until isolation is in place.
-- [x] Apply `workspace.sizeLimit` to the Runtime Pod `emptyDir`.
+- [x] Support `workspace.emptyDir.sizeLimit` on the Runtime Pod `emptyDir`.
 
 Acceptance criteria:
 

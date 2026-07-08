@@ -201,28 +201,64 @@ func TestBuildDeploymentMergesPodTemplate(t *testing.T) {
 	}
 }
 
-func TestBuildDeploymentAppliesWorkspaceSizeLimit(t *testing.T) {
+func TestBuildDeploymentAppliesWorkspacePVC(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
 			Template: runtimePodTemplate("bash-runtime:latest"),
 			Workspace: &v1alpha1.RuntimeWorkspaceSpec{
-				SizeLimit: quantityPtr(resource.MustParse("10Gi")),
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "bash-workspace",
+					},
+				},
 			},
 		},
 	}
 
 	deploy := (&RuntimeReconciler{}).buildDeployment(rt)
 	workspace := deploy.Spec.Template.Spec.Volumes[0]
-	if workspace.EmptyDir == nil || workspace.EmptyDir.SizeLimit == nil {
-		t.Fatalf("workspace emptyDir = %#v, want size limit", workspace.EmptyDir)
+	if workspace.PersistentVolumeClaim == nil {
+		t.Fatalf("workspace volume = %#v, want persistentVolumeClaim", workspace.VolumeSource)
 	}
-	if got := workspace.EmptyDir.SizeLimit.String(); got != "10Gi" {
-		t.Fatalf("workspace sizeLimit = %q, want 10Gi", got)
+	if got := workspace.PersistentVolumeClaim.ClaimName; got != "bash-workspace" {
+		t.Fatalf("workspace claimName = %q, want bash-workspace", got)
+	}
+	if workspace.EmptyDir != nil {
+		t.Fatalf("workspace emptyDir = %#v, want nil when PVC is configured", workspace.EmptyDir)
 	}
 }
 
-func TestBuildDeploymentLeavesWorkspaceSizeLimitUnsetByDefault(t *testing.T) {
+func TestBuildDeploymentAppliesWorkspaceEmptyDirVolumeSource(t *testing.T) {
+	rt := &v1alpha1.Runtime{
+		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
+		Spec: v1alpha1.RuntimeSpec{
+			Template: runtimePodTemplate("bash-runtime:latest"),
+			Workspace: &v1alpha1.RuntimeWorkspaceSpec{
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{
+						Medium:    corev1.StorageMediumMemory,
+						SizeLimit: resource.NewQuantity(5*1024*1024*1024, resource.BinarySI),
+					},
+				},
+			},
+		},
+	}
+
+	deploy := (&RuntimeReconciler{}).buildDeployment(rt)
+	workspace := deploy.Spec.Template.Spec.Volumes[0]
+	if workspace.EmptyDir == nil {
+		t.Fatalf("workspace emptyDir = nil, want configured emptyDir")
+	}
+	if workspace.EmptyDir.Medium != corev1.StorageMediumMemory {
+		t.Fatalf("workspace emptyDir medium = %q, want Memory", workspace.EmptyDir.Medium)
+	}
+	if workspace.EmptyDir.SizeLimit == nil || workspace.EmptyDir.SizeLimit.String() != "5Gi" {
+		t.Fatalf("workspace emptyDir sizeLimit = %v, want 5Gi", workspace.EmptyDir.SizeLimit)
+	}
+}
+
+func TestBuildDeploymentUsesEmptyDirWorkspaceByDefault(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
@@ -607,10 +643,6 @@ func TestBuildDeploymentOmitsUnsetS3ArtifactStoreOptions(t *testing.T) {
 	if len(daemon.EnvFrom) != 0 {
 		t.Fatalf("daemon envFrom = %v, want none", daemon.EnvFrom)
 	}
-}
-
-func quantityPtr(q resource.Quantity) *resource.Quantity {
-	return &q
 }
 
 func runtimePodTemplate(image string) corev1.PodTemplateSpec {

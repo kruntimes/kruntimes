@@ -60,7 +60,7 @@ title: "开源准备计划"
 - [x] 对 Python Runtime 的取消和超时终止整个进程组，并等待退出。
 - [x] 修复 Python Runtime 中共享 task 状态的并发访问。
 - [x] 明确 Python handler 模式的隔离方案；在未隔离前标记为 trusted-code only。
-- [x] 将 `workspace.sizeLimit` 实际应用到 Runtime Pod 的 `emptyDir`。
+- [x] 支持 Runtime Pod `emptyDir` 上的 `workspace.emptyDir.sizeLimit`。
 
 验收标准：
 

@@ -283,10 +283,8 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 	}
 	volumes = append(volumes,
 		corev1.Volume{
-			Name: workspaceVolume,
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: workspaceVolumeSource(rt.Spec.Workspace),
-			},
+			Name:         workspaceVolume,
+			VolumeSource: workspaceVolumeSource(rt.Spec.Workspace),
 		},
 	)
 	artifactSecurityContext := configureArtifactStore(rt.Spec.ArtifactStore, &daemonContainer, &volumes)
@@ -505,14 +503,49 @@ func defaultContainerSecurityContext() *corev1.SecurityContext {
 	}
 }
 
-func workspaceVolumeSource(workspace *v1alpha1.RuntimeWorkspaceSpec) *corev1.EmptyDirVolumeSource {
-	emptyDir := &corev1.EmptyDirVolumeSource{}
-	if workspace == nil || workspace.SizeLimit == nil {
-		return emptyDir
+func workspaceVolumeSource(workspace *v1alpha1.RuntimeWorkspaceSpec) corev1.VolumeSource {
+	if workspace == nil {
+		return corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
 	}
-	sizeLimit := workspace.SizeLimit.DeepCopy()
-	emptyDir.SizeLimit = &sizeLimit
-	return emptyDir
+
+	source := workspace.VolumeSource.DeepCopy()
+	if source == nil || !hasVolumeSource(*source) {
+		return corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
+	}
+	return *source
+}
+
+func hasVolumeSource(source corev1.VolumeSource) bool {
+	return source.HostPath != nil ||
+		source.EmptyDir != nil ||
+		source.GCEPersistentDisk != nil ||
+		source.AWSElasticBlockStore != nil ||
+		source.GitRepo != nil ||
+		source.Secret != nil ||
+		source.NFS != nil ||
+		source.ISCSI != nil ||
+		source.Glusterfs != nil ||
+		source.PersistentVolumeClaim != nil ||
+		source.RBD != nil ||
+		source.FlexVolume != nil ||
+		source.Cinder != nil ||
+		source.CephFS != nil ||
+		source.Flocker != nil ||
+		source.DownwardAPI != nil ||
+		source.FC != nil ||
+		source.AzureFile != nil ||
+		source.ConfigMap != nil ||
+		source.VsphereVolume != nil ||
+		source.Quobyte != nil ||
+		source.AzureDisk != nil ||
+		source.PhotonPersistentDisk != nil ||
+		source.Projected != nil ||
+		source.PortworxVolume != nil ||
+		source.ScaleIO != nil ||
+		source.StorageOS != nil ||
+		source.CSI != nil ||
+		source.Ephemeral != nil ||
+		source.Image != nil
 }
 
 func configureArtifactStore(store *v1alpha1.RuntimeArtifactStoreSpec, daemon *corev1.Container, volumes *[]corev1.Volume) *corev1.PodSecurityContext {

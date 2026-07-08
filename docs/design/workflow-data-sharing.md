@@ -126,8 +126,9 @@ spec:
 The preferred API should inline Kubernetes `corev1.VolumeSource` fields under
 `spec.workspace` instead of inventing a separate workspace volume model or
 nesting another `volumeSource` object. `emptyDir` remains the default when no
-explicit workspace volume source is set. Existing `workspace.sizeLimit` can be
-migrated into, or treated as shorthand for, `workspace.emptyDir`.
+explicit workspace volume source is set. EmptyDir options such as `sizeLimit`
+should use the native `workspace.emptyDir.sizeLimit` shape instead of a
+kruntimes-specific shorthand.
 
 This Runtime workspace volume work is a prerequisite for durable or
 PVC-backed `PersistentWorkspace` behavior. The first implementation can still
@@ -317,7 +318,7 @@ Required safeguards:
 
 1. Add this design document and review the API shape.
 2. Extend `Runtime.spec.workspace` to inline Kubernetes `VolumeSource` fields,
-   while preserving the current emptyDir default and sizeLimit behavior.
+   while preserving the current emptyDir default behavior.
 3. Add `PersistentWorkspace` API types, CRD validation, status, and controller.
 4. Add Run `workspace` reference fields.
 5. Add Kubernetes-style Run affinity/anti-affinity fields.

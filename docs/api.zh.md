@@ -100,9 +100,26 @@ gateway 和 function runtime contract 工作。
 | `spec.template` | Runtime Pods 使用的 `PodTemplateSpec`。 |
 | `spec.daemonImage` | 可选的注入 `runtimed` sidecar image override。 |
 | `spec.artifactStore` | runtimed 和 maintainers 使用的 artifact backend configuration snapshot。 |
+| `spec.workspace` | 共享 workspace volume。默认是 `emptyDir`；也可以 inline Kubernetes `VolumeSource` 字段，例如 `persistentVolumeClaim`。 |
 
 controller 拥有 kruntimes 所需的保留 Runtime Pod 字段，包括注入的 `runtimed` container
 以及 control-plane labels/annotations。
+
+Workspace 示例：
+
+```yaml
+spec:
+  workspace:
+    emptyDir:
+      sizeLimit: 10Gi
+```
+
+```yaml
+spec:
+  workspace:
+    persistentVolumeClaim:
+      claimName: bash-workspace
+```
 
 ### Workflow
 
