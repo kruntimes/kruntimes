@@ -158,6 +158,29 @@ binding, Run workspace references, and cleanup are tracked in the roadmap.
 `Workflow` orchestrates child Runs. Workflow docs are still intentionally
 minimal while the API remains experimental.
 
+### Action
+
+`Action` defines a reusable step group for the target WorkflowRun model. It is a
+definition object, not an execution instance.
+
+Current spec fields:
+
+| Field | Description |
+| --- | --- |
+| `spec.inputs` | Optional typed string inputs accepted by the Action. |
+| `spec.outputs` | Optional expression-based outputs exposed by the Action. |
+| `spec.steps` | Ordered reusable steps. The first version supports `run` steps only. |
+
+Current status fields:
+
+| Field | Description |
+| --- | --- |
+| `status.conditions` | Definition-level readiness and validation conditions. |
+
+The initial controller records definition readiness only. Namespace-local
+`uses` resolution, input binding, output propagation, and WorkflowRun execution
+are tracked in the roadmap.
+
 ## Runtime Server gRPC API
 
 Runtime Servers implement `api/runtime/v1/runtime.proto`:

@@ -682,6 +682,54 @@ func TestCRDValidationRejectsInvalidPersistentWorkspaceMode(t *testing.T) {
 	}
 }
 
+func TestCRDValidationRejectsActionWithoutSteps(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-action-steps-validation-")
+
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "empty", Namespace: ns.Name},
+		Spec: v1alpha1.ActionSpec{
+			Steps: []v1alpha1.StepSpec{},
+		},
+	}
+	if err := k8sClient.Create(ctx, action); !apierrors.IsInvalid(err) {
+		t.Fatalf("empty action steps error = %v, want Invalid", err)
+	}
+}
+
+func TestCRDValidationRejectsInvalidActionInputType(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-action-input-validation-")
+
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "bad-input", Namespace: ns.Name},
+		Spec: v1alpha1.ActionSpec{
+			Inputs: map[string]v1alpha1.ActionInputSpec{
+				"version": {Type: v1alpha1.ActionInputType("number")},
+			},
+			Steps: []v1alpha1.StepSpec{{Name: "setup", Run: "echo setup"}},
+		},
+	}
+	if err := k8sClient.Create(ctx, action); !apierrors.IsInvalid(err) {
+		t.Fatalf("invalid action input type error = %v, want Invalid", err)
+	}
+}
+
+func TestCRDValidationRejectsActionStepUses(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-action-step-uses-validation-")
+
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "nested-uses", Namespace: ns.Name},
+		Spec: v1alpha1.ActionSpec{
+			Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: "another-action"}},
+		},
+	}
+	if err := k8sClient.Create(ctx, action); !apierrors.IsInvalid(err) {
+		t.Fatalf("action step uses error = %v, want Invalid", err)
+	}
+}
+
 func testNamespace(t *testing.T, generateName string) *corev1.Namespace {
 	t.Helper()
 	ns := &corev1.Namespace{}
