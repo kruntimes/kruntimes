@@ -193,7 +193,7 @@ wiring from accumulating avoidable conflicts.
   Initial implementation TODO:
   - [x] add a design document covering API shape, validation, status,
     component boundaries, and breaking-change scope;
-  - add `WorkflowRun` API types, CRD validation, status, and controller
+  - [x] add `WorkflowRun` API types, CRD validation, status, and controller
     skeleton;
   - change `Workflow` API types to reusable definitions;
   - [x] add `Action` API types, CRD validation, status, and controller
