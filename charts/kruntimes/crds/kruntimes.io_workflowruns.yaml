@@ -128,10 +128,26 @@ spec:
                       maxItems: 128
                       minItems: 1
                       type: array
-                  required:
-                  - runs-on
-                  - steps
+                    uses:
+                      description: Uses references a reusable Workflow in the same
+                        namespace.
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                      type: string
+                    with:
+                      additionalProperties:
+                        type: string
+                      description: With passes string inputs to the reusable Workflow
+                        referenced by Uses.
+                      maxProperties: 256
+                      type: object
                   type: object
+                  x-kubernetes-validations:
+                  - message: exactly one of steps or uses must be set
+                    rule: has(self.steps) != has(self.uses)
+                  - message: with can only be set when uses is set
+                    rule: '!has(self.with) || has(self.uses)'
                 description: |-
                   Jobs is a map of inline job names to job specs. Jobs run in parallel
                   unless constrained by needs; the map order is not significant.

@@ -151,7 +151,25 @@ references 和 cleanup 仍在 roadmap 中跟踪。
 
 ### Workflow
 
-`Workflow` 编排 child Runs。由于 API 仍然 experimental，Workflow 文档目前刻意保持最小化。
+`Workflow` 定义 reusable workflow。它是 definition object，不是 execution instance。
+创建 `WorkflowRun` 才会执行 inline jobs 或调用 reusable Workflows。
+
+当前 spec 字段：
+
+| Field | Description |
+| --- | --- |
+| `spec.inputs` | 该 Workflow 接受的可选 typed string inputs。 |
+| `spec.outputs` | 该 Workflow 暴露的可选 expression-based outputs。 |
+| `spec.jobs` | Reusable jobs。每个 job 当前支持 inline `steps` 或 namespace-local `uses` 二选一。 |
+
+当前 status 字段：
+
+| Field | Description |
+| --- | --- |
+| `status.conditions` | Definition-level readiness 和 validation conditions。skeleton controller 会记录 `Ready=True`。 |
+
+Workflow execution 已迁移到 `WorkflowRun` API。Namespace-local `uses` resolution、
+input binding、output propagation 和 WorkflowRun execution 仍在 roadmap 中跟踪。
 
 ### WorkflowRun
 

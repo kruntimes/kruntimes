@@ -17,8 +17,8 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.phase
-      name: Phase
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -26,7 +26,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Workflow is the Schema for the workflows API.
+        description: Workflow is the Schema for reusable workflow definitions.
         properties:
           apiVersion:
             description: |-
@@ -46,8 +46,30 @@ spec:
           metadata:
             type: object
           spec:
-            description: WorkflowSpec defines the desired state of Workflow.
+            description: WorkflowSpec defines a reusable Workflow definition.
             properties:
+              inputs:
+                additionalProperties:
+                  description: WorkflowInputSpec defines one reusable Workflow input.
+                  properties:
+                    default:
+                      description: Default is the default string value used when the
+                        caller does not pass this input.
+                      maxLength: 8192
+                      type: string
+                    required:
+                      description: Required marks the input as required.
+                      type: boolean
+                    type:
+                      default: string
+                      description: Type is the input type.
+                      enum:
+                      - string
+                      type: string
+                  type: object
+                description: Inputs defines parameters accepted by this Workflow.
+                maxProperties: 64
+                type: object
               jobs:
                 additionalProperties:
                   description: JobSpec defines a single job within a workflow.
@@ -128,14 +150,31 @@ spec:
                       maxItems: 128
                       minItems: 1
                       type: array
-                  required:
-                  - runs-on
-                  - steps
+                    uses:
+                      description: Uses references a reusable Workflow in the same
+                        namespace.
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                      type: string
+                    with:
+                      additionalProperties:
+                        type: string
+                      description: With passes string inputs to the reusable Workflow
+                        referenced by Uses.
+                      maxProperties: 256
+                      type: object
                   type: object
+                  x-kubernetes-validations:
+                  - message: exactly one of steps or uses must be set
+                    rule: has(self.steps) != has(self.uses)
+                  - message: with can only be set when uses is set
+                    rule: '!has(self.with) || has(self.uses)'
                 description: |-
-                  Jobs is a map of job names to job specs. Jobs run in parallel unless
-                  constrained by needs; the map order is not significant.
-                  Job names become Kubernetes label values on child Runs.
+                  Jobs is a map of reusable job names to job specs. Jobs run in parallel
+                  unless constrained by needs; the map order is not significant.
+                  Job names become Kubernetes label values on child Runs when a WorkflowRun
+                  executes this definition.
                 maxProperties: 64
                 minProperties: 1
                 type: object
@@ -143,6 +182,23 @@ spec:
                 - message: job names must be valid Kubernetes label values with at
                     most 63 characters
                   rule: self.all(name, size(name) <= 63 && name.matches('^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$'))
+              outputs:
+                additionalProperties:
+                  description: WorkflowOutputSpec defines one reusable Workflow output.
+                  properties:
+                    value:
+                      description: Value is a ${{ }} expression evaluated after the
+                        Workflow jobs run.
+                      maxLength: 8192
+                      minLength: 1
+                      type: string
+                  required:
+                  - value
+                  type: object
+                description: Outputs defines values exposed by this Workflow after
+                  its jobs complete.
+                maxProperties: 64
+                type: object
             required:
             - jobs
             type: object
@@ -151,11 +207,12 @@ spec:
               rule: self.jobs.all(name, !has(self.jobs[name].needs) || self.jobs[name].needs.all(need,
                 need in self.jobs && need != name))
           status:
-            description: WorkflowStatus defines the observed state of Workflow.
+            description: WorkflowStatus defines the observed state of a reusable Workflow
+              definition.
             properties:
               conditions:
-                description: Conditions represent the current state of the Workflow's
-                  lifecycle conditions.
+                description: Conditions represent definition-level validation and
+                  readiness.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -215,69 +272,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              jobs:
-                additionalProperties:
-                  description: JobStatus tracks the status of a job.
-                  properties:
-                    phase:
-                      description: Phase is the current phase of the job.
-                      enum:
-                      - Pending
-                      - Waiting
-                      - Running
-                      - Succeeded
-                      - Failed
-                      type: string
-                    steps:
-                      additionalProperties:
-                        description: StepStatus tracks the status of a step.
-                        properties:
-                          outputs:
-                            additionalProperties:
-                              type: string
-                            description: Outputs is key-value pairs exposed by this
-                              step.
-                            maxProperties: 64
-                            type: object
-                          phase:
-                            description: Phase is the current phase of the step.
-                            enum:
-                            - Pending
-                            - Running
-                            - Succeeded
-                            - Failed
-                            type: string
-                          runName:
-                            description: RunName is the name of the Run CRD created
-                              for this step.
-                            type: string
-                        required:
-                        - phase
-                        type: object
-                      description: Steps tracks the status of each step by name.
-                      maxProperties: 128
-                      type: object
-                  required:
-                  - phase
-                  type: object
-                description: Jobs tracks the status of each job by name.
-                maxProperties: 64
-                type: object
-              message:
-                description: Message is a human-readable status or error message.
-                maxLength: 4096
-                type: string
-              phase:
-                default: Pending
-                description: Phase is the current lifecycle phase of the workflow.
-                enum:
-                - Pending
-                - Running
-                - Succeeded
-                - Failed
-                type: string
-            required:
-            - phase
             type: object
         type: object
     served: true

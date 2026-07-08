@@ -71,11 +71,17 @@ helm uninstall kruntimes-runtimes --namespace default --ignore-not-found
 helm uninstall kruntimes --namespace kruntimes-system --ignore-not-found
 ```
 
-Platform 卸载默认不删除 CRDs。这是有意为之：删除 CRDs 会删除集群中所有的 `Runtime`、
-`Run` 和 `Workflow` 对象。仅在备份或有意丢弃这些对象后才移除 CRDs：
+Platform 卸载默认不删除 CRDs。这是有意为之：删除 CRDs 会删除集群中所有 kruntimes
+custom resources。仅在备份或有意丢弃这些对象后才移除 CRDs：
 
 ```bash
-kubectl delete crd runs.kruntimes.io runtimes.kruntimes.io workflows.kruntimes.io
+kubectl delete crd \
+  runtimes.kruntimes.io \
+  runs.kruntimes.io \
+  workflows.kruntimes.io \
+  workflowruns.kruntimes.io \
+  actions.kruntimes.io \
+  persistentworkspaces.kruntimes.io
 ```
 
 外部 artifact stores、object buckets、PVC 内容和外部日志系统不会被 Helm 卸载删除。
@@ -85,14 +91,14 @@ kubectl delete crd runs.kruntimes.io runtimes.kruntimes.io workflows.kruntimes.i
 至少备份以下内容：
 
 - Platform 和 Runtime charts 的 Helm release values。
-- 你打算恢复的 namespace 中的 `Runtime`、`Run` 和 `Workflow` custom resources。
+- 你打算恢复的 namespace 中的 kruntimes custom resources。
 - Runtime artifact stores 或自定义 Runtime Pod 模板引用的 Secrets。
 - Artifact stores 使用的 PVCs 或 object storage buckets。
 
 Kubernetes 对象备份示例：
 
 ```bash
-kubectl get runtime,runs,workflows -A -o yaml > kruntimes-objects.yaml
+kubectl get runtime,runs,workflows,workflowruns,actions,persistentworkspaces -A -o yaml > kruntimes-objects.yaml
 helm get values kruntimes -n kruntimes-system --all > kruntimes-values.yaml
 helm get values kruntimes-runtimes -n default --all > kruntimes-runtimes-values.yaml
 ```

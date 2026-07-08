@@ -40,7 +40,7 @@ func newWorkflowCreateCmd(getter genericclioptions.RESTClientGetter, scheme *run
 
 	cmd := &cobra.Command{
 		Use:   "create -f <file>",
-		Short: "Create a Workflow from a GitHub Actions workflow file.",
+		Short: "Create a reusable Workflow definition from a GitHub Actions workflow file.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := clientFromConfig(getter, scheme)
@@ -67,7 +67,7 @@ func newWorkflowCreateCmd(getter genericclioptions.RESTClientGetter, scheme *run
 			if err := c.Create(cmd.Context(), wf); err != nil {
 				return fmt.Errorf("create workflow: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Workflow %s created\n", wf.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Workflow definition %s created\n", wf.Name)
 			return nil
 		},
 	}
