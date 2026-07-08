@@ -121,6 +121,34 @@ spec:
       claimName: bash-workspace
 ```
 
+### PersistentWorkspace
+
+`PersistentWorkspace` 表示一个命名的 workspace 边界，后续可以被 Runs 和 Workflow-managed
+jobs 引用。它不是 Workflow-specific 对象。
+
+当前 spec 字段：
+
+| Field | Description |
+| --- | --- |
+| `spec.runtime` | 支撑该 workspace 的 Runtime workspace volume 所属 Runtime。 |
+| `spec.mode` | 绑定模式。第一版支持 `RuntimePodLocal`。 |
+| `spec.ttlSecondsAfterUnused` | workspace 变为 unused 后的可选保留窗口。 |
+| `spec.cleanupPolicy` | 清理行为。支持 `DeleteAfterTTL` 和 `Retain`。 |
+
+当前 status 字段：
+
+| Field | Description |
+| --- | --- |
+| `status.phase` | 生命周期阶段：`Pending`、`Bound`、`Lost` 或 `Released`。 |
+| `status.runtime` | observed Runtime 名称。 |
+| `status.boundPod` | 绑定实现完成后支撑 workspace 的 Runtime Pod。 |
+| `status.path` | 绑定实现完成后的 runtime-local workspace path。 |
+| `status.lastUsedTime` | 最后一次 observed use time。 |
+| `status.conditions` | lifecycle 和 validation conditions。 |
+
+初始 controller 只负责 validation 和 lifecycle status。Runtime Pod binding、Run workspace
+references 和 cleanup 仍在 roadmap 中跟踪。
+
 ### Workflow
 
 `Workflow` 编排 child Runs。由于 API 仍然 experimental，Workflow 文档目前刻意保持最小化。

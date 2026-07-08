@@ -149,7 +149,8 @@ a coherent experimental product. The current execution order is:
     cleanup, security, and compatibility;
   - [x] extend `Runtime.spec.workspace` to inline Kubernetes `VolumeSource`
     fields while keeping the current emptyDir default behavior;
-  - add `PersistentWorkspace` API types, CRD validation, status, and controller;
+  - [x] add `PersistentWorkspace` API types, CRD validation, status, and
+    controller skeleton;
   - add Run fields for workspace reference and Kubernetes-style Run affinity;
   - update scheduler placement to respect required/preferred Run affinity while
     keeping no-capacity Runs Pending;

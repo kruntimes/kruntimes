@@ -125,6 +125,34 @@ spec:
       claimName: bash-workspace
 ```
 
+### PersistentWorkspace
+
+`PersistentWorkspace` represents a named workspace boundary that can later be
+referenced by Runs and Workflow-managed jobs. It is not Workflow-specific.
+
+Current spec fields:
+
+| Field | Description |
+| --- | --- |
+| `spec.runtime` | Runtime whose workspace volume backs this workspace. |
+| `spec.mode` | Binding mode. The first supported value is `RuntimePodLocal`. |
+| `spec.ttlSecondsAfterUnused` | Optional retention window after the workspace becomes unused. |
+| `spec.cleanupPolicy` | Cleanup behavior. Supported values are `DeleteAfterTTL` and `Retain`. |
+
+Current status fields:
+
+| Field | Description |
+| --- | --- |
+| `status.phase` | Lifecycle phase: `Pending`, `Bound`, `Lost`, or `Released`. |
+| `status.runtime` | Observed Runtime name. |
+| `status.boundPod` | Runtime Pod backing the workspace once binding is implemented. |
+| `status.path` | Runtime-local workspace path once binding is implemented. |
+| `status.lastUsedTime` | Last observed use time. |
+| `status.conditions` | Lifecycle and validation conditions. |
+
+The initial controller validates and records lifecycle status only. Runtime Pod
+binding, Run workspace references, and cleanup are tracked in the roadmap.
+
 ### Workflow
 
 `Workflow` orchestrates child Runs. Workflow docs are still intentionally
