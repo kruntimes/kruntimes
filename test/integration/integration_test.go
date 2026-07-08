@@ -650,6 +650,38 @@ func TestCRDValidationRejectsMultipleRuntimeWorkspaceVolumeSources(t *testing.T)
 	}
 }
 
+func TestCRDValidationRejectsInvalidPersistentWorkspaceRuntime(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-persistent-workspace-runtime-validation-")
+
+	workspace := &v1alpha1.PersistentWorkspace{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-runtime", Namespace: ns.Name},
+		Spec: v1alpha1.PersistentWorkspaceSpec{
+			Runtime: "bad/runtime",
+		},
+	}
+	if err := k8sClient.Create(ctx, workspace); !apierrors.IsInvalid(err) {
+		t.Fatalf("invalid persistent workspace runtime error = %v, want Invalid", err)
+	}
+}
+
+func TestCRDValidationRejectsInvalidPersistentWorkspaceMode(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-persistent-workspace-mode-validation-")
+
+	workspace := &v1alpha1.PersistentWorkspace{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-mode", Namespace: ns.Name},
+		Spec: v1alpha1.PersistentWorkspaceSpec{
+			Runtime:       "bash",
+			Mode:          v1alpha1.PersistentWorkspaceMode("PVC"),
+			CleanupPolicy: v1alpha1.PersistentWorkspaceDeleteAfterTTL,
+		},
+	}
+	if err := k8sClient.Create(ctx, workspace); !apierrors.IsInvalid(err) {
+		t.Fatalf("invalid persistent workspace mode error = %v, want Invalid", err)
+	}
+}
+
 func testNamespace(t *testing.T, generateName string) *corev1.Namespace {
 	t.Helper()
 	ns := &corev1.Namespace{}

@@ -40,6 +40,24 @@ rules:
   - apiGroups:
       - kruntimes.io
     resources:
+      - persistentworkspaces
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+      - patch
+  - apiGroups:
+      - kruntimes.io
+    resources:
+      - persistentworkspaces/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - kruntimes.io
+    resources:
       - runs
     verbs:
       - get

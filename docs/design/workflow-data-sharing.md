@@ -107,8 +107,9 @@ rules.
 
 ## Runtime Workspace Volume
 
-Today `Runtime.spec.workspace` only configures an `emptyDir` size limit, and the
-controller always creates the reserved `workspace` volume as `emptyDir`.
+Today `Runtime.spec.workspace` inlines Kubernetes `VolumeSource` fields, and the
+controller creates the reserved `workspace` volume as `emptyDir` when no explicit
+workspace volume source is set.
 
 Target direction:
 
@@ -319,7 +320,9 @@ Required safeguards:
 1. Add this design document and review the API shape.
 2. Extend `Runtime.spec.workspace` to inline Kubernetes `VolumeSource` fields,
    while preserving the current emptyDir default behavior.
-3. Add `PersistentWorkspace` API types, CRD validation, status, and controller.
+3. Add `PersistentWorkspace` API types, CRD validation, status, and controller
+   skeleton. Binding to Runtime Pods, Run workspace references, and cleanup are
+   separate follow-up implementation steps.
 4. Add Run `workspace` reference fields.
 5. Add Kubernetes-style Run affinity/anti-affinity fields.
 6. Update scheduler placement to respect required/preferred Run affinity while

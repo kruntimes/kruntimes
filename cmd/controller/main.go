@@ -117,6 +117,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	persistentWorkspaceReconciler := &controller.PersistentWorkspaceReconciler{
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("PersistentWorkspace"),
+		Scheme: mgr.GetScheme(),
+	}
+	if err := persistentWorkspaceReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "PersistentWorkspace")
+		os.Exit(1)
+	}
+
 	staleReaper := &controller.StaleRunReaper{
 		Client:             mgr.GetClient(),
 		Log:                ctrl.Log.WithName("controllers").WithName("StaleReaper"),
