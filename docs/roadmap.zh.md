@@ -176,6 +176,15 @@ controller wiring 累积不必要的冲突。
     validation failures 和 output propagation。
 - [ ] Dashboard：设计并实现只读 web dashboard，类似 Tekton Dashboard，可以按
   namespace 查看 Runs，并检查状态和日志。
+  初始实现 TODO：
+  - [x] 增加只读 [Dashboard 设计文档](design/dashboard/)，覆盖 scope、architecture、
+    RBAC、log access 和 implementation sequence；
+  - 增加 dashboard backend，提供只读 Kubernetes API access；
+  - 实现 Run list/detail APIs，并遵守 namespace-aware RBAC；
+  - 通过 backend-controlled 路径代理 Run log tail/follow；
+  - 增加只读 frontend views，覆盖 namespace selection、Run lists、Run details、
+    conditions、outputs、artifact references 和 logs；
+  - 增加可选 Helm installation support 和 E2E smoke coverage。
 - [ ] 随着安装面逐步稳定，继续推进供应链、安全、兼容性和运维加固。
 
 ### 迈向 v1.0

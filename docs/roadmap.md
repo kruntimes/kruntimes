@@ -207,6 +207,15 @@ wiring from accumulating avoidable conflicts.
 - [ ] Dashboard: design and build a read-only web dashboard, similar in spirit
   to Tekton Dashboard, that can browse Runs by namespace and inspect status and
   logs.
+  Initial implementation TODO:
+  - [x] add a read-only [Dashboard design document](design/dashboard/) covering
+    scope, architecture, RBAC, log access, and implementation sequence;
+  - add a dashboard backend with read-only Kubernetes API access;
+  - implement Run list/detail APIs with namespace-aware RBAC;
+  - proxy Run log tail/follow through a backend-controlled path;
+  - add read-only frontend views for namespace selection, Run lists, Run
+    details, conditions, outputs, artifact references, and logs;
+  - add optional Helm installation support and E2E smoke coverage.
 - [ ] Continue supply-chain, security, compatibility, and operational
   hardening as the installation surface stabilizes.
 
