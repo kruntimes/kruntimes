@@ -169,13 +169,19 @@ controller wiring 累积不必要的冲突。
   - [x] 增加 `WorkflowRun` API types、CRD validation、status 和 controller skeleton；
   - [x] 将 `Workflow` API types 改为 reusable definitions；
   - [x] 增加 `Action` API types、CRD validation、status 和 controller skeleton；
-  - 实现 top-level、job 和 step calls 的 namespace-local `uses` resolution；
-  - 实现 input binding、expression context 和 output propagation；
   - [x] 为 reusable Workflow definitions 和 WorkflowRun skeleton 增加面向 workflow
     语义的 `krt wf` verbs；
   - [x] 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`；
+  - 实现 resolved graph snapshot storage 和 recovery；
+  - 实现 top-level `WorkflowRun.spec.uses` 的 namespace-local resolution；
+  - 实现 top-level reusable Workflow calls 的 input binding；
+  - 实现 inline WorkflowRun execution，覆盖 `jobs` 和 `steps.run`；
+  - 实现 job-level reusable Workflow calls；
+  - 实现 step-level Action expansion；
+  - 实现 `inputs`、`steps` 和 `jobs` contexts 的 expression evaluation；
+  - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；
   - 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
-    validation failures 和 output propagation。
+    validation failures、output propagation 和 controller restart recovery。
 - [ ] Dashboard：设计并实现只读 web dashboard，类似 Tekton Dashboard，可以按
   namespace 查看 Runs，并检查状态和日志。
   初始实现 TODO：

@@ -198,14 +198,20 @@ wiring from accumulating avoidable conflicts.
   - [x] change `Workflow` API types to reusable definitions;
   - [x] add `Action` API types, CRD validation, status, and controller
     skeleton;
-  - implement namespace-local `uses` resolution for top-level, job, and step
-    calls;
-  - implement input binding, expression context, and output propagation;
   - [x] add workflow-oriented `krt wf` verbs for reusable Workflow definitions
     and WorkflowRun skeletons;
   - [x] update CLI verbs and docs so execution uses `WorkflowRun`;
+  - implement resolved graph snapshot storage and recovery;
+  - implement namespace-local top-level `WorkflowRun.spec.uses` resolution;
+  - implement input binding for top-level reusable Workflow calls;
+  - implement inline WorkflowRun execution for `jobs` and `steps.run`;
+  - implement job-level reusable Workflow calls;
+  - implement step-level Action expansion;
+  - implement expression evaluation for `inputs`, `steps`, and `jobs` contexts;
+  - promote child Run outputs into WorkflowRun step/job/workflow outputs;
   - add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
-    calls, validation failures, and output propagation.
+    calls, validation failures, output propagation, and controller restart
+    recovery.
 - [ ] Dashboard: design and build a read-only web dashboard, similar in spirit
   to Tekton Dashboard, that can browse Runs by namespace and inspect status and
   logs.
