@@ -201,6 +201,69 @@ delivery deterministic and safe.
 Full stdout and stderr are exposed through structured runtimed logs keyed by
 Run UID. They are not copied wholesale into `status.message`.
 
+## WorkflowRun Skeleton
+
+`WorkflowRun` is the target execution-instance API for the reusable workflow
+model. The current v0.x skeleton accepts inline jobs or a namespace-local
+reusable Workflow reference, but execution is not implemented yet.
+
+Create an inline WorkflowRun manifest:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  name: ci-demo
+spec:
+  jobs:
+    test:
+      runs-on: bash
+      steps:
+        - name: unit
+          run: make test
+```
+
+Submit and inspect it with `krt`:
+
+```bash
+krt wf run -f workflowrun.yaml -n default
+krt wf run ls -n default
+krt wf run get ci-demo -n default
+krt wf run delete ci-demo -n default
+```
+
+Create a WorkflowRun that references a reusable Workflow:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  name: release-demo
+spec:
+  uses: build-and-test
+  with:
+    ref: main
+```
+
+`krt wf run -f` also accepts a small GitHub Actions style workflow file and
+converts it to an inline `WorkflowRun`.
+
+For reusable Workflow definitions:
+
+```bash
+krt wf create -f workflow.yaml -n default
+krt wf ls -n default
+krt wf trigger build-and-test --set ref=main -n default
+krt wf delete build-and-test -n default
+```
+
+`krt wf trigger` creates a `WorkflowRun` with `spec.uses` pointing at the
+reusable Workflow. The created `WorkflowRun` remains pending until WorkflowRun
+execution is implemented.
+
+`krt wf run cancel` is reserved for the future cancellation API and currently
+returns a clear unsupported error.
+
 ## CLI
 
 The `krt` CLI supports kubeconfig/context, namespace selection, waiting, output
