@@ -218,6 +218,30 @@ outputs:
 - 缺少 required inputs 时 validation 或 reconcile 早期失败；
 - 未知 input names 时 validation 或 reconcile 早期失败。
 
+WorkflowRun controller 应在展开 child jobs 或 steps 之前完成 input binding：
+
+1. 从 callee 声明的 `inputs` 开始。
+2. 应用每个 input 的 `default`。
+3. 覆盖 caller 通过 `with` 传入的 values。
+4. 拒绝缺少 required inputs 的调用。
+5. 拒绝未知的 `with` keys。
+6. 在创建 Runs 之前，将 resolved execution snapshot 存入 `WorkflowRun.status`
+   或内部 child object annotation。
+
+已经启动的 WorkflowRun 不应观察到被引用 `Workflow` 或 `Action` 的后续变更。Reusable
+definitions 可以随时间变化，但每个 WorkflowRun 一旦 accepted，它的执行必须是确定的。后续
+可以增加显式 revisioning；第一版应捕获足够的 resolved data，让 retries 和 controller
+restart 后的恢复保持稳定。
+
+Step outputs 来自 child Run 结果。step 将小型 key-value outputs 写入
+`KRUNTIME_OUTPUTS`；runtimed 将其持久化到 child Run status。WorkflowRun controller
+读取这些 child Run outputs，并提升到
+`WorkflowRun.status.jobs.<job>.steps.<step>.outputs`。
+
+Job outputs 在 job 内所有 steps 成功后计算。Workflow outputs 在 reusable Workflow 内所有
+jobs 成功后计算。当 expression 引用了不存在的 job、step 或 output key 时，output
+evaluation 必须让 WorkflowRun 失败。
+
 ## Reference Resolution
 
 第一版 references 保持 namespace-local：
@@ -232,6 +256,72 @@ URLs、Git refs 或 OCI refs。
 
 这样可以保持 API 小，并避免在 execution model 稳定前过早创建必须长期支持的 reference
 format。
+
+Reference resolution 应按以下顺序发生：
+
+1. 将 top-level `WorkflowRun.spec.uses` 解析到同 namespace 下的 `Workflow`。
+2. 将被引用 Workflow 的 jobs 展开到 WorkflowRun execution graph。
+3. 将每个 job-level `uses` 解析到同 namespace 下的 reusable `Workflow`。
+4. 将 reusable Workflow calls 展开为 nested job groups，并保持它们自己的
+   job/workspace/artifact boundary。
+5. 将每个 step-level `uses` 解析到同 namespace 下的 `Action`。
+6. 将 Action steps inline 展开到 caller job context。
+7. 在创建任何 child Runs 之前检测 cycles。
+
+Workflow calls 之间的 cycles 必须被拒绝。第一版中 Action 不应再调用另一个 Action，因为
+nested Action expansion 目前不需要，而且会增加 cycle detection 的复杂度。Reusable
+Workflow 只有在 controller 能证明 call graph 无环时，才可以调用另一个 Workflow。
+
+Resolution failures 应在创建任何 child Runs 前将 WorkflowRun 置为 `Failed`。典型情况包括
+missing references、namespace 假设不匹配、unsupported nested Action calls、input binding
+失败以及 cycles。
+
+## Execution Graph
+
+WorkflowRun controller 拥有 graph expansion 和 execution state。它不应依赖 scheduler 或
+runtimed 理解 Workflow 概念。
+
+第一版应使用简单、确定性的 graph 模型：
+
+- 每个 job 都有稳定的 execution path，例如 `jobs.build`，或从 reusable Workflow call
+  展开的 `jobs.release.jobs.build`；
+- 每个 step 都有稳定的 execution path，例如 `jobs.build.steps.package`；
+- 每个 child Run 都带有 WorkflowRun name、job path 和 step path labels；
+- child Run names 要么足够确定以支持 idempotent reconciliation，要么在创建新 Runs 前
+  通过 labels 发现已有 Runs；
+- controller 只在所有 dependency jobs 成功后创建 Runs；
+- failed、cancelled 或 timed-out child Runs 会让 owning WorkflowRun 失败，除非未来
+  retry/continue-on-error API 显式改变这个行为。
+
+第一版应支持一种执行策略：
+
+1. Accept WorkflowRun，并设置 `status.phase=Pending`。
+2. Resolve references 并 bind inputs。
+3. 持久化 resolved graph snapshot。
+4. 通过为每个 ready job 创建第一个 step Run 来启动 ready jobs。
+5. 当 step Run 成功时，收集 outputs，并创建下一个 step Run。
+6. 当 job 内所有 steps 成功时，计算 job outputs，并将 job 标记为 succeeded。
+7. 当所有 jobs 成功时，计算 WorkflowRun outputs，并将 WorkflowRun 标记为 succeeded。
+
+这有意避免增加单独的 WorkflowRunInvocation API。Child Runs 仍然是持久 execution records，
+scheduler/runtimed 仍然只操作 Runs。
+
+## Expression Context
+
+对于 v0.x，expressions 应保持足够小，只支持来自已知 context 的 string interpolation：
+
+| Context | 来源 |
+| --- | --- |
+| `inputs.<name>` | 当前 Workflow、Action 或 WorkflowRun 的 resolved inputs |
+| `steps.<step>.outputs.<name>` | 同一 job 内已经完成的前序 steps |
+| `jobs.<job>.outputs.<name>` | 同一 graph boundary 内已经完成的 dependency jobs |
+
+Expressions 不应访问 Kubernetes objects、environment variables、secrets、files、
+arbitrary functions 或 network resources。Secret handling 在暴露给 Workflow expressions
+之前需要单独设计。
+
+Evaluation 必须是确定且无副作用的。Unsupported syntax 或 missing values 应让
+WorkflowRun 失败，并提供清晰 condition 和 message。
 
 ## Status Model
 
@@ -281,12 +371,18 @@ status:
 4. 增加 `Action` API types、CRD validation、status 和 controller skeleton。
    Namespace-local resolution、input binding、output propagation 和 WorkflowRun
    execution 是后续独立实现步骤。
-5. 实现 top-level、job 和 step `uses` 的 namespace-local reference resolution。
-6. 实现 input binding、expression context 和 output propagation。
-7. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。
-8. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
-   validation failures 和 output propagation。
-9. reusable model 实现后，更新最终 v0.x demos。
+5. 实现 resolved graph snapshot 和 top-level `WorkflowRun.spec.uses` 的
+   namespace-local resolution。
+6. 实现 top-level reusable Workflow calls 的 input binding。
+7. 实现 inline WorkflowRun execution，覆盖 `jobs` 和 `steps.run`。
+8. 实现 job-level reusable Workflow calls。
+9. 实现 step-level Action expansion。
+10. 实现 expression evaluation 和 output propagation。
+11. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。
+12. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
+    validation failures、output propagation，以及从 resolved graph snapshot 进行
+    controller restart recovery。
+13. reusable model 实现后，更新最终 v0.x demos。
 
 当前实现状态：
 

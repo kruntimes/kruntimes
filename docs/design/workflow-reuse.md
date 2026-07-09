@@ -224,6 +224,33 @@ For v0.x, validation should prefer a narrow model:
 - missing required inputs fail validation or reconcile early;
 - unknown input names fail validation or reconcile early.
 
+The WorkflowRun controller should bind inputs before expanding child jobs or
+steps:
+
+1. Start from the callee's declared `inputs`.
+2. Apply each input `default`.
+3. Overlay caller-provided `with` values.
+4. Reject missing required inputs.
+5. Reject unknown `with` keys.
+6. Store a resolved execution snapshot in `WorkflowRun.status` or an internal
+   child object annotation before creating Runs.
+
+Do not let an already-started WorkflowRun observe mutable changes to a
+referenced `Workflow` or `Action`. Reusable definitions may change over time,
+but each WorkflowRun execution must be deterministic once accepted. Later work
+can add explicit revisioning; the first version should capture enough resolved
+data to make retries and controller restarts stable.
+
+Step outputs come from child Run results. A step writes small key-value outputs
+to `KRUNTIME_OUTPUTS`; runtimed persists them to the child Run status. The
+WorkflowRun controller reads those child Run outputs and promotes them into
+`WorkflowRun.status.jobs.<job>.steps.<step>.outputs`.
+
+Job outputs are evaluated after all steps in the job succeed. Workflow outputs
+are evaluated after all jobs in the reusable Workflow succeed. Output
+evaluation must fail the WorkflowRun when an expression references a missing
+job, step, or output key.
+
 ## Reference Resolution
 
 The first version should keep references namespace-local:
@@ -238,6 +265,78 @@ URLs, Git refs, or OCI refs until there is a concrete need.
 
 This keeps the API small and avoids creating a reference format that must be
 supported long-term before the execution model is stable.
+
+Reference resolution should happen in this order:
+
+1. Resolve a top-level `WorkflowRun.spec.uses` to a `Workflow` in the same
+   namespace.
+2. Expand the referenced Workflow jobs into the WorkflowRun execution graph.
+3. Resolve each job-level `uses` to a same-namespace reusable `Workflow`.
+4. Expand reusable Workflow calls as nested job groups with their own
+   job/workspace/artifact boundary.
+5. Resolve each step-level `uses` to a same-namespace `Action`.
+6. Expand Action steps inline inside the caller job context.
+7. Detect cycles before creating any child Runs.
+
+Cycles must be rejected across Workflow calls. An Action must not call another
+Action in the first version because nested Action expansion is not needed yet
+and makes cycle detection harder. A reusable Workflow may call another
+Workflow only when the controller can prove the call graph is acyclic.
+
+Resolution failures should set the WorkflowRun to `Failed` before creating any
+child Runs. Examples include missing references, wrong namespace assumptions,
+unsupported nested Action calls, input binding failures, and cycles.
+
+## Execution Graph
+
+The WorkflowRun controller owns graph expansion and execution state. It should
+not rely on scheduler or runtimed to understand Workflow concepts.
+
+The first implementation should use a simple deterministic graph model:
+
+- every job has a stable execution path, such as `jobs.build` or
+  `jobs.release.jobs.build` for a job expanded from a reusable Workflow call;
+- every step has a stable execution path, such as `jobs.build.steps.package`;
+- each child Run is labeled with the WorkflowRun name, job path, and step path;
+- child Run names are generated deterministically enough for idempotent
+  reconciliation, or are discovered through labels before creating new Runs;
+- the controller creates Runs only when all dependency jobs have succeeded;
+- failed, cancelled, or timed-out child Runs fail the owning WorkflowRun unless
+  a future retry/continue-on-error API explicitly changes that behavior.
+
+The first version should support one execution strategy:
+
+1. Accept the WorkflowRun and set `status.phase=Pending`.
+2. Resolve references and bind inputs.
+3. Persist the resolved graph snapshot.
+4. Start ready jobs by creating the first step Run for each job.
+5. When a step Run succeeds, collect outputs and create the next step Run.
+6. When all steps in a job succeed, evaluate job outputs and mark the job
+   succeeded.
+7. When all jobs succeed, evaluate WorkflowRun outputs and mark the WorkflowRun
+   succeeded.
+
+This deliberately avoids adding a separate WorkflowRunInvocation API. Child
+Runs remain the durable execution records, and scheduler/runtimed continue to
+operate only on Runs.
+
+## Expression Context
+
+For v0.x, expressions should stay intentionally small. They should support only
+string interpolation from known contexts:
+
+| Context | Available from |
+| --- | --- |
+| `inputs.<name>` | resolved inputs for the current Workflow, Action, or WorkflowRun |
+| `steps.<step>.outputs.<name>` | previous steps in the same job |
+| `jobs.<job>.outputs.<name>` | completed dependency jobs in the same graph boundary |
+
+Expressions should not access Kubernetes objects, environment variables,
+secrets, files, arbitrary functions, or network resources. Secret handling
+needs a separate design before it is exposed to Workflow expressions.
+
+Evaluation must be deterministic and side-effect free. Unsupported syntax or
+missing values should fail the WorkflowRun with a clear condition and message.
 
 ## Status Model
 
@@ -290,13 +389,18 @@ the implementation lands.
 4. Add `Action` API types, CRD validation, status, and controller skeleton.
    Namespace-local resolution, input binding, output propagation, and
    WorkflowRun execution are separate follow-up implementation steps.
-5. Implement namespace-local reference resolution for top-level, job, and step
-   `uses`.
-6. Implement input binding, expression context, and output propagation.
-7. Update CLI verbs and docs to use `WorkflowRun` for execution.
-8. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
-   calls, validation failures, and output propagation.
-9. Update the final v0.x demos after the reusable model is implemented.
+5. Implement the resolved graph snapshot and namespace-local top-level
+   `WorkflowRun.spec.uses` resolution.
+6. Implement input binding for top-level reusable Workflow calls.
+7. Implement inline WorkflowRun execution for `jobs` and `steps.run`.
+8. Implement job-level reusable Workflow calls.
+9. Implement step-level Action expansion.
+10. Implement expression evaluation and output propagation.
+11. Update CLI verbs and docs to use `WorkflowRun` for execution.
+12. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
+    calls, validation failures, output propagation, and controller restart
+    recovery from the resolved graph snapshot.
+13. Update the final v0.x demos after the reusable model is implemented.
 
 Current implementation status:
 
