@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/go-logr/logr"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -40,6 +41,9 @@ func (r *WorkflowRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if workflowRun.Status.Phase == "" {
 		workflowRun.Status.Phase = v1alpha1.WorkflowPending
 	}
+	if workflowRun.Status.Jobs == nil && len(workflowRun.Spec.Jobs) > 0 {
+		workflowRun.Status.Jobs = resolvedInlineJobStatuses(workflowRun.Spec.Jobs)
+	}
 	apimeta.SetStatusCondition(&workflowRun.Status.Conditions, metav1.Condition{
 		Type:               workflowRunAcceptedCondition,
 		Status:             metav1.ConditionTrue,
@@ -58,4 +62,29 @@ func (r *WorkflowRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.WorkflowRun{}).
 		Complete(r)
+}
+
+func resolvedInlineJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.JobStatus {
+	statuses := make(map[string]v1alpha1.JobStatus, len(jobs))
+	for jobName, job := range jobs {
+		pre := append([]string(nil), job.Needs...)
+		sort.Strings(pre)
+		phase := v1alpha1.JobPending
+		if len(pre) > 0 {
+			phase = v1alpha1.JobWaiting
+		}
+		steps := make([]v1alpha1.StepStatus, 0, len(job.Steps))
+		for _, step := range job.Steps {
+			steps = append(steps, v1alpha1.StepStatus{
+				Name:  step.Name,
+				Phase: v1alpha1.StepPending,
+			})
+		}
+		statuses[jobName] = v1alpha1.JobStatus{
+			Phase: phase,
+			Pre:   pre,
+			Steps: steps,
+		}
+	}
+	return statuses
 }

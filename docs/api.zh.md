@@ -190,7 +190,7 @@ skeleton：API、CRD validation、status、controller wiring 和面向 workflow 
 | Field | Description |
 | --- | --- |
 | `status.phase` | Lifecycle phase。skeleton controller 会初始化为 `Pending`。 |
-| `status.jobs` | 未来按 job name 记录 job execution status。 |
+| `status.jobs` | 按 job name 记录轻量 resolved job status。每个 job 记录 `pre` 和有序 step statuses。 |
 | `status.conditions` | Lifecycle conditions。skeleton controller 会记录 `Accepted=True`。 |
 
 ### Action

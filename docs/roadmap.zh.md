@@ -172,7 +172,7 @@ controller wiring 累积不必要的冲突。
   - [x] 为 reusable Workflow definitions 和 WorkflowRun skeleton 增加面向 workflow
     语义的 `krt wf` verbs；
   - [x] 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`；
-  - 实现 resolved graph snapshot storage 和 recovery；
+  - [x] 为 inline WorkflowRuns 初始化轻量 `status.jobs[*].pre` 和有序 `steps`；
   - 实现 top-level `WorkflowRun.spec.uses` 的 namespace-local resolution；
   - 实现 top-level reusable Workflow calls 的 input binding；
   - 实现 inline WorkflowRun execution，覆盖 `jobs` 和 `steps.run`；
