@@ -201,7 +201,8 @@ wiring from accumulating avoidable conflicts.
   - [x] add workflow-oriented `krt wf` verbs for reusable Workflow definitions
     and WorkflowRun skeletons;
   - [x] update CLI verbs and docs so execution uses `WorkflowRun`;
-  - implement resolved graph snapshot storage and recovery;
+  - [x] initialize lightweight `status.jobs[*].pre` and ordered `steps` for
+    inline WorkflowRuns;
   - implement namespace-local top-level `WorkflowRun.spec.uses` resolution;
   - implement input binding for top-level reusable Workflow calls;
   - implement inline WorkflowRun execution for `jobs` and `steps.run`;

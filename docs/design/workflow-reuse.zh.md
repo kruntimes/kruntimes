@@ -225,8 +225,7 @@ WorkflowRun controller 应在展开 child jobs 或 steps 之前完成 input bind
 3. 覆盖 caller 通过 `with` 传入的 values。
 4. 拒绝缺少 required inputs 的调用。
 5. 拒绝未知的 `with` keys。
-6. 在创建 Runs 之前，将 resolved execution snapshot 存入 `WorkflowRun.status`
-   或内部 child object annotation。
+6. 在创建 Runs 之前，将轻量 resolved DAG edges 存入 `WorkflowRun.status.jobs`。
 
 已经启动的 WorkflowRun 不应观察到被引用 `Workflow` 或 `Action` 的后续变更。Reusable
 definitions 可以随时间变化，但每个 WorkflowRun 一旦 accepted，它的执行必须是确定的。后续
@@ -235,8 +234,8 @@ restart 后的恢复保持稳定。
 
 Step outputs 来自 child Run 结果。step 将小型 key-value outputs 写入
 `KRUNTIME_OUTPUTS`；runtimed 将其持久化到 child Run status。WorkflowRun controller
-读取这些 child Run outputs，并提升到
-`WorkflowRun.status.jobs.<job>.steps.<step>.outputs`。
+读取这些 child Run outputs，并提升到匹配的有序
+`WorkflowRun.status.jobs.<job>.steps[]` entry。
 
 Job outputs 在 job 内所有 steps 成功后计算。Workflow outputs 在 reusable Workflow 内所有
 jobs 成功后计算。当 expression 引用了不存在的 job、step 或 output key 时，output
@@ -297,7 +296,7 @@ runtimed 理解 Workflow 概念。
 
 1. Accept WorkflowRun，并设置 `status.phase=Pending`。
 2. Resolve references 并 bind inputs。
-3. 持久化 resolved graph snapshot。
+3. 将 resolved predecessor job edges 持久化到 `status.jobs[*].pre`。
 4. 通过为每个 ready job 创建第一个 step Run 来启动 ready jobs。
 5. 当 step Run 成功时，收集 outputs，并创建下一个 step Run。
 6. 当 job 内所有 steps 成功时，计算 job outputs，并将 job 标记为 succeeded。
@@ -333,15 +332,28 @@ status:
   jobs:
     build:
       phase: Running
+      pre: []
+      next:
+        - test
       steps:
-        setup:
+        - name: package
           phase: Succeeded
           outputs:
-            python-version: "3.13"
+            image: agent:v0.1.0
+    test:
+      phase: Waiting
+      pre:
+        - build
+      steps:
+        - name: unit
+          phase: Pending
 ```
 
 `Workflow.status` 和 `Action.status` 只应包含 definition-level conditions，例如 validation
 或 readiness。它们不包含 per-execution job 或 step state。
+
+第一版实现只会为 inline `WorkflowRun.spec.jobs` 存储轻量 DAG edges 和有序 step status。
+它不会把完整 job specs、step commands、environment 或 source data 存入 status。
 
 ## 组件边界
 
@@ -371,7 +383,7 @@ status:
 4. 增加 `Action` API types、CRD validation、status 和 controller skeleton。
    Namespace-local resolution、input binding、output propagation 和 WorkflowRun
    execution 是后续独立实现步骤。
-5. 实现 resolved graph snapshot 和 top-level `WorkflowRun.spec.uses` 的
+5. 实现轻量 DAG edge snapshotting 和 top-level `WorkflowRun.spec.uses` 的
    namespace-local resolution。
 6. 实现 top-level reusable Workflow calls 的 input binding。
 7. 实现 inline WorkflowRun execution，覆盖 `jobs` 和 `steps.run`。
@@ -380,12 +392,14 @@ status:
 10. 实现 expression evaluation 和 output propagation。
 11. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。
 12. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
-    validation failures、output propagation，以及从 resolved graph snapshot 进行
-    controller restart recovery。
+    validation failures、output propagation，以及从 status DAG edges 进行 controller
+    restart recovery。
 13. reusable model 实现后，更新最终 v0.x demos。
 
 当前实现状态：
 
 - `WorkflowRun`、`Workflow` 和 `Action` API skeletons 已存在。
 - `Workflow` 现在是 reusable definition skeleton，不再执行 child Runs。
+- Inline WorkflowRuns 会初始化 `status.jobs[*].pre` 和有序
+  `status.jobs[*].steps`。
 - 旧 Workflow execution E2E coverage 暂时 skip，等待 WorkflowRun execution 实现后恢复。

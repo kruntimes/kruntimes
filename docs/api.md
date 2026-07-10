@@ -197,7 +197,7 @@ Current status fields:
 | Field | Description |
 | --- | --- |
 | `status.phase` | Lifecycle phase. The skeleton controller initializes it to `Pending`. |
-| `status.jobs` | Future job execution status keyed by job name. |
+| `status.jobs` | Lightweight resolved job status keyed by job name. Each job records `pre` and ordered step statuses. |
 | `status.conditions` | Lifecycle conditions. The skeleton controller records `Accepted=True`. |
 
 ### Action

@@ -232,8 +232,8 @@ steps:
 3. Overlay caller-provided `with` values.
 4. Reject missing required inputs.
 5. Reject unknown `with` keys.
-6. Store a resolved execution snapshot in `WorkflowRun.status` or an internal
-   child object annotation before creating Runs.
+6. Store the lightweight resolved DAG edges in `WorkflowRun.status.jobs`
+   before creating Runs.
 
 Do not let an already-started WorkflowRun observe mutable changes to a
 referenced `Workflow` or `Action`. Reusable definitions may change over time,
@@ -243,8 +243,8 @@ data to make retries and controller restarts stable.
 
 Step outputs come from child Run results. A step writes small key-value outputs
 to `KRUNTIME_OUTPUTS`; runtimed persists them to the child Run status. The
-WorkflowRun controller reads those child Run outputs and promotes them into
-`WorkflowRun.status.jobs.<job>.steps.<step>.outputs`.
+WorkflowRun controller reads those child Run outputs and promotes them into the
+matching ordered `WorkflowRun.status.jobs.<job>.steps[]` entry.
 
 Job outputs are evaluated after all steps in the job succeed. Workflow outputs
 are evaluated after all jobs in the reusable Workflow succeed. Output
@@ -308,7 +308,7 @@ The first version should support one execution strategy:
 
 1. Accept the WorkflowRun and set `status.phase=Pending`.
 2. Resolve references and bind inputs.
-3. Persist the resolved graph snapshot.
+3. Persist resolved predecessor job edges in `status.jobs[*].pre`.
 4. Start ready jobs by creating the first step Run for each job.
 5. When a step Run succeeds, collect outputs and create the next step Run.
 6. When all steps in a job succeed, evaluate job outputs and mark the job
@@ -348,16 +348,30 @@ status:
   jobs:
     build:
       phase: Running
+      pre: []
+      next:
+        - test
       steps:
-        setup:
+        - name: package
           phase: Succeeded
           outputs:
-            python-version: "3.13"
+            image: agent:v0.1.0
+    test:
+      phase: Waiting
+      pre:
+        - build
+      steps:
+        - name: unit
+          phase: Pending
 ```
 
 `Workflow.status` and `Action.status` should contain definition-level
 conditions only, such as validation or readiness. They should not contain
 per-execution job or step state.
+
+The first implementation stores only lightweight DAG edges and ordered step
+status for inline `WorkflowRun.spec.jobs`. It does not store full job specs,
+step commands, environment, or source data in status.
 
 ## Component Boundaries
 
@@ -389,7 +403,7 @@ the implementation lands.
 4. Add `Action` API types, CRD validation, status, and controller skeleton.
    Namespace-local resolution, input binding, output propagation, and
    WorkflowRun execution are separate follow-up implementation steps.
-5. Implement the resolved graph snapshot and namespace-local top-level
+5. Implement lightweight DAG edge snapshotting and namespace-local top-level
    `WorkflowRun.spec.uses` resolution.
 6. Implement input binding for top-level reusable Workflow calls.
 7. Implement inline WorkflowRun execution for `jobs` and `steps.run`.
@@ -399,7 +413,7 @@ the implementation lands.
 11. Update CLI verbs and docs to use `WorkflowRun` for execution.
 12. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
     calls, validation failures, output propagation, and controller restart
-    recovery from the resolved graph snapshot.
+    recovery from the status DAG edges.
 13. Update the final v0.x demos after the reusable model is implemented.
 
 Current implementation status:
@@ -407,5 +421,7 @@ Current implementation status:
 - `WorkflowRun`, `Workflow`, and `Action` API skeletons exist.
 - `Workflow` is now a reusable definition skeleton and no longer executes
   child Runs.
+- Inline WorkflowRuns initialize `status.jobs[*].pre` and ordered
+  `status.jobs[*].steps`.
 - Old Workflow execution E2E coverage is skipped until WorkflowRun execution
   lands.

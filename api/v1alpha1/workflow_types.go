@@ -189,15 +189,29 @@ type JobStatus struct {
 	// Phase is the current phase of the job.
 	Phase JobPhase `json:"phase"`
 
-	// Steps tracks the status of each step by name.
+	// Pre is the resolved list of predecessor jobs that must complete before
+	// this job can start.
 	// +optional
-	// +kubebuilder:validation:MaxProperties=128
-	Steps map[string]StepStatus `json:"steps,omitempty"`
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=63
+	Pre []string `json:"pre,omitempty"`
+
+	// Steps tracks each step in the original job step order.
+	// +optional
+	// +kubebuilder:validation:MaxItems=128
+	Steps []StepStatus `json:"steps,omitempty"`
 }
 
 // +kubebuilder:object:generate=true
 // StepStatus tracks the status of a step.
 type StepStatus struct {
+	// Name is the step name.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
+	Name string `json:"name"`
+
 	// Phase is the current phase of the step.
 	Phase StepPhase `json:"phase"`
 

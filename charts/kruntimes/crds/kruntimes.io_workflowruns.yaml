@@ -259,10 +259,27 @@ spec:
                       - Succeeded
                       - Failed
                       type: string
+                    pre:
+                      description: |-
+                        Pre is the resolved list of predecessor jobs that must complete before
+                        this job can start.
+                      items:
+                        maxLength: 63
+                        type: string
+                      maxItems: 64
+                      type: array
                     steps:
-                      additionalProperties:
+                      description: Steps tracks each step in the original job step
+                        order.
+                      items:
                         description: StepStatus tracks the status of a step.
                         properties:
+                          name:
+                            description: Name is the step name.
+                            maxLength: 63
+                            minLength: 1
+                            pattern: ^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$
+                            type: string
                           outputs:
                             additionalProperties:
                               type: string
@@ -283,11 +300,11 @@ spec:
                               for this step.
                             type: string
                         required:
+                        - name
                         - phase
                         type: object
-                      description: Steps tracks the status of each step by name.
-                      maxProperties: 128
-                      type: object
+                      maxItems: 128
+                      type: array
                   required:
                   - phase
                   type: object
