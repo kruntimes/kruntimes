@@ -176,7 +176,12 @@ controller wiring 累积不必要的冲突。
   - [x] 实现 top-level `WorkflowRun.spec.uses` 的 namespace-local
     resolution；
   - [x] 实现 top-level reusable Workflow calls 的 input binding；
-  - 实现 inline WorkflowRun execution，覆盖 `jobs` 和 `steps.run`；
+  - 在 inline execution changes 开始前审计现有 E2E tests，移除或更新仍使用旧
+    Workflow execution model 的失效 cases，保证迁移过程中 `make e2e` 始终可以通过；
+  - 实现 ready jobs 的 inline WorkflowRun first-step Run creation；
+  - 实现 child Run status observation 和 step status updates；
+  - 实现 next-step creation、job terminal handling 和 WorkflowRun terminal handling；
+  - 实现 in-progress inline WorkflowRuns 的 controller restart recovery；
   - 实现 job-level reusable Workflow calls；
   - 实现 step-level Action expansion；
   - 实现 `inputs`、`steps` 和 `jobs` contexts 的 expression evaluation；

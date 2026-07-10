@@ -305,6 +305,24 @@ runtimed 理解 Workflow 概念。
 这有意避免增加单独的 WorkflowRunInvocation API。Child Runs 仍然是持久 execution records，
 scheduler/runtimed 仍然只操作 Runs。
 
+Inline WorkflowRun execution 应拆成小的、可 review 的步骤落地：
+
+1. 在修改 execution behavior 前，先审计现有 E2E tests。移除或更新仍在测试旧
+   Workflow execution model 的失效 case，保证整个迁移过程中 `make e2e` 始终可以通过。
+2. 只为 ready inline jobs 创建第一个 child Run，将 child Run name 记录到对应的有序
+   step status，并通过 labels 发现已有 child Runs 来保证创建幂等。
+3. Watch 或 reconcile 属于 WorkflowRun 的 child Runs，并将 terminal child Run phase
+   复制到对应 step status。
+4. 当 step 成功时，在同一 job 内创建下一个 step Run；当 step failed、cancelled 或
+   timed out 时，将 job 和 WorkflowRun 标记为 failed。
+5. 当 job 内所有 steps 成功时，将 job 标记为 succeeded，并解锁所有 `pre`
+   dependencies 已成功的 jobs。
+6. 当所有 jobs 成功时，将 WorkflowRun 标记为 succeeded；如果任一 dependency job
+   失败，则不创建 child Runs，并将 dependent jobs 标记为 failed。
+7. 增加 restart recovery tests，证明 controller 可以从
+   `status.jobs[*].steps[*].runName` 和 child Run labels 继续执行，且不会重复创建 Runs。
+8. 只有当 controller 能端到端执行 inline WorkflowRun 后，再增加 E2E coverage。
+
 ## Expression Context
 
 对于 v0.x，expressions 应保持足够小，只支持来自已知 context 的 string interpolation：
@@ -333,8 +351,6 @@ status:
     build:
       phase: Running
       pre: []
-      next:
-        - test
       steps:
         - name: package
           phase: Succeeded
@@ -386,15 +402,18 @@ status:
 5. 实现轻量 DAG edge snapshotting 和 top-level `WorkflowRun.spec.uses` 的
    namespace-local resolution。
 6. 实现 top-level reusable Workflow calls 的 input binding。
-7. 实现 inline WorkflowRun execution，覆盖 `jobs` 和 `steps.run`。
-8. 实现 job-level reusable Workflow calls。
-9. 实现 step-level Action expansion。
-10. 实现 expression evaluation 和 output propagation。
-11. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。
-12. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
+7. 实现 ready jobs 的 inline WorkflowRun first-step Run creation。
+8. 实现 child Run status observation 和 step status updates。
+9. 实现 next-step creation、job terminal handling 和 WorkflowRun terminal handling。
+10. 实现 in-progress inline WorkflowRuns 的 controller restart recovery。
+11. 实现 job-level reusable Workflow calls。
+12. 实现 step-level Action expansion。
+13. 实现 expression evaluation 和 output propagation。
+14. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。
+15. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
     validation failures、output propagation，以及从 status DAG edges 进行 controller
     restart recovery。
-13. reusable model 实现后，更新最终 v0.x demos。
+16. reusable model 实现后，更新最终 v0.x demos。
 
 当前实现状态：
 
