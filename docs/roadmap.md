@@ -205,7 +205,7 @@ wiring from accumulating avoidable conflicts.
     inline WorkflowRuns;
   - [x] implement namespace-local top-level `WorkflowRun.spec.uses`
     resolution;
-  - implement input binding for top-level reusable Workflow calls;
+  - [x] implement input binding for top-level reusable Workflow calls;
   - implement inline WorkflowRun execution for `jobs` and `steps.run`;
   - implement job-level reusable Workflow calls;
   - implement step-level Action expansion;

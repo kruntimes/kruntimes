@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -17,6 +18,18 @@ import (
 )
 
 const workflowRunAcceptedCondition = "Accepted"
+
+type workflowInputBindingError struct {
+	err error
+}
+
+func (e *workflowInputBindingError) Error() string {
+	return e.err.Error()
+}
+
+func (e *workflowInputBindingError) Unwrap() error {
+	return e.err
+}
 
 // WorkflowRunReconciler owns WorkflowRun execution-instance status.
 type WorkflowRunReconciler struct {
@@ -53,13 +66,18 @@ func (r *WorkflowRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if workflowRun.Status.Phase != v1alpha1.WorkflowFailed && workflowRun.Status.Jobs == nil {
 		jobs, err := r.resolveWorkflowRunJobs(ctx, &workflowRun)
 		if err != nil {
-			if !apierrors.IsNotFound(err) {
+			var inputErr *workflowInputBindingError
+			switch {
+			case apierrors.IsNotFound(err):
+				condition.Reason = "WorkflowResolutionFailed"
+			case errors.As(err, &inputErr):
+				condition.Reason = "WorkflowInputBindingFailed"
+			default:
 				return ctrl.Result{}, err
 			}
 			workflowRun.Status.Phase = v1alpha1.WorkflowFailed
 			workflowRun.Status.Message = err.Error()
 			condition.Status = metav1.ConditionFalse
-			condition.Reason = "WorkflowResolutionFailed"
 			condition.Message = err.Error()
 		} else if len(jobs) > 0 {
 			workflowRun.Status.Jobs = resolvedJobStatuses(jobs)
@@ -92,7 +110,37 @@ func (r *WorkflowRunReconciler) resolveWorkflowRunJobs(ctx context.Context, work
 	if err := r.Get(ctx, key, &workflow); err != nil {
 		return nil, fmt.Errorf("get workflow %s/%s: %w", workflowRun.Namespace, workflowRun.Spec.Uses, err)
 	}
+	if _, err := bindWorkflowInputs(workflow.Spec.Inputs, workflowRun.Spec.With); err != nil {
+		return nil, &workflowInputBindingError{err: fmt.Errorf("bind workflow inputs for %s/%s: %w", workflowRun.Namespace, workflowRun.Spec.Uses, err)}
+	}
 	return workflow.Spec.Jobs, nil
+}
+
+func bindWorkflowInputs(inputs map[string]v1alpha1.WorkflowInputSpec, with map[string]string) (map[string]string, error) {
+	for name := range with {
+		if _, ok := inputs[name]; !ok {
+			return nil, fmt.Errorf("unknown input %q", name)
+		}
+	}
+
+	bound := make(map[string]string, len(inputs))
+	names := make([]string, 0, len(inputs))
+	for name := range inputs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		input := inputs[name]
+		value, ok := with[name]
+		if !ok {
+			value = input.Default
+		}
+		if value == "" && input.Required && !ok && input.Default == "" {
+			return nil, fmt.Errorf("missing required input %q", name)
+		}
+		bound[name] = value
+	}
+	return bound, nil
 }
 
 func resolvedJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.JobStatus {

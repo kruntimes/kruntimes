@@ -163,6 +163,10 @@ func TestWorkflowRunReconcilerResolvesReusableWorkflow(t *testing.T) {
 	workflow := &v1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "build-and-test", Namespace: "default"},
 		Spec: v1alpha1.WorkflowSpec{
+			Inputs: map[string]v1alpha1.WorkflowInputSpec{
+				"ref":    {Required: true},
+				"target": {Default: "linux-amd64"},
+			},
 			Jobs: map[string]v1alpha1.JobSpec{
 				"build": {
 					RunsOn: "bash",
@@ -263,5 +267,139 @@ func TestWorkflowRunReconcilerFailsWhenReusableWorkflowMissing(t *testing.T) {
 	cond := apimeta.FindStatusCondition(updated.Status.Conditions, workflowRunAcceptedCondition)
 	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "WorkflowResolutionFailed" {
 		t.Fatalf("condition = %#v, want resolution failure", cond)
+	}
+}
+
+func TestWorkflowRunReconcilerFailsWhenWorkflowInputUnknown(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "build-and-test", Namespace: "default"},
+		Spec: v1alpha1.WorkflowSpec{
+			Inputs: map[string]v1alpha1.WorkflowInputSpec{
+				"ref": {Required: true},
+			},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {
+					RunsOn: "bash",
+					Steps:  []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}},
+				},
+			},
+		},
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", Generation: 7},
+		Spec: v1alpha1.WorkflowRunSpec{
+			Uses: "build-and-test",
+			With: map[string]string{
+				"ref":     "main",
+				"unknown": "value",
+			},
+		},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflow, workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{
+		Namespace: workflowRun.Namespace,
+		Name:      workflowRun.Name,
+	}}
+	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile workflowrun: %v", err)
+	}
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.WorkflowFailed {
+		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowFailed)
+	}
+	if !strings.Contains(updated.Status.Message, `unknown input "unknown"`) {
+		t.Fatalf("message = %q, want unknown input", updated.Status.Message)
+	}
+	cond := apimeta.FindStatusCondition(updated.Status.Conditions, workflowRunAcceptedCondition)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "WorkflowInputBindingFailed" {
+		t.Fatalf("condition = %#v, want input binding failure", cond)
+	}
+}
+
+func TestWorkflowRunReconcilerFailsWhenWorkflowInputRequired(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "build-and-test", Namespace: "default"},
+		Spec: v1alpha1.WorkflowSpec{
+			Inputs: map[string]v1alpha1.WorkflowInputSpec{
+				"ref": {Required: true},
+			},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {
+					RunsOn: "bash",
+					Steps:  []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}},
+				},
+			},
+		},
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", Generation: 8},
+		Spec: v1alpha1.WorkflowRunSpec{
+			Uses: "build-and-test",
+		},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflow, workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{
+		Namespace: workflowRun.Namespace,
+		Name:      workflowRun.Name,
+	}}
+	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile workflowrun: %v", err)
+	}
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.WorkflowFailed {
+		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowFailed)
+	}
+	if !strings.Contains(updated.Status.Message, `missing required input "ref"`) {
+		t.Fatalf("message = %q, want missing required input", updated.Status.Message)
+	}
+	cond := apimeta.FindStatusCondition(updated.Status.Conditions, workflowRunAcceptedCondition)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "WorkflowInputBindingFailed" {
+		t.Fatalf("condition = %#v, want input binding failure", cond)
+	}
+}
+
+func TestBindWorkflowInputsAppliesDefaults(t *testing.T) {
+	bound, err := bindWorkflowInputs(
+		map[string]v1alpha1.WorkflowInputSpec{
+			"ref":    {Required: true},
+			"target": {Default: "linux-amd64"},
+		},
+		map[string]string{"ref": "main"},
+	)
+	if err != nil {
+		t.Fatalf("bindWorkflowInputs() error = %v", err)
+	}
+	if bound["ref"] != "main" || bound["target"] != "linux-amd64" {
+		t.Fatalf("bound inputs = %#v, want ref and default target", bound)
 	}
 }
