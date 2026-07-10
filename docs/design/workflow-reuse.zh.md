@@ -405,4 +405,7 @@ status:
 - Top-level `WorkflowRun.spec.uses` 会解析同 namespace 下的 reusable
   Workflow，并基于被引用 Workflow 的 jobs 初始化 `status.jobs`。Missing
   references 会在创建 child Runs 前让 WorkflowRun 失败。
+- Top-level reusable Workflow calls 会提前绑定 string inputs：应用 defaults，
+  missing required inputs 会失败，unknown `with` keys 也会失败。Bound values 会等到
+  WorkflowRun execution 实现后再用于 child Runs。
 - 旧 Workflow execution E2E coverage 暂时 skip，等待 WorkflowRun execution 实现后恢复。
