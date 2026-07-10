@@ -212,7 +212,7 @@ wiring from accumulating avoidable conflicts.
   - [x] implement inline WorkflowRun first-step Run creation for ready jobs;
   - [x] refactor WorkflowRun controller reconciliation into a load/plan/apply
     state-machine structure before adding more execution cases;
-  - implement child Run status observation and step status updates;
+  - [x] implement child Run status observation and step status updates;
   - implement next-step creation, job terminal handling, and WorkflowRun
     terminal handling;
   - implement controller restart recovery for in-progress inline WorkflowRuns;

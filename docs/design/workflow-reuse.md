@@ -482,5 +482,8 @@ Current implementation status:
 - Inline WorkflowRuns create first-step child Runs for ready inline jobs and
   record the child Run name in ordered step status. Child Run result
   observation and next-step creation are still follow-up work.
+- WorkflowRuns observe terminal child Run phases and copy them into the
+  matching step status. Next-step creation and job/WorkflowRun terminal
+  handling are still follow-up work.
 - Old Workflow execution E2E coverage is skipped until WorkflowRun execution
   lands.

@@ -450,4 +450,6 @@ status:
 - Inline WorkflowRuns 会为 ready inline jobs 创建 first-step child Runs，并将 child
   Run name 记录到有序 step status 中。Child Run result observation 和 next-step
   creation 仍是后续工作。
+- WorkflowRuns 会观察 terminal child Run phases，并复制到匹配的 step status。
+  Next-step creation 和 job/WorkflowRun terminal handling 仍是后续工作。
 - 旧 Workflow execution E2E coverage 暂时 skip，等待 WorkflowRun execution 实现后恢复。
