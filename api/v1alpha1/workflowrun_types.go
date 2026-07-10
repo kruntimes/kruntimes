@@ -2,6 +2,18 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+const (
+	// WorkflowRunAcceptedCondition reports whether the WorkflowRun was accepted by the controller.
+	WorkflowRunAcceptedCondition = "Accepted"
+
+	// WorkflowRunUIDLabel identifies child Runs owned by a WorkflowRun.
+	WorkflowRunUIDLabel = "kruntimes.io/workflowrun-uid"
+	// WorkflowJobLabel identifies the workflow job that owns a child Run.
+	WorkflowJobLabel = "kruntimes.io/workflow-job"
+	// WorkflowStepLabel identifies the workflow step that owns a child Run.
+	WorkflowStepLabel = "kruntimes.io/workflow-step"
+)
+
 // +kubebuilder:object:generate=true
 // WorkflowRunSpec defines one workflow execution instance.
 // +kubebuilder:validation:XValidation:rule="has(self.jobs) != has(self.uses)",message="exactly one of jobs or uses must be set"

@@ -328,18 +328,22 @@ Inline WorkflowRun execution should land in small, reviewable steps:
 2. Create only the first child Run for each ready inline job, record the child
    Run name on the matching ordered step status, and make creation idempotent
    by discovering existing child Runs through labels.
-3. Watch or reconcile child Runs owned by a WorkflowRun and copy terminal child
+3. Before adding more execution states, refactor the WorkflowRun controller
+   into a load/plan/apply state-machine shape: load the WorkflowRun and related
+   resources, derive the current state, switch on that state to produce the
+   intended actions, then apply Kubernetes writes.
+4. Watch or reconcile child Runs owned by a WorkflowRun and copy terminal child
    Run phase into the matching step status.
-4. When a step succeeds, create the next step Run in the same job; when a step
+5. When a step succeeds, create the next step Run in the same job; when a step
    fails, is cancelled, or times out, fail the job and WorkflowRun.
-5. When all steps in a job succeed, mark the job succeeded and unblock jobs
+6. When all steps in a job succeed, mark the job succeeded and unblock jobs
    whose `pre` dependencies have all succeeded.
-6. When all jobs succeed, mark the WorkflowRun succeeded; if any dependency
+7. When all jobs succeed, mark the WorkflowRun succeeded; if any dependency
    job fails, fail dependent jobs without creating child Runs.
-7. Add restart recovery tests that prove the controller can continue from
+8. Add restart recovery tests that prove the controller can continue from
    `status.jobs[*].steps[*].runName` and child Run labels without duplicating
    Runs.
-8. Add E2E coverage only after the controller can execute an inline
+9. Add E2E coverage only after the controller can execute an inline
    WorkflowRun end to end.
 
 ## Expression Context
@@ -453,5 +457,10 @@ Current implementation status:
 - Top-level reusable Workflow calls bind string inputs early: defaults are
   applied, missing required inputs fail, and unknown `with` keys fail. Bound
   values are not evaluated into child Runs until WorkflowRun execution lands.
+- Stale E2E stubs for the old Workflow execution model have been removed so
+  E2E stays focused on behavior that should still pass during the migration.
+- Inline WorkflowRuns create first-step child Runs for ready inline jobs and
+  record the child Run name in ordered step status. Child Run result
+  observation and next-step creation are still follow-up work.
 - Old Workflow execution E2E coverage is skipped until WorkflowRun execution
   lands.

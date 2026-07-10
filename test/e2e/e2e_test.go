@@ -1266,22 +1266,6 @@ func TestPythonInlineRun(t *testing.T) {
 	t.Logf("Python Run completed successfully: %s", run.Status.Message)
 }
 
-func TestWorkflowSingleJob(t *testing.T) {
-	t.Skip("Workflow execution moved to WorkflowRun; restore coverage with WorkflowRun execution")
-}
-
-func TestWorkflowChildRunCancellationFailsWorkflow(t *testing.T) {
-	t.Skip("Workflow execution moved to WorkflowRun; restore cancellation coverage with WorkflowRun execution")
-}
-
-func TestWorkflowLongNamesCreateHashedChildRun(t *testing.T) {
-	t.Skip("Workflow execution moved to WorkflowRun; restore child Run naming coverage with WorkflowRun execution")
-}
-
-func TestWorkflowStepOutputs(t *testing.T) {
-	t.Skip("Workflow execution moved to WorkflowRun; restore output coverage with WorkflowRun execution")
-}
-
 func TestRunInvalidOutputsDoesNotRetry(t *testing.T) {
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
@@ -1396,10 +1380,6 @@ echo "succeeded on attempt $count"
 		t.Fatalf("expected at least 3 attempts, got %d", run.Status.Attempt)
 	}
 	t.Logf("Run succeeded after %d attempts: %s", run.Status.Attempt, run.Status.Message)
-}
-
-func TestWorkflowTopoOrder(t *testing.T) {
-	t.Skip("Workflow execution moved to WorkflowRun; restore ordering coverage with WorkflowRun execution")
 }
 
 func TestStaleRunNoRetry(t *testing.T) {
