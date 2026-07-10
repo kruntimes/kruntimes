@@ -320,6 +320,28 @@ This deliberately avoids adding a separate WorkflowRunInvocation API. Child
 Runs remain the durable execution records, and scheduler/runtimed continue to
 operate only on Runs.
 
+Inline WorkflowRun execution should land in small, reviewable steps:
+
+1. Before changing execution behavior, audit the existing E2E tests. Remove or
+   update stale cases that still exercise the old Workflow execution model so
+   `make e2e` can stay passing throughout the migration.
+2. Create only the first child Run for each ready inline job, record the child
+   Run name on the matching ordered step status, and make creation idempotent
+   by discovering existing child Runs through labels.
+3. Watch or reconcile child Runs owned by a WorkflowRun and copy terminal child
+   Run phase into the matching step status.
+4. When a step succeeds, create the next step Run in the same job; when a step
+   fails, is cancelled, or times out, fail the job and WorkflowRun.
+5. When all steps in a job succeed, mark the job succeeded and unblock jobs
+   whose `pre` dependencies have all succeeded.
+6. When all jobs succeed, mark the WorkflowRun succeeded; if any dependency
+   job fails, fail dependent jobs without creating child Runs.
+7. Add restart recovery tests that prove the controller can continue from
+   `status.jobs[*].steps[*].runName` and child Run labels without duplicating
+   Runs.
+8. Add E2E coverage only after the controller can execute an inline
+   WorkflowRun end to end.
+
 ## Expression Context
 
 For v0.x, expressions should stay intentionally small. They should support only
@@ -349,8 +371,6 @@ status:
     build:
       phase: Running
       pre: []
-      next:
-        - test
       steps:
         - name: package
           phase: Succeeded
@@ -406,15 +426,19 @@ the implementation lands.
 5. Implement lightweight DAG edge snapshotting and namespace-local top-level
    `WorkflowRun.spec.uses` resolution.
 6. Implement input binding for top-level reusable Workflow calls.
-7. Implement inline WorkflowRun execution for `jobs` and `steps.run`.
-8. Implement job-level reusable Workflow calls.
-9. Implement step-level Action expansion.
-10. Implement expression evaluation and output propagation.
-11. Update CLI verbs and docs to use `WorkflowRun` for execution.
-12. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
+7. Implement inline WorkflowRun first-step Run creation for ready jobs.
+8. Implement child Run status observation and step status updates.
+9. Implement next-step creation, job terminal handling, and WorkflowRun
+   terminal handling.
+10. Implement controller restart recovery for in-progress inline WorkflowRuns.
+11. Implement job-level reusable Workflow calls.
+12. Implement step-level Action expansion.
+13. Implement expression evaluation and output propagation.
+14. Update CLI verbs and docs to use `WorkflowRun` for execution.
+15. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
     calls, validation failures, output propagation, and controller restart
     recovery from the status DAG edges.
-13. Update the final v0.x demos after the reusable model is implemented.
+16. Update the final v0.x demos after the reusable model is implemented.
 
 Current implementation status:
 
