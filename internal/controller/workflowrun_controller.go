@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/go-logr/logr"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -26,6 +27,7 @@ type WorkflowRunReconciler struct {
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflowruns,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflowruns/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=kruntimes.io,resources=workflows,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 func (r *WorkflowRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -41,16 +43,29 @@ func (r *WorkflowRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if workflowRun.Status.Phase == "" {
 		workflowRun.Status.Phase = v1alpha1.WorkflowPending
 	}
-	if workflowRun.Status.Jobs == nil && len(workflowRun.Spec.Jobs) > 0 {
-		workflowRun.Status.Jobs = resolvedInlineJobStatuses(workflowRun.Spec.Jobs)
-	}
-	apimeta.SetStatusCondition(&workflowRun.Status.Conditions, metav1.Condition{
+	condition := metav1.Condition{
 		Type:               workflowRunAcceptedCondition,
 		Status:             metav1.ConditionTrue,
 		Reason:             "Accepted",
 		Message:            "WorkflowRun accepted; execution is a follow-up implementation step",
 		ObservedGeneration: workflowRun.Generation,
-	})
+	}
+	if workflowRun.Status.Phase != v1alpha1.WorkflowFailed && workflowRun.Status.Jobs == nil {
+		jobs, err := r.resolveWorkflowRunJobs(ctx, &workflowRun)
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			}
+			workflowRun.Status.Phase = v1alpha1.WorkflowFailed
+			workflowRun.Status.Message = err.Error()
+			condition.Status = metav1.ConditionFalse
+			condition.Reason = "WorkflowResolutionFailed"
+			condition.Message = err.Error()
+		} else if len(jobs) > 0 {
+			workflowRun.Status.Jobs = resolvedJobStatuses(jobs)
+		}
+	}
+	apimeta.SetStatusCondition(&workflowRun.Status.Conditions, condition)
 	if err := r.Status().Patch(ctx, &workflowRun, client.MergeFrom(base)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("patch workflowrun status: %w", err)
 	}
@@ -64,7 +79,23 @@ func (r *WorkflowRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func resolvedInlineJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.JobStatus {
+func (r *WorkflowRunReconciler) resolveWorkflowRunJobs(ctx context.Context, workflowRun *v1alpha1.WorkflowRun) (map[string]v1alpha1.JobSpec, error) {
+	if len(workflowRun.Spec.Jobs) > 0 {
+		return workflowRun.Spec.Jobs, nil
+	}
+	if workflowRun.Spec.Uses == "" {
+		return nil, nil
+	}
+
+	var workflow v1alpha1.Workflow
+	key := client.ObjectKey{Namespace: workflowRun.Namespace, Name: workflowRun.Spec.Uses}
+	if err := r.Get(ctx, key, &workflow); err != nil {
+		return nil, fmt.Errorf("get workflow %s/%s: %w", workflowRun.Namespace, workflowRun.Spec.Uses, err)
+	}
+	return workflow.Spec.Jobs, nil
+}
+
+func resolvedJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.JobStatus {
 	statuses := make(map[string]v1alpha1.JobStatus, len(jobs))
 	for jobName, job := range jobs {
 		pre := append([]string(nil), job.Needs...)

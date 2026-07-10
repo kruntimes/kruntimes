@@ -402,4 +402,7 @@ status:
 - `Workflow` 现在是 reusable definition skeleton，不再执行 child Runs。
 - Inline WorkflowRuns 会初始化 `status.jobs[*].pre` 和有序
   `status.jobs[*].steps`。
+- Top-level `WorkflowRun.spec.uses` 会解析同 namespace 下的 reusable
+  Workflow，并基于被引用 Workflow 的 jobs 初始化 `status.jobs`。Missing
+  references 会在创建 child Runs 前让 WorkflowRun 失败。
 - 旧 Workflow execution E2E coverage 暂时 skip，等待 WorkflowRun execution 实现后恢复。

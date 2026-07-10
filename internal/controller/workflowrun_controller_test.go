@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -150,5 +151,117 @@ func TestWorkflowRunReconcilerPreservesResolvedJobStatus(t *testing.T) {
 	}
 	if len(status.Steps) != 1 || status.Steps[0].RunName != "existing-run" {
 		t.Fatalf("steps = %#v, want existing run preserved", status.Steps)
+	}
+}
+
+func TestWorkflowRunReconcilerResolvesReusableWorkflow(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "build-and-test", Namespace: "default"},
+		Spec: v1alpha1.WorkflowSpec{
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {
+					RunsOn: "bash",
+					Steps:  []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}},
+				},
+				"test": {
+					RunsOn: "bash",
+					Needs:  []string{"build"},
+					Steps:  []v1alpha1.StepSpec{{Name: "unit", Run: "make test"}},
+				},
+			},
+		},
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", Generation: 5},
+		Spec: v1alpha1.WorkflowRunSpec{
+			Uses: "build-and-test",
+			With: map[string]string{"ref": "main"},
+		},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflow, workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{
+		Namespace: workflowRun.Namespace,
+		Name:      workflowRun.Name,
+	}}
+	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile workflowrun: %v", err)
+	}
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.WorkflowPending {
+		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowPending)
+	}
+	if len(updated.Status.Jobs) != 2 {
+		t.Fatalf("jobs = %#v, want 2 resolved jobs", updated.Status.Jobs)
+	}
+	if got := updated.Status.Jobs["build"]; got.Phase != v1alpha1.JobPending || len(got.Pre) != 0 || len(got.Steps) != 1 || got.Steps[0].Name != "compile" {
+		t.Fatalf("build status = %#v, want pending compile step", got)
+	}
+	if got := updated.Status.Jobs["test"]; got.Phase != v1alpha1.JobWaiting || len(got.Pre) != 1 || got.Pre[0] != "build" {
+		t.Fatalf("test status = %#v, want waiting on build", got)
+	}
+	cond := apimeta.FindStatusCondition(updated.Status.Conditions, workflowRunAcceptedCondition)
+	if cond == nil || cond.Status != metav1.ConditionTrue {
+		t.Fatalf("condition = %#v, want accepted true", cond)
+	}
+}
+
+func TestWorkflowRunReconcilerFailsWhenReusableWorkflowMissing(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", Generation: 6},
+		Spec: v1alpha1.WorkflowRunSpec{
+			Uses: "missing-workflow",
+		},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{
+		Namespace: workflowRun.Namespace,
+		Name:      workflowRun.Name,
+	}}
+	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile workflowrun: %v", err)
+	}
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.WorkflowFailed {
+		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowFailed)
+	}
+	if updated.Status.Jobs != nil {
+		t.Fatalf("jobs = %#v, want nil on failed resolution", updated.Status.Jobs)
+	}
+	if !strings.Contains(updated.Status.Message, "missing-workflow") {
+		t.Fatalf("message = %q, want missing workflow name", updated.Status.Message)
+	}
+	cond := apimeta.FindStatusCondition(updated.Status.Conditions, workflowRunAcceptedCondition)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "WorkflowResolutionFailed" {
+		t.Fatalf("condition = %#v, want resolution failure", cond)
 	}
 }

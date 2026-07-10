@@ -423,5 +423,8 @@ Current implementation status:
   child Runs.
 - Inline WorkflowRuns initialize `status.jobs[*].pre` and ordered
   `status.jobs[*].steps`.
+- Top-level `WorkflowRun.spec.uses` resolves a same-namespace reusable
+  Workflow and initializes `status.jobs` from the referenced Workflow jobs.
+  Missing references fail the WorkflowRun before child Runs are created.
 - Old Workflow execution E2E coverage is skipped until WorkflowRun execution
   lands.

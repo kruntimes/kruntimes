@@ -203,7 +203,8 @@ wiring from accumulating avoidable conflicts.
   - [x] update CLI verbs and docs so execution uses `WorkflowRun`;
   - [x] initialize lightweight `status.jobs[*].pre` and ordered `steps` for
     inline WorkflowRuns;
-  - implement namespace-local top-level `WorkflowRun.spec.uses` resolution;
+  - [x] implement namespace-local top-level `WorkflowRun.spec.uses`
+    resolution;
   - implement input binding for top-level reusable Workflow calls;
   - implement inline WorkflowRun execution for `jobs` and `steps.run`;
   - implement job-level reusable Workflow calls;
