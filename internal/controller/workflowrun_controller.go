@@ -35,6 +35,14 @@ func (e *workflowInputBindingError) Unwrap() error {
 	return e.err
 }
 
+type workflowRunReconcileState string
+
+const (
+	workflowRunStateResolveJobs          workflowRunReconcileState = "ResolveJobs"
+	workflowRunStateStartReadyInlineJobs workflowRunReconcileState = "StartReadyInlineJobs"
+	workflowRunStatePatchStatus          workflowRunReconcileState = "PatchStatus"
+)
+
 // WorkflowRunReconciler owns WorkflowRun execution-instance status.
 type WorkflowRunReconciler struct {
 	client.Client
@@ -61,48 +69,85 @@ func (r *WorkflowRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if workflowRun.Status.Phase == "" {
 		workflowRun.Status.Phase = v1alpha1.WorkflowPending
 	}
-	condition := metav1.Condition{
+
+	condition := acceptedWorkflowRunCondition(&workflowRun)
+	for {
+		switch workflowRunStateFor(&workflowRun) {
+		case workflowRunStateResolveJobs:
+			if err := r.applyResolveWorkflowRunJobs(ctx, &workflowRun, &condition); err != nil {
+				return ctrl.Result{}, err
+			}
+			continue
+		case workflowRunStateStartReadyInlineJobs:
+			if err := r.applyStartReadyInlineJobs(ctx, &workflowRun, &condition); err != nil {
+				return ctrl.Result{}, err
+			}
+		case workflowRunStatePatchStatus:
+		}
+		break
+	}
+
+	apimeta.SetStatusCondition(&workflowRun.Status.Conditions, condition)
+	if err := r.Status().Patch(ctx, &workflowRun, client.MergeFrom(base)); err != nil {
+		return ctrl.Result{}, fmt.Errorf("patch workflowrun status: %w", err)
+	}
+	return ctrl.Result{}, nil
+}
+
+func acceptedWorkflowRunCondition(workflowRun *v1alpha1.WorkflowRun) metav1.Condition {
+	return metav1.Condition{
 		Type:               v1alpha1.WorkflowRunAcceptedCondition,
 		Status:             metav1.ConditionTrue,
 		Reason:             "Accepted",
 		Message:            "WorkflowRun accepted; execution is a follow-up implementation step",
 		ObservedGeneration: workflowRun.Generation,
 	}
+}
+
+func workflowRunStateFor(workflowRun *v1alpha1.WorkflowRun) workflowRunReconcileState {
 	if workflowRun.Status.Phase != v1alpha1.WorkflowFailed && workflowRun.Status.Jobs == nil {
-		jobs, err := r.resolveWorkflowRunJobs(ctx, &workflowRun)
-		if err != nil {
-			var inputErr *workflowInputBindingError
-			switch {
-			case apierrors.IsNotFound(err):
-				condition.Reason = "WorkflowResolutionFailed"
-			case errors.As(err, &inputErr):
-				condition.Reason = "WorkflowInputBindingFailed"
-			default:
-				return ctrl.Result{}, err
-			}
-			workflowRun.Status.Phase = v1alpha1.WorkflowFailed
-			workflowRun.Status.Message = err.Error()
-			condition.Status = metav1.ConditionFalse
-			condition.Message = err.Error()
-		} else if len(jobs) > 0 {
-			workflowRun.Status.Jobs = resolvedJobStatuses(jobs)
-		}
+		return workflowRunStateResolveJobs
 	}
 	if workflowRun.Status.Phase == v1alpha1.WorkflowPending && len(workflowRun.Spec.Jobs) > 0 && len(workflowRun.Status.Jobs) > 0 {
-		if err := r.startReadyInlineJobs(ctx, &workflowRun); err != nil {
-			return ctrl.Result{}, err
-		}
-		if workflowRun.Status.Phase == v1alpha1.WorkflowFailed {
-			condition.Status = metav1.ConditionFalse
-			condition.Reason = "WorkflowExecutionFailed"
-			condition.Message = workflowRun.Status.Message
-		}
+		return workflowRunStateStartReadyInlineJobs
 	}
-	apimeta.SetStatusCondition(&workflowRun.Status.Conditions, condition)
-	if err := r.Status().Patch(ctx, &workflowRun, client.MergeFrom(base)); err != nil {
-		return ctrl.Result{}, fmt.Errorf("patch workflowrun status: %w", err)
+	return workflowRunStatePatchStatus
+}
+
+func (r *WorkflowRunReconciler) applyResolveWorkflowRunJobs(ctx context.Context, workflowRun *v1alpha1.WorkflowRun, condition *metav1.Condition) error {
+	jobs, err := r.resolveWorkflowRunJobs(ctx, workflowRun)
+	if err != nil {
+		var inputErr *workflowInputBindingError
+		switch {
+		case apierrors.IsNotFound(err):
+			condition.Reason = "WorkflowResolutionFailed"
+		case errors.As(err, &inputErr):
+			condition.Reason = "WorkflowInputBindingFailed"
+		default:
+			return err
+		}
+		workflowRun.Status.Phase = v1alpha1.WorkflowFailed
+		workflowRun.Status.Message = err.Error()
+		condition.Status = metav1.ConditionFalse
+		condition.Message = err.Error()
+		return nil
 	}
-	return ctrl.Result{}, nil
+	if len(jobs) > 0 {
+		workflowRun.Status.Jobs = resolvedJobStatuses(jobs)
+	}
+	return nil
+}
+
+func (r *WorkflowRunReconciler) applyStartReadyInlineJobs(ctx context.Context, workflowRun *v1alpha1.WorkflowRun, condition *metav1.Condition) error {
+	if err := r.startReadyInlineJobs(ctx, workflowRun); err != nil {
+		return err
+	}
+	if workflowRun.Status.Phase == v1alpha1.WorkflowFailed {
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "WorkflowExecutionFailed"
+		condition.Message = workflowRun.Status.Message
+	}
+	return nil
 }
 
 // SetupWithManager registers the WorkflowRun reconciler.
