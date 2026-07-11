@@ -311,17 +311,20 @@ Inline WorkflowRun execution 应拆成小的、可 review 的步骤落地：
    Workflow execution model 的失效 case，保证整个迁移过程中 `make e2e` 始终可以通过。
 2. 只为 ready inline jobs 创建第一个 child Run，将 child Run name 记录到对应的有序
    step status，并通过 labels 发现已有 child Runs 来保证创建幂等。
-3. Watch 或 reconcile 属于 WorkflowRun 的 child Runs，并将 terminal child Run phase
+3. 在增加更多 execution states 之前，将 WorkflowRun controller 重构为 load/plan/apply
+   的状态机形态：先加载 WorkflowRun 和相关资源，推导 current state，再根据 state
+   计算需要执行的 actions，最后执行 Kubernetes writes。
+4. Watch 或 reconcile 属于 WorkflowRun 的 child Runs，并将 terminal child Run phase
    复制到对应 step status。
-4. 当 step 成功时，在同一 job 内创建下一个 step Run；当 step failed、cancelled 或
+5. 当 step 成功时，在同一 job 内创建下一个 step Run；当 step failed、cancelled 或
    timed out 时，将 job 和 WorkflowRun 标记为 failed。
-5. 当 job 内所有 steps 成功时，将 job 标记为 succeeded，并解锁所有 `pre`
+6. 当 job 内所有 steps 成功时，将 job 标记为 succeeded，并解锁所有 `pre`
    dependencies 已成功的 jobs。
-6. 当所有 jobs 成功时，将 WorkflowRun 标记为 succeeded；如果任一 dependency job
+7. 当所有 jobs 成功时，将 WorkflowRun 标记为 succeeded；如果任一 dependency job
    失败，则不创建 child Runs，并将 dependent jobs 标记为 failed。
-7. 增加 restart recovery tests，证明 controller 可以从
+8. 增加 restart recovery tests，证明 controller 可以从
    `status.jobs[*].steps[*].runName` 和 child Run labels 继续执行，且不会重复创建 Runs。
-8. 只有当 controller 能端到端执行 inline WorkflowRun 后，再增加 E2E coverage。
+9. 只有当 controller 能端到端执行 inline WorkflowRun 后，再增加 E2E coverage。
 
 ## Expression Context
 
@@ -427,4 +430,9 @@ status:
 - Top-level reusable Workflow calls 会提前绑定 string inputs：应用 defaults，
   missing required inputs 会失败，unknown `with` keys 也会失败。Bound values 会等到
   WorkflowRun execution 实现后再用于 child Runs。
+- 旧 Workflow execution model 的 stale E2E stubs 已删除，保证迁移期间 E2E 聚焦于
+  仍应保持 passing 的行为。
+- Inline WorkflowRuns 会为 ready inline jobs 创建 first-step child Runs，并将 child
+  Run name 记录到有序 step status 中。Child Run result observation 和 next-step
+  creation 仍是后续工作。
 - 旧 Workflow execution E2E coverage 暂时 skip，等待 WorkflowRun execution 实现后恢复。

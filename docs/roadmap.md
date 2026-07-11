@@ -206,10 +206,12 @@ wiring from accumulating avoidable conflicts.
   - [x] implement namespace-local top-level `WorkflowRun.spec.uses`
     resolution;
   - [x] implement input binding for top-level reusable Workflow calls;
-  - audit existing E2E tests before inline execution changes, and remove or
+  - [x] audit existing E2E tests before inline execution changes, and remove or
     update stale cases that still use the old Workflow execution model so
     `make e2e` stays passing during the migration;
-  - implement inline WorkflowRun first-step Run creation for ready jobs;
+  - [x] implement inline WorkflowRun first-step Run creation for ready jobs;
+  - refactor WorkflowRun controller reconciliation into a load/plan/apply
+    state-machine structure before adding more execution cases;
   - implement child Run status observation and step status updates;
   - implement next-step creation, job terminal handling, and WorkflowRun
     terminal handling;
