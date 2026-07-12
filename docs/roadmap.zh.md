@@ -181,7 +181,7 @@ controller wiring 累积不必要的冲突。
   - [x] 实现 ready jobs 的 inline WorkflowRun first-step Run creation；
   - [x] 在增加更多 execution cases 前，将 WorkflowRun controller reconciliation
     重构为 load/plan/apply 的状态机结构；
-  - 实现 child Run status observation 和 step status updates；
+  - [x] 实现 child Run status observation 和 step status updates；
   - 实现 next-step creation、job terminal handling 和 WorkflowRun terminal handling；
   - 实现 in-progress inline WorkflowRuns 的 controller restart recovery；
   - 实现 job-level reusable Workflow calls；

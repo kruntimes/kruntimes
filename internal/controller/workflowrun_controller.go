@@ -47,9 +47,10 @@ const (
 type workflowRunAction string
 
 const (
-	workflowRunActionNone           workflowRunAction = "None"
-	workflowRunActionInitialize     workflowRunAction = "Initialize"
-	workflowRunActionStartReadyJobs workflowRunAction = "StartReadyJobs"
+	workflowRunActionNone             workflowRunAction = "None"
+	workflowRunActionInitialize       workflowRunAction = "Initialize"
+	workflowRunActionObserveChildRuns workflowRunAction = "ObserveChildRuns"
+	workflowRunActionStartReadyJobs   workflowRunAction = "StartReadyJobs"
 )
 
 type workflowRunResources struct {
@@ -135,6 +136,10 @@ func planWorkflowRun(resources *workflowRunResources) workflowRunPlan {
 	if state == workflowRunStateTerminal || len(workflowRun.Spec.Jobs) == 0 || len(workflowRun.Status.Jobs) == 0 {
 		return plan
 	}
+	if childRunsNeedObservation(resources) {
+		plan.action = workflowRunActionObserveChildRuns
+		return plan
+	}
 
 	jobNames := make([]string, 0, len(workflowRun.Spec.Jobs))
 	for jobName := range workflowRun.Spec.Jobs {
@@ -195,6 +200,9 @@ func (r *WorkflowRunReconciler) applyWorkflowRunAction(ctx context.Context, reso
 	switch plan.action {
 	case workflowRunActionInitialize:
 		return r.applyInitializeWorkflowRun(ctx, workflowRun)
+	case workflowRunActionObserveChildRuns:
+		applyObserveChildRuns(resources)
+		return nil
 	case workflowRunActionStartReadyJobs:
 		return r.applyStartReadyJobs(ctx, resources, plan.jobs)
 	}
@@ -205,6 +213,7 @@ func (r *WorkflowRunReconciler) applyWorkflowRunAction(ctx context.Context, reso
 func (r *WorkflowRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.WorkflowRun{}).
+		Owns(&v1alpha1.Run{}).
 		Complete(r)
 }
 
@@ -375,6 +384,76 @@ func jobReadyToStart(status v1alpha1.JobStatus, jobs map[string]v1alpha1.JobStat
 		}
 	}
 	return true
+}
+
+func childRunsNeedObservation(resources *workflowRunResources) bool {
+	workflowRun := resources.workflowRun
+	for _, run := range resources.childRuns {
+		stepPhase, terminal := terminalRunStepPhase(run.Status.Phase)
+		if !terminal {
+			continue
+		}
+		jobStatus, ok := workflowRun.Status.Jobs[run.Labels[v1alpha1.WorkflowJobLabel]]
+		if !ok {
+			continue
+		}
+		for _, step := range jobStatus.Steps {
+			if step.Name != run.Labels[v1alpha1.WorkflowStepLabel] {
+				continue
+			}
+			if (step.RunName == "" || step.RunName == run.Name) && (step.RunName != run.Name || step.Phase != stepPhase) {
+				return true
+			}
+			break
+		}
+	}
+	return false
+}
+
+func applyObserveChildRuns(resources *workflowRunResources) {
+	workflowRun := resources.workflowRun
+	keys := make([]string, 0, len(resources.childRuns))
+	for key := range resources.childRuns {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		run := resources.childRuns[key]
+		stepPhase, terminal := terminalRunStepPhase(run.Status.Phase)
+		if !terminal {
+			continue
+		}
+		jobName := run.Labels[v1alpha1.WorkflowJobLabel]
+		stepName := run.Labels[v1alpha1.WorkflowStepLabel]
+		jobStatus, ok := workflowRun.Status.Jobs[jobName]
+		if !ok {
+			continue
+		}
+		for i := range jobStatus.Steps {
+			step := &jobStatus.Steps[i]
+			if step.Name != stepName {
+				continue
+			}
+			if step.RunName != "" && step.RunName != run.Name {
+				break
+			}
+			step.RunName = run.Name
+			step.Phase = stepPhase
+			workflowRun.Status.Jobs[jobName] = jobStatus
+			break
+		}
+	}
+}
+
+func terminalRunStepPhase(phase v1alpha1.RunPhase) (v1alpha1.StepPhase, bool) {
+	switch phase {
+	case v1alpha1.RunSucceeded:
+		return v1alpha1.StepSucceeded, true
+	case v1alpha1.RunFailed, v1alpha1.RunTimeout, v1alpha1.RunCancelled:
+		return v1alpha1.StepFailed, true
+	default:
+		return "", false
+	}
 }
 
 func buildStepRun(workflowRun *v1alpha1.WorkflowRun, jobName string, job v1alpha1.JobSpec, step v1alpha1.StepSpec, labels map[string]string) *v1alpha1.Run {

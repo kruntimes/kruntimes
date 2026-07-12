@@ -338,6 +338,11 @@ durable and restart-safe, and keeps new execution states explicit as child Run
 observation, next-step creation, restart recovery, and reusable call expansion
 land.
 
+For an active WorkflowRun, `ObserveChildRuns` takes precedence over
+`StartReadyJobs`. When a child Run reaches a terminal phase, that reconciliation
+only copies the phase into the matching step status. The next reconciliation
+may then decide whether to create a next step or unblock dependent jobs.
+
 Inline WorkflowRun execution should land in small, reviewable steps:
 
 1. Before changing execution behavior, audit the existing E2E tests. Remove or
@@ -482,5 +487,8 @@ Current implementation status:
 - Inline WorkflowRuns create first-step child Runs for ready inline jobs and
   record the child Run name in ordered step status. Child Run result
   observation and next-step creation are still follow-up work.
+- WorkflowRuns observe terminal child Run phases and copy them into the
+  matching step status. Next-step creation and job/WorkflowRun terminal
+  handling are still follow-up work.
 - Old Workflow execution E2E coverage is skipped until WorkflowRun execution
   lands.

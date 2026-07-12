@@ -169,6 +169,31 @@ func TestPlanWorkflowRunSeparatesCurrentStateFromAction(t *testing.T) {
 	}
 }
 
+func TestPlanWorkflowRunObservesChildRunsBeforeStartingReadyJobs(t *testing.T) {
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+			"lint":  {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "check", Run: "make lint"}}},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{{Name: "compile", Phase: v1alpha1.StepRunning, RunName: "build-run"}}},
+				"lint":  {Phase: v1alpha1.JobPending, Steps: []v1alpha1.StepStatus{{Name: "check", Phase: v1alpha1.StepPending}}},
+			},
+		},
+	}
+	buildRun := workflowChildRun(workflowRun, "build", "compile", "build-run", v1alpha1.RunSucceeded)
+	plan := planWorkflowRun(&workflowRunResources{
+		workflowRun: workflowRun,
+		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): buildRun},
+	})
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionObserveChildRuns {
+		t.Fatalf("plan = %#v, want Running + ObserveChildRuns", plan)
+	}
+}
+
 func TestJobReadyToStartChecksDependencyStatus(t *testing.T) {
 	status := v1alpha1.JobStatus{
 		Phase: v1alpha1.JobWaiting,
@@ -346,6 +371,57 @@ func TestWorkflowRunReconcilerRejectsJobWithoutRuntimeDuringInitialization(t *te
 	}
 	if len(childRuns.Items) != 0 {
 		t.Fatalf("child runs = %#v, want none", childRuns.Items)
+	}
+}
+
+func TestWorkflowRunReconcilerObservesTerminalChildRuns(t *testing.T) {
+	for _, test := range []struct {
+		runPhase  v1alpha1.RunPhase
+		stepPhase v1alpha1.StepPhase
+	}{
+		{runPhase: v1alpha1.RunSucceeded, stepPhase: v1alpha1.StepSucceeded},
+		{runPhase: v1alpha1.RunFailed, stepPhase: v1alpha1.StepFailed},
+		{runPhase: v1alpha1.RunTimeout, stepPhase: v1alpha1.StepFailed},
+		{runPhase: v1alpha1.RunCancelled, stepPhase: v1alpha1.StepFailed},
+	} {
+		t.Run(string(test.runPhase), func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := v1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatalf("add scheme: %v", err)
+			}
+			workflowRun := &v1alpha1.WorkflowRun{
+				ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid"},
+				Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+					"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+				}},
+				Status: v1alpha1.WorkflowRunStatus{
+					Phase: v1alpha1.WorkflowRunning,
+					Jobs: map[string]v1alpha1.JobStatus{
+						"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{{Name: "compile", Phase: v1alpha1.StepRunning, RunName: "build-run"}}},
+					},
+				},
+			}
+			run := workflowChildRun(workflowRun, "build", "compile", "build-run", test.runPhase)
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(workflowRun, run).
+				WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+				Build()
+			reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+			reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}, 1)
+
+			var updated v1alpha1.WorkflowRun
+			if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+				t.Fatalf("get workflowrun: %v", err)
+			}
+			step := updated.Status.Jobs["build"].Steps[0]
+			if step.Phase != test.stepPhase || step.RunName != run.Name {
+				t.Fatalf("step = %#v, want %s %s", step, test.stepPhase, run.Name)
+			}
+			if updated.Status.Jobs["build"].Phase != v1alpha1.JobRunning || updated.Status.Phase != v1alpha1.WorkflowRunning {
+				t.Fatalf("status = %#v, want job and workflow to remain running", updated.Status)
+			}
+		})
 	}
 }
 
@@ -670,5 +746,21 @@ func assertChildRunCount(t *testing.T, c client.Client, namespace string, want i
 	}
 	if len(runs.Items) != want {
 		t.Fatalf("child runs = %#v, want %d", runs.Items, want)
+	}
+}
+
+func workflowChildRun(workflowRun *v1alpha1.WorkflowRun, jobName string, stepName string, runName string, phase v1alpha1.RunPhase) *v1alpha1.Run {
+	return &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      runName,
+			Namespace: workflowRun.Namespace,
+			Labels:    workflowStepLabels(workflowRun, jobName, stepName),
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Source:  &v1alpha1.CodeSource{Inline: ptrTo("make build")},
+			Mode:    v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+		},
+		Status: v1alpha1.RunStatus{Phase: phase},
 	}
 }
