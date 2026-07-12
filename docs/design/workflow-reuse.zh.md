@@ -306,13 +306,18 @@ runtimed 理解 Workflow 概念。
 scheduler/runtimed 仍然只操作 Runs。
 
 WorkflowRun controller 的 reconciliation 应保持 load/plan/apply 结构：加载
-WorkflowRun 和所有 child Runs，推导 current state，与 desired state 比较，并且只规划一个
-state transition。随后执行该 transition，再 patch WorkflowRun status。一次 reconciliation
-不能在 status 更新前循环执行多个 state transitions。一个 `StartReadyJobs` transition 可以
-materialize 所有彼此独立的 ready jobs，以保持 jobs 的并行性；但不能在同一次 reconciliation
-中把它们推进到更后的 execution state。这样每个 transition 都是 durable 且 restart-safe 的；
-后续引入 child Run observation、next-step creation、restart recovery 和 reusable call
-expansion 等 execution states 时，状态也会保持显式。
+WorkflowRun 和所有 child Runs，推导 current state，为该 state 选择一个 action，执行 action，
+再 patch WorkflowRun status。current state 与 action 有意分离。初始的 `Empty` state 对应
+`Initialize` action：它负责 validation controller-level semantics、resolve references 和
+inputs、persist execution graph，并设置 `Accepted=True`。初始化失败时设置 `Accepted=False`，
+且不能创建 child Runs。后续 execution actions 不得修改 `Accepted`：已经 accepted 的
+WorkflowRun 仍然可能在执行时失败。
+
+一次 reconciliation 不能在 status 更新前循环执行多个 state transitions。一个
+`StartReadyJobs` action 可以 materialize 所有彼此独立的 ready jobs，以保持 jobs 的并行性；
+但不能在同一次 reconciliation 中把它们推进到更后的 execution state。这样每个 transition
+都是 durable 且 restart-safe 的；后续引入 child Run observation、next-step creation、restart
+recovery 和 reusable call expansion 等 execution states 时，状态也会保持显式。
 
 Inline WorkflowRun execution 应拆成小的、可 review 的步骤落地：
 

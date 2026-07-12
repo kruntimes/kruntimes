@@ -321,16 +321,22 @@ Runs remain the durable execution records, and scheduler/runtimed continue to
 operate only on Runs.
 
 The WorkflowRun controller should keep reconciliation structured as
-load/plan/apply: load the WorkflowRun and all child Runs, derive the current
-state, compare it with the desired state, and plan exactly one state
-transition. It then applies that transition and patches WorkflowRun status.
+load/plan/apply: load the WorkflowRun and all child Runs, derive its current
+state, choose one action for that state, apply the action, and patch
+WorkflowRun status. Current state and action are intentionally separate. The
+initial `Empty` state has an `Initialize` action, which validates controller-
+level semantics, resolves references and inputs, persists the execution graph,
+and sets `Accepted=True`. A failed initialization sets `Accepted=False` and
+does not create child Runs. Later execution actions must not modify `Accepted`:
+an accepted WorkflowRun can still fail while executing.
+
 A reconciliation must not loop through multiple state transitions before the
-status update. One `StartReadyJobs` transition may materialize every
-independent ready job, so those jobs remain parallel; it must not advance those
-jobs to a later execution state in the same reconciliation. This makes each
-transition durable and restart-safe, and keeps new execution states explicit as
-child Run observation, next-step creation, restart recovery, and reusable call
-expansion land.
+status update. One `StartReadyJobs` action may materialize every independent
+ready job, so those jobs remain parallel; it must not advance those jobs to a
+later execution state in the same reconciliation. This makes each transition
+durable and restart-safe, and keeps new execution states explicit as child Run
+observation, next-step creation, restart recovery, and reusable call expansion
+land.
 
 Inline WorkflowRun execution should land in small, reviewable steps:
 
