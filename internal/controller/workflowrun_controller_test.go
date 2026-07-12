@@ -117,7 +117,7 @@ func TestWorkflowRunReconcilerAcceptsWorkflowRun(t *testing.T) {
 	}
 }
 
-func TestWorkflowRunReconcilerCreatesOneReadyJobPerReconcile(t *testing.T) {
+func TestWorkflowRunReconcilerStartsAllIndependentReadyJobs(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
@@ -142,9 +142,7 @@ func TestWorkflowRunReconcilerCreatesOneReadyJobPerReconcile(t *testing.T) {
 	reconcileWorkflowRun(t, reconciler, req, 1)
 	assertChildRunCount(t, c, workflowRun.Namespace, 0)
 
-	// Each following reconcile creates at most one Run, in stable job-name order.
-	reconcileWorkflowRun(t, reconciler, req, 1)
-	assertChildRunCount(t, c, workflowRun.Namespace, 1)
+	// A single StartReadyJobs transition creates all independent ready jobs.
 	reconcileWorkflowRun(t, reconciler, req, 1)
 	assertChildRunCount(t, c, workflowRun.Namespace, 2)
 }
