@@ -357,16 +357,21 @@ Inline WorkflowRun execution should land in small, reviewable steps:
    intended actions, then apply Kubernetes writes.
 4. Watch or reconcile child Runs owned by a WorkflowRun and copy terminal child
    Run phase into the matching step status.
-5. When a step succeeds, create the next step Run in the same job; when a step
-   fails, is cancelled, or times out, fail the job and WorkflowRun.
-6. When all steps in a job succeed, mark the job succeeded and unblock jobs
-   whose `pre` dependencies have all succeeded.
-7. When all jobs succeed, mark the WorkflowRun succeeded; if any dependency
-   job fails, fail dependent jobs without creating child Runs.
-8. Add restart recovery tests that prove the controller can continue from
+5. Define and review failure, cancellation, and terminal-status semantics
+   before implementing them: in particular, whether independent jobs continue
+   after a failure and when blocked dependent jobs become failed.
+6. When a step succeeds and a later step is pending, create the next step Run
+   in the same job.
+7. Aggregate terminal step states into terminal job states: all succeeded
+   steps succeed the job; any failed, cancelled, or timed-out step fails it.
+8. Propagate failed job dependencies and finalize the WorkflowRun according to
+   the reviewed terminal-status semantics.
+9. When a job succeeds, unblock jobs whose `pre` dependencies have all
+   succeeded.
+10. Add restart recovery tests that prove the controller can continue from
    `status.jobs[*].steps[*].runName` and child Run labels without duplicating
    Runs.
-9. Add E2E coverage only after the controller can execute an inline
+11. Add E2E coverage only after the controller can execute an inline
    WorkflowRun end to end.
 
 ## Expression Context
@@ -457,17 +462,20 @@ the implementation lands.
 8. Refactor WorkflowRun controller reconciliation into a load/plan/apply
    state-machine structure.
 9. Implement child Run status observation and step status updates.
-10. Implement next-step creation, job terminal handling, and WorkflowRun
-   terminal handling.
-11. Implement controller restart recovery for in-progress inline WorkflowRuns.
-12. Implement job-level reusable Workflow calls.
-13. Implement step-level Action expansion.
-14. Implement expression evaluation and output propagation.
-15. Update CLI verbs and docs to use `WorkflowRun` for execution.
-16. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
+10. Define and review child failure, cancellation, dependency propagation, and
+    WorkflowRun terminal-status semantics.
+11. Implement next-step creation after observed step success.
+12. Implement job terminal-state aggregation from observed step states.
+13. Implement failed-dependency propagation and WorkflowRun terminal handling.
+14. Implement controller restart recovery for in-progress inline WorkflowRuns.
+15. Implement job-level reusable Workflow calls.
+16. Implement step-level Action expansion.
+17. Implement expression evaluation and output propagation.
+18. Update CLI verbs and docs to use `WorkflowRun` for execution.
+19. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
     calls, validation failures, output propagation, and controller restart
     recovery from the status DAG edges.
-17. Update the final v0.x demos after the reusable model is implemented.
+20. Update the final v0.x demos after the reusable model is implemented.
 
 Current implementation status:
 

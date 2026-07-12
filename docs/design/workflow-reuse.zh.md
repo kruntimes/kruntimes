@@ -334,15 +334,17 @@ Inline WorkflowRun execution 应拆成小的、可 review 的步骤落地：
    计算需要执行的 actions，最后执行 Kubernetes writes。
 4. Watch 或 reconcile 属于 WorkflowRun 的 child Runs，并将 terminal child Run phase
    复制到对应 step status。
-5. 当 step 成功时，在同一 job 内创建下一个 step Run；当 step failed、cancelled 或
-   timed out 时，将 job 和 WorkflowRun 标记为 failed。
-6. 当 job 内所有 steps 成功时，将 job 标记为 succeeded，并解锁所有 `pre`
-   dependencies 已成功的 jobs。
-7. 当所有 jobs 成功时，将 WorkflowRun 标记为 succeeded；如果任一 dependency job
-   失败，则不创建 child Runs，并将 dependent jobs 标记为 failed。
-8. 增加 restart recovery tests，证明 controller 可以从
+5. 在实现前定义并 review failure、cancellation 和 terminal-status semantics：尤其是
+   failure 后是否继续 independent jobs，以及何时将 blocked dependent jobs 标记为 failed。
+6. 当 step 成功且存在 pending 的后续 step 时，在同一 job 内创建 next-step Run。
+7. 将 terminal step states 聚合为 terminal job states：所有 steps succeeded 时 job
+   succeeded；任何 step failed、cancelled 或 timed out 时 job failed。
+8. 根据已 review 的 terminal-status semantics，propagate failed job dependencies 并
+   finalize WorkflowRun。
+9. 当 job succeeded 时，解锁所有 `pre` dependencies 已成功的 jobs。
+10. 增加 restart recovery tests，证明 controller 可以从
    `status.jobs[*].steps[*].runName` 和 child Run labels 继续执行，且不会重复创建 Runs。
-9. 只有当 controller 能端到端执行 inline WorkflowRun 后，再增加 E2E coverage。
+11. 只有当 controller 能端到端执行 inline WorkflowRun 后，再增加 E2E coverage。
 
 ## Expression Context
 
@@ -426,16 +428,20 @@ status:
 7. 实现 ready jobs 的 inline WorkflowRun first-step Run creation。
 8. 将 WorkflowRun controller reconciliation 重构为 load/plan/apply 的状态机结构。
 9. 实现 child Run status observation 和 step status updates。
-10. 实现 next-step creation、job terminal handling 和 WorkflowRun terminal handling。
-11. 实现 in-progress inline WorkflowRuns 的 controller restart recovery。
-12. 实现 job-level reusable Workflow calls。
-13. 实现 step-level Action expansion。
-14. 实现 expression evaluation 和 output propagation。
-15. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。
-16. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
+10. 定义并 review child failure、cancellation、dependency propagation 和 WorkflowRun
+    terminal-status semantics。
+11. 实现 observed step success 后的 next-step creation。
+12. 根据 observed step states 实现 job terminal-state aggregation。
+13. 实现 failed-dependency propagation 和 WorkflowRun terminal handling。
+14. 实现 in-progress inline WorkflowRuns 的 controller restart recovery。
+15. 实现 job-level reusable Workflow calls。
+16. 实现 step-level Action expansion。
+17. 实现 expression evaluation 和 output propagation。
+18. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。
+19. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
     validation failures、output propagation，以及从 status DAG edges 进行 controller
     restart recovery。
-17. reusable model 实现后，更新最终 v0.x demos。
+20. reusable model 实现后，更新最终 v0.x demos。
 
 当前实现状态：
 

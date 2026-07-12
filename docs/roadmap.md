@@ -213,8 +213,11 @@ wiring from accumulating avoidable conflicts.
   - [x] refactor WorkflowRun controller reconciliation into a load/plan/apply
     state-machine structure before adding more execution cases;
   - [x] implement child Run status observation and step status updates;
-  - implement next-step creation, job terminal handling, and WorkflowRun
-    terminal handling;
+  - define and review child failure, cancellation, dependency propagation, and
+    WorkflowRun terminal-status semantics;
+  - implement next-step creation after observed step success;
+  - implement job terminal-state aggregation from observed step states;
+  - implement failed-dependency propagation and WorkflowRun terminal handling;
   - implement controller restart recovery for in-progress inline WorkflowRuns;
   - implement job-level reusable Workflow calls;
   - implement step-level Action expansion;
