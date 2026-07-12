@@ -320,6 +320,24 @@ This deliberately avoids adding a separate WorkflowRunInvocation API. Child
 Runs remain the durable execution records, and scheduler/runtimed continue to
 operate only on Runs.
 
+The WorkflowRun controller should keep reconciliation structured as
+load/plan/apply: load the WorkflowRun and all child Runs, derive its current
+state, choose one action for that state, apply the action, and patch
+WorkflowRun status. Current state and action are intentionally separate. The
+initial `Empty` state has an `Initialize` action, which validates controller-
+level semantics, resolves references and inputs, persists the execution graph,
+and sets `Accepted=True`. A failed initialization sets `Accepted=False` and
+does not create child Runs. Later execution actions must not modify `Accepted`:
+an accepted WorkflowRun can still fail while executing.
+
+A reconciliation must not loop through multiple state transitions before the
+status update. One `StartReadyJobs` action may materialize every independent
+ready job, so those jobs remain parallel; it must not advance those jobs to a
+later execution state in the same reconciliation. This makes each transition
+durable and restart-safe, and keeps new execution states explicit as child Run
+observation, next-step creation, restart recovery, and reusable call expansion
+land.
+
 Inline WorkflowRun execution should land in small, reviewable steps:
 
 1. Before changing execution behavior, audit the existing E2E tests. Remove or
@@ -431,18 +449,20 @@ the implementation lands.
    `WorkflowRun.spec.uses` resolution.
 6. Implement input binding for top-level reusable Workflow calls.
 7. Implement inline WorkflowRun first-step Run creation for ready jobs.
-8. Implement child Run status observation and step status updates.
-9. Implement next-step creation, job terminal handling, and WorkflowRun
+8. Refactor WorkflowRun controller reconciliation into a load/plan/apply
+   state-machine structure.
+9. Implement child Run status observation and step status updates.
+10. Implement next-step creation, job terminal handling, and WorkflowRun
    terminal handling.
-10. Implement controller restart recovery for in-progress inline WorkflowRuns.
-11. Implement job-level reusable Workflow calls.
-12. Implement step-level Action expansion.
-13. Implement expression evaluation and output propagation.
-14. Update CLI verbs and docs to use `WorkflowRun` for execution.
-15. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
+11. Implement controller restart recovery for in-progress inline WorkflowRuns.
+12. Implement job-level reusable Workflow calls.
+13. Implement step-level Action expansion.
+14. Implement expression evaluation and output propagation.
+15. Update CLI verbs and docs to use `WorkflowRun` for execution.
+16. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
     calls, validation failures, output propagation, and controller restart
     recovery from the status DAG edges.
-16. Update the final v0.x demos after the reusable model is implemented.
+17. Update the final v0.x demos after the reusable model is implemented.
 
 Current implementation status:
 

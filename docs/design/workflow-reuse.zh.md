@@ -305,6 +305,20 @@ runtimed 理解 Workflow 概念。
 这有意避免增加单独的 WorkflowRunInvocation API。Child Runs 仍然是持久 execution records，
 scheduler/runtimed 仍然只操作 Runs。
 
+WorkflowRun controller 的 reconciliation 应保持 load/plan/apply 结构：加载
+WorkflowRun 和所有 child Runs，推导 current state，为该 state 选择一个 action，执行 action，
+再 patch WorkflowRun status。current state 与 action 有意分离。初始的 `Empty` state 对应
+`Initialize` action：它负责 validation controller-level semantics、resolve references 和
+inputs、persist execution graph，并设置 `Accepted=True`。初始化失败时设置 `Accepted=False`，
+且不能创建 child Runs。后续 execution actions 不得修改 `Accepted`：已经 accepted 的
+WorkflowRun 仍然可能在执行时失败。
+
+一次 reconciliation 不能在 status 更新前循环执行多个 state transitions。一个
+`StartReadyJobs` action 可以 materialize 所有彼此独立的 ready jobs，以保持 jobs 的并行性；
+但不能在同一次 reconciliation 中把它们推进到更后的 execution state。这样每个 transition
+都是 durable 且 restart-safe 的；后续引入 child Run observation、next-step creation、restart
+recovery 和 reusable call expansion 等 execution states 时，状态也会保持显式。
+
 Inline WorkflowRun execution 应拆成小的、可 review 的步骤落地：
 
 1. 在修改 execution behavior 前，先审计现有 E2E tests。移除或更新仍在测试旧
@@ -406,17 +420,18 @@ status:
    namespace-local resolution。
 6. 实现 top-level reusable Workflow calls 的 input binding。
 7. 实现 ready jobs 的 inline WorkflowRun first-step Run creation。
-8. 实现 child Run status observation 和 step status updates。
-9. 实现 next-step creation、job terminal handling 和 WorkflowRun terminal handling。
-10. 实现 in-progress inline WorkflowRuns 的 controller restart recovery。
-11. 实现 job-level reusable Workflow calls。
-12. 实现 step-level Action expansion。
-13. 实现 expression evaluation 和 output propagation。
-14. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。
-15. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
+8. 将 WorkflowRun controller reconciliation 重构为 load/plan/apply 的状态机结构。
+9. 实现 child Run status observation 和 step status updates。
+10. 实现 next-step creation、job terminal handling 和 WorkflowRun terminal handling。
+11. 实现 in-progress inline WorkflowRuns 的 controller restart recovery。
+12. 实现 job-level reusable Workflow calls。
+13. 实现 step-level Action expansion。
+14. 实现 expression evaluation 和 output propagation。
+15. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。
+16. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
     validation failures、output propagation，以及从 status DAG edges 进行 controller
     restart recovery。
-16. reusable model 实现后，更新最终 v0.x demos。
+17. reusable model 实现后，更新最终 v0.x demos。
 
 当前实现状态：
 

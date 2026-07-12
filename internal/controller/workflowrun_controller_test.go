@@ -52,9 +52,7 @@ func TestWorkflowRunReconcilerAcceptsWorkflowRun(t *testing.T) {
 		Namespace: workflowRun.Namespace,
 		Name:      workflowRun.Name,
 	}}
-	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
-		t.Fatalf("reconcile workflowrun: %v", err)
-	}
+	reconcileWorkflowRun(t, reconciler, req, 2)
 
 	var updated v1alpha1.WorkflowRun
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
@@ -119,6 +117,58 @@ func TestWorkflowRunReconcilerAcceptsWorkflowRun(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunReconcilerStartsAllIndependentReadyJobs(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "parallel", Namespace: "default", UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"alpha": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "first", Run: "echo alpha"}}},
+			"beta":  {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "first", Run: "echo beta"}}},
+		}},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+
+	// The first reconcile only persists the resolved graph.
+	reconcileWorkflowRun(t, reconciler, req, 1)
+	assertChildRunCount(t, c, workflowRun.Namespace, 0)
+
+	// A single StartReadyJobs transition creates all independent ready jobs.
+	reconcileWorkflowRun(t, reconciler, req, 1)
+	assertChildRunCount(t, c, workflowRun.Namespace, 2)
+}
+
+func TestPlanWorkflowRunSeparatesCurrentStateFromAction(t *testing.T) {
+	empty := &v1alpha1.WorkflowRun{}
+	plan := planWorkflowRun(&workflowRunResources{workflowRun: empty})
+	if plan.state != workflowRunStateEmpty || plan.action != workflowRunActionInitialize {
+		t.Fatalf("empty plan = %#v, want Empty + Initialize", plan)
+	}
+
+	pending := &v1alpha1.WorkflowRun{
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowPending,
+			Jobs:  resolvedJobStatuses(map[string]v1alpha1.JobSpec{"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}}}),
+		},
+	}
+	plan = planWorkflowRun(&workflowRunResources{workflowRun: pending})
+	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartReadyJobs || len(plan.jobs) != 1 || plan.jobs[0] != "build" {
+		t.Fatalf("pending plan = %#v, want Pending + StartReadyJobs(build)", plan)
+	}
+}
+
 func TestJobReadyToStartChecksDependencyStatus(t *testing.T) {
 	status := v1alpha1.JobStatus{
 		Phase: v1alpha1.JobWaiting,
@@ -137,7 +187,7 @@ func TestJobReadyToStartChecksDependencyStatus(t *testing.T) {
 	}
 }
 
-func TestWorkflowRunReconcilerFailsReadyJobWithoutInlineSteps(t *testing.T) {
+func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
@@ -164,9 +214,7 @@ func TestWorkflowRunReconcilerFailsReadyJobWithoutInlineSteps(t *testing.T) {
 		Namespace: workflowRun.Namespace,
 		Name:      workflowRun.Name,
 	}}
-	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
-		t.Fatalf("reconcile workflowrun: %v", err)
-	}
+	reconcileWorkflowRun(t, reconciler, req, 2)
 
 	var updated v1alpha1.WorkflowRun
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
@@ -178,8 +226,12 @@ func TestWorkflowRunReconcilerFailsReadyJobWithoutInlineSteps(t *testing.T) {
 	if !strings.Contains(updated.Status.Message, "job-level uses is not implemented yet") {
 		t.Fatalf("message = %q, want job-level uses not implemented", updated.Status.Message)
 	}
-	if updated.Status.Jobs["release"].Phase != v1alpha1.JobFailed {
-		t.Fatalf("job phase = %q, want %q", updated.Status.Jobs["release"].Phase, v1alpha1.JobFailed)
+	if updated.Status.Jobs != nil {
+		t.Fatalf("jobs = %#v, want nil for rejected workflowrun", updated.Status.Jobs)
+	}
+	cond := apimeta.FindStatusCondition(updated.Status.Conditions, v1alpha1.WorkflowRunAcceptedCondition)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "WorkflowValidationFailed" {
+		t.Fatalf("condition = %#v, want validation rejection", cond)
 	}
 }
 
@@ -223,9 +275,7 @@ func TestWorkflowRunReconcilerReusesExistingFirstStepRun(t *testing.T) {
 		Namespace: workflowRun.Namespace,
 		Name:      workflowRun.Name,
 	}}
-	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
-		t.Fatalf("reconcile workflowrun: %v", err)
-	}
+	reconcileWorkflowRun(t, reconciler, req, 2)
 
 	var updated v1alpha1.WorkflowRun
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
@@ -244,7 +294,7 @@ func TestWorkflowRunReconcilerReusesExistingFirstStepRun(t *testing.T) {
 	}
 }
 
-func TestWorkflowRunReconcilerFailsReadyJobWithoutRuntime(t *testing.T) {
+func TestWorkflowRunReconcilerRejectsJobWithoutRuntimeDuringInitialization(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
@@ -271,9 +321,7 @@ func TestWorkflowRunReconcilerFailsReadyJobWithoutRuntime(t *testing.T) {
 		Namespace: workflowRun.Namespace,
 		Name:      workflowRun.Name,
 	}}
-	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
-		t.Fatalf("reconcile workflowrun: %v", err)
-	}
+	reconcileWorkflowRun(t, reconciler, req, 2)
 
 	var updated v1alpha1.WorkflowRun
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
@@ -282,15 +330,15 @@ func TestWorkflowRunReconcilerFailsReadyJobWithoutRuntime(t *testing.T) {
 	if updated.Status.Phase != v1alpha1.WorkflowFailed {
 		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowFailed)
 	}
-	if updated.Status.Jobs["build"].Phase != v1alpha1.JobFailed {
-		t.Fatalf("build phase = %q, want %q", updated.Status.Jobs["build"].Phase, v1alpha1.JobFailed)
+	if updated.Status.Jobs != nil {
+		t.Fatalf("jobs = %#v, want nil for rejected workflowrun", updated.Status.Jobs)
 	}
 	if !strings.Contains(updated.Status.Message, `job "build" must set runs-on`) {
 		t.Fatalf("message = %q, want missing runs-on", updated.Status.Message)
 	}
 	cond := apimeta.FindStatusCondition(updated.Status.Conditions, v1alpha1.WorkflowRunAcceptedCondition)
-	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "WorkflowExecutionFailed" {
-		t.Fatalf("condition = %#v, want execution failure", cond)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "WorkflowValidationFailed" {
+		t.Fatalf("condition = %#v, want validation rejection", cond)
 	}
 	var childRuns v1alpha1.RunList
 	if err := c.List(context.Background(), &childRuns, client.InNamespace(workflowRun.Namespace)); err != nil {
@@ -341,9 +389,7 @@ func TestWorkflowRunReconcilerPreservesResolvedJobStatus(t *testing.T) {
 		Namespace: workflowRun.Namespace,
 		Name:      workflowRun.Name,
 	}}
-	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
-		t.Fatalf("reconcile workflowrun: %v", err)
-	}
+	reconcileWorkflowRun(t, reconciler, req, 2)
 
 	var updated v1alpha1.WorkflowRun
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
@@ -405,9 +451,7 @@ func TestWorkflowRunReconcilerResolvesReusableWorkflow(t *testing.T) {
 		Namespace: workflowRun.Namespace,
 		Name:      workflowRun.Name,
 	}}
-	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
-		t.Fatalf("reconcile workflowrun: %v", err)
-	}
+	reconcileWorkflowRun(t, reconciler, req, 2)
 
 	var updated v1alpha1.WorkflowRun
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
@@ -454,9 +498,7 @@ func TestWorkflowRunReconcilerFailsWhenReusableWorkflowMissing(t *testing.T) {
 		Namespace: workflowRun.Namespace,
 		Name:      workflowRun.Name,
 	}}
-	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
-		t.Fatalf("reconcile workflowrun: %v", err)
-	}
+	reconcileWorkflowRun(t, reconciler, req, 2)
 
 	var updated v1alpha1.WorkflowRun
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
@@ -518,9 +560,7 @@ func TestWorkflowRunReconcilerFailsWhenWorkflowInputUnknown(t *testing.T) {
 		Namespace: workflowRun.Namespace,
 		Name:      workflowRun.Name,
 	}}
-	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
-		t.Fatalf("reconcile workflowrun: %v", err)
-	}
+	reconcileWorkflowRun(t, reconciler, req, 2)
 
 	var updated v1alpha1.WorkflowRun
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
@@ -575,9 +615,7 @@ func TestWorkflowRunReconcilerFailsWhenWorkflowInputRequired(t *testing.T) {
 		Namespace: workflowRun.Namespace,
 		Name:      workflowRun.Name,
 	}}
-	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
-		t.Fatalf("reconcile workflowrun: %v", err)
-	}
+	reconcileWorkflowRun(t, reconciler, req, 2)
 
 	var updated v1alpha1.WorkflowRun
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
@@ -613,4 +651,24 @@ func TestBindWorkflowInputsAppliesDefaults(t *testing.T) {
 
 func ptrTo(value string) *string {
 	return &value
+}
+
+func reconcileWorkflowRun(t *testing.T, reconciler *WorkflowRunReconciler, req ctrl.Request, times int) {
+	t.Helper()
+	for range times {
+		if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
+			t.Fatalf("reconcile workflowrun: %v", err)
+		}
+	}
+}
+
+func assertChildRunCount(t *testing.T, c client.Client, namespace string, want int) {
+	t.Helper()
+	var runs v1alpha1.RunList
+	if err := c.List(context.Background(), &runs, client.InNamespace(namespace)); err != nil {
+		t.Fatalf("list child runs: %v", err)
+	}
+	if len(runs.Items) != want {
+		t.Fatalf("child runs = %#v, want %d", runs.Items, want)
+	}
 }

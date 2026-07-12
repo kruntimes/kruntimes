@@ -35,6 +35,34 @@ func (e *workflowInputBindingError) Unwrap() error {
 	return e.err
 }
 
+type workflowRunState string
+
+const (
+	workflowRunStateEmpty    workflowRunState = "Empty"
+	workflowRunStatePending  workflowRunState = "Pending"
+	workflowRunStateRunning  workflowRunState = "Running"
+	workflowRunStateTerminal workflowRunState = "Terminal"
+)
+
+type workflowRunAction string
+
+const (
+	workflowRunActionNone           workflowRunAction = "None"
+	workflowRunActionInitialize     workflowRunAction = "Initialize"
+	workflowRunActionStartReadyJobs workflowRunAction = "StartReadyJobs"
+)
+
+type workflowRunResources struct {
+	workflowRun *v1alpha1.WorkflowRun
+	childRuns   map[string]*v1alpha1.Run
+}
+
+type workflowRunPlan struct {
+	state  workflowRunState
+	action workflowRunAction
+	jobs   []string
+}
+
 // WorkflowRunReconciler owns WorkflowRun execution-instance status.
 type WorkflowRunReconciler struct {
 	client.Client
@@ -49,60 +77,128 @@ type WorkflowRunReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 func (r *WorkflowRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	var workflowRun v1alpha1.WorkflowRun
-	if err := r.Get(ctx, req.NamespacedName, &workflowRun); err != nil {
+	resources, err := r.loadWorkflowRunResources(ctx, req.NamespacedName)
+	if err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	workflowRun := resources.workflowRun
 	if !workflowRun.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
 
 	base := workflowRun.DeepCopy()
-	if workflowRun.Status.Phase == "" {
-		workflowRun.Status.Phase = v1alpha1.WorkflowPending
+	plan := planWorkflowRun(resources)
+	if plan.action == workflowRunActionNone {
+		return ctrl.Result{}, nil
 	}
-	condition := metav1.Condition{
-		Type:               v1alpha1.WorkflowRunAcceptedCondition,
-		Status:             metav1.ConditionTrue,
-		Reason:             "Accepted",
-		Message:            "WorkflowRun accepted; execution is a follow-up implementation step",
-		ObservedGeneration: workflowRun.Generation,
+	if err := r.applyWorkflowRunAction(ctx, resources, plan); err != nil {
+		return ctrl.Result{}, err
 	}
-	if workflowRun.Status.Phase != v1alpha1.WorkflowFailed && workflowRun.Status.Jobs == nil {
-		jobs, err := r.resolveWorkflowRunJobs(ctx, &workflowRun)
-		if err != nil {
-			var inputErr *workflowInputBindingError
-			switch {
-			case apierrors.IsNotFound(err):
-				condition.Reason = "WorkflowResolutionFailed"
-			case errors.As(err, &inputErr):
-				condition.Reason = "WorkflowInputBindingFailed"
-			default:
-				return ctrl.Result{}, err
-			}
-			workflowRun.Status.Phase = v1alpha1.WorkflowFailed
-			workflowRun.Status.Message = err.Error()
-			condition.Status = metav1.ConditionFalse
-			condition.Message = err.Error()
-		} else if len(jobs) > 0 {
-			workflowRun.Status.Jobs = resolvedJobStatuses(jobs)
-		}
-	}
-	if workflowRun.Status.Phase == v1alpha1.WorkflowPending && len(workflowRun.Spec.Jobs) > 0 && len(workflowRun.Status.Jobs) > 0 {
-		if err := r.startReadyInlineJobs(ctx, &workflowRun); err != nil {
-			return ctrl.Result{}, err
-		}
-		if workflowRun.Status.Phase == v1alpha1.WorkflowFailed {
-			condition.Status = metav1.ConditionFalse
-			condition.Reason = "WorkflowExecutionFailed"
-			condition.Message = workflowRun.Status.Message
-		}
-	}
-	apimeta.SetStatusCondition(&workflowRun.Status.Conditions, condition)
-	if err := r.Status().Patch(ctx, &workflowRun, client.MergeFrom(base)); err != nil {
+
+	if err := r.Status().Patch(ctx, workflowRun, client.MergeFrom(base)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("patch workflowrun status: %w", err)
 	}
 	return ctrl.Result{}, nil
+}
+
+func (r *WorkflowRunReconciler) loadWorkflowRunResources(ctx context.Context, key client.ObjectKey) (*workflowRunResources, error) {
+	workflowRun := &v1alpha1.WorkflowRun{}
+	if err := r.Get(ctx, key, workflowRun); err != nil {
+		return nil, err
+	}
+
+	var runs v1alpha1.RunList
+	labels := client.MatchingLabels{v1alpha1.WorkflowRunUIDLabel: string(workflowRun.UID)}
+	if err := r.List(ctx, &runs, client.InNamespace(workflowRun.Namespace), labels); err != nil {
+		return nil, fmt.Errorf("list child runs for workflowrun %s/%s: %w", workflowRun.Namespace, workflowRun.Name, err)
+	}
+	childRuns := make(map[string]*v1alpha1.Run, len(runs.Items))
+	for i := range runs.Items {
+		run := &runs.Items[i]
+		key := workflowStepKey(run.Labels[v1alpha1.WorkflowJobLabel], run.Labels[v1alpha1.WorkflowStepLabel])
+		if existing, ok := childRuns[key]; !ok || run.Name < existing.Name {
+			childRuns[key] = run.DeepCopy()
+		}
+	}
+
+	return &workflowRunResources{workflowRun: workflowRun, childRuns: childRuns}, nil
+}
+
+func planWorkflowRun(resources *workflowRunResources) workflowRunPlan {
+	workflowRun := resources.workflowRun
+	state := workflowRunStateFor(workflowRun)
+	plan := workflowRunPlan{state: state, action: workflowRunActionNone}
+	if state == workflowRunStateEmpty {
+		plan.action = workflowRunActionInitialize
+		return plan
+	}
+	if state == workflowRunStateTerminal || len(workflowRun.Spec.Jobs) == 0 || len(workflowRun.Status.Jobs) == 0 {
+		return plan
+	}
+
+	jobNames := make([]string, 0, len(workflowRun.Spec.Jobs))
+	for jobName := range workflowRun.Spec.Jobs {
+		jobNames = append(jobNames, jobName)
+	}
+	sort.Strings(jobNames)
+	readyJobs := make([]string, 0, len(jobNames))
+	for _, jobName := range jobNames {
+		status := workflowRun.Status.Jobs[jobName]
+		if !jobReadyToStart(status, workflowRun.Status.Jobs) {
+			continue
+		}
+		if status.Steps[0].RunName != "" {
+			continue
+		}
+		readyJobs = append(readyJobs, jobName)
+	}
+	if len(readyJobs) > 0 {
+		plan.action = workflowRunActionStartReadyJobs
+		plan.jobs = readyJobs
+	}
+	return plan
+}
+
+func workflowRunStateFor(workflowRun *v1alpha1.WorkflowRun) workflowRunState {
+	if workflowRun.Status.Phase == v1alpha1.WorkflowFailed || workflowRun.Status.Phase == v1alpha1.WorkflowSucceeded {
+		return workflowRunStateTerminal
+	}
+	if workflowRun.Status.Jobs == nil {
+		return workflowRunStateEmpty
+	}
+	if workflowRun.Status.Phase == v1alpha1.WorkflowRunning {
+		return workflowRunStateRunning
+	}
+	return workflowRunStatePending
+}
+
+func (r *WorkflowRunReconciler) applyInitializeWorkflowRun(ctx context.Context, workflowRun *v1alpha1.WorkflowRun) error {
+	jobs, err := r.resolveWorkflowRunJobs(ctx, workflowRun)
+	if err != nil {
+		if reason, rejected := workflowRunRejectionReason(err); rejected {
+			return rejectWorkflowRun(workflowRun, reason, err.Error())
+		}
+		return err
+	}
+	if err := validateResolvedWorkflowJobs(jobs); err != nil {
+		return rejectWorkflowRun(workflowRun, "WorkflowValidationFailed", err.Error())
+	}
+	workflowRun.Status.Phase = v1alpha1.WorkflowPending
+	workflowRun.Status.Message = ""
+	workflowRun.Status.Jobs = resolvedJobStatuses(jobs)
+	setWorkflowRunAcceptedCondition(workflowRun, metav1.ConditionTrue, "Accepted", "WorkflowRun accepted and initialized")
+	return nil
+}
+
+func (r *WorkflowRunReconciler) applyWorkflowRunAction(ctx context.Context, resources *workflowRunResources, plan workflowRunPlan) error {
+	workflowRun := resources.workflowRun
+	switch plan.action {
+	case workflowRunActionInitialize:
+		return r.applyInitializeWorkflowRun(ctx, workflowRun)
+	case workflowRunActionStartReadyJobs:
+		return r.applyStartReadyJobs(ctx, resources, plan.jobs)
+	}
+	return nil
 }
 
 // SetupWithManager registers the WorkflowRun reconciler.
@@ -129,6 +225,56 @@ func (r *WorkflowRunReconciler) resolveWorkflowRunJobs(ctx context.Context, work
 		return nil, &workflowInputBindingError{err: fmt.Errorf("bind workflow inputs for %s/%s: %w", workflowRun.Namespace, workflowRun.Spec.Uses, err)}
 	}
 	return workflow.Spec.Jobs, nil
+}
+
+func workflowRunRejectionReason(err error) (string, bool) {
+	var inputErr *workflowInputBindingError
+	switch {
+	case apierrors.IsNotFound(err):
+		return "WorkflowResolutionFailed", true
+	case errors.As(err, &inputErr):
+		return "WorkflowInputBindingFailed", true
+	default:
+		return "", false
+	}
+}
+
+func validateResolvedWorkflowJobs(jobs map[string]v1alpha1.JobSpec) error {
+	jobNames := make([]string, 0, len(jobs))
+	for jobName := range jobs {
+		jobNames = append(jobNames, jobName)
+	}
+	sort.Strings(jobNames)
+	for _, jobName := range jobNames {
+		job := jobs[jobName]
+		if job.Uses != "" {
+			return fmt.Errorf("job %q uses reusable workflow %q, but job-level uses is not implemented yet", jobName, job.Uses)
+		}
+		if job.RunsOn == "" {
+			return fmt.Errorf("job %q must set runs-on before creating child Runs", jobName)
+		}
+		if len(job.Steps) == 0 {
+			return fmt.Errorf("job %q must contain at least one step before creating child Runs", jobName)
+		}
+	}
+	return nil
+}
+
+func rejectWorkflowRun(workflowRun *v1alpha1.WorkflowRun, reason string, message string) error {
+	workflowRun.Status.Phase = v1alpha1.WorkflowFailed
+	workflowRun.Status.Message = message
+	setWorkflowRunAcceptedCondition(workflowRun, metav1.ConditionFalse, reason, message)
+	return nil
+}
+
+func setWorkflowRunAcceptedCondition(workflowRun *v1alpha1.WorkflowRun, status metav1.ConditionStatus, reason string, message string) {
+	apimeta.SetStatusCondition(&workflowRun.Status.Conditions, metav1.Condition{
+		Type:               v1alpha1.WorkflowRunAcceptedCondition,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: workflowRun.Generation,
+	})
 }
 
 func bindWorkflowInputs(inputs map[string]v1alpha1.WorkflowInputSpec, with map[string]string) (map[string]string, error) {
@@ -183,60 +329,40 @@ func resolvedJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.J
 	return statuses
 }
 
-func (r *WorkflowRunReconciler) startReadyInlineJobs(ctx context.Context, workflowRun *v1alpha1.WorkflowRun) error {
-	type readyJob struct {
-		name   string
-		spec   v1alpha1.JobSpec
-		status v1alpha1.JobStatus
-	}
-	jobNames := make([]string, 0, len(workflowRun.Spec.Jobs))
-	for jobName := range workflowRun.Spec.Jobs {
-		jobNames = append(jobNames, jobName)
-	}
-	sort.Strings(jobNames)
-	readyJobs := make([]readyJob, 0, len(jobNames))
+func (r *WorkflowRunReconciler) applyStartReadyJobs(ctx context.Context, resources *workflowRunResources, jobNames []string) error {
+	workflowRun := resources.workflowRun
 	for _, jobName := range jobNames {
 		job := workflowRun.Spec.Jobs[jobName]
-		status := workflowRun.Status.Jobs[jobName]
-		if !jobReadyToStart(status, workflowRun.Status.Jobs) {
-			continue
-		}
-		if len(job.Steps) == 0 || len(status.Steps) == 0 {
-			workflowRun.Status.Phase = v1alpha1.WorkflowFailed
-			if job.Uses != "" {
-				workflowRun.Status.Message = fmt.Sprintf("job %q uses reusable workflow %q, but job-level uses is not implemented yet", jobName, job.Uses)
-			} else {
-				workflowRun.Status.Message = fmt.Sprintf("job %q must contain at least one step before creating child Runs", jobName)
+		step := job.Steps[0]
+		run := resources.childRuns[workflowStepKey(jobName, step.Name)]
+		if run == nil {
+			run = buildStepRun(workflowRun, jobName, job, step, workflowStepLabels(workflowRun, jobName, step.Name))
+			if err := controllerutil.SetControllerReference(workflowRun, run, r.Scheme); err != nil {
+				return fmt.Errorf("set workflowrun owner reference on run %s/%s: %w", run.Namespace, run.Name, err)
 			}
-			status.Phase = v1alpha1.JobFailed
-			workflowRun.Status.Jobs[jobName] = status
-			return nil
+			if err := r.Create(ctx, run); err != nil {
+				if !apierrors.IsAlreadyExists(err) {
+					return fmt.Errorf("create child run %s/%s: %w", run.Namespace, run.Name, err)
+				}
+				var existing v1alpha1.Run
+				if getErr := r.Get(ctx, client.ObjectKeyFromObject(run), &existing); getErr != nil {
+					return fmt.Errorf("get existing child run %s/%s after create conflict: %w", run.Namespace, run.Name, getErr)
+				}
+				run = &existing
+			}
 		}
-		if status.Steps[0].RunName != "" {
-			continue
-		}
-		if job.RunsOn == "" {
-			workflowRun.Status.Phase = v1alpha1.WorkflowFailed
-			workflowRun.Status.Message = fmt.Sprintf("job %q must set runs-on before creating child Runs", jobName)
-			status.Phase = v1alpha1.JobFailed
-			workflowRun.Status.Jobs[jobName] = status
-			return nil
-		}
-		readyJobs = append(readyJobs, readyJob{name: jobName, spec: job, status: status})
-	}
-	for _, ready := range readyJobs {
-		run, err := r.ensureStepRun(ctx, workflowRun, ready.name, ready.spec, ready.spec.Steps[0])
-		if err != nil {
-			return err
-		}
-		status := ready.status
-		status.Phase = v1alpha1.JobRunning
-		status.Steps[0].Phase = v1alpha1.StepRunning
-		status.Steps[0].RunName = run.Name
-		workflowRun.Status.Jobs[ready.name] = status
-		workflowRun.Status.Phase = v1alpha1.WorkflowRunning
+		recordFirstStepRun(workflowRun, jobName, run.Name)
 	}
 	return nil
+}
+
+func recordFirstStepRun(workflowRun *v1alpha1.WorkflowRun, jobName string, runName string) {
+	status := workflowRun.Status.Jobs[jobName]
+	status.Phase = v1alpha1.JobRunning
+	status.Steps[0].Phase = v1alpha1.StepRunning
+	status.Steps[0].RunName = runName
+	workflowRun.Status.Jobs[jobName] = status
+	workflowRun.Status.Phase = v1alpha1.WorkflowRunning
 }
 
 func jobReadyToStart(status v1alpha1.JobStatus, jobs map[string]v1alpha1.JobStatus) bool {
@@ -249,36 +375,6 @@ func jobReadyToStart(status v1alpha1.JobStatus, jobs map[string]v1alpha1.JobStat
 		}
 	}
 	return true
-}
-
-func (r *WorkflowRunReconciler) ensureStepRun(ctx context.Context, workflowRun *v1alpha1.WorkflowRun, jobName string, job v1alpha1.JobSpec, step v1alpha1.StepSpec) (*v1alpha1.Run, error) {
-	labels := workflowStepLabels(workflowRun, jobName, step.Name)
-	var existing v1alpha1.RunList
-	if err := r.List(ctx, &existing, client.InNamespace(workflowRun.Namespace), client.MatchingLabels(labels)); err != nil {
-		return nil, fmt.Errorf("list child runs for workflowrun %s/%s job %s step %s: %w", workflowRun.Namespace, workflowRun.Name, jobName, step.Name, err)
-	}
-	if len(existing.Items) > 0 {
-		sort.Slice(existing.Items, func(i, j int) bool {
-			return existing.Items[i].Name < existing.Items[j].Name
-		})
-		return &existing.Items[0], nil
-	}
-
-	run := buildStepRun(workflowRun, jobName, job, step, labels)
-	if err := controllerutil.SetControllerReference(workflowRun, run, r.Scheme); err != nil {
-		return nil, fmt.Errorf("set workflowrun owner reference on run %s/%s: %w", run.Namespace, run.Name, err)
-	}
-	if err := r.Create(ctx, run); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return nil, fmt.Errorf("create child run %s/%s: %w", run.Namespace, run.Name, err)
-		}
-		var created v1alpha1.Run
-		if getErr := r.Get(ctx, client.ObjectKeyFromObject(run), &created); getErr != nil {
-			return nil, fmt.Errorf("get existing child run %s/%s after create conflict: %w", run.Namespace, run.Name, getErr)
-		}
-		return &created, nil
-	}
-	return run, nil
 }
 
 func buildStepRun(workflowRun *v1alpha1.WorkflowRun, jobName string, job v1alpha1.JobSpec, step v1alpha1.StepSpec, labels map[string]string) *v1alpha1.Run {
@@ -315,6 +411,10 @@ func workflowStepLabels(workflowRun *v1alpha1.WorkflowRun, jobName string, stepN
 		v1alpha1.WorkflowJobLabel:    jobName,
 		v1alpha1.WorkflowStepLabel:   stepName,
 	}
+}
+
+func workflowStepKey(jobName string, stepName string) string {
+	return jobName + "\x00" + stepName
 }
 
 func workflowStepRunName(workflowRunName string, jobName string, stepName string) string {

@@ -210,7 +210,7 @@ wiring from accumulating avoidable conflicts.
     update stale cases that still use the old Workflow execution model so
     `make e2e` stays passing during the migration;
   - [x] implement inline WorkflowRun first-step Run creation for ready jobs;
-  - refactor WorkflowRun controller reconciliation into a load/plan/apply
+  - [x] refactor WorkflowRun controller reconciliation into a load/plan/apply
     state-machine structure before adding more execution cases;
   - implement child Run status observation and step status updates;
   - implement next-step creation, job terminal handling, and WorkflowRun
