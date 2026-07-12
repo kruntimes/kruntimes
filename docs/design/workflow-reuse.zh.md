@@ -319,6 +319,10 @@ WorkflowRun 仍然可能在执行时失败。
 都是 durable 且 restart-safe 的；后续引入 child Run observation、next-step creation、restart
 recovery 和 reusable call expansion 等 execution states 时，状态也会保持显式。
 
+对于 active WorkflowRun，`ObserveChildRuns` 的优先级高于 `StartReadyJobs`。当 child Run
+进入 terminal phase 时，该次 reconciliation 只将 phase 复制到对应的 step status。下一次
+reconciliation 才能决定是否创建 next step 或解除 dependency jobs 的阻塞。
+
 Inline WorkflowRun execution 应拆成小的、可 review 的步骤落地：
 
 1. 在修改 execution behavior 前，先审计现有 E2E tests。移除或更新仍在测试旧
