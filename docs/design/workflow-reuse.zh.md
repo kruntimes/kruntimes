@@ -306,9 +306,11 @@ runtimed 理解 Workflow 概念。
 scheduler/runtimed 仍然只操作 Runs。
 
 WorkflowRun controller 的 reconciliation 应保持 load/plan/apply 结构：加载
-WorkflowRun 和相关资源，规划下一个 execution state，根据 state 做 switch，再执行对应的
-Kubernetes writes。这样在继续加入 child Run observation、next-step creation、restart
-recovery 和 reusable call expansion 时，每个 execution state 都保持显式。
+WorkflowRun 和所有 child Runs，推导 current state，与 desired state 比较，并且只规划一个
+operation。随后执行该 operation，再 patch WorkflowRun status。一次 reconciliation 不能循环
+执行多个 operation，也不能在 status 更新前创建多个 child Runs。这样每个 transition 都是
+durable 且 restart-safe 的；后续引入 child Run observation、next-step creation、restart
+recovery 和 reusable call expansion 等 execution states 时，状态也会保持显式。
 
 Inline WorkflowRun execution 应拆成小的、可 review 的步骤落地：
 

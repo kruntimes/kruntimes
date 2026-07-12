@@ -321,10 +321,13 @@ Runs remain the durable execution records, and scheduler/runtimed continue to
 operate only on Runs.
 
 The WorkflowRun controller should keep reconciliation structured as
-load/plan/apply: load the WorkflowRun and related resources, plan the next
-execution state, switch on that state, and apply the resulting Kubernetes
-writes. This keeps new execution states explicit as child Run observation,
-next-step creation, restart recovery, and reusable call expansion land.
+load/plan/apply: load the WorkflowRun and all child Runs, derive the current
+state, compare it with the desired state, and plan exactly one operation. It
+then applies that operation and patches WorkflowRun status. A reconciliation
+must not loop through multiple operations or create multiple child Runs before
+the status update. This makes each transition durable and restart-safe, and
+keeps new execution states explicit as child Run observation, next-step
+creation, restart recovery, and reusable call expansion land.
 
 Inline WorkflowRun execution should land in small, reviewable steps:
 
