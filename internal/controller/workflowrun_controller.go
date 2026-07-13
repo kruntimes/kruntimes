@@ -47,10 +47,10 @@ const (
 type workflowRunAction string
 
 const (
-	workflowRunActionNone             workflowRunAction = "None"
-	workflowRunActionInitialize       workflowRunAction = "Initialize"
-	workflowRunActionObserveChildRuns workflowRunAction = "ObserveChildRuns"
-	workflowRunActionStartReadyJobs   workflowRunAction = "StartReadyJobs"
+	workflowRunActionNone               workflowRunAction = "None"
+	workflowRunActionInitialize         workflowRunAction = "Initialize"
+	workflowRunActionObserveChildRuns   workflowRunAction = "ObserveChildRuns"
+	workflowRunActionStartRunnableSteps workflowRunAction = "StartRunnableSteps"
 )
 
 type workflowRunResources struct {
@@ -59,9 +59,14 @@ type workflowRunResources struct {
 }
 
 type workflowRunPlan struct {
-	state  workflowRunState
-	action workflowRunAction
-	jobs   []string
+	state   workflowRunState
+	action  workflowRunAction
+	targets []workflowRunStepTarget
+}
+
+type workflowRunStepTarget struct {
+	jobName   string
+	stepIndex int
 }
 
 // WorkflowRunReconciler owns WorkflowRun execution-instance status.
@@ -140,26 +145,9 @@ func planWorkflowRun(resources *workflowRunResources) workflowRunPlan {
 		plan.action = workflowRunActionObserveChildRuns
 		return plan
 	}
-
-	jobNames := make([]string, 0, len(workflowRun.Spec.Jobs))
-	for jobName := range workflowRun.Spec.Jobs {
-		jobNames = append(jobNames, jobName)
-	}
-	sort.Strings(jobNames)
-	readyJobs := make([]string, 0, len(jobNames))
-	for _, jobName := range jobNames {
-		status := workflowRun.Status.Jobs[jobName]
-		if !jobReadyToStart(status, workflowRun.Status.Jobs) {
-			continue
-		}
-		if status.Steps[0].RunName != "" {
-			continue
-		}
-		readyJobs = append(readyJobs, jobName)
-	}
-	if len(readyJobs) > 0 {
-		plan.action = workflowRunActionStartReadyJobs
-		plan.jobs = readyJobs
+	if targets := runnableStepTargets(workflowRun); len(targets) > 0 {
+		plan.action = workflowRunActionStartRunnableSteps
+		plan.targets = targets
 	}
 	return plan
 }
@@ -203,8 +191,8 @@ func (r *WorkflowRunReconciler) applyWorkflowRunAction(ctx context.Context, reso
 	case workflowRunActionObserveChildRuns:
 		applyObserveChildRuns(resources)
 		return nil
-	case workflowRunActionStartReadyJobs:
-		return r.applyStartReadyJobs(ctx, resources, plan.jobs)
+	case workflowRunActionStartRunnableSteps:
+		return r.applyStartRunnableSteps(ctx, resources, plan.targets)
 	}
 	return nil
 }
@@ -338,40 +326,89 @@ func resolvedJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.J
 	return statuses
 }
 
-func (r *WorkflowRunReconciler) applyStartReadyJobs(ctx context.Context, resources *workflowRunResources, jobNames []string) error {
+func (r *WorkflowRunReconciler) applyStartRunnableSteps(ctx context.Context, resources *workflowRunResources, targets []workflowRunStepTarget) error {
 	workflowRun := resources.workflowRun
-	for _, jobName := range jobNames {
-		job := workflowRun.Spec.Jobs[jobName]
-		step := job.Steps[0]
-		run := resources.childRuns[workflowStepKey(jobName, step.Name)]
-		if run == nil {
-			run = buildStepRun(workflowRun, jobName, job, step, workflowStepLabels(workflowRun, jobName, step.Name))
-			if err := controllerutil.SetControllerReference(workflowRun, run, r.Scheme); err != nil {
-				return fmt.Errorf("set workflowrun owner reference on run %s/%s: %w", run.Namespace, run.Name, err)
-			}
-			if err := r.Create(ctx, run); err != nil {
-				if !apierrors.IsAlreadyExists(err) {
-					return fmt.Errorf("create child run %s/%s: %w", run.Namespace, run.Name, err)
-				}
-				var existing v1alpha1.Run
-				if getErr := r.Get(ctx, client.ObjectKeyFromObject(run), &existing); getErr != nil {
-					return fmt.Errorf("get existing child run %s/%s after create conflict: %w", run.Namespace, run.Name, getErr)
-				}
-				run = &existing
-			}
+	for _, target := range targets {
+		job := workflowRun.Spec.Jobs[target.jobName]
+		run, err := r.createOrReuseStepRun(ctx, resources, target.jobName, job, target.stepIndex)
+		if err != nil {
+			return err
 		}
-		recordFirstStepRun(workflowRun, jobName, run.Name)
+		recordStepRun(workflowRun, target.jobName, target.stepIndex, run.Name)
 	}
 	return nil
 }
 
-func recordFirstStepRun(workflowRun *v1alpha1.WorkflowRun, jobName string, runName string) {
+func (r *WorkflowRunReconciler) createOrReuseStepRun(ctx context.Context, resources *workflowRunResources, jobName string, job v1alpha1.JobSpec, stepIndex int) (*v1alpha1.Run, error) {
+	workflowRun := resources.workflowRun
+	step := job.Steps[stepIndex]
+	run := resources.childRuns[workflowStepKey(jobName, step.Name)]
+	if run != nil {
+		return run, nil
+	}
+
+	run = buildStepRun(workflowRun, jobName, job, step, workflowStepLabels(workflowRun, jobName, step.Name))
+	if err := controllerutil.SetControllerReference(workflowRun, run, r.Scheme); err != nil {
+		return nil, fmt.Errorf("set workflowrun owner reference on run %s/%s: %w", run.Namespace, run.Name, err)
+	}
+	if err := r.Create(ctx, run); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("create child run %s/%s: %w", run.Namespace, run.Name, err)
+		}
+		var existing v1alpha1.Run
+		if getErr := r.Get(ctx, client.ObjectKeyFromObject(run), &existing); getErr != nil {
+			return nil, fmt.Errorf("get existing child run %s/%s after create conflict: %w", run.Namespace, run.Name, getErr)
+		}
+		run = &existing
+	}
+	return run, nil
+}
+
+func recordStepRun(workflowRun *v1alpha1.WorkflowRun, jobName string, stepIndex int, runName string) {
 	status := workflowRun.Status.Jobs[jobName]
 	status.Phase = v1alpha1.JobRunning
-	status.Steps[0].Phase = v1alpha1.StepRunning
-	status.Steps[0].RunName = runName
+	status.Steps[stepIndex].Phase = v1alpha1.StepRunning
+	status.Steps[stepIndex].RunName = runName
 	workflowRun.Status.Jobs[jobName] = status
 	workflowRun.Status.Phase = v1alpha1.WorkflowRunning
+}
+
+func runnableStepTargets(workflowRun *v1alpha1.WorkflowRun) []workflowRunStepTarget {
+	jobNames := make([]string, 0, len(workflowRun.Spec.Jobs))
+	for jobName := range workflowRun.Spec.Jobs {
+		jobNames = append(jobNames, jobName)
+	}
+	sort.Strings(jobNames)
+
+	targets := make([]workflowRunStepTarget, 0, len(jobNames))
+	for _, jobName := range jobNames {
+		job := workflowRun.Spec.Jobs[jobName]
+		status, ok := workflowRun.Status.Jobs[jobName]
+		if !ok || len(status.Steps) != len(job.Steps) {
+			continue
+		}
+		if jobReadyToStart(status, workflowRun.Status.Jobs) && status.Steps[0].RunName == "" {
+			targets = append(targets, workflowRunStepTarget{jobName: jobName, stepIndex: 0})
+			continue
+		}
+		if stepIndex, ok := nextStepToStart(status); ok {
+			targets = append(targets, workflowRunStepTarget{jobName: jobName, stepIndex: stepIndex})
+		}
+	}
+	return targets
+}
+
+func nextStepToStart(status v1alpha1.JobStatus) (int, bool) {
+	for i, step := range status.Steps {
+		if step.Phase == v1alpha1.StepSucceeded {
+			continue
+		}
+		if i > 0 && step.Phase == v1alpha1.StepPending && step.RunName == "" {
+			return i, true
+		}
+		return 0, false
+	}
+	return 0, false
 }
 
 func jobReadyToStart(status v1alpha1.JobStatus, jobs map[string]v1alpha1.JobStatus) bool {

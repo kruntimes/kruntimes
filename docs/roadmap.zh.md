@@ -185,7 +185,7 @@ controller wiring 累积不必要的冲突。
   - [x] 定义并 review child failure、cancellation、dependency propagation 和
     WorkflowRun terminal-status semantics：failure 后 independent jobs 继续，
     dependency-blocked jobs 为 `Skipped`，WorkflowRun 在 executable jobs settled 后聚合；
-  - 实现 observed step success 后的 next-step creation；
+  - [x] 实现 observed step success 后的 next-step creation；
   - 根据 observed step states 实现 job terminal-state aggregation；
   - 实现 failed-dependency propagation 和 WorkflowRun terminal handling；
   - 实现 in-progress inline WorkflowRuns 的 controller restart recovery；
