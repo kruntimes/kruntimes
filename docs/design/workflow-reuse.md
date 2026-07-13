@@ -301,8 +301,8 @@ The first implementation should use a simple deterministic graph model:
 - child Run names are generated deterministically enough for idempotent
   reconciliation, or are discovered through labels before creating new Runs;
 - the controller creates Runs only when all dependency jobs have succeeded;
-- failed, cancelled, or timed-out child Runs fail the owning WorkflowRun unless
-  a future retry/continue-on-error API explicitly changes that behavior.
+- terminal child Run phases are preserved on their owning step, then aggregated
+  into job and WorkflowRun state according to the terminal semantics below.
 
 The first version should support one execution strategy:
 
@@ -313,8 +313,8 @@ The first version should support one execution strategy:
 5. When a step Run succeeds, collect outputs and create the next step Run.
 6. When all steps in a job succeed, evaluate job outputs and mark the job
    succeeded.
-7. When all jobs succeed, evaluate WorkflowRun outputs and mark the WorkflowRun
-   succeeded.
+7. After all executable jobs have reached a terminal state, evaluate
+   WorkflowRun outputs and determine its terminal state.
 
 This deliberately avoids adding a separate WorkflowRunInvocation API. Child
 Runs remain the durable execution records, and scheduler/runtimed continue to
@@ -343,6 +343,33 @@ For an active WorkflowRun, `ObserveChildRuns` takes precedence over
 only copies the phase into the matching step status. The next reconciliation
 may then decide whether to create a next step or unblock dependent jobs.
 
+## Failure, Cancellation, and Terminal Semantics
+
+The v0.x default follows the familiar GitHub Actions job-dependency model:
+independent jobs run in parallel, while a failed or skipped prerequisite skips
+its dependents. Conditional execution, `continue-on-error`, and matrix
+fail-fast behavior are deliberate future API additions; they are not implicit
+controller behavior in the first version.
+
+- A terminal child Run is copied to the matching step without rewriting its
+  phase. In particular, `RunTimeout` remains `RunTimeout`, and `Cancelled`
+  remains `Cancelled`.
+- A job succeeds only when all of its steps succeed. A failed, cancelled, or
+  timed-out step makes its owning job `Failed`.
+- Independent jobs continue to be created and allowed to finish after another
+  job fails. A job that depends, directly or transitively, on a failed or
+  skipped job is marked `Skipped`, records the blocking predecessor, and never
+  creates a child Run. It is not itself `Failed`.
+- The controller waits until every executable job has reached a terminal state
+  or been skipped. The WorkflowRun is `Failed` if any job failed; otherwise it
+  is `Succeeded`, including the case where jobs were skipped only because of a
+  dependency. WorkflowRun status must preserve the job-level reasons so the
+  aggregate phase is explainable.
+- Cancelling a WorkflowRun prevents new child Runs from being created and
+  requests cancellation for every non-terminal child Run. Once those children
+  have settled, the WorkflowRun is `Cancelled`; it is not converted to
+  `Failed` because a child reports cancellation or timeout during this process.
+
 Inline WorkflowRun execution should land in small, reviewable steps:
 
 1. Before changing execution behavior, audit the existing E2E tests. Remove or
@@ -357,9 +384,10 @@ Inline WorkflowRun execution should land in small, reviewable steps:
    intended actions, then apply Kubernetes writes.
 4. Watch or reconcile child Runs owned by a WorkflowRun and copy terminal child
    Run phase into the matching step status.
-5. Define and review failure, cancellation, and terminal-status semantics
-   before implementing them: in particular, whether independent jobs continue
-   after a failure and when blocked dependent jobs become failed.
+5. Define and review failure, cancellation, and terminal-status semantics:
+   independent jobs continue after a failure, dependency-blocked jobs become
+   `Skipped`, and the WorkflowRun aggregates only after all executable jobs
+   settle.
 6. When a step succeeds and a later step is pending, create the next step Run
    in the same job.
 7. Aggregate terminal step states into terminal job states: all succeeded
@@ -463,7 +491,9 @@ the implementation lands.
    state-machine structure.
 9. Implement child Run status observation and step status updates.
 10. Define and review child failure, cancellation, dependency propagation, and
-    WorkflowRun terminal-status semantics.
+    WorkflowRun terminal-status semantics: independent jobs continue, blocked
+    dependents are `Skipped`, and terminal status is aggregated after all
+    executable jobs settle.
 11. Implement next-step creation after observed step success.
 12. Implement job terminal-state aggregation from observed step states.
 13. Implement failed-dependency propagation and WorkflowRun terminal handling.
