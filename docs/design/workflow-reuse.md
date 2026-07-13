@@ -313,8 +313,9 @@ The first version should support one execution strategy:
    the next step after a successful predecessor in a running job.
 5. When a step Run succeeds, collect outputs; the following reconciliation
    includes its next step with any other runnable steps.
-6. When all steps in a job succeed, evaluate job outputs and mark the job
-   succeeded.
+6. Aggregate observed terminal step states into the job state: all succeeded
+   steps succeed the job, while any failed step fails it. Job output evaluation
+   is deferred until output propagation is implemented.
 7. After all executable jobs have reached a terminal state, evaluate
    WorkflowRun outputs and determine its terminal state.
 

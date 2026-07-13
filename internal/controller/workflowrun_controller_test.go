@@ -220,6 +220,27 @@ func TestPlanWorkflowRunStartsAllRunnableSteps(t *testing.T) {
 	}
 }
 
+func TestPlanWorkflowRunFinalizesTerminalJobsBeforeStartingReadyJobs(t *testing.T) {
+	workflowRun := &v1alpha1.WorkflowRun{
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+			"lint":  {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "check", Run: "make lint"}}},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{{Name: "compile", Phase: v1alpha1.StepSucceeded, RunName: "compile-run"}}},
+				"lint":  {Phase: v1alpha1.JobPending, Steps: []v1alpha1.StepStatus{{Name: "check", Phase: v1alpha1.StepPending}}},
+			},
+		},
+	}
+
+	plan := planWorkflowRun(&workflowRunResources{workflowRun: workflowRun})
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionFinalizeJobs || len(plan.jobs) != 1 || plan.jobs[0] != "build" {
+		t.Fatalf("plan = %#v, want Running + FinalizeJobs(build)", plan)
+	}
+}
+
 func TestJobReadyToStartChecksDependencyStatus(t *testing.T) {
 	status := v1alpha1.JobStatus{
 		Phase: v1alpha1.JobWaiting,
@@ -539,6 +560,61 @@ func TestWorkflowRunReconcilerCreatesNextStepAfterObservedSuccess(t *testing.T) 
 	}
 	if lintRun.Spec.Source == nil || lintRun.Spec.Source.Inline == nil || *lintRun.Spec.Source.Inline != "make lint" {
 		t.Fatalf("lint run spec = %#v, want lint command", lintRun.Spec)
+	}
+}
+
+func TestWorkflowRunReconcilerFinalizesJobAfterObservedTerminalStep(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		runPhase v1alpha1.RunPhase
+		jobPhase v1alpha1.JobPhase
+	}{
+		{name: "succeeded", runPhase: v1alpha1.RunSucceeded, jobPhase: v1alpha1.JobSucceeded},
+		{name: "failed", runPhase: v1alpha1.RunFailed, jobPhase: v1alpha1.JobFailed},
+		{name: "timed-out", runPhase: v1alpha1.RunTimeout, jobPhase: v1alpha1.JobFailed},
+		{name: "cancelled", runPhase: v1alpha1.RunCancelled, jobPhase: v1alpha1.JobFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := v1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatalf("add scheme: %v", err)
+			}
+
+			workflowRun := &v1alpha1.WorkflowRun{
+				ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid"},
+				Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+					"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+				}},
+				Status: v1alpha1.WorkflowRunStatus{
+					Phase: v1alpha1.WorkflowRunning,
+					Jobs: map[string]v1alpha1.JobStatus{
+						"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{{Name: "compile", Phase: v1alpha1.StepRunning, RunName: "compile-run"}}},
+					},
+				},
+			}
+			run := workflowChildRun(workflowRun, "build", "compile", "compile-run", test.runPhase)
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(workflowRun, run).
+				WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+				Build()
+			reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+			req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+
+			// Observation and job finalization are separate durable transitions.
+			reconcileWorkflowRun(t, reconciler, req, 2)
+
+			var updated v1alpha1.WorkflowRun
+			if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+				t.Fatalf("get workflowrun: %v", err)
+			}
+			if updated.Status.Jobs["build"].Phase != test.jobPhase {
+				t.Fatalf("job phase = %q, want %q", updated.Status.Jobs["build"].Phase, test.jobPhase)
+			}
+			if updated.Status.Phase != v1alpha1.WorkflowRunning {
+				t.Fatalf("workflow phase = %q, want %q before WorkflowRun terminal aggregation", updated.Status.Phase, v1alpha1.WorkflowRunning)
+			}
+		})
 	}
 }
 

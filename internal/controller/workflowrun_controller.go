@@ -51,6 +51,7 @@ const (
 	workflowRunActionInitialize         workflowRunAction = "Initialize"
 	workflowRunActionObserveChildRuns   workflowRunAction = "ObserveChildRuns"
 	workflowRunActionStartRunnableSteps workflowRunAction = "StartRunnableSteps"
+	workflowRunActionFinalizeJobs       workflowRunAction = "FinalizeJobs"
 )
 
 type workflowRunResources struct {
@@ -62,6 +63,7 @@ type workflowRunPlan struct {
 	state   workflowRunState
 	action  workflowRunAction
 	targets []workflowRunStepTarget
+	jobs    []string
 }
 
 type workflowRunStepTarget struct {
@@ -145,9 +147,15 @@ func planWorkflowRun(resources *workflowRunResources) workflowRunPlan {
 		plan.action = workflowRunActionObserveChildRuns
 		return plan
 	}
+	if jobNames := jobsWithTerminalStepStates(workflowRun); len(jobNames) > 0 {
+		plan.action = workflowRunActionFinalizeJobs
+		plan.jobs = jobNames
+		return plan
+	}
 	if targets := runnableStepTargets(workflowRun); len(targets) > 0 {
 		plan.action = workflowRunActionStartRunnableSteps
 		plan.targets = targets
+		return plan
 	}
 	return plan
 }
@@ -193,6 +201,9 @@ func (r *WorkflowRunReconciler) applyWorkflowRunAction(ctx context.Context, reso
 		return nil
 	case workflowRunActionStartRunnableSteps:
 		return r.applyStartRunnableSteps(ctx, resources, plan.targets)
+	case workflowRunActionFinalizeJobs:
+		applyFinalizeJobs(workflowRun, plan.jobs)
+		return nil
 	}
 	return nil
 }
@@ -409,6 +420,52 @@ func nextStepToStart(status v1alpha1.JobStatus) (int, bool) {
 		return 0, false
 	}
 	return 0, false
+}
+
+func jobsWithTerminalStepStates(workflowRun *v1alpha1.WorkflowRun) []string {
+	jobNames := make([]string, 0, len(workflowRun.Status.Jobs))
+	for jobName, status := range workflowRun.Status.Jobs {
+		if status.Phase != v1alpha1.JobRunning {
+			continue
+		}
+		if _, ok := terminalJobPhase(status); ok {
+			jobNames = append(jobNames, jobName)
+		}
+	}
+	sort.Strings(jobNames)
+	return jobNames
+}
+
+func terminalJobPhase(status v1alpha1.JobStatus) (v1alpha1.JobPhase, bool) {
+	if len(status.Steps) == 0 {
+		return "", false
+	}
+	allSucceeded := true
+	for _, step := range status.Steps {
+		switch step.Phase {
+		case v1alpha1.StepFailed:
+			return v1alpha1.JobFailed, true
+		case v1alpha1.StepSucceeded:
+		default:
+			allSucceeded = false
+		}
+	}
+	if allSucceeded {
+		return v1alpha1.JobSucceeded, true
+	}
+	return "", false
+}
+
+func applyFinalizeJobs(workflowRun *v1alpha1.WorkflowRun, jobNames []string) {
+	for _, jobName := range jobNames {
+		status := workflowRun.Status.Jobs[jobName]
+		phase, ok := terminalJobPhase(status)
+		if !ok {
+			continue
+		}
+		status.Phase = phase
+		workflowRun.Status.Jobs[jobName] = status
+	}
 }
 
 func jobReadyToStart(status v1alpha1.JobStatus, jobs map[string]v1alpha1.JobStatus) bool {
