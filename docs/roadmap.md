@@ -220,7 +220,11 @@ wiring from accumulating avoidable conflicts.
     after executable jobs settle;
   - [x] implement next-step creation after observed step success;
   - [x] implement job terminal-state aggregation from observed step states;
-  - implement failed-dependency propagation and WorkflowRun terminal handling;
+  - add terminal-status and cancellation API prerequisites, regenerated CRDs,
+    and child Run patch RBAC;
+  - implement failed-dependency propagation to `JobSkipped`;
+  - implement WorkflowRun terminal aggregation;
+  - implement WorkflowRun cancellation propagation;
   - implement controller restart recovery for in-progress inline WorkflowRuns;
   - implement job-level reusable Workflow calls;
   - implement step-level Action expansion;

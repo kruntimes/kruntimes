@@ -340,8 +340,8 @@ failed 或 skipped prerequisite 会让其 dependents 被跳过。conditional exe
 - 只有 job 的所有 steps 都 succeeded，job 才 succeeded。任一 step failed、cancelled 或
   timed out 都会使 owning job 进入 `Failed`。
 - 一个 job 失败后，independent jobs 仍会被创建并允许完成。直接或传递依赖于 failed 或
-  skipped job 的 job 会进入 `Skipped`，记录 blocking predecessor，并且永不创建 child Run；
-  它自身不是 `Failed`。
+  skipped job 的 job 会进入 `Skipped`，且永不创建 child Run；其 `pre` edges 和
+  predecessor job phases 可以识别 blocker，故它自身不是 `Failed`。
 - controller 等待所有 executable jobs terminal 或被 skipped。任一 job `Failed` 时，
   WorkflowRun 为 `Failed`；否则 WorkflowRun 为 `Succeeded`，包括仅因 dependency 而
   skipped 的 jobs。WorkflowRun status 必须保留 job-level reasons，使 aggregate phase
@@ -349,6 +349,47 @@ failed 或 skipped prerequisite 会让其 dependents 被跳过。conditional exe
 - 取消 WorkflowRun 时，controller 停止创建新的 child Runs，并请求取消所有 non-terminal
   child Runs。待它们 settled 后，WorkflowRun 为 `Cancelled`；不得因为过程中 child 报告
   cancellation 或 timeout 而转成 `Failed`。
+
+### API Prerequisites
+
+现有 WorkflowRun API 还不能完整表达这些语义。在 controller 实现 dependency propagation 或
+cancellation 前，API 必须增加以下 fields 和 phases：
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+spec:
+  cancelRequested: true
+status:
+  phase: Cancelled
+  jobs:
+    test:
+      phase: Skipped
+      pre: [build]
+```
+
+- `WorkflowRun.spec.cancelRequested` 是 user intent，对齐 `Run.spec.cancelRequested`。
+  controller 一旦观察到它，就不能再为该 WorkflowRun 创建 child Runs。
+- `WorkflowPhase` 必须增加 terminal `Cancelled`。
+- `JobPhase` 必须增加 terminal `Skipped`。它表示 job 因 predecessor failed 或 skipped
+  而未执行。已有的 `pre` edges 加上 predecessor job phases 就可以识别 blocking job，故 v0.x
+  不增加冗余的 `blockedBy` status field。
+- v0.x 不为 `JobPhase` 增加 `Cancelled`。普通执行中 step cancellation 会使 running job
+  进入 `Failed`；整体 WorkflowRun cancellation 由 parent 的 `Cancelled` phase 表达。
+
+Cancellation 是独立的 controller action，优先于正常 execution actions。它会给每个
+non-terminal child Run patch `spec.cancelRequested=true`，并等待观察到它们 terminal。之后把
+parent WorkflowRun 设为 `Cancelled`。从未启动的 jobs 维持当前 Pending 或 Waiting，因为它们
+不是被 DAG dependency skip；parent terminal phase 说明它们不会继续运行。
+
+非 cancellation 场景中，dependency propagation 和 WorkflowRun finalization 是独立 actions：
+
+1. 任一 predecessor 为 `Failed` 或 `Skipped` 时，将 Pending 或 Waiting job 标记为
+   `Skipped`；independent jobs 仍然可以启动；
+2. 所有 executable jobs settled 后，若任一 job 是 `Failed`，WorkflowRun 为 `Failed`；
+   否则为 `Succeeded`。
+
+API change 需要重新生成 CRDs，并为 WorkflowRun controller 增加 patch child Runs 的 RBAC。
 
 Inline WorkflowRun execution 应拆成小的、可 review 的步骤落地：
 
@@ -367,12 +408,17 @@ Inline WorkflowRun execution 应拆成小的、可 review 的步骤落地：
 6. 当 step 成功且存在 pending 的后续 step 时，在同一 job 内创建 next-step Run。
 7. 将 terminal step states 聚合为 terminal job states：所有 steps succeeded 时 job
    succeeded；任何 step failed、cancelled 或 timed out 时 job failed。
-8. 根据已 review 的 terminal-status semantics，propagate failed job dependencies 并
-   finalize WorkflowRun。
-9. 当 job succeeded 时，解锁所有 `pre` dependencies 已成功的 jobs。
-10. 增加 restart recovery tests，证明 controller 可以从
+8. 增加已 review 的 terminal-status 与 cancellation API prerequisites，重新生成 CRDs，
+   并授予 child Run patch RBAC。
+9. 当 failed 或 skipped predecessor 阻塞 job 时，将 job 标记为 `Skipped`；当 job
+   succeeded 时，解锁所有 `pre` dependencies 已成功的 jobs。
+10. 所有 executable jobs settled 后，将非 cancelled WorkflowRun finalize 为 `Succeeded`
+    或 `Failed`。
+11. 处理 `spec.cancelRequested`：取消 active child Runs，并将 WorkflowRun finalize 为
+    `Cancelled`。
+12. 增加 restart recovery tests，证明 controller 可以从
    `status.jobs[*].steps[*].runName` 和 child Run labels 继续执行，且不会重复创建 Runs。
-11. 只有当 controller 能端到端执行 inline WorkflowRun 后，再增加 E2E coverage。
+13. 只有当 controller 能端到端执行 inline WorkflowRun 后，再增加 E2E coverage。
 
 ## Expression Context
 
@@ -462,15 +508,19 @@ status:
     并在所有 executable jobs settled 后聚合终态。
 11. 实现 observed step success 后的 next-step creation。
 12. 根据 observed step states 实现 job terminal-state aggregation。
-13. 实现 failed-dependency propagation 和 WorkflowRun terminal handling。
-14. 实现 in-progress inline WorkflowRuns 的 controller restart recovery。
-15. 实现 job-level reusable Workflow calls。
-16. 实现 step-level Action expansion。
-17. 实现 expression evaluation 和 output propagation。
-18. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。
-19. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
-    validation failures、output propagation，以及从 status DAG edges 进行 controller
-    restart recovery。
+13. 增加 terminal-status 和 cancellation API prerequisites、重新生成 CRDs，以及 child Run
+    patch RBAC。
+14. 实现到 `JobSkipped` 的 failed-dependency propagation。
+15. 实现 WorkflowRun terminal aggregation。
+16. 实现 WorkflowRun cancellation propagation。
+17. 实现 in-progress inline WorkflowRuns 的 controller restart recovery。
+18. 实现 job-level reusable Workflow calls。
+19. 实现 step-level Action expansion。
+20. 实现 expression evaluation 和 output propagation。
+21. 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`。
+22. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
+   validation failures、output propagation，以及从 status DAG edges 进行 controller
+   restart recovery。
 20. reusable model 实现后，更新最终 v0.x demos。
 
 当前实现状态：

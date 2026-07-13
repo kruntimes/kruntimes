@@ -188,7 +188,11 @@ controller wiring 累积不必要的冲突。
     dependency-blocked jobs 为 `Skipped`，WorkflowRun 在 executable jobs settled 后聚合；
   - [x] 实现 observed step success 后的 next-step creation；
   - [x] 根据 observed step states 实现 job terminal-state aggregation；
-  - 实现 failed-dependency propagation 和 WorkflowRun terminal handling；
+  - 增加 terminal-status 和 cancellation API prerequisites、重新生成 CRDs，以及 child Run
+    patch RBAC；
+  - 实现到 `JobSkipped` 的 failed-dependency propagation；
+  - 实现 WorkflowRun terminal aggregation；
+  - 实现 WorkflowRun cancellation propagation；
   - 实现 in-progress inline WorkflowRuns 的 controller restart recovery；
   - 实现 job-level reusable Workflow calls；
   - 实现 step-level Action expansion；
