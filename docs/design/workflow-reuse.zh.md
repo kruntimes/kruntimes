@@ -301,7 +301,9 @@ runtimed 理解 Workflow 概念。
    中 successful predecessor 之后的下一个 step。
 5. 当 step Run 成功时收集 outputs；下一次 reconciliation 会将其 next step 与其他
    runnable steps 一起处理。
-6. 当 job 内所有 steps 成功时，计算 job outputs，并将 job 标记为 succeeded。
+6. 将 observed terminal step states 聚合为 job state：所有 steps succeeded 时 job
+   succeeded，任一 step failed 时 job failed。job output evaluation 延后到实现 output
+   propagation 时处理。
 7. 当所有可执行 jobs 到达 terminal state 后，计算 WorkflowRun outputs，并确定
    WorkflowRun 的 terminal state。
 
