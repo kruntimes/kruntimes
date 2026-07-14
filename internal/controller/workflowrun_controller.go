@@ -254,6 +254,50 @@ func validateResolvedWorkflowJobs(jobs map[string]v1alpha1.JobSpec) error {
 			return fmt.Errorf("job %q must contain at least one step before creating child Runs", jobName)
 		}
 	}
+	return validateWorkflowJobDAG(jobs, jobNames)
+}
+
+func validateWorkflowJobDAG(jobs map[string]v1alpha1.JobSpec, jobNames []string) error {
+	const (
+		jobVisiting = iota + 1
+		jobVisited
+	)
+	states := make(map[string]int, len(jobs))
+	stack := make([]string, 0, len(jobs))
+
+	var visit func(string) error
+	visit = func(jobName string) error {
+		switch states[jobName] {
+		case jobVisited:
+			return nil
+		case jobVisiting:
+			cycleStart := slices.Index(stack, jobName)
+			cycle := append(slices.Clone(stack[cycleStart:]), jobName)
+			return fmt.Errorf("workflow job dependency cycle: %s", strings.Join(cycle, " -> "))
+		}
+
+		states[jobName] = jobVisiting
+		stack = append(stack, jobName)
+		dependencies := slices.Clone(jobs[jobName].Needs)
+		sort.Strings(dependencies)
+		for _, dependency := range dependencies {
+			if _, ok := jobs[dependency]; !ok {
+				return fmt.Errorf("job %q needs unknown job %q", jobName, dependency)
+			}
+			if err := visit(dependency); err != nil {
+				return err
+			}
+		}
+		stack = stack[:len(stack)-1]
+		states[jobName] = jobVisited
+		return nil
+	}
+
+	for _, jobName := range jobNames {
+		if err := visit(jobName); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

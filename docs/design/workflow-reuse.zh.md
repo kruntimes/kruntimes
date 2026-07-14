@@ -537,6 +537,8 @@ status:
 - Top-level reusable Workflow calls 会提前绑定 string inputs：应用 defaults，
   missing required inputs 会失败，unknown `with` keys 也会失败。Bound values 会等到
   WorkflowRun execution 实现后再用于 child Runs。
+- Inline 和 resolved reusable Workflow job DAG 会在初始化 status graph 或创建 child Runs
+  前拒绝 unknown dependencies 和 multi-job cycles。
 - 旧 Workflow execution model 的 stale E2E stubs 已删除，保证迁移期间 E2E 聚焦于
   仍应保持 passing 的行为。
 - Inline WorkflowRuns 会为 runnable jobs 创建 first-step 和 next-step child Runs，并将

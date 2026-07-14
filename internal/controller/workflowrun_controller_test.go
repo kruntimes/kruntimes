@@ -376,6 +376,80 @@ func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization
 	}
 }
 
+func TestWorkflowRunReconcilerRejectsCyclicJobDAG(t *testing.T) {
+	cyclicJobs := func() map[string]v1alpha1.JobSpec {
+		return map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Needs: []string{"test"}, Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+			"test":  {RunsOn: "bash", Needs: []string{"build"}, Steps: []v1alpha1.StepSpec{{Name: "unit", Run: "make test"}}},
+		}
+	}
+
+	for _, test := range []struct {
+		name     string
+		reusable bool
+	}{
+		{name: "inline"},
+		{name: "reusable", reusable: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := v1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatalf("add scheme: %v", err)
+			}
+
+			workflowRun := &v1alpha1.WorkflowRun{
+				ObjectMeta: metav1.ObjectMeta{Name: test.name, Namespace: "default", UID: "workflowrun-uid", Generation: 3},
+				Spec:       v1alpha1.WorkflowRunSpec{Jobs: cyclicJobs()},
+			}
+			objects := []client.Object{workflowRun}
+			if test.reusable {
+				workflowRun.Spec = v1alpha1.WorkflowRunSpec{Uses: "cyclic"}
+				objects = append(objects, &v1alpha1.Workflow{
+					ObjectMeta: metav1.ObjectMeta{Name: "cyclic", Namespace: workflowRun.Namespace},
+					Spec:       v1alpha1.WorkflowSpec{Jobs: cyclicJobs()},
+				})
+			}
+
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(objects...).
+				WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+				Build()
+			reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+			reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}, 1)
+
+			var updated v1alpha1.WorkflowRun
+			if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+				t.Fatalf("get workflowrun: %v", err)
+			}
+			if updated.Status.Phase != v1alpha1.WorkflowFailed || updated.Status.Jobs != nil {
+				t.Fatalf("status = %#v, want failed before graph initialization", updated.Status)
+			}
+			if !strings.Contains(updated.Status.Message, "workflow job dependency cycle: build -> test -> build") {
+				t.Fatalf("message = %q, want deterministic cycle path", updated.Status.Message)
+			}
+			condition := apimeta.FindStatusCondition(updated.Status.Conditions, v1alpha1.WorkflowRunAcceptedCondition)
+			if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "WorkflowValidationFailed" {
+				t.Fatalf("condition = %#v, want WorkflowValidationFailed", condition)
+			}
+			assertChildRunCount(t, c, workflowRun.Namespace, 0)
+		})
+	}
+}
+
+func TestValidateResolvedWorkflowJobsRejectsUnknownDependency(t *testing.T) {
+	err := validateResolvedWorkflowJobs(map[string]v1alpha1.JobSpec{
+		"build": {
+			RunsOn: "bash",
+			Needs:  []string{"missing"},
+			Steps:  []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), `job "build" needs unknown job "missing"`) {
+		t.Fatalf("validateResolvedWorkflowJobs() error = %v, want unknown dependency", err)
+	}
+}
+
 func TestWorkflowRunReconcilerReusesExistingFirstStepRun(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
