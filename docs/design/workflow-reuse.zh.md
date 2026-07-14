@@ -513,7 +513,8 @@ status:
 14. 实现到 `JobSkipped` 的 failed-dependency propagation。
 15. 实现 WorkflowRun terminal aggregation。
 16. 实现 WorkflowRun cancellation propagation。
-17. 实现 in-progress inline WorkflowRuns 的 controller restart recovery。
+17. 验证 in-progress inline WorkflowRuns 的 controller restart recovery，包括 child Run
+    已创建但 status 尚未持久化的故障窗口。
 18. 实现 job-level reusable Workflow calls。
 19. 实现 step-level Action expansion。
 20. 实现 expression evaluation 和 output propagation。
@@ -521,7 +522,7 @@ status:
 22. 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
    validation failures、output propagation，以及从 status DAG edges 进行 controller
    restart recovery。
-20. reusable model 实现后，更新最终 v0.x demos。
+23. reusable model 实现后，更新最终 v0.x demos。
 
 当前实现状态：
 
@@ -537,9 +538,11 @@ status:
   WorkflowRun execution 实现后再用于 child Runs。
 - 旧 Workflow execution model 的 stale E2E stubs 已删除，保证迁移期间 E2E 聚焦于
   仍应保持 passing 的行为。
-- Inline WorkflowRuns 会为 ready inline jobs 创建 first-step child Runs，并将 child
-  Run name 记录到有序 step status 中。Child Run result observation 和 next-step
-  creation 仍是后续工作。
-- WorkflowRuns 会观察 terminal child Run phases，并复制到匹配的 step status。
-  Next-step creation 和 job/WorkflowRun terminal handling 仍是后续工作。
+- Inline WorkflowRuns 会为 runnable jobs 创建 first-step 和 next-step child Runs，并将
+  child Run names 记录到有序 step status 中。
+- WorkflowRuns 会观察 terminal child Run phases、复制到匹配的 step status，并聚合
+  terminal job phases。WorkflowRun terminal handling 仍是后续工作。
+- Restart recovery 已覆盖 create-before-status-patch 故障窗口：replacement controller
+  通过 durable labels 发现 child Runs、修复 step status，并继续观察 terminal state，且
+  不会重复创建 Runs。
 - 旧 Workflow execution E2E coverage 暂时 skip，等待 WorkflowRun execution 实现后恢复。

@@ -225,7 +225,8 @@ wiring from accumulating avoidable conflicts.
   - implement failed-dependency propagation to `JobSkipped`;
   - implement WorkflowRun terminal aggregation;
   - implement WorkflowRun cancellation propagation;
-  - implement controller restart recovery for in-progress inline WorkflowRuns;
+  - [x] verify controller restart recovery for in-progress inline WorkflowRuns,
+    including child Run creation before status persistence;
   - implement job-level reusable Workflow calls;
   - implement step-level Action expansion;
   - implement expression evaluation for `inputs`, `steps`, and `jobs` contexts;
