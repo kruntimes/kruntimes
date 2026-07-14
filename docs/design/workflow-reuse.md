@@ -363,8 +363,9 @@ controller behavior in the first version.
   timed-out step makes its owning job `Failed`.
 - Independent jobs continue to be created and allowed to finish after another
   job fails. A job that depends, directly or transitively, on a failed or
-  skipped job is marked `Skipped`, records the blocking predecessor, and never
-  creates a child Run. It is not itself `Failed`.
+  skipped job is marked `Skipped` and never creates a child Run. Its `pre`
+  edges and predecessor job phases identify the blocker, so it is not itself
+  `Failed`.
 - The controller waits until every executable job has reached a terminal state
   or been skipped. The WorkflowRun is `Failed` if any job failed; otherwise it
   is `Succeeded`, including the case where jobs were skipped only because of a
@@ -374,6 +375,55 @@ controller behavior in the first version.
   requests cancellation for every non-terminal child Run. Once those children
   have settled, the WorkflowRun is `Cancelled`; it is not converted to
   `Failed` because a child reports cancellation or timeout during this process.
+
+### API Prerequisites
+
+The existing WorkflowRun API cannot represent all of these semantics. Before
+the controller implements dependency propagation or cancellation, the API must
+add the following fields and phases:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+spec:
+  cancelRequested: true
+status:
+  phase: Cancelled
+  jobs:
+    test:
+      phase: Skipped
+      pre: [build]
+```
+
+- `WorkflowRun.spec.cancelRequested` is a user intent, mirroring
+  `Run.spec.cancelRequested`. Once observed, the controller must not create
+  more child Runs for that WorkflowRun.
+- `WorkflowPhase` must add terminal `Cancelled`.
+- `JobPhase` must add terminal `Skipped`. It means the job was not executed
+  because a predecessor failed or was skipped. The existing `pre` edges plus
+  predecessor job phases identify the blocking job, so v0.x does not add a
+  redundant `blockedBy` status field.
+- `JobPhase` does not add `Cancelled` in v0.x. A step cancelled as ordinary
+  execution failure makes its running job `Failed`; cancellation of the whole
+  WorkflowRun is represented by the parent `Cancelled` phase.
+
+Cancellation is a separate controller action. It takes priority over normal
+execution actions, patches `spec.cancelRequested=true` on every non-terminal
+child Run, and waits for their terminal phases to be observed. It then sets the
+parent WorkflowRun to `Cancelled`. Jobs that were never started retain their
+current Pending or Waiting state because they were not skipped by a DAG
+dependency; the parent terminal phase explains why they will not run.
+
+Outside cancellation, dependency propagation and WorkflowRun finalization are
+separate actions:
+
+1. mark a Pending or Waiting job `Skipped` when any predecessor is `Failed` or
+   `Skipped`; independent jobs remain eligible to start;
+2. after all executable jobs have settled, set WorkflowRun `Failed` when any
+   job is `Failed`, otherwise set it `Succeeded`.
+
+The API change requires regenerated CRDs and controller RBAC allowing the
+WorkflowRun controller to patch child Runs for cancellation.
 
 Inline WorkflowRun execution should land in small, reviewable steps:
 
@@ -397,14 +447,18 @@ Inline WorkflowRun execution should land in small, reviewable steps:
    in the same job.
 7. Aggregate terminal step states into terminal job states: all succeeded
    steps succeed the job; any failed, cancelled, or timed-out step fails it.
-8. Propagate failed job dependencies and finalize the WorkflowRun according to
-   the reviewed terminal-status semantics.
-9. When a job succeeds, unblock jobs whose `pre` dependencies have all
-   succeeded.
-10. Add restart recovery tests that prove the controller can continue from
+8. Add the reviewed terminal-status and cancellation API prerequisites,
+   regenerate CRDs, and grant child Run patch RBAC.
+9. Mark jobs `Skipped` when a failed or skipped predecessor blocks them; when a
+   job succeeds, unblock jobs whose `pre` dependencies have all succeeded.
+10. Finalize a non-cancelled WorkflowRun as `Succeeded` or `Failed` after all
+    executable jobs settle.
+11. Handle `spec.cancelRequested` by cancelling active child Runs and
+    finalizing the WorkflowRun as `Cancelled`.
+12. Add restart recovery tests that prove the controller can continue from
    `status.jobs[*].steps[*].runName` and child Run labels without duplicating
    Runs.
-11. Add E2E coverage only after the controller can execute an inline
+13. Add E2E coverage only after the controller can execute an inline
    WorkflowRun end to end.
 
 ## Expression Context
@@ -502,15 +556,19 @@ the implementation lands.
     executable jobs settle.
 11. Implement next-step creation after observed step success.
 12. Implement job terminal-state aggregation from observed step states.
-13. Implement failed-dependency propagation and WorkflowRun terminal handling.
-14. Implement controller restart recovery for in-progress inline WorkflowRuns.
-15. Implement job-level reusable Workflow calls.
-16. Implement step-level Action expansion.
-17. Implement expression evaluation and output propagation.
-18. Update CLI verbs and docs to use `WorkflowRun` for execution.
-19. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
-    calls, validation failures, output propagation, and controller restart
-    recovery from the status DAG edges.
+13. Add terminal-status and cancellation API prerequisites, regenerated CRDs,
+    and child Run patch RBAC.
+14. Implement failed-dependency propagation to `JobSkipped`.
+15. Implement WorkflowRun terminal aggregation.
+16. Implement WorkflowRun cancellation propagation.
+17. Implement controller restart recovery for in-progress inline WorkflowRuns.
+18. Implement job-level reusable Workflow calls.
+19. Implement step-level Action expansion.
+20. Implement expression evaluation and output propagation.
+21. Update CLI verbs and docs to use `WorkflowRun` for execution.
+22. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
+   calls, validation failures, output propagation, and controller restart
+   recovery from the status DAG edges.
 20. Update the final v0.x demos after the reusable model is implemented.
 
 Current implementation status:
