@@ -193,7 +193,8 @@ controller wiring 累积不必要的冲突。
   - 实现到 `JobSkipped` 的 failed-dependency propagation；
   - 实现 WorkflowRun terminal aggregation；
   - 实现 WorkflowRun cancellation propagation；
-  - 实现 in-progress inline WorkflowRuns 的 controller restart recovery；
+  - [x] 验证 in-progress inline WorkflowRuns 的 controller restart recovery，包括
+    child Run 已创建但 status 尚未持久化的故障窗口；
   - 实现 job-level reusable Workflow calls；
   - 实现 step-level Action expansion；
   - 实现 `inputs`、`steps` 和 `jobs` contexts 的 expression evaluation；

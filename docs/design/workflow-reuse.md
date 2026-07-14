@@ -561,7 +561,8 @@ the implementation lands.
 14. Implement failed-dependency propagation to `JobSkipped`.
 15. Implement WorkflowRun terminal aggregation.
 16. Implement WorkflowRun cancellation propagation.
-17. Implement controller restart recovery for in-progress inline WorkflowRuns.
+17. Verify controller restart recovery for in-progress inline WorkflowRuns,
+    including child Run creation before status persistence.
 18. Implement job-level reusable Workflow calls.
 19. Implement step-level Action expansion.
 20. Implement expression evaluation and output propagation.
@@ -569,7 +570,7 @@ the implementation lands.
 22. Add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
    calls, validation failures, output propagation, and controller restart
    recovery from the status DAG edges.
-20. Update the final v0.x demos after the reusable model is implemented.
+23. Update the final v0.x demos after the reusable model is implemented.
 
 Current implementation status:
 
@@ -586,11 +587,13 @@ Current implementation status:
   values are not evaluated into child Runs until WorkflowRun execution lands.
 - Stale E2E stubs for the old Workflow execution model have been removed so
   E2E stays focused on behavior that should still pass during the migration.
-- Inline WorkflowRuns create first-step child Runs for ready inline jobs and
-  record the child Run name in ordered step status. Child Run result
-  observation and next-step creation are still follow-up work.
-- WorkflowRuns observe terminal child Run phases and copy them into the
-  matching step status. Next-step creation and job/WorkflowRun terminal
-  handling are still follow-up work.
+- Inline WorkflowRuns create first-step and next-step child Runs for runnable
+  jobs and record child Run names in ordered step status.
+- WorkflowRuns observe terminal child Run phases, copy them into matching step
+  status, and aggregate terminal job phases. WorkflowRun terminal handling is
+  still follow-up work.
+- Restart recovery is verified across the create-before-status-patch failure
+  window: a replacement controller discovers child Runs through durable labels,
+  repairs step status, and continues terminal observation without duplicates.
 - Old Workflow execution E2E coverage is skipped until WorkflowRun execution
   lands.

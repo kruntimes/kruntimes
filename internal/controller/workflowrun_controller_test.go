@@ -623,6 +623,103 @@ func TestWorkflowRunReconcilerDoesNotPatchDerivedStatusWhenActionFails(t *testin
 	}
 }
 
+func TestWorkflowRunReconcilerRecoversAfterRestartAcrossStatusPatchFailure(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {
+				RunsOn: "bash",
+				Steps: []v1alpha1.StepSpec{
+					{Name: "compile", Run: "make build"},
+					{Name: "package", Run: "make package"},
+				},
+			},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{
+					{Name: "compile", Phase: v1alpha1.StepSucceeded, RunName: "compile-run"},
+					{Name: "package", Phase: v1alpha1.StepPending},
+				}},
+			},
+		},
+	}
+	compileRun := workflowChildRun(workflowRun, "build", "compile", "compile-run", v1alpha1.RunSucceeded)
+	statusErr := errors.New("patch workflowrun status")
+	failStatusPatch := true
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun, compileRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}, &v1alpha1.Run{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, underlying client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				if subResourceName == "status" && failStatusPatch {
+					return statusErr
+				}
+				return underlying.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+
+	firstController := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	if _, err := firstController.Reconcile(context.Background(), req); !errors.Is(err, statusErr) {
+		t.Fatalf("first Reconcile error = %v, want %v", err, statusErr)
+	}
+	assertChildRunCount(t, c, workflowRun.Namespace, 2)
+
+	var persisted v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &persisted); err != nil {
+		t.Fatalf("get workflowrun after failed status patch: %v", err)
+	}
+	if step := persisted.Status.Jobs["build"].Steps[1]; step.RunName != "" || step.Phase != v1alpha1.StepPending {
+		t.Fatalf("persisted package step = %#v, want pending without runName", step)
+	}
+
+	// A replacement controller discovers the already-created Run by labels and
+	// repairs status instead of creating a duplicate.
+	failStatusPatch = false
+	restartedController := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	reconcileWorkflowRun(t, restartedController, req, 1)
+	assertChildRunCount(t, c, workflowRun.Namespace, 2)
+
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &persisted); err != nil {
+		t.Fatalf("get recovered workflowrun: %v", err)
+	}
+	packageStep := persisted.Status.Jobs["build"].Steps[1]
+	if packageStep.RunName == "" || packageStep.Phase != v1alpha1.StepRunning {
+		t.Fatalf("recovered package step = %#v, want running with existing runName", packageStep)
+	}
+
+	var packageRun v1alpha1.Run
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: workflowRun.Namespace, Name: packageStep.RunName}, &packageRun); err != nil {
+		t.Fatalf("get recovered package run: %v", err)
+	}
+	packageRun.Status.Phase = v1alpha1.RunSucceeded
+	if err := c.Status().Update(context.Background(), &packageRun); err != nil {
+		t.Fatalf("complete package run: %v", err)
+	}
+
+	// Another replacement controller derives terminal step and job state from
+	// the durable child Run without relying on process-local memory.
+	terminalController := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	reconcileWorkflowRun(t, terminalController, req, 1)
+	assertChildRunCount(t, c, workflowRun.Namespace, 2)
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &persisted); err != nil {
+		t.Fatalf("get terminal workflowrun: %v", err)
+	}
+	build := persisted.Status.Jobs["build"]
+	if build.Phase != v1alpha1.JobSucceeded || build.Steps[1].Phase != v1alpha1.StepSucceeded {
+		t.Fatalf("recovered build status = %#v, want succeeded", build)
+	}
+}
+
 func TestWorkflowRunReconcilerFinalizesJobAfterObservedTerminalStep(t *testing.T) {
 	for _, test := range []struct {
 		name     string
