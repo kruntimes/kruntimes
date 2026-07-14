@@ -48,6 +48,12 @@ spec:
           spec:
             description: WorkflowRunSpec defines one workflow execution instance.
             properties:
+              cancelRequested:
+                description: |-
+                  CancelRequested requests cancellation of this WorkflowRun. Once observed,
+                  the controller stops creating child Runs and requests cancellation of
+                  active child Runs.
+                type: boolean
               jobs:
                 additionalProperties:
                   description: JobSpec defines a single job within a workflow.
@@ -258,6 +264,7 @@ spec:
                       - Running
                       - Succeeded
                       - Failed
+                      - Skipped
                       type: string
                     pre:
                       description: |-
@@ -324,6 +331,7 @@ spec:
                 - Running
                 - Succeeded
                 - Failed
+                - Cancelled
                 type: string
             required:
             - phase

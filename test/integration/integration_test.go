@@ -674,6 +674,41 @@ func TestCRDValidationAllowsInlineWorkflowRun(t *testing.T) {
 	}
 }
 
+func TestCRDValidationAllowsWorkflowRunTerminalAPI(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-workflowrun-terminal-api-")
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "cancelled", Namespace: ns.Name},
+		Spec: v1alpha1.WorkflowRunSpec{
+			CancelRequested: true,
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {
+					RunsOn: "bash",
+					Steps:  []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}},
+				},
+				"test": {
+					RunsOn: "bash",
+					Needs:  []string{"build"},
+					Steps:  []v1alpha1.StepSpec{{Name: "unit", Run: "make test"}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, workflowRun); err != nil {
+		t.Fatalf("create cancelling workflowrun: %v", err)
+	}
+
+	workflowRun.Status.Phase = v1alpha1.WorkflowCancelled
+	workflowRun.Status.Jobs = map[string]v1alpha1.JobStatus{
+		"build": {Phase: v1alpha1.JobFailed},
+		"test":  {Phase: v1alpha1.JobSkipped, Pre: []string{"build"}},
+	}
+	if err := k8sClient.Status().Update(ctx, workflowRun); err != nil {
+		t.Fatalf("update workflowrun terminal status: %v", err)
+	}
+}
+
 func TestCRDValidationAllowsWorkflowRunUses(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-workflowrun-uses-validation-")

@@ -3,7 +3,7 @@ package v1alpha1
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 // WorkflowPhase is the lifecycle phase of a WorkflowRun execution.
-// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed
+// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed;Cancelled
 type WorkflowPhase string
 
 const (
@@ -11,10 +11,11 @@ const (
 	WorkflowRunning   WorkflowPhase = "Running"
 	WorkflowSucceeded WorkflowPhase = "Succeeded"
 	WorkflowFailed    WorkflowPhase = "Failed"
+	WorkflowCancelled WorkflowPhase = "Cancelled"
 )
 
 // JobPhase is the lifecycle phase of a job within a workflow.
-// +kubebuilder:validation:Enum=Pending;Waiting;Running;Succeeded;Failed
+// +kubebuilder:validation:Enum=Pending;Waiting;Running;Succeeded;Failed;Skipped
 type JobPhase string
 
 const (
@@ -23,6 +24,7 @@ const (
 	JobRunning   JobPhase = "Running"
 	JobSucceeded JobPhase = "Succeeded"
 	JobFailed    JobPhase = "Failed"
+	JobSkipped   JobPhase = "Skipped"
 )
 
 // StepPhase is the lifecycle phase of a step within a job.

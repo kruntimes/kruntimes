@@ -153,7 +153,7 @@ func TestWorkflowRunReconcilerStartsAllIndependentReadyJobs(t *testing.T) {
 	assertChildRunCount(t, c, workflowRun.Namespace, 2)
 }
 
-func TestPlanWorkflowRunSeparatesCurrentStateFromAction(t *testing.T) {
+func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 	empty := &v1alpha1.WorkflowRun{}
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: empty})
 	if plan.state != workflowRunStateEmpty || plan.action != workflowRunActionInitialize {
@@ -172,6 +172,13 @@ func TestPlanWorkflowRunSeparatesCurrentStateFromAction(t *testing.T) {
 	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: pending})
 	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableSteps || len(plan.targets) != 1 || plan.targets[0] != (workflowRunStepTarget{jobName: "build", stepIndex: 0}) {
 		t.Fatalf("pending plan = %#v, want Pending + StartRunnableSteps(build[0])", plan)
+	}
+
+	cancelled := pending.DeepCopy()
+	cancelled.Status.Phase = v1alpha1.WorkflowCancelled
+	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: cancelled})
+	if plan.state != workflowRunStateTerminal || plan.action != workflowRunActionNone {
+		t.Fatalf("cancelled plan = %#v, want Terminal + None", plan)
 	}
 }
 
