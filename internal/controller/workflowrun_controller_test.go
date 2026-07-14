@@ -276,6 +276,58 @@ func TestJobReadyToStartChecksDependencyStatus(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunReconcilerSkipsBlockedJobsAndStartsIndependentJobs(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "failure", Namespace: "default", UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build":  {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+			"test":   {RunsOn: "bash", Needs: []string{"build"}, Steps: []v1alpha1.StepSpec{{Name: "unit", Run: "make test"}}},
+			"deploy": {RunsOn: "bash", Needs: []string{"test"}, Steps: []v1alpha1.StepSpec{{Name: "apply", Run: "make deploy"}}},
+			"lint":   {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "check", Run: "make lint"}}},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"build":  {Phase: v1alpha1.JobFailed, Steps: []v1alpha1.StepStatus{{Name: "compile", Phase: v1alpha1.StepFailed, RunName: "build-run"}}},
+				"test":   {Phase: v1alpha1.JobWaiting, Pre: []string{"build"}, Steps: []v1alpha1.StepStatus{{Name: "unit", Phase: v1alpha1.StepPending}}},
+				"deploy": {Phase: v1alpha1.JobWaiting, Pre: []string{"test"}, Steps: []v1alpha1.StepStatus{{Name: "apply", Phase: v1alpha1.StepPending}}},
+				"lint":   {Phase: v1alpha1.JobPending, Steps: []v1alpha1.StepStatus{{Name: "check", Phase: v1alpha1.StepPending}}},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}, 1)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	if updated.Status.Jobs["test"].Phase != v1alpha1.JobSkipped || updated.Status.Jobs["deploy"].Phase != v1alpha1.JobSkipped {
+		t.Fatalf("jobs = %#v, want direct and transitive dependents skipped", updated.Status.Jobs)
+	}
+	if updated.Status.Jobs["lint"].Phase != v1alpha1.JobRunning {
+		t.Fatalf("lint = %#v, want independent job running", updated.Status.Jobs["lint"])
+	}
+
+	var runs v1alpha1.RunList
+	if err := c.List(context.Background(), &runs, client.InNamespace(workflowRun.Namespace)); err != nil {
+		t.Fatalf("list child runs: %v", err)
+	}
+	if len(runs.Items) != 1 || runs.Items[0].Labels[v1alpha1.WorkflowJobLabel] != "lint" {
+		t.Fatalf("child runs = %#v, want only independent lint run", runs.Items)
+	}
+}
+
 func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {

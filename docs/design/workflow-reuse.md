@@ -415,7 +415,7 @@ current Pending or Waiting state because they were not skipped by a DAG
 dependency; the parent terminal phase explains why they will not run.
 
 Outside cancellation, dependency propagation and WorkflowRun finalization are
-separate actions:
+default status derivations performed before planning external actions:
 
 1. mark a Pending or Waiting job `Skipped` when any predecessor is `Failed` or
    `Skipped`; independent jobs remain eligible to start;

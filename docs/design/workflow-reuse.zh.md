@@ -382,7 +382,8 @@ non-terminal child Run patch `spec.cancelRequested=true`，并等待观察到它
 parent WorkflowRun 设为 `Cancelled`。从未启动的 jobs 维持当前 Pending 或 Waiting，因为它们
 不是被 DAG dependency skip；parent terminal phase 说明它们不会继续运行。
 
-非 cancellation 场景中，dependency propagation 和 WorkflowRun finalization 是独立 actions：
+非 cancellation 场景中，dependency propagation 和 WorkflowRun finalization 是在规划
+external actions 前默认执行的 status derivations：
 
 1. 任一 predecessor 为 `Failed` 或 `Skipped` 时，将 Pending 或 Waiting job 标记为
    `Skipped`；independent jobs 仍然可以启动；
