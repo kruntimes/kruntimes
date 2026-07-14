@@ -431,8 +431,11 @@ func terminalJobPhase(status v1alpha1.JobStatus) (v1alpha1.JobPhase, bool) {
 }
 
 func deriveWorkflowRunStatus(resources *workflowRunResources) {
-	projectTerminalChildRuns(resources)
-	workflowRun := resources.workflowRun
+	deriveStepStatusesFromChildRuns(resources)
+	deriveJobStatuses(resources.workflowRun)
+}
+
+func deriveJobStatuses(workflowRun *v1alpha1.WorkflowRun) {
 	for jobName, status := range workflowRun.Status.Jobs {
 		if status.Phase != v1alpha1.JobRunning {
 			continue
@@ -458,7 +461,7 @@ func jobReadyToStart(status v1alpha1.JobStatus, jobs map[string]v1alpha1.JobStat
 	return true
 }
 
-func projectTerminalChildRuns(resources *workflowRunResources) {
+func deriveStepStatusesFromChildRuns(resources *workflowRunResources) {
 	workflowRun := resources.workflowRun
 	keys := make([]string, 0, len(resources.childRuns))
 	for key := range resources.childRuns {
