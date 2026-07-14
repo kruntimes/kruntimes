@@ -40,6 +40,12 @@ type WorkflowRunSpec struct {
 	// +optional
 	// +kubebuilder:validation:MaxProperties=256
 	With map[string]string `json:"with,omitempty"`
+
+	// CancelRequested requests cancellation of this WorkflowRun. Once observed,
+	// the controller stops creating child Runs and requests cancellation of
+	// active child Runs.
+	// +optional
+	CancelRequested bool `json:"cancelRequested,omitempty"`
 }
 
 // +kubebuilder:object:generate=true

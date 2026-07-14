@@ -79,7 +79,7 @@ type WorkflowRunReconciler struct {
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflowruns,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflowruns/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflows,verbs=get;list;watch
-// +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;create;patch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 func (r *WorkflowRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -155,7 +155,8 @@ func calculateWorkflowRunPlan(resources *workflowRunResources) workflowRunPlan {
 }
 
 func workflowRunStateFor(workflowRun *v1alpha1.WorkflowRun) workflowRunState {
-	if workflowRun.Status.Phase == v1alpha1.WorkflowFailed || workflowRun.Status.Phase == v1alpha1.WorkflowSucceeded {
+	switch workflowRun.Status.Phase {
+	case v1alpha1.WorkflowFailed, v1alpha1.WorkflowSucceeded, v1alpha1.WorkflowCancelled:
 		return workflowRunStateTerminal
 	}
 	if workflowRun.Status.Jobs == nil {

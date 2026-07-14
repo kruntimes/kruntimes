@@ -220,7 +220,7 @@ wiring from accumulating avoidable conflicts.
     after executable jobs settle;
   - [x] implement next-step creation after observed step success;
   - [x] implement job terminal-state aggregation from observed step states;
-  - add terminal-status and cancellation API prerequisites, regenerated CRDs,
+  - [x] add terminal-status and cancellation API prerequisites, regenerated CRDs,
     and child Run patch RBAC;
   - implement failed-dependency propagation to `JobSkipped`;
   - implement WorkflowRun terminal aggregation;

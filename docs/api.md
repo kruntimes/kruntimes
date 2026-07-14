@@ -179,26 +179,34 @@ tracked in the roadmap.
 
 ### WorkflowRun
 
-`WorkflowRun` is the target execution-instance API for the reusable workflow
-model. It is a skeleton in the current release: the API, CRD validation, status,
-controller wiring, and workflow-oriented `krt wf` CLI verbs exist, but
-execution is not implemented yet.
+`WorkflowRun` is the execution-instance API for the reusable workflow model.
+The controller currently resolves top-level reusable Workflow references and
+inputs, executes inline jobs as sequential step Runs, and derives step and job
+status. Reusable job calls, Action expansion, output propagation, dependency
+failure propagation, terminal WorkflowRun aggregation, and cancellation
+propagation remain in the roadmap.
 
 Current spec shape:
 
 | Field | Description |
 | --- | --- |
 | `spec.jobs` | Inline jobs to execute. Exactly one of `spec.jobs` or `spec.uses` must be set. |
-| `spec.uses` | Namespace-local reusable Workflow name to execute later. Exactly one of `spec.jobs` or `spec.uses` must be set. |
+| `spec.uses` | Namespace-local reusable Workflow name to execute. Exactly one of `spec.jobs` or `spec.uses` must be set. |
 | `spec.with` | String inputs passed to the reusable Workflow named by `spec.uses`. |
+| `spec.cancelRequested` | User intent to cancel the WorkflowRun. The field is available, but child Run cancellation propagation is not implemented yet. |
 
 Current status fields:
 
 | Field | Description |
 | --- | --- |
-| `status.phase` | Lifecycle phase. The skeleton controller initializes it to `Pending`. |
+| `status.phase` | `Pending`, `Running`, `Succeeded`, `Failed`, or `Cancelled`. Terminal WorkflowRun aggregation and cancellation handling are not implemented yet. |
 | `status.jobs` | Lightweight resolved job status keyed by job name. Each job records `pre` and ordered step statuses. |
 | `status.conditions` | Lifecycle conditions. The skeleton controller records `Accepted=True`. |
+
+Job phases are `Pending`, `Waiting`, `Running`, `Succeeded`, `Failed`, and
+`Skipped`. `Skipped` represents a job blocked by a failed or skipped
+dependency; propagation into that phase is tracked as the next controller
+task.
 
 ### Action
 
