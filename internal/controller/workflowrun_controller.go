@@ -434,6 +434,7 @@ func terminalJobPhase(status v1alpha1.JobStatus) (v1alpha1.JobPhase, bool) {
 func deriveWorkflowRunStatus(resources *workflowRunResources) {
 	deriveStepStatusesFromChildRuns(resources)
 	deriveJobStatuses(resources.workflowRun)
+	deriveSkippedJobStatuses(resources.workflowRun.Status.Jobs)
 }
 
 func deriveJobStatuses(workflowRun *v1alpha1.WorkflowRun) {
@@ -448,6 +449,45 @@ func deriveJobStatuses(workflowRun *v1alpha1.WorkflowRun) {
 		status.Phase = phase
 		workflowRun.Status.Jobs[jobName] = status
 	}
+}
+
+func deriveSkippedJobStatuses(jobs map[string]v1alpha1.JobStatus) {
+	jobNames := make([]string, 0, len(jobs))
+	for jobName := range jobs {
+		jobNames = append(jobNames, jobName)
+	}
+	sort.Strings(jobNames)
+
+	// A newly skipped job can transitively block another job later or earlier
+	// in lexical order, so derive until the bounded job graph reaches a fixed point.
+	for range len(jobNames) {
+		changed := false
+		for _, jobName := range jobNames {
+			status := jobs[jobName]
+			if status.Phase != v1alpha1.JobPending && status.Phase != v1alpha1.JobWaiting {
+				continue
+			}
+			if !hasFailedOrSkippedDependency(status, jobs) {
+				continue
+			}
+			status.Phase = v1alpha1.JobSkipped
+			jobs[jobName] = status
+			changed = true
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+func hasFailedOrSkippedDependency(status v1alpha1.JobStatus, jobs map[string]v1alpha1.JobStatus) bool {
+	for _, pre := range status.Pre {
+		switch jobs[pre].Phase {
+		case v1alpha1.JobFailed, v1alpha1.JobSkipped:
+			return true
+		}
+	}
+	return false
 }
 
 func jobReadyToStart(status v1alpha1.JobStatus, jobs map[string]v1alpha1.JobStatus) bool {

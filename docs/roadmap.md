@@ -222,7 +222,9 @@ wiring from accumulating avoidable conflicts.
   - [x] implement job terminal-state aggregation from observed step states;
   - [x] add terminal-status and cancellation API prerequisites, regenerated CRDs,
     and child Run patch RBAC;
-  - implement failed-dependency propagation to `JobSkipped`;
+  - validate inline and resolved Workflow job DAGs for multi-job cycles before
+    creating child Runs;
+  - [x] implement deterministic failed-dependency propagation to `JobSkipped`;
   - implement WorkflowRun terminal aggregation;
   - implement WorkflowRun cancellation propagation;
   - implement controller restart recovery for in-progress inline WorkflowRuns;

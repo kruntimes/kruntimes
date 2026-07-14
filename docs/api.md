@@ -182,9 +182,8 @@ tracked in the roadmap.
 `WorkflowRun` is the execution-instance API for the reusable workflow model.
 The controller currently resolves top-level reusable Workflow references and
 inputs, executes inline jobs as sequential step Runs, and derives step and job
-status. Reusable job calls, Action expansion, output propagation, dependency
-failure propagation, terminal WorkflowRun aggregation, and cancellation
-propagation remain in the roadmap.
+status. Reusable job calls, Action expansion, output propagation, terminal
+WorkflowRun aggregation, and cancellation propagation remain in the roadmap.
 
 Current spec shape:
 
@@ -204,9 +203,9 @@ Current status fields:
 | `status.conditions` | Lifecycle conditions. The skeleton controller records `Accepted=True`. |
 
 Job phases are `Pending`, `Waiting`, `Running`, `Succeeded`, `Failed`, and
-`Skipped`. `Skipped` represents a job blocked by a failed or skipped
-dependency; propagation into that phase is tracked as the next controller
-task.
+`Skipped`. The controller transitively marks a job `Skipped` when it is blocked
+by a failed or skipped dependency, never creates child Runs for it, and
+continues independent jobs.
 
 ### Action
 

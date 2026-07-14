@@ -190,7 +190,8 @@ controller wiring 累积不必要的冲突。
   - [x] 根据 observed step states 实现 job terminal-state aggregation；
   - [x] 增加 terminal-status 和 cancellation API prerequisites、重新生成 CRDs，以及 child Run
     patch RBAC；
-  - 实现到 `JobSkipped` 的 failed-dependency propagation；
+  - 在创建 child Runs 前校验 inline 和 resolved Workflow job DAG 中的 multi-job cycles；
+  - [x] 实现 deterministic failed-dependency propagation 到 `JobSkipped`；
   - 实现 WorkflowRun terminal aggregation；
   - 实现 WorkflowRun cancellation propagation；
   - 实现 in-progress inline WorkflowRuns 的 controller restart recovery；
