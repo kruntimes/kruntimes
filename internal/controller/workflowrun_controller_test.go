@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -142,7 +143,10 @@ func TestWorkflowRunReconcilerStartsAllIndependentReadyJobs(t *testing.T) {
 	reconcileWorkflowRun(t, reconciler, req, 1)
 	assertChildRunCount(t, c, workflowRun.Namespace, 0)
 
-	// A single StartReadyJobs transition creates all independent ready jobs.
+	// A single StartRunnableSteps transition creates all independent ready jobs.
+	reconcileWorkflowRun(t, reconciler, req, 1)
+	assertChildRunCount(t, c, workflowRun.Namespace, 2)
+	// A subsequent reconcile sees the next step as running and creates nothing.
 	reconcileWorkflowRun(t, reconciler, req, 1)
 	assertChildRunCount(t, c, workflowRun.Namespace, 2)
 }
@@ -164,8 +168,8 @@ func TestPlanWorkflowRunSeparatesCurrentStateFromAction(t *testing.T) {
 		},
 	}
 	plan = planWorkflowRun(&workflowRunResources{workflowRun: pending})
-	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartReadyJobs || len(plan.jobs) != 1 || plan.jobs[0] != "build" {
-		t.Fatalf("pending plan = %#v, want Pending + StartReadyJobs(build)", plan)
+	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableSteps || len(plan.targets) != 1 || plan.targets[0] != (workflowRunStepTarget{jobName: "build", stepIndex: 0}) {
+		t.Fatalf("pending plan = %#v, want Pending + StartRunnableSteps(build[0])", plan)
 	}
 }
 
@@ -191,6 +195,28 @@ func TestPlanWorkflowRunObservesChildRunsBeforeStartingReadyJobs(t *testing.T) {
 	})
 	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionObserveChildRuns {
 		t.Fatalf("plan = %#v, want Running + ObserveChildRuns", plan)
+	}
+}
+
+func TestPlanWorkflowRunStartsAllRunnableSteps(t *testing.T) {
+	workflowRun := &v1alpha1.WorkflowRun{
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}, {Name: "package", Run: "make package"}}},
+			"lint":  {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "check", Run: "make lint"}}},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{{Name: "compile", Phase: v1alpha1.StepSucceeded, RunName: "compile-run"}, {Name: "package", Phase: v1alpha1.StepPending}}},
+				"lint":  {Phase: v1alpha1.JobPending, Steps: []v1alpha1.StepStatus{{Name: "check", Phase: v1alpha1.StepPending}}},
+			},
+		},
+	}
+
+	plan := planWorkflowRun(&workflowRunResources{workflowRun: workflowRun})
+	want := []workflowRunStepTarget{{jobName: "build", stepIndex: 1}, {jobName: "lint", stepIndex: 0}}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
+		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
 }
 
@@ -422,6 +448,113 @@ func TestWorkflowRunReconcilerObservesTerminalChildRuns(t *testing.T) {
 				t.Fatalf("status = %#v, want job and workflow to remain running", updated.Status)
 			}
 		})
+	}
+}
+
+func TestWorkflowRunReconcilerCreatesNextStepAfterObservedSuccess(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {
+				RunsOn: "bash",
+				Steps: []v1alpha1.StepSpec{
+					{Name: "compile", Run: "make build"},
+					{Name: "package", Run: "make package"},
+				},
+			},
+			"lint": {
+				RunsOn: "bash",
+				Steps:  []v1alpha1.StepSpec{{Name: "check", Run: "make lint"}},
+			},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{
+					{Name: "compile", Phase: v1alpha1.StepRunning, RunName: "compile-run"},
+					{Name: "package", Phase: v1alpha1.StepPending},
+				}},
+				"lint": {Phase: v1alpha1.JobPending, Steps: []v1alpha1.StepStatus{{Name: "check", Phase: v1alpha1.StepPending}}},
+			},
+		},
+	}
+	compileRun := workflowChildRun(workflowRun, "build", "compile", "compile-run", v1alpha1.RunSucceeded)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun, compileRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+
+	// Observation is one durable transition. The following reconcile starts both
+	// the build next step and the independent lint first step.
+	reconcileWorkflowRun(t, reconciler, req, 1)
+	assertChildRunCount(t, c, workflowRun.Namespace, 1)
+	reconcileWorkflowRun(t, reconciler, req, 1)
+	assertChildRunCount(t, c, workflowRun.Namespace, 3)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	steps := updated.Status.Jobs["build"].Steps
+	if steps[0].Phase != v1alpha1.StepSucceeded || steps[0].RunName != compileRun.Name {
+		t.Fatalf("first step = %#v, want succeeded compile run", steps[0])
+	}
+	if steps[1].Phase != v1alpha1.StepRunning || steps[1].RunName == "" {
+		t.Fatalf("second step = %#v, want running next-step run", steps[1])
+	}
+	lintStep := updated.Status.Jobs["lint"].Steps[0]
+	if lintStep.Phase != v1alpha1.StepRunning || lintStep.RunName == "" {
+		t.Fatalf("lint step = %#v, want running first-step run", lintStep)
+	}
+
+	var runs v1alpha1.RunList
+	if err := c.List(context.Background(), &runs, client.InNamespace(workflowRun.Namespace)); err != nil {
+		t.Fatalf("list child runs: %v", err)
+	}
+	byName := make(map[string]v1alpha1.Run, len(runs.Items))
+	for _, run := range runs.Items {
+		byName[run.Name] = run
+	}
+	packageRun, ok := byName[steps[1].RunName]
+	if !ok {
+		t.Fatalf("missing next-step run %q", steps[1].RunName)
+	}
+	if packageRun.Spec.Source == nil || packageRun.Spec.Source.Inline == nil || *packageRun.Spec.Source.Inline != "make package" {
+		t.Fatalf("next-step run spec = %#v, want package command", packageRun.Spec)
+	}
+	if packageRun.Labels[v1alpha1.WorkflowStepLabel] != "package" {
+		t.Fatalf("next-step run labels = %v, want package step label", packageRun.Labels)
+	}
+	lintRun, ok := byName[lintStep.RunName]
+	if !ok {
+		t.Fatalf("missing lint run %q", lintStep.RunName)
+	}
+	if lintRun.Spec.Source == nil || lintRun.Spec.Source.Inline == nil || *lintRun.Spec.Source.Inline != "make lint" {
+		t.Fatalf("lint run spec = %#v, want lint command", lintRun.Spec)
+	}
+}
+
+func TestNextStepToStartRequiresPrecedingSuccess(t *testing.T) {
+	status := v1alpha1.JobStatus{Steps: []v1alpha1.StepStatus{
+		{Name: "compile", Phase: v1alpha1.StepRunning, RunName: "compile-run"},
+		{Name: "package", Phase: v1alpha1.StepPending},
+	}}
+	if _, ok := nextStepToStart(status); ok {
+		t.Fatal("nextStepToStart() selected a step before its predecessor succeeded")
+	}
+
+	status.Steps[0].Phase = v1alpha1.StepSucceeded
+	index, ok := nextStepToStart(status)
+	if !ok || index != 1 {
+		t.Fatalf("nextStepToStart() = %d, %t, want 1, true", index, ok)
 	}
 }
 

@@ -309,8 +309,10 @@ The first version should support one execution strategy:
 1. Accept the WorkflowRun and set `status.phase=Pending`.
 2. Resolve references and bind inputs.
 3. Persist resolved predecessor job edges in `status.jobs[*].pre`.
-4. Start ready jobs by creating the first step Run for each job.
-5. When a step Run succeeds, collect outputs and create the next step Run.
+4. Start every runnable step: the first step of each dependency-ready job and
+   the next step after a successful predecessor in a running job.
+5. When a step Run succeeds, collect outputs; the following reconciliation
+   includes its next step with any other runnable steps.
 6. When all steps in a job succeed, evaluate job outputs and mark the job
    succeeded.
 7. After all executable jobs have reached a terminal state, evaluate
@@ -331,15 +333,16 @@ does not create child Runs. Later execution actions must not modify `Accepted`:
 an accepted WorkflowRun can still fail while executing.
 
 A reconciliation must not loop through multiple state transitions before the
-status update. One `StartReadyJobs` action may materialize every independent
-ready job, so those jobs remain parallel; it must not advance those jobs to a
-later execution state in the same reconciliation. This makes each transition
-durable and restart-safe, and keeps new execution states explicit as child Run
-observation, next-step creation, restart recovery, and reusable call expansion
-land.
+status update. One `StartRunnableSteps` action may materialize every currently
+runnable step, including first steps for dependency-ready jobs and next steps
+whose predecessors succeeded. Each job contributes at most one target, so the
+action does not advance a job through multiple execution states in the same
+reconciliation. This makes each transition durable and restart-safe, and keeps
+new execution states explicit as child Run observation, restart recovery, and
+reusable call expansion land.
 
 For an active WorkflowRun, `ObserveChildRuns` takes precedence over
-`StartReadyJobs`. When a child Run reaches a terminal phase, that reconciliation
+`StartRunnableSteps`. When a child Run reaches a terminal phase, that reconciliation
 only copies the phase into the matching step status. The next reconciliation
 may then decide whether to create a next step or unblock dependent jobs.
 

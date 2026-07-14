@@ -217,7 +217,7 @@ wiring from accumulating avoidable conflicts.
     and WorkflowRun terminal-status semantics: independent jobs continue after
     a failure, dependency-blocked jobs are `Skipped`, and WorkflowRun aggregates
     after executable jobs settle;
-  - implement next-step creation after observed step success;
+  - [x] implement next-step creation after observed step success;
   - implement job terminal-state aggregation from observed step states;
   - implement failed-dependency propagation and WorkflowRun terminal handling;
   - implement controller restart recovery for in-progress inline WorkflowRuns;
