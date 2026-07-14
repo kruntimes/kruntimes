@@ -310,24 +310,23 @@ runtimed 理解 Workflow 概念。
 这有意避免增加单独的 WorkflowRunInvocation API。Child Runs 仍然是持久 execution records，
 scheduler/runtimed 仍然只操作 Runs。
 
-WorkflowRun controller 的 reconciliation 应保持 load/plan/apply 结构：加载
-WorkflowRun 和所有 child Runs，推导 current state，为该 state 选择一个 action，执行 action，
-再 patch WorkflowRun status。current state 与 action 有意分离。初始的 `Empty` state 对应
-`Initialize` action：它负责 validation controller-level semantics、resolve references 和
-inputs、persist execution graph，并设置 `Accepted=True`。初始化失败时设置 `Accepted=False`，
-且不能创建 child Runs。后续 execution actions 不得修改 `Accepted`：已经 accepted 的
-WorkflowRun 仍然可能在执行时失败。
+WorkflowRun controller 的 reconciliation 应保持 load/calculate/apply/patch 结构：加载
+WorkflowRun 和所有 child Runs，根据这些 resources 推导 desired status 和 current state，
+计算一个 action，执行 action，将执行结果合并进 desired status，并仅在 desired status 与
+已持久化 status 存在差异时 patch。status projection 是每次 reconciliation 的默认步骤；
+观察 child Runs 以及将 terminal steps 聚合为 job phase 不应成为独立 action。current state
+与 action 仍然有意分离。初始的 `Empty` state 对应 `Initialize` action：它负责 validation
+controller-level semantics、resolve references 和 inputs、persist execution graph，并设置
+`Accepted=True`。初始化失败时设置 `Accepted=False`，且不能创建 child Runs。后续 execution
+actions 不得修改 `Accepted`：已经 accepted 的 WorkflowRun 仍然可能在执行时失败。
 
-一次 reconciliation 不能在 status 更新前循环执行多个 state transitions。一个
-`StartRunnableSteps` action 可以 materialize 所有当前 runnable steps，包括 dependency-ready
-jobs 的 first steps，以及 predecessor succeeded 后的 next steps。每个 job 最多贡献一个 target，
-故 action 不会在同一次 reconciliation 中将同一个 job 推进多个 execution states。这样每个
-transition 都是 durable 且 restart-safe 的；后续引入 child Run observation、restart recovery 和
-reusable call expansion 等 execution states 时，状态也会保持显式。
-
-对于 active WorkflowRun，`ObserveChildRuns` 的优先级高于 `StartRunnableSteps`。当 child Run
-进入 terminal phase 时，该次 reconciliation 只将 phase 复制到对应的 step status。下一次
-reconciliation 才能决定是否创建 next step 或解除 dependency jobs 的阻塞。
+一次 reconciliation 不能在 status 更新前循环执行多个 external actions。一个
+`StartRunnableSteps` action 可以 materialize 所有当前 runnable steps，包括本轮开始时根据
+resources 推导状态后刚刚变为 runnable 的 steps。每个 job 最多贡献一个 target，因此 action
+不会在同一次 reconciliation 中让同一个 job 执行多个 execution operations。action 失败时，
+controller 直接返回 error，不 patch status；action 成功时，将新建 Run 的 identity 和 running
+phase 合并进 desired status，再执行一次有条件的 status patch。这样 external operations 保持
+显式、幂等且 restart-safe，同时不会为内部 status projection 额外消耗 reconciliation。
 
 ## Failure、Cancellation 和 Terminal Semantics
 
@@ -357,9 +356,9 @@ Inline WorkflowRun execution 应拆成小的、可 review 的步骤落地：
    Workflow execution model 的失效 case，保证整个迁移过程中 `make e2e` 始终可以通过。
 2. 只为 ready inline jobs 创建第一个 child Run，将 child Run name 记录到对应的有序
    step status，并通过 labels 发现已有 child Runs 来保证创建幂等。
-3. 在增加更多 execution states 之前，将 WorkflowRun controller 重构为 load/plan/apply
-   的状态机形态：先加载 WorkflowRun 和相关资源，推导 current state，再根据 state
-   计算需要执行的 actions，最后执行 Kubernetes writes。
+3. 在增加更多 execution states 之前，将 WorkflowRun controller 重构为
+   load/calculate/apply/patch 形态：加载 WorkflowRun 和相关资源，推导 desired status
+   与 current state，计算一个 external action，执行后合并结果，并按需 patch status。
 4. Watch 或 reconcile 属于 WorkflowRun 的 child Runs，并将 terminal child Run phase
    复制到对应 step status。
 5. 定义并 review failure、cancellation 和 terminal-status semantics：failure 后
@@ -455,7 +454,8 @@ status:
    namespace-local resolution。
 6. 实现 top-level reusable Workflow calls 的 input binding。
 7. 实现 ready jobs 的 inline WorkflowRun first-step Run creation。
-8. 将 WorkflowRun controller reconciliation 重构为 load/plan/apply 的状态机结构。
+8. 将 WorkflowRun controller reconciliation 重构为 load/calculate/apply/patch 结构：
+   默认推导 status，并将 external side effects 建模为 actions。
 9. 实现 child Run status observation 和 step status updates。
 10. 定义并 review child failure、cancellation、dependency propagation 和 WorkflowRun
     terminal-status semantics：independent jobs 继续，blocked dependents 为 `Skipped`，

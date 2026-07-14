@@ -179,8 +179,9 @@ controller wiring 累积不必要的冲突。
   - [x] 在 inline execution changes 开始前审计现有 E2E tests，移除或更新仍使用旧
     Workflow execution model 的失效 cases，保证迁移过程中 `make e2e` 始终可以通过；
   - [x] 实现 ready jobs 的 inline WorkflowRun first-step Run creation；
-  - [x] 在增加更多 execution cases 前，将 WorkflowRun controller reconciliation
-    重构为 load/plan/apply 的状态机结构；
+  - [x] 将 WorkflowRun controller reconciliation 重构为
+    load/calculate/apply/patch 结构：每次 reconciliation 默认推导 status，只有 external
+    side effects 才建模为 actions；
   - [x] 实现 child Run status observation 和 step status updates；
   - [x] 定义并 review child failure、cancellation、dependency propagation 和
     WorkflowRun terminal-status semantics：failure 后 independent jobs 继续，

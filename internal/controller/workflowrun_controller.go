@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -49,9 +50,7 @@ type workflowRunAction string
 const (
 	workflowRunActionNone               workflowRunAction = "None"
 	workflowRunActionInitialize         workflowRunAction = "Initialize"
-	workflowRunActionObserveChildRuns   workflowRunAction = "ObserveChildRuns"
 	workflowRunActionStartRunnableSteps workflowRunAction = "StartRunnableSteps"
-	workflowRunActionFinalizeJobs       workflowRunAction = "FinalizeJobs"
 )
 
 type workflowRunResources struct {
@@ -63,7 +62,6 @@ type workflowRunPlan struct {
 	state   workflowRunState
 	action  workflowRunAction
 	targets []workflowRunStepTarget
-	jobs    []string
 }
 
 type workflowRunStepTarget struct {
@@ -95,15 +93,19 @@ func (r *WorkflowRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	base := workflowRun.DeepCopy()
-	plan := planWorkflowRun(resources)
-	if plan.action == workflowRunActionNone {
-		return ctrl.Result{}, nil
-	}
-	if err := r.applyWorkflowRunAction(ctx, resources, plan); err != nil {
-		return ctrl.Result{}, err
+	resources.workflowRun = workflowRun.DeepCopy()
+	plan := calculateWorkflowRunPlan(resources)
+	if plan.action != workflowRunActionNone {
+		if err := r.applyWorkflowRunAction(ctx, resources, plan); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
-	if err := r.Status().Patch(ctx, workflowRun, client.MergeFrom(base)); err != nil {
+	desired := resources.workflowRun
+	if apiequality.Semantic.DeepEqual(base.Status, desired.Status) {
+		return ctrl.Result{}, nil
+	}
+	if err := r.Status().Patch(ctx, desired, client.MergeFrom(base)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("patch workflowrun status: %w", err)
 	}
 	return ctrl.Result{}, nil
@@ -132,7 +134,8 @@ func (r *WorkflowRunReconciler) loadWorkflowRunResources(ctx context.Context, ke
 	return &workflowRunResources{workflowRun: workflowRun, childRuns: childRuns}, nil
 }
 
-func planWorkflowRun(resources *workflowRunResources) workflowRunPlan {
+func calculateWorkflowRunPlan(resources *workflowRunResources) workflowRunPlan {
+	deriveWorkflowRunStatus(resources)
 	workflowRun := resources.workflowRun
 	state := workflowRunStateFor(workflowRun)
 	plan := workflowRunPlan{state: state, action: workflowRunActionNone}
@@ -141,15 +144,6 @@ func planWorkflowRun(resources *workflowRunResources) workflowRunPlan {
 		return plan
 	}
 	if state == workflowRunStateTerminal || len(workflowRun.Spec.Jobs) == 0 || len(workflowRun.Status.Jobs) == 0 {
-		return plan
-	}
-	if childRunsNeedObservation(resources) {
-		plan.action = workflowRunActionObserveChildRuns
-		return plan
-	}
-	if jobNames := jobsWithTerminalStepStates(workflowRun); len(jobNames) > 0 {
-		plan.action = workflowRunActionFinalizeJobs
-		plan.jobs = jobNames
 		return plan
 	}
 	if targets := runnableStepTargets(workflowRun); len(targets) > 0 {
@@ -196,14 +190,8 @@ func (r *WorkflowRunReconciler) applyWorkflowRunAction(ctx context.Context, reso
 	switch plan.action {
 	case workflowRunActionInitialize:
 		return r.applyInitializeWorkflowRun(ctx, workflowRun)
-	case workflowRunActionObserveChildRuns:
-		applyObserveChildRuns(resources)
-		return nil
 	case workflowRunActionStartRunnableSteps:
 		return r.applyStartRunnableSteps(ctx, resources, plan.targets)
-	case workflowRunActionFinalizeJobs:
-		applyFinalizeJobs(workflowRun, plan.jobs)
-		return nil
 	}
 	return nil
 }
@@ -422,20 +410,6 @@ func nextStepToStart(status v1alpha1.JobStatus) (int, bool) {
 	return 0, false
 }
 
-func jobsWithTerminalStepStates(workflowRun *v1alpha1.WorkflowRun) []string {
-	jobNames := make([]string, 0, len(workflowRun.Status.Jobs))
-	for jobName, status := range workflowRun.Status.Jobs {
-		if status.Phase != v1alpha1.JobRunning {
-			continue
-		}
-		if _, ok := terminalJobPhase(status); ok {
-			jobNames = append(jobNames, jobName)
-		}
-	}
-	sort.Strings(jobNames)
-	return jobNames
-}
-
 func terminalJobPhase(status v1alpha1.JobStatus) (v1alpha1.JobPhase, bool) {
 	if len(status.Steps) == 0 {
 		return "", false
@@ -456,9 +430,16 @@ func terminalJobPhase(status v1alpha1.JobStatus) (v1alpha1.JobPhase, bool) {
 	return "", false
 }
 
-func applyFinalizeJobs(workflowRun *v1alpha1.WorkflowRun, jobNames []string) {
-	for _, jobName := range jobNames {
-		status := workflowRun.Status.Jobs[jobName]
+func deriveWorkflowRunStatus(resources *workflowRunResources) {
+	deriveStepStatusesFromChildRuns(resources)
+	deriveJobStatuses(resources.workflowRun)
+}
+
+func deriveJobStatuses(workflowRun *v1alpha1.WorkflowRun) {
+	for jobName, status := range workflowRun.Status.Jobs {
+		if status.Phase != v1alpha1.JobRunning {
+			continue
+		}
 		phase, ok := terminalJobPhase(status)
 		if !ok {
 			continue
@@ -480,31 +461,7 @@ func jobReadyToStart(status v1alpha1.JobStatus, jobs map[string]v1alpha1.JobStat
 	return true
 }
 
-func childRunsNeedObservation(resources *workflowRunResources) bool {
-	workflowRun := resources.workflowRun
-	for _, run := range resources.childRuns {
-		stepPhase, terminal := terminalRunStepPhase(run.Status.Phase)
-		if !terminal {
-			continue
-		}
-		jobStatus, ok := workflowRun.Status.Jobs[run.Labels[v1alpha1.WorkflowJobLabel]]
-		if !ok {
-			continue
-		}
-		for _, step := range jobStatus.Steps {
-			if step.Name != run.Labels[v1alpha1.WorkflowStepLabel] {
-				continue
-			}
-			if (step.RunName == "" || step.RunName == run.Name) && (step.RunName != run.Name || step.Phase != stepPhase) {
-				return true
-			}
-			break
-		}
-	}
-	return false
-}
-
-func applyObserveChildRuns(resources *workflowRunResources) {
+func deriveStepStatusesFromChildRuns(resources *workflowRunResources) {
 	workflowRun := resources.workflowRun
 	keys := make([]string, 0, len(resources.childRuns))
 	for key := range resources.childRuns {

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -153,7 +155,7 @@ func TestWorkflowRunReconcilerStartsAllIndependentReadyJobs(t *testing.T) {
 
 func TestPlanWorkflowRunSeparatesCurrentStateFromAction(t *testing.T) {
 	empty := &v1alpha1.WorkflowRun{}
-	plan := planWorkflowRun(&workflowRunResources{workflowRun: empty})
+	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: empty})
 	if plan.state != workflowRunStateEmpty || plan.action != workflowRunActionInitialize {
 		t.Fatalf("empty plan = %#v, want Empty + Initialize", plan)
 	}
@@ -167,13 +169,13 @@ func TestPlanWorkflowRunSeparatesCurrentStateFromAction(t *testing.T) {
 			Jobs:  resolvedJobStatuses(map[string]v1alpha1.JobSpec{"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}}}),
 		},
 	}
-	plan = planWorkflowRun(&workflowRunResources{workflowRun: pending})
+	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: pending})
 	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableSteps || len(plan.targets) != 1 || plan.targets[0] != (workflowRunStepTarget{jobName: "build", stepIndex: 0}) {
 		t.Fatalf("pending plan = %#v, want Pending + StartRunnableSteps(build[0])", plan)
 	}
 }
 
-func TestPlanWorkflowRunObservesChildRunsBeforeStartingReadyJobs(t *testing.T) {
+func TestCalculateWorkflowRunPlanProjectsStatusBeforeStartingReadyJobs(t *testing.T) {
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{UID: "workflowrun-uid"},
 		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
@@ -189,12 +191,16 @@ func TestPlanWorkflowRunObservesChildRunsBeforeStartingReadyJobs(t *testing.T) {
 		},
 	}
 	buildRun := workflowChildRun(workflowRun, "build", "compile", "build-run", v1alpha1.RunSucceeded)
-	plan := planWorkflowRun(&workflowRunResources{
+	plan := calculateWorkflowRunPlan(&workflowRunResources{
 		workflowRun: workflowRun,
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): buildRun},
 	})
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionObserveChildRuns {
-		t.Fatalf("plan = %#v, want Running + ObserveChildRuns", plan)
+	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
+		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
+	}
+	if workflowRun.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded {
+		t.Fatalf("build status = %#v, want derived succeeded job", workflowRun.Status.Jobs["build"])
 	}
 }
 
@@ -213,14 +219,14 @@ func TestPlanWorkflowRunStartsAllRunnableSteps(t *testing.T) {
 		},
 	}
 
-	plan := planWorkflowRun(&workflowRunResources{workflowRun: workflowRun})
+	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun})
 	want := []workflowRunStepTarget{{jobName: "build", stepIndex: 1}, {jobName: "lint", stepIndex: 0}}
 	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
 }
 
-func TestPlanWorkflowRunFinalizesTerminalJobsBeforeStartingReadyJobs(t *testing.T) {
+func TestCalculateWorkflowRunPlanFinalizesJobsBeforeStartingReadyJobs(t *testing.T) {
 	workflowRun := &v1alpha1.WorkflowRun{
 		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
 			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
@@ -235,9 +241,13 @@ func TestPlanWorkflowRunFinalizesTerminalJobsBeforeStartingReadyJobs(t *testing.
 		},
 	}
 
-	plan := planWorkflowRun(&workflowRunResources{workflowRun: workflowRun})
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionFinalizeJobs || len(plan.jobs) != 1 || plan.jobs[0] != "build" {
-		t.Fatalf("plan = %#v, want Running + FinalizeJobs(build)", plan)
+	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun})
+	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
+		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
+	}
+	if workflowRun.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded {
+		t.Fatalf("build status = %#v, want derived succeeded job", workflowRun.Status.Jobs["build"])
 	}
 }
 
@@ -465,8 +475,12 @@ func TestWorkflowRunReconcilerObservesTerminalChildRuns(t *testing.T) {
 			if step.Phase != test.stepPhase || step.RunName != run.Name {
 				t.Fatalf("step = %#v, want %s %s", step, test.stepPhase, run.Name)
 			}
-			if updated.Status.Jobs["build"].Phase != v1alpha1.JobRunning || updated.Status.Phase != v1alpha1.WorkflowRunning {
-				t.Fatalf("status = %#v, want job and workflow to remain running", updated.Status)
+			wantJobPhase := v1alpha1.JobFailed
+			if test.stepPhase == v1alpha1.StepSucceeded {
+				wantJobPhase = v1alpha1.JobSucceeded
+			}
+			if updated.Status.Jobs["build"].Phase != wantJobPhase || updated.Status.Phase != v1alpha1.WorkflowRunning {
+				t.Fatalf("status = %#v, want derived terminal job and running workflow", updated.Status)
 			}
 		})
 	}
@@ -513,10 +527,8 @@ func TestWorkflowRunReconcilerCreatesNextStepAfterObservedSuccess(t *testing.T) 
 	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
 	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
 
-	// Observation is one durable transition. The following reconcile starts both
-	// the build next step and the independent lint first step.
-	reconcileWorkflowRun(t, reconciler, req, 1)
-	assertChildRunCount(t, c, workflowRun.Namespace, 1)
+	// Status projection and action planning happen in the same reconciliation,
+	// so the next build step and independent lint job start immediately.
 	reconcileWorkflowRun(t, reconciler, req, 1)
 	assertChildRunCount(t, c, workflowRun.Namespace, 3)
 
@@ -563,6 +575,54 @@ func TestWorkflowRunReconcilerCreatesNextStepAfterObservedSuccess(t *testing.T) 
 	}
 }
 
+func TestWorkflowRunReconcilerDoesNotPatchDerivedStatusWhenActionFails(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+			"lint":  {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "check", Run: "make lint"}}},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{{Name: "compile", Phase: v1alpha1.StepRunning, RunName: "compile-run"}}},
+				"lint":  {Phase: v1alpha1.JobPending, Steps: []v1alpha1.StepStatus{{Name: "check", Phase: v1alpha1.StepPending}}},
+			},
+		},
+	}
+	compileRun := workflowChildRun(workflowRun, "build", "compile", "compile-run", v1alpha1.RunSucceeded)
+	createErr := errors.New("create child run")
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun, compileRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+				return createErr
+			},
+		}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)})
+	if !errors.Is(err, createErr) {
+		t.Fatalf("Reconcile error = %v, want %v", err, createErr)
+	}
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	build := updated.Status.Jobs["build"]
+	if build.Phase != v1alpha1.JobRunning || build.Steps[0].Phase != v1alpha1.StepRunning {
+		t.Fatalf("build status = %#v, want persisted status unchanged", build)
+	}
+}
+
 func TestWorkflowRunReconcilerFinalizesJobAfterObservedTerminalStep(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -601,8 +661,8 @@ func TestWorkflowRunReconcilerFinalizesJobAfterObservedTerminalStep(t *testing.T
 			reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
 			req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
 
-			// Observation and job finalization are separate durable transitions.
-			reconcileWorkflowRun(t, reconciler, req, 2)
+			// Child observation and job aggregation are derived before planning.
+			reconcileWorkflowRun(t, reconciler, req, 1)
 
 			var updated v1alpha1.WorkflowRun
 			if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {

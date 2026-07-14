@@ -324,28 +324,29 @@ Runs remain the durable execution records, and scheduler/runtimed continue to
 operate only on Runs.
 
 The WorkflowRun controller should keep reconciliation structured as
-load/plan/apply: load the WorkflowRun and all child Runs, derive its current
-state, choose one action for that state, apply the action, and patch
-WorkflowRun status. Current state and action are intentionally separate. The
-initial `Empty` state has an `Initialize` action, which validates controller-
-level semantics, resolves references and inputs, persists the execution graph,
-and sets `Accepted=True`. A failed initialization sets `Accepted=False` and
-does not create child Runs. Later execution actions must not modify `Accepted`:
-an accepted WorkflowRun can still fail while executing.
+load/calculate/apply/patch: load the WorkflowRun and all child Runs, derive the
+desired status and current state from those resources, calculate one action,
+apply the action, incorporate its result into the desired status, and patch
+status only when it differs from the persisted status. Status projection is
+part of every reconciliation; observing child Runs and aggregating terminal
+steps into job phases are not separate actions. Current state and action remain
+intentionally separate. The initial `Empty` state has an `Initialize` action,
+which validates controller-level semantics, resolves references and inputs,
+persists the execution graph, and sets `Accepted=True`. A failed initialization
+sets `Accepted=False` and does not create child Runs. Later execution actions
+must not modify `Accepted`: an accepted WorkflowRun can still fail while
+executing.
 
-A reconciliation must not loop through multiple state transitions before the
+A reconciliation must not loop through multiple external actions before the
 status update. One `StartRunnableSteps` action may materialize every currently
-runnable step, including first steps for dependency-ready jobs and next steps
-whose predecessors succeeded. Each job contributes at most one target, so the
-action does not advance a job through multiple execution states in the same
-reconciliation. This makes each transition durable and restart-safe, and keeps
-new execution states explicit as child Run observation, restart recovery, and
-reusable call expansion land.
-
-For an active WorkflowRun, `ObserveChildRuns` takes precedence over
-`StartRunnableSteps`. When a child Run reaches a terminal phase, that reconciliation
-only copies the phase into the matching step status. The next reconciliation
-may then decide whether to create a next step or unblock dependent jobs.
+runnable step, including steps made runnable by status derived at the start of
+that reconciliation. Each job contributes at most one target, so the action
+does not advance a job through multiple execution operations in the same
+reconciliation. If the action fails, the controller returns the error without
+patching status. If it succeeds, created Run identities and running phases are
+added to the desired status before the single conditional status patch. This
+keeps external operations explicit, idempotent, and restart-safe without using
+extra reconciliations for internal status projection.
 
 ## Failure, Cancellation, and Terminal Semantics
 
@@ -383,9 +384,9 @@ Inline WorkflowRun execution should land in small, reviewable steps:
    Run name on the matching ordered step status, and make creation idempotent
    by discovering existing child Runs through labels.
 3. Before adding more execution states, refactor the WorkflowRun controller
-   into a load/plan/apply state-machine shape: load the WorkflowRun and related
-   resources, derive the current state, switch on that state to produce the
-   intended actions, then apply Kubernetes writes.
+   into a load/calculate/apply/patch shape: load the WorkflowRun and related
+   resources, derive desired status and current state, calculate one external
+   action, apply it, incorporate its result, and conditionally patch status.
 4. Watch or reconcile child Runs owned by a WorkflowRun and copy terminal child
    Run phase into the matching step status.
 5. Define and review failure, cancellation, and terminal-status semantics:
@@ -491,8 +492,9 @@ the implementation lands.
    `WorkflowRun.spec.uses` resolution.
 6. Implement input binding for top-level reusable Workflow calls.
 7. Implement inline WorkflowRun first-step Run creation for ready jobs.
-8. Refactor WorkflowRun controller reconciliation into a load/plan/apply
-   state-machine structure.
+8. Refactor WorkflowRun controller reconciliation into a
+   load/calculate/apply/patch structure with default status projection and
+   external side effects represented as actions.
 9. Implement child Run status observation and step status updates.
 10. Define and review child failure, cancellation, dependency propagation, and
     WorkflowRun terminal-status semantics: independent jobs continue, blocked
