@@ -181,10 +181,10 @@ tracked in the roadmap.
 
 `WorkflowRun` is the execution-instance API for the reusable workflow model.
 The controller currently resolves top-level reusable Workflow references and
-inputs, executes inline jobs as sequential step Runs, and derives step and job
-status and aggregate settled jobs into a terminal WorkflowRun phase. Reusable
-job calls, Action expansion, output propagation, and cancellation propagation
-remain in the roadmap.
+inputs, executes inline jobs as sequential step Runs, derives step and job
+status, aggregates settled jobs into a terminal WorkflowRun phase, and
+propagates cancellation to active child Runs. Reusable job calls, Action
+expansion, and output propagation remain in the roadmap.
 
 Before initializing the status graph or creating child Runs, the controller
 rejects inline and resolved reusable Workflow job graphs with unknown
@@ -198,13 +198,13 @@ Current spec shape:
 | `spec.jobs` | Inline jobs to execute. Exactly one of `spec.jobs` or `spec.uses` must be set. |
 | `spec.uses` | Namespace-local reusable Workflow name to execute. Exactly one of `spec.jobs` or `spec.uses` must be set. |
 | `spec.with` | String inputs passed to the reusable Workflow named by `spec.uses`. |
-| `spec.cancelRequested` | User intent to cancel the WorkflowRun. The field is available, but child Run cancellation propagation is not implemented yet. |
+| `spec.cancelRequested` | Requests cancellation. The controller stops creating child Runs, sets `cancelRequested` on every active child Run, and waits for them to settle. |
 
 Current status fields:
 
 | Field | Description |
 | --- | --- |
-| `status.phase` | `Pending`, `Running`, `Succeeded`, `Failed`, or `Cancelled`. After all jobs settle, the controller sets `Failed` if any job failed and `Succeeded` otherwise. Cancellation handling remains in the roadmap. |
+| `status.phase` | `Pending`, `Running`, `Succeeded`, `Failed`, or `Cancelled`. After all jobs settle, the controller sets `Failed` if any job failed and `Succeeded` otherwise. A cancellation request results in `Cancelled` after active child Runs settle. |
 | `status.jobs` | Lightweight resolved job status keyed by job name. Each job records `pre` and ordered step statuses. |
 | `status.conditions` | Lifecycle conditions. The skeleton controller records `Accepted=True`. |
 
@@ -212,6 +212,8 @@ Job phases are `Pending`, `Waiting`, `Running`, `Succeeded`, `Failed`, and
 `Skipped`. The controller transitively marks a job `Skipped` when it is blocked
 by a failed or skipped dependency, never creates child Runs for it, and
 continues independent jobs.
+During WorkflowRun cancellation, jobs that never started retain their existing
+`Pending` or `Waiting` phase rather than becoming `Skipped`.
 
 ### Action
 

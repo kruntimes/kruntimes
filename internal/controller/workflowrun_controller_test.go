@@ -180,6 +180,28 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 	if plan.state != workflowRunStateTerminal || plan.action != workflowRunActionNone {
 		t.Fatalf("cancelled plan = %#v, want Terminal + None", plan)
 	}
+
+	cancelling := pending.DeepCopy()
+	cancelling.Spec.CancelRequested = true
+	activeRun := workflowChildRun(cancelling, "build", "compile", "build-run", v1alpha1.RunRunning)
+	plan = calculateWorkflowRunPlan(&workflowRunResources{
+		workflowRun: cancelling,
+		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
+	})
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildRunCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
+		t.Fatalf("cancelling plan = %#v, want Cancelling + RequestChildRunCancellation(build-run)", plan)
+	}
+
+	// A late child Run watch must repair an early Cancelled projection caused by
+	// the create-before-cache-observation window.
+	cancelling.Status.Phase = v1alpha1.WorkflowCancelled
+	plan = calculateWorkflowRunPlan(&workflowRunResources{
+		workflowRun: cancelling,
+		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
+	})
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildRunCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
+		t.Fatalf("late child plan = %#v, want cancellation repair", plan)
+	}
 }
 
 func TestCalculateWorkflowRunPlanProjectsStatusBeforeStartingReadyJobs(t *testing.T) {
@@ -917,6 +939,164 @@ func TestDeriveTerminalWorkflowRunStatus(t *testing.T) {
 			deriveTerminalWorkflowRunStatus(workflowRun)
 			if workflowRun.Status.Phase != test.want {
 				t.Fatalf("phase = %q, want %q", workflowRun.Status.Phase, test.want)
+			}
+		})
+	}
+}
+
+func TestWorkflowRunReconcilerRequestsCancellationWithoutStartingNewJobs(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "cancel-build", Namespace: "default", UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{
+			CancelRequested: true,
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+				"lint":  {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "check", Run: "make lint"}}},
+			},
+		},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{{Name: "compile", Phase: v1alpha1.StepRunning, RunName: "build-run"}}},
+				"lint":  {Phase: v1alpha1.JobPending, Steps: []v1alpha1.StepStatus{{Name: "check", Phase: v1alpha1.StepPending}}},
+			},
+		},
+	}
+	activeRun := workflowChildRun(workflowRun, "build", "compile", "build-run", v1alpha1.RunRunning)
+	patches := 0
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun, activeRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, underlying client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if _, ok := obj.(*v1alpha1.Run); ok {
+					patches++
+				}
+				return underlying.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+
+	reconcileWorkflowRun(t, reconciler, req, 2)
+
+	var updatedRun v1alpha1.Run
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(activeRun), &updatedRun); err != nil {
+		t.Fatalf("get child run: %v", err)
+	}
+	if !updatedRun.Spec.CancelRequested {
+		t.Fatal("child run cancelRequested = false, want true")
+	}
+	if patches != 1 {
+		t.Fatalf("child run patches = %d, want one idempotent cancellation request", patches)
+	}
+	assertChildRunCount(t, c, workflowRun.Namespace, 1)
+
+	var updatedWorkflowRun v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updatedWorkflowRun); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	if updatedWorkflowRun.Status.Phase != v1alpha1.WorkflowRunning || updatedWorkflowRun.Status.Jobs["lint"].Phase != v1alpha1.JobPending {
+		t.Fatalf("status = %#v, want running cancellation with untouched pending job", updatedWorkflowRun.Status)
+	}
+}
+
+func TestWorkflowRunReconcilerFinalizesCancellationAfterChildRunsSettle(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "cancelled-build", Namespace: "default", UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{
+			CancelRequested: true,
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+				"lint":  {RunsOn: "bash", Needs: []string{"build"}, Steps: []v1alpha1.StepSpec{{Name: "check", Run: "make lint"}}},
+			},
+		},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{{Name: "compile", Phase: v1alpha1.StepRunning, RunName: "build-run"}}},
+				"lint":  {Phase: v1alpha1.JobWaiting, Pre: []string{"build"}, Steps: []v1alpha1.StepStatus{{Name: "check", Phase: v1alpha1.StepPending}}},
+			},
+		},
+	}
+	cancelledRun := workflowChildRun(workflowRun, "build", "compile", "build-run", v1alpha1.RunCancelled)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun, cancelledRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}, 1)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.WorkflowCancelled {
+		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowCancelled)
+	}
+	if updated.Status.Jobs["build"].Phase != v1alpha1.JobFailed || updated.Status.Jobs["lint"].Phase != v1alpha1.JobWaiting {
+		t.Fatalf("jobs = %#v, want failed active job and untouched waiting job", updated.Status.Jobs)
+	}
+	assertChildRunCount(t, c, workflowRun.Namespace, 1)
+}
+
+func TestWorkflowRunReconcilerCancelsBeforeCreatingAnyChildRun(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "cancel-pending", Namespace: "default", UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{
+			CancelRequested: true,
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}, 1)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.WorkflowCancelled || updated.Status.Jobs != nil {
+		t.Fatalf("status = %#v, want cancellation before initialization", updated.Status)
+	}
+	assertChildRunCount(t, c, workflowRun.Namespace, 0)
+}
+
+func TestDeriveCancelledWorkflowRunStatusPreservesExistingTerminalPhase(t *testing.T) {
+	for _, phase := range []v1alpha1.WorkflowPhase{
+		v1alpha1.WorkflowSucceeded,
+		v1alpha1.WorkflowFailed,
+		v1alpha1.WorkflowCancelled,
+	} {
+		t.Run(string(phase), func(t *testing.T) {
+			workflowRun := &v1alpha1.WorkflowRun{
+				Spec:   v1alpha1.WorkflowRunSpec{CancelRequested: true},
+				Status: v1alpha1.WorkflowRunStatus{Phase: phase},
+			}
+			deriveCancelledWorkflowRunStatus(&workflowRunResources{workflowRun: workflowRun})
+			if workflowRun.Status.Phase != phase {
+				t.Fatalf("phase = %q, want existing terminal phase %q", workflowRun.Status.Phase, phase)
 			}
 		})
 	}
