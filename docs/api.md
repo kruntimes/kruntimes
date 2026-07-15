@@ -182,8 +182,9 @@ tracked in the roadmap.
 `WorkflowRun` is the execution-instance API for the reusable workflow model.
 The controller currently resolves top-level reusable Workflow references and
 inputs, executes inline jobs as sequential step Runs, and derives step and job
-status. Reusable job calls, Action expansion, output propagation, terminal
-WorkflowRun aggregation, and cancellation propagation remain in the roadmap.
+status and aggregate settled jobs into a terminal WorkflowRun phase. Reusable
+job calls, Action expansion, output propagation, and cancellation propagation
+remain in the roadmap.
 
 Before initializing the status graph or creating child Runs, the controller
 rejects inline and resolved reusable Workflow job graphs with unknown
@@ -203,7 +204,7 @@ Current status fields:
 
 | Field | Description |
 | --- | --- |
-| `status.phase` | `Pending`, `Running`, `Succeeded`, `Failed`, or `Cancelled`. Terminal WorkflowRun aggregation and cancellation handling are not implemented yet. |
+| `status.phase` | `Pending`, `Running`, `Succeeded`, `Failed`, or `Cancelled`. After all jobs settle, the controller sets `Failed` if any job failed and `Succeeded` otherwise. Cancellation handling remains in the roadmap. |
 | `status.jobs` | Lightweight resolved job status keyed by job name. Each job records `pre` and ordered step statuses. |
 | `status.conditions` | Lifecycle conditions. The skeleton controller records `Accepted=True`. |
 

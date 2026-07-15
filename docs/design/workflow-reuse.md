@@ -592,8 +592,9 @@ Current implementation status:
 - Inline WorkflowRuns create first-step and next-step child Runs for runnable
   jobs and record child Run names in ordered step status.
 - WorkflowRuns observe terminal child Run phases, copy them into matching step
-  status, and aggregate terminal job phases. WorkflowRun terminal handling is
-  still follow-up work.
+  status, aggregate terminal job phases, and finalize after all jobs settle.
+  Any failed job fails the WorkflowRun; otherwise it succeeds, including when
+  remaining jobs are skipped.
 - Restart recovery is verified across the create-before-status-patch failure
   window: a replacement controller discovers child Runs through durable labels,
   repairs step status, and continues terminal observation without duplicates.

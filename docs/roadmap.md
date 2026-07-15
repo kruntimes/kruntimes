@@ -225,7 +225,7 @@ wiring from accumulating avoidable conflicts.
   - [x] validate inline and resolved Workflow job DAGs for unknown dependencies
     and multi-job cycles before creating child Runs;
   - [x] implement deterministic failed-dependency propagation to `JobSkipped`;
-  - implement WorkflowRun terminal aggregation;
+  - [x] implement WorkflowRun terminal aggregation;
   - implement WorkflowRun cancellation propagation;
   - [x] verify controller restart recovery for in-progress inline WorkflowRuns,
     including child Run creation before status persistence;
