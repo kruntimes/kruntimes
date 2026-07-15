@@ -566,13 +566,14 @@ func TestWorkflowRunReconcilerRejectsJobWithoutRuntimeDuringInitialization(t *te
 
 func TestWorkflowRunReconcilerObservesTerminalChildRuns(t *testing.T) {
 	for _, test := range []struct {
-		runPhase  v1alpha1.RunPhase
-		stepPhase v1alpha1.StepPhase
+		runPhase      v1alpha1.RunPhase
+		stepPhase     v1alpha1.StepPhase
+		workflowPhase v1alpha1.WorkflowPhase
 	}{
-		{runPhase: v1alpha1.RunSucceeded, stepPhase: v1alpha1.StepSucceeded},
-		{runPhase: v1alpha1.RunFailed, stepPhase: v1alpha1.StepFailed},
-		{runPhase: v1alpha1.RunTimeout, stepPhase: v1alpha1.StepFailed},
-		{runPhase: v1alpha1.RunCancelled, stepPhase: v1alpha1.StepFailed},
+		{runPhase: v1alpha1.RunSucceeded, stepPhase: v1alpha1.StepSucceeded, workflowPhase: v1alpha1.WorkflowSucceeded},
+		{runPhase: v1alpha1.RunFailed, stepPhase: v1alpha1.StepFailed, workflowPhase: v1alpha1.WorkflowFailed},
+		{runPhase: v1alpha1.RunTimeout, stepPhase: v1alpha1.StepFailed, workflowPhase: v1alpha1.WorkflowFailed},
+		{runPhase: v1alpha1.RunCancelled, stepPhase: v1alpha1.StepFailed, workflowPhase: v1alpha1.WorkflowFailed},
 	} {
 		t.Run(string(test.runPhase), func(t *testing.T) {
 			scheme := runtime.NewScheme()
@@ -612,8 +613,8 @@ func TestWorkflowRunReconcilerObservesTerminalChildRuns(t *testing.T) {
 			if test.stepPhase == v1alpha1.StepSucceeded {
 				wantJobPhase = v1alpha1.JobSucceeded
 			}
-			if updated.Status.Jobs["build"].Phase != wantJobPhase || updated.Status.Phase != v1alpha1.WorkflowRunning {
-				t.Fatalf("status = %#v, want derived terminal job and running workflow", updated.Status)
+			if updated.Status.Jobs["build"].Phase != wantJobPhase || updated.Status.Phase != test.workflowPhase {
+				t.Fatalf("status = %#v, want derived terminal job and workflow %s", updated.Status, test.workflowPhase)
 			}
 		})
 	}
@@ -853,56 +854,69 @@ func TestWorkflowRunReconcilerRecoversAfterRestartAcrossStatusPatchFailure(t *te
 	}
 }
 
-func TestWorkflowRunReconcilerFinalizesJobAfterObservedTerminalStep(t *testing.T) {
+func TestDeriveTerminalWorkflowRunStatus(t *testing.T) {
 	for _, test := range []struct {
-		name     string
-		runPhase v1alpha1.RunPhase
-		jobPhase v1alpha1.JobPhase
+		name            string
+		cancelRequested bool
+		jobs            map[string]v1alpha1.JobStatus
+		want            v1alpha1.WorkflowPhase
 	}{
-		{name: "succeeded", runPhase: v1alpha1.RunSucceeded, jobPhase: v1alpha1.JobSucceeded},
-		{name: "failed", runPhase: v1alpha1.RunFailed, jobPhase: v1alpha1.JobFailed},
-		{name: "timed-out", runPhase: v1alpha1.RunTimeout, jobPhase: v1alpha1.JobFailed},
-		{name: "cancelled", runPhase: v1alpha1.RunCancelled, jobPhase: v1alpha1.JobFailed},
+		{
+			name: "all jobs succeeded",
+			jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobSucceeded},
+				"test":  {Phase: v1alpha1.JobSucceeded},
+			},
+			want: v1alpha1.WorkflowSucceeded,
+		},
+		{
+			name: "failed job with skipped dependent",
+			jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobFailed},
+				"test":  {Phase: v1alpha1.JobSkipped},
+			},
+			want: v1alpha1.WorkflowFailed,
+		},
+		{
+			name: "succeeded and skipped jobs",
+			jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobSucceeded},
+				"docs":  {Phase: v1alpha1.JobSkipped},
+			},
+			want: v1alpha1.WorkflowSucceeded,
+		},
+		{
+			name: "independent job still running",
+			jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobFailed},
+				"lint":  {Phase: v1alpha1.JobRunning},
+			},
+			want: v1alpha1.WorkflowRunning,
+		},
+		{
+			name:            "cancellation owns terminal phase",
+			cancelRequested: true,
+			jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobFailed},
+			},
+			want: v1alpha1.WorkflowRunning,
+		},
+		{
+			name: "uninitialized status",
+			want: v1alpha1.WorkflowRunning,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			scheme := runtime.NewScheme()
-			if err := v1alpha1.AddToScheme(scheme); err != nil {
-				t.Fatalf("add scheme: %v", err)
-			}
-
 			workflowRun := &v1alpha1.WorkflowRun{
-				ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid"},
-				Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
-					"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
-				}},
+				Spec: v1alpha1.WorkflowRunSpec{CancelRequested: test.cancelRequested},
 				Status: v1alpha1.WorkflowRunStatus{
 					Phase: v1alpha1.WorkflowRunning,
-					Jobs: map[string]v1alpha1.JobStatus{
-						"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{{Name: "compile", Phase: v1alpha1.StepRunning, RunName: "compile-run"}}},
-					},
+					Jobs:  test.jobs,
 				},
 			}
-			run := workflowChildRun(workflowRun, "build", "compile", "compile-run", test.runPhase)
-			c := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(workflowRun, run).
-				WithStatusSubresource(&v1alpha1.WorkflowRun{}).
-				Build()
-			reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
-			req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
-
-			// Child observation and job aggregation are derived before planning.
-			reconcileWorkflowRun(t, reconciler, req, 1)
-
-			var updated v1alpha1.WorkflowRun
-			if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
-				t.Fatalf("get workflowrun: %v", err)
-			}
-			if updated.Status.Jobs["build"].Phase != test.jobPhase {
-				t.Fatalf("job phase = %q, want %q", updated.Status.Jobs["build"].Phase, test.jobPhase)
-			}
-			if updated.Status.Phase != v1alpha1.WorkflowRunning {
-				t.Fatalf("workflow phase = %q, want %q before WorkflowRun terminal aggregation", updated.Status.Phase, v1alpha1.WorkflowRunning)
+			deriveTerminalWorkflowRunStatus(workflowRun)
+			if workflowRun.Status.Phase != test.want {
+				t.Fatalf("phase = %q, want %q", workflowRun.Status.Phase, test.want)
 			}
 		})
 	}

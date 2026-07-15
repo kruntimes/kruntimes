@@ -479,6 +479,25 @@ func deriveWorkflowRunStatus(resources *workflowRunResources) {
 	deriveStepStatusesFromChildRuns(resources)
 	deriveJobStatuses(resources.workflowRun)
 	deriveSkippedJobStatuses(resources.workflowRun.Status.Jobs)
+	deriveTerminalWorkflowRunStatus(resources.workflowRun)
+}
+
+func deriveTerminalWorkflowRunStatus(workflowRun *v1alpha1.WorkflowRun) {
+	if workflowRun.Spec.CancelRequested || len(workflowRun.Status.Jobs) == 0 {
+		return
+	}
+
+	phase := v1alpha1.WorkflowSucceeded
+	for _, status := range workflowRun.Status.Jobs {
+		switch status.Phase {
+		case v1alpha1.JobFailed:
+			phase = v1alpha1.WorkflowFailed
+		case v1alpha1.JobSucceeded, v1alpha1.JobSkipped:
+		default:
+			return
+		}
+	}
+	workflowRun.Status.Phase = phase
 }
 
 func deriveJobStatuses(workflowRun *v1alpha1.WorkflowRun) {
