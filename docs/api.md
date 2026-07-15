@@ -185,6 +185,11 @@ inputs, executes inline jobs as sequential step Runs, and derives step and job
 status. Reusable job calls, Action expansion, output propagation, terminal
 WorkflowRun aggregation, and cancellation propagation remain in the roadmap.
 
+Before initializing the status graph or creating child Runs, the controller
+rejects inline and resolved reusable Workflow job graphs with unknown
+dependencies or dependency cycles. The rejection message includes a stable
+cycle path for diagnosis.
+
 Current spec shape:
 
 | Field | Description |

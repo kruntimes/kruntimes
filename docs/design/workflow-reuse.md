@@ -585,6 +585,8 @@ Current implementation status:
 - Top-level reusable Workflow calls bind string inputs early: defaults are
   applied, missing required inputs fail, and unknown `with` keys fail. Bound
   values are not evaluated into child Runs until WorkflowRun execution lands.
+- Inline and resolved reusable Workflow job DAGs reject unknown dependencies
+  and multi-job cycles before status graph initialization or child Run creation.
 - Stale E2E stubs for the old Workflow execution model have been removed so
   E2E stays focused on behavior that should still pass during the migration.
 - Inline WorkflowRuns create first-step and next-step child Runs for runnable
