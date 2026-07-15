@@ -141,7 +141,9 @@ spec:
 Validation must enforce that job `uses` and job `steps` are mutually exclusive.
 
 Reusable Workflow jobs have their own job/workspace/artifact boundary. They
-communicate with callers through inputs, outputs, and artifacts.
+communicate with callers through inputs, outputs, and artifacts. The concrete
+parent/child execution boundary and immutable snapshot model are defined in
+[Job-Level Reusable Workflow Execution](workflow-job-reuse.md).
 
 ## Action
 
@@ -272,8 +274,10 @@ Reference resolution should happen in this order:
    namespace.
 2. Expand the referenced Workflow jobs into the WorkflowRun execution graph.
 3. Resolve each job-level `uses` to a same-namespace reusable `Workflow`.
-4. Expand reusable Workflow calls as nested job groups with their own
-   job/workspace/artifact boundary.
+4. Represent each runnable reusable Workflow call as a child WorkflowRun with
+   its own job/workspace/artifact boundary, using the immutable execution
+   snapshot defined in
+   [Job-Level Reusable Workflow Execution](workflow-job-reuse.md).
 5. Resolve each step-level `uses` to a same-namespace `Action`.
 6. Expand Action steps inline inside the caller job context.
 7. Detect cycles before creating any child Runs.
@@ -294,10 +298,10 @@ not rely on scheduler or runtimed to understand Workflow concepts.
 
 The first implementation should use a simple deterministic graph model:
 
-- every job has a stable execution path, such as `jobs.build` or
-  `jobs.release.jobs.build` for a job expanded from a reusable Workflow call;
+- every job has a stable execution path local to its owning WorkflowRun;
 - every step has a stable execution path, such as `jobs.build.steps.package`;
-- each child Run is labeled with the WorkflowRun name, job path, and step path;
+- each child Run is labeled with its owning WorkflowRun, local job, and local
+  step identity;
 - child Run names are generated deterministically enough for idempotent
   reconciliation, or are discovered through labels before creating new Runs;
 - the controller creates Runs only when all dependency jobs have succeeded;

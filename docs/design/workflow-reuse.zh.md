@@ -135,7 +135,8 @@ spec:
 Validation 必须保证 job `uses` 和 job `steps` 互斥。
 
 Reusable Workflow jobs 拥有自己的 job/workspace/artifact boundary。它们通过 inputs、
-outputs 和 artifacts 与 caller 通信。
+outputs 和 artifacts 与 caller 通信。具体的 parent/child execution boundary 和 immutable
+snapshot model 见 [Job-Level Reusable Workflow Execution](workflow-job-reuse.md)。
 
 ## Action
 
@@ -261,8 +262,9 @@ Reference resolution 应按以下顺序发生：
 1. 将 top-level `WorkflowRun.spec.uses` 解析到同 namespace 下的 `Workflow`。
 2. 将被引用 Workflow 的 jobs 展开到 WorkflowRun execution graph。
 3. 将每个 job-level `uses` 解析到同 namespace 下的 reusable `Workflow`。
-4. 将 reusable Workflow calls 展开为 nested job groups，并保持它们自己的
-   job/workspace/artifact boundary。
+4. 使用 [Job-Level Reusable Workflow Execution](workflow-job-reuse.md) 定义的 immutable
+   execution snapshot，把每个 runnable reusable Workflow call 表示为拥有独立
+   job/workspace/artifact boundary 的 child WorkflowRun。
 5. 将每个 step-level `uses` 解析到同 namespace 下的 `Action`。
 6. 将 Action steps inline 展开到 caller job context。
 7. 在创建任何 child Runs 之前检测 cycles。
@@ -282,10 +284,9 @@ runtimed 理解 Workflow 概念。
 
 第一版应使用简单、确定性的 graph 模型：
 
-- 每个 job 都有稳定的 execution path，例如 `jobs.build`，或从 reusable Workflow call
-  展开的 `jobs.release.jobs.build`；
+- 每个 job 都有相对于 owning WorkflowRun 的稳定 execution path；
 - 每个 step 都有稳定的 execution path，例如 `jobs.build.steps.package`；
-- 每个 child Run 都带有 WorkflowRun name、job path 和 step path labels；
+- 每个 child Run 都带有 owning WorkflowRun、local job 和 local step identity labels；
 - child Run names 要么足够确定以支持 idempotent reconciliation，要么在创建新 Runs 前
   通过 labels 发现已有 Runs；
 - controller 只在所有 dependency jobs 成功后创建 Runs；

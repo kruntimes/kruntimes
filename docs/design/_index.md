@@ -10,4 +10,5 @@ implemented.
 - [Function Mode and Agent Sandboxes](function-mode/)
 - [Workflow Data Sharing](workflow-data-sharing/)
 - [Workflow Reuse](workflow-reuse/)
+- [Job-Level Reusable Workflow Execution](workflow-job-reuse/)
 - [Dashboard](dashboard/)
