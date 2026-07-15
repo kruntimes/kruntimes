@@ -595,6 +595,9 @@ Current implementation status:
   status, aggregate terminal job phases, and finalize after all jobs settle.
   Any failed job fails the WorkflowRun; otherwise it succeeds, including when
   remaining jobs are skipped.
+- WorkflowRun cancellation stops new child Run creation, idempotently requests
+  cancellation for active child Runs, and finalizes as `Cancelled` after they
+  settle. Jobs that never started retain their `Pending` or `Waiting` phase.
 - Restart recovery is verified across the create-before-status-patch failure
   window: a replacement controller discovers child Runs through durable labels,
   repairs step status, and continues terminal observation without duplicates.

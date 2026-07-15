@@ -546,6 +546,9 @@ status:
 - WorkflowRuns 会观察 terminal child Run phases、复制到匹配的 step status、聚合
   terminal job phases，并在所有 jobs settled 后 finalize。任一 job failed 时
   WorkflowRun failed；否则 succeeded，包括其余 jobs 为 skipped 的情况。
+- WorkflowRun cancellation 会停止创建新的 child Runs，幂等地请求取消 active child Runs，
+  并在它们 settled 后 finalize 为 `Cancelled`。从未启动的 jobs 保留 `Pending` 或
+  `Waiting` phase。
 - Restart recovery 已覆盖 create-before-status-patch 故障窗口：replacement controller
   通过 durable labels 发现 child Runs、修复 step status，并继续观察 terminal state，且
   不会重复创建 Runs。

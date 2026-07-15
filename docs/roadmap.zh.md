@@ -194,7 +194,7 @@ controller wiring 累积不必要的冲突。
     dependencies 和 multi-job cycles；
   - [x] 实现 deterministic failed-dependency propagation 到 `JobSkipped`；
   - [x] 实现 WorkflowRun terminal aggregation；
-  - 实现 WorkflowRun cancellation propagation；
+  - [x] 实现 WorkflowRun cancellation propagation；
   - [x] 验证 in-progress inline WorkflowRuns 的 controller restart recovery，包括
     child Run 已创建但 status 尚未持久化的故障窗口；
   - 实现 job-level reusable Workflow calls；

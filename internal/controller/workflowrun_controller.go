@@ -39,18 +39,20 @@ func (e *workflowInputBindingError) Unwrap() error {
 type workflowRunState string
 
 const (
-	workflowRunStateEmpty    workflowRunState = "Empty"
-	workflowRunStatePending  workflowRunState = "Pending"
-	workflowRunStateRunning  workflowRunState = "Running"
-	workflowRunStateTerminal workflowRunState = "Terminal"
+	workflowRunStateEmpty      workflowRunState = "Empty"
+	workflowRunStatePending    workflowRunState = "Pending"
+	workflowRunStateRunning    workflowRunState = "Running"
+	workflowRunStateCancelling workflowRunState = "Cancelling"
+	workflowRunStateTerminal   workflowRunState = "Terminal"
 )
 
 type workflowRunAction string
 
 const (
-	workflowRunActionNone               workflowRunAction = "None"
-	workflowRunActionInitialize         workflowRunAction = "Initialize"
-	workflowRunActionStartRunnableSteps workflowRunAction = "StartRunnableSteps"
+	workflowRunActionNone                        workflowRunAction = "None"
+	workflowRunActionInitialize                  workflowRunAction = "Initialize"
+	workflowRunActionStartRunnableSteps          workflowRunAction = "StartRunnableSteps"
+	workflowRunActionRequestChildRunCancellation workflowRunAction = "RequestChildRunCancellation"
 )
 
 type workflowRunResources struct {
@@ -59,9 +61,10 @@ type workflowRunResources struct {
 }
 
 type workflowRunPlan struct {
-	state   workflowRunState
-	action  workflowRunAction
-	targets []workflowRunStepTarget
+	state    workflowRunState
+	action   workflowRunAction
+	targets  []workflowRunStepTarget
+	runNames []string
 }
 
 type workflowRunStepTarget struct {
@@ -143,7 +146,21 @@ func calculateWorkflowRunPlan(resources *workflowRunResources) workflowRunPlan {
 		plan.action = workflowRunActionInitialize
 		return plan
 	}
-	if state == workflowRunStateTerminal || len(workflowRun.Spec.Jobs) == 0 || len(workflowRun.Status.Jobs) == 0 {
+	if workflowRun.Spec.CancelRequested {
+		if runNames := childRunsToCancel(resources.childRuns); len(runNames) > 0 {
+			plan.state = workflowRunStateCancelling
+			plan.action = workflowRunActionRequestChildRunCancellation
+			plan.runNames = runNames
+			return plan
+		}
+	}
+	if state == workflowRunStateTerminal {
+		return plan
+	}
+	if state == workflowRunStateCancelling {
+		return plan
+	}
+	if len(workflowRun.Spec.Jobs) == 0 || len(workflowRun.Status.Jobs) == 0 {
 		return plan
 	}
 	if targets := runnableStepTargets(workflowRun); len(targets) > 0 {
@@ -155,9 +172,11 @@ func calculateWorkflowRunPlan(resources *workflowRunResources) workflowRunPlan {
 }
 
 func workflowRunStateFor(workflowRun *v1alpha1.WorkflowRun) workflowRunState {
-	switch workflowRun.Status.Phase {
-	case v1alpha1.WorkflowFailed, v1alpha1.WorkflowSucceeded, v1alpha1.WorkflowCancelled:
+	if isTerminalWorkflowPhase(workflowRun.Status.Phase) {
 		return workflowRunStateTerminal
+	}
+	if workflowRun.Spec.CancelRequested {
+		return workflowRunStateCancelling
 	}
 	if workflowRun.Status.Jobs == nil {
 		return workflowRunStateEmpty
@@ -193,6 +212,8 @@ func (r *WorkflowRunReconciler) applyWorkflowRunAction(ctx context.Context, reso
 		return r.applyInitializeWorkflowRun(ctx, workflowRun)
 	case workflowRunActionStartRunnableSteps:
 		return r.applyStartRunnableSteps(ctx, resources, plan.targets)
+	case workflowRunActionRequestChildRunCancellation:
+		return r.applyRequestChildRunCancellation(ctx, resources, plan.runNames)
 	}
 	return nil
 }
@@ -478,8 +499,64 @@ func terminalJobPhase(status v1alpha1.JobStatus) (v1alpha1.JobPhase, bool) {
 func deriveWorkflowRunStatus(resources *workflowRunResources) {
 	deriveStepStatusesFromChildRuns(resources)
 	deriveJobStatuses(resources.workflowRun)
+	if resources.workflowRun.Spec.CancelRequested {
+		deriveCancelledWorkflowRunStatus(resources)
+		return
+	}
 	deriveSkippedJobStatuses(resources.workflowRun.Status.Jobs)
 	deriveTerminalWorkflowRunStatus(resources.workflowRun)
+}
+
+func deriveCancelledWorkflowRunStatus(resources *workflowRunResources) {
+	workflowRun := resources.workflowRun
+	if !workflowRun.Spec.CancelRequested || isTerminalWorkflowPhase(workflowRun.Status.Phase) {
+		return
+	}
+	for _, run := range resources.childRuns {
+		if !isTerminalRunPhase(run.Status.Phase) {
+			return
+		}
+	}
+	workflowRun.Status.Phase = v1alpha1.WorkflowCancelled
+}
+
+func isTerminalWorkflowPhase(phase v1alpha1.WorkflowPhase) bool {
+	switch phase {
+	case v1alpha1.WorkflowSucceeded, v1alpha1.WorkflowFailed, v1alpha1.WorkflowCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+func childRunsToCancel(childRuns map[string]*v1alpha1.Run) []string {
+	runNames := make([]string, 0, len(childRuns))
+	for _, run := range childRuns {
+		if !isTerminalRunPhase(run.Status.Phase) && !run.Spec.CancelRequested {
+			runNames = append(runNames, run.Name)
+		}
+	}
+	sort.Strings(runNames)
+	return runNames
+}
+
+func (r *WorkflowRunReconciler) applyRequestChildRunCancellation(ctx context.Context, resources *workflowRunResources, runNames []string) error {
+	childRuns := make(map[string]*v1alpha1.Run, len(resources.childRuns))
+	for _, run := range resources.childRuns {
+		childRuns[run.Name] = run
+	}
+	for _, runName := range runNames {
+		run := childRuns[runName]
+		if run == nil || run.Spec.CancelRequested || isTerminalRunPhase(run.Status.Phase) {
+			continue
+		}
+		base := run.DeepCopy()
+		run.Spec.CancelRequested = true
+		if err := r.Patch(ctx, run, client.MergeFrom(base)); err != nil {
+			return fmt.Errorf("request cancellation of child run %s/%s: %w", run.Namespace, run.Name, err)
+		}
+	}
+	return nil
 }
 
 func deriveTerminalWorkflowRunStatus(workflowRun *v1alpha1.WorkflowRun) {
