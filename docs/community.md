@@ -12,8 +12,9 @@ kruntimes is released under the Apache License 2.0. See
 
 - Square icon: [`docs/icon.png`](icon.png), used for the website favicon and
   compact header mark.
-- Horizontal logo: [`docs/logo.png`](logo.png), used for README and website
-  hero branding.
+- Horizontal logo: [`docs/logo.svg`](logo.svg), used for README and website
+  hero branding. [`docs/logo.png`](logo.png) remains available for consumers
+  that require a raster asset.
 
 ## Maintainers
 

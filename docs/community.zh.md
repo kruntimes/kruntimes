@@ -12,7 +12,8 @@ kruntimes 基于 Apache License 2.0 发布。详见
 ## 品牌资产
 
 - 方形图标：[`docs/icon.png`](icon.png)，用于网站 favicon 和紧凑页眉标记。
-- 横向 Logo：[`docs/logo.png`](logo.png)，用于 README 和网站 hero 品牌展示。
+- 横向 Logo：[`docs/logo.svg`](logo.svg)，用于 README 和网站 hero 品牌展示。
+  [`docs/logo.png`](logo.png) 保留给需要栅格资源的使用方。
 
 ## 维护者
 

@@ -2,7 +2,7 @@
 {{ $isZH := eq site.Language.Lang "zh" }}
 <section class="hero">
   <div class="hero-inner">
-    <img class="hero-logo" src="{{ "img/logo.png" | relURL }}" alt="kruntimes" width="887" height="243">
+    <img class="hero-logo" src="{{ "img/logo.svg" | relURL }}" alt="kruntimes" width="887" height="243">
     <p class="eyebrow">{{ if $isZH }}Kubernetes-native 执行引擎{{ else }}Kubernetes-native execution engine{{ end }}</p>
     <h1 style="font-size: 38px;">{{ if $isZH }}Kubernetes 上快速、可复用的执行引擎{{ else }}Fast, reusable execution engine on Kubernetes{{ end }}</h1>
     <p>
