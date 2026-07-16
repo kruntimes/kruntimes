@@ -192,14 +192,18 @@ dependency cycle 的 inline 和 resolved reusable Workflow job graph。rejection
 | `spec.jobs` | Inline jobs。`spec.jobs` 和 `spec.uses` 必须且只能设置一个。 |
 | `spec.uses` | 要执行的 namespace-local reusable Workflow 名称。`spec.jobs` 和 `spec.uses` 必须且只能设置一个。 |
 | `spec.with` | 传给 `spec.uses` 引用的 reusable Workflow 的 string inputs。 |
-| `spec.cancelRequested` | 请求取消 WorkflowRun。controller 会停止创建 child Runs，为所有 active child Runs 设置 `cancelRequested`，并等待它们 settled。 |
+| `spec.cancelRequested` | 请求取消 WorkflowRun。它只能从 `false` 变为 `true`。controller 会停止创建 child Runs，为所有 active child Runs 设置 `cancelRequested`，并等待它们 settled。 |
+
+创建后，`spec.jobs`、`spec.uses` 与 `spec.with` 都是 immutable execution inputs。这样可防止
+已 accepted 的 WorkflowRun 在运行中观察到不同 definition。
 
 当前 status 字段：
 
 | Field | Description |
 | --- | --- |
 | `status.phase` | `Pending`、`Running`、`Succeeded`、`Failed` 或 `Cancelled`。所有 jobs settled 后，任一 job failed 则 controller 设置为 `Failed`，否则设置为 `Succeeded`。收到 cancellation request 后，active child Runs settled 时设置为 `Cancelled`。 |
-| `status.jobs` | 按 job name 记录轻量 resolved job status。每个 job 记录 `pre` 和有序 step statuses。 |
+| `status.jobs` | 按 job name 记录轻量 resolved job status。每个 job 记录 `pre`、有序 step statuses，以及 reusable call 对应的 child `workflowRunName`。 |
+| `status.snapshotName` | resolved execution tree 的 immutable ControllerRevision index。snapshot resolver 仍在 roadmap 中跟踪。 |
 | `status.conditions` | Lifecycle conditions。skeleton controller 会记录 `Accepted=True`。 |
 
 Job phases 包括 `Pending`、`Waiting`、`Running`、`Succeeded`、`Failed` 和 `Skipped`。

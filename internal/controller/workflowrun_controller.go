@@ -83,6 +83,7 @@ type WorkflowRunReconciler struct {
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflowruns/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflows,verbs=get;list;watch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;create;patch
+// +kubebuilder:rbac:groups=apps,resources=controllerrevisions,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 func (r *WorkflowRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

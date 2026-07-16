@@ -199,14 +199,19 @@ Current spec shape:
 | `spec.jobs` | Inline jobs to execute. Exactly one of `spec.jobs` or `spec.uses` must be set. |
 | `spec.uses` | Namespace-local reusable Workflow name to execute. Exactly one of `spec.jobs` or `spec.uses` must be set. |
 | `spec.with` | String inputs passed to the reusable Workflow named by `spec.uses`. |
-| `spec.cancelRequested` | Requests cancellation. The controller stops creating child Runs, sets `cancelRequested` on every active child Run, and waits for them to settle. |
+| `spec.cancelRequested` | Requests cancellation. It may transition only from `false` to `true`. The controller stops creating child Runs, sets `cancelRequested` on every active child Run, and waits for them to settle. |
+
+After creation, `spec.jobs`, `spec.uses`, and `spec.with` are immutable execution
+inputs. This prevents an accepted WorkflowRun from observing a different
+definition while it is running.
 
 Current status fields:
 
 | Field | Description |
 | --- | --- |
 | `status.phase` | `Pending`, `Running`, `Succeeded`, `Failed`, or `Cancelled`. After all jobs settle, the controller sets `Failed` if any job failed and `Succeeded` otherwise. A cancellation request results in `Cancelled` after active child Runs settle. |
-| `status.jobs` | Lightweight resolved job status keyed by job name. Each job records `pre` and ordered step statuses. |
+| `status.jobs` | Lightweight resolved job status keyed by job name. Each job records `pre`, ordered step statuses, and, for a reusable call, its child `workflowRunName`. |
+| `status.snapshotName` | Immutable ControllerRevision index for the resolved execution tree. The snapshot resolver is tracked in the roadmap. |
 | `status.conditions` | Lifecycle conditions. The skeleton controller records `Accepted=True`. |
 
 Job phases are `Pending`, `Waiting`, `Running`, `Succeeded`, `Failed`, and

@@ -2,42 +2,6 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// WorkflowPhase is the lifecycle phase of a WorkflowRun execution.
-// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed;Cancelled
-type WorkflowPhase string
-
-const (
-	WorkflowPending   WorkflowPhase = "Pending"
-	WorkflowRunning   WorkflowPhase = "Running"
-	WorkflowSucceeded WorkflowPhase = "Succeeded"
-	WorkflowFailed    WorkflowPhase = "Failed"
-	WorkflowCancelled WorkflowPhase = "Cancelled"
-)
-
-// JobPhase is the lifecycle phase of a job within a workflow.
-// +kubebuilder:validation:Enum=Pending;Waiting;Running;Succeeded;Failed;Skipped
-type JobPhase string
-
-const (
-	JobPending   JobPhase = "Pending"
-	JobWaiting   JobPhase = "Waiting"
-	JobRunning   JobPhase = "Running"
-	JobSucceeded JobPhase = "Succeeded"
-	JobFailed    JobPhase = "Failed"
-	JobSkipped   JobPhase = "Skipped"
-)
-
-// StepPhase is the lifecycle phase of a step within a job.
-// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed
-type StepPhase string
-
-const (
-	StepPending   StepPhase = "Pending"
-	StepRunning   StepPhase = "Running"
-	StepSucceeded StepPhase = "Succeeded"
-	StepFailed    StepPhase = "Failed"
-)
-
 // +kubebuilder:object:generate=true
 // WorkflowInputSpec defines one reusable Workflow input.
 type WorkflowInputSpec struct {
@@ -183,48 +147,6 @@ type WorkflowStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-}
-
-// +kubebuilder:object:generate=true
-// JobStatus tracks the status of a job.
-type JobStatus struct {
-	// Phase is the current phase of the job.
-	Phase JobPhase `json:"phase"`
-
-	// Pre is the resolved list of predecessor jobs that must complete before
-	// this job can start.
-	// +optional
-	// +kubebuilder:validation:MaxItems=64
-	// +kubebuilder:validation:items:MaxLength=63
-	Pre []string `json:"pre,omitempty"`
-
-	// Steps tracks each step in the original job step order.
-	// +optional
-	// +kubebuilder:validation:MaxItems=128
-	Steps []StepStatus `json:"steps,omitempty"`
-}
-
-// +kubebuilder:object:generate=true
-// StepStatus tracks the status of a step.
-type StepStatus struct {
-	// Name is the step name.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern=`^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
-	Name string `json:"name"`
-
-	// Phase is the current phase of the step.
-	Phase StepPhase `json:"phase"`
-
-	// RunName is the name of the Run CRD created for this step.
-	// +optional
-	RunName string `json:"runName,omitempty"`
-
-	// Outputs is key-value pairs exposed by this step.
-	// +optional
-	// +kubebuilder:validation:MaxProperties=64
-	Outputs map[string]string `json:"outputs,omitempty"`
 }
 
 // +kubebuilder:object:root=true
