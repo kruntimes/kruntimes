@@ -112,6 +112,53 @@ accepted execution 不能再次读取 mutable `Workflow` definitions。在初始
 创建任何 child 前，controller 会递归解析完整的 namespace-local Workflow call tree，并写入
 immutable execution snapshot。
 
+### Snapshot Record 格式
+
+snapshot 在 `ControllerRevision.data.raw` 中使用两种 JSON record。它们是
+controller-private record，而不是 CRD；record 显式包含 schema version，因此未来不兼容的格式
+变更必须经过 review 的 migration，不能静默地重新解释已经 accepted 的 execution。
+
+```go
+type WorkflowExecutionSnapshotIndex struct {
+    SchemaVersion string                 `json:"schemaVersion"` // v1alpha1
+    Nodes         []WorkflowSnapshotNode `json:"nodes"`
+}
+
+type WorkflowSnapshotNode struct {
+    CallPath           string            `json:"callPath"`
+    DefinitionRevision string            `json:"definitionRevision"`
+    With               map[string]string `json:"with,omitempty"`
+}
+
+type WorkflowDefinitionSnapshot struct {
+    SchemaVersion string                 `json:"schemaVersion"` // v1alpha1
+    Source        WorkflowSnapshotSource `json:"source"`
+    Inputs        map[string]WorkflowInputSpec
+    Outputs       map[string]WorkflowOutputSpec
+    Jobs          map[string]JobSpec
+}
+
+type WorkflowSnapshotSource struct {
+    Kind            string `json:"kind"` // WorkflowRun 或 Workflow
+    Name            string `json:"name"`
+    UID             string `json:"uid"`
+    Generation      int64  `json:"generation"`
+    ResourceVersion string `json:"resourceVersion"`
+}
+```
+
+每个 index 都有一个 `root` node。inline root 使用 `WorkflowRun` definition snapshot；root
+`spec.uses` node 和每个 nested call 使用 `Workflow` definition snapshot。job-level call path
+在 caller path 后增加 `/jobs/<job-name>`。job name 不允许包含 `/`，因此它在 reconciliation
+间没有歧义且保持稳定。`With` 保留在 call node，以便之后在 caller context 中求值；它绝不会被
+合并到 callee definition。
+
+definition revision 和 index name 都从 canonical JSON 与 root WorkflowRun UID 进行
+content-address。controller 先创建 definition revisions，再创建 index，最后才持久化
+`status.snapshotName`。因此 restart 要么找到完整且匹配的 index，要么安全重建缺失的 immutable
+records。在接受 WorkflowRun 前，它只删除未被完整 index 引用的 root-owned definition revisions。
+resolver 会在创建 index 或 execution child 前拒绝超过 Kubernetes object size limit 的 record。
+
 snapshot 不放在 status 中，而是存储在由 WorkflowRun owner 的 `ControllerRevision`
 objects 中。Kubernetes API validation 会使已成功创建 revision 的 `data` 不可变：
 

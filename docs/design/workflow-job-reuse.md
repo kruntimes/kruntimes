@@ -128,6 +128,59 @@ initializing `status.jobs` or creating any child, the controller recursively
 resolves the complete namespace-local Workflow call tree and writes an
 immutable execution snapshot.
 
+### Snapshot Record Format
+
+The snapshot has two JSON record types in `ControllerRevision.data.raw`.
+They are controller-private records, not CRDs, and start with an explicit
+schema version so a future incompatible record format requires a reviewed
+migration rather than silently reinterpreting an accepted execution.
+
+```go
+type WorkflowExecutionSnapshotIndex struct {
+    SchemaVersion string                 `json:"schemaVersion"` // v1alpha1
+    Nodes         []WorkflowSnapshotNode `json:"nodes"`
+}
+
+type WorkflowSnapshotNode struct {
+    CallPath           string            `json:"callPath"`
+    DefinitionRevision string            `json:"definitionRevision"`
+    With               map[string]string `json:"with,omitempty"`
+}
+
+type WorkflowDefinitionSnapshot struct {
+    SchemaVersion string                 `json:"schemaVersion"` // v1alpha1
+    Source        WorkflowSnapshotSource `json:"source"`
+    Inputs        map[string]WorkflowInputSpec
+    Outputs       map[string]WorkflowOutputSpec
+    Jobs          map[string]JobSpec
+}
+
+type WorkflowSnapshotSource struct {
+    Kind            string `json:"kind"` // WorkflowRun or Workflow
+    Name            string `json:"name"`
+    UID             string `json:"uid"`
+    Generation      int64  `json:"generation"`
+    ResourceVersion string `json:"resourceVersion"`
+}
+```
+
+Every index contains a `root` node. An inline root has a `WorkflowRun`
+definition snapshot; a root `spec.uses` node and every nested call use a
+`Workflow` definition snapshot. A job-level call path appends
+`/jobs/<job-name>` to its caller path. Job names cannot contain `/`, so this is
+unambiguous and stable across reconciliation. `With` remains on the call node,
+where it can later be evaluated in the caller context; it is never merged into
+the callee definition.
+
+Definition revisions and the index name are content-addressed from canonical
+JSON plus the root WorkflowRun UID. The controller creates definition revisions
+first, then the index, and only then persists `status.snapshotName`. A restart
+therefore either finds a complete matching index or safely recreates missing
+immutable records. Before accepting the WorkflowRun, it deletes only
+root-owned definition revisions that are not referenced by the complete index.
+The resolver rejects a record that exceeds the Kubernetes object size limit
+before it creates an index or execution child.
+
 The snapshot is stored outside status in WorkflowRun-owned `ControllerRevision`
 objects. Kubernetes API validation makes a successfully created revision's
 `data` immutable:
