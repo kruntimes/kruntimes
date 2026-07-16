@@ -2,7 +2,7 @@
 
 状态：**提案，等待 review**
 
-本文细化 [Workflow Reuse](workflow-reuse.md) 中的 job-level `uses` 模型，定义一个在
+本文细化 [Workflow Reuse](../workflow-reuse/) 中的 job-level `uses` 模型，定义一个在
 controller restart 和 reusable `Workflow` 更新后仍保持确定性的 execution boundary。
 
 ## 问题
@@ -112,22 +112,25 @@ accepted execution 不能再次读取 mutable `Workflow` definitions。在初始
 创建任何 child 前，controller 会递归解析完整的 namespace-local Workflow call tree，并写入
 immutable execution snapshot。
 
-snapshot 不放在 status 中，而是存储在由 WorkflowRun owner 的 immutable ConfigMaps 中：
+snapshot 不放在 status 中，而是存储在由 WorkflowRun owner 的 `ControllerRevision`
+objects 中。Kubernetes API validation 会使已成功创建 revision 的 `data` 不可变：
 
-- 一个较小的 index ConfigMap 将稳定 call paths 映射到 definition snapshots；
-- definition ConfigMaps 包含 normalized Workflow inputs、outputs 和 jobs；
+- 一个较小的 index ControllerRevision 将稳定 call paths 映射到 definition revisions；
+- definition ControllerRevisions 在 JSON `data` fields 中包含 normalized Workflow inputs、
+  outputs 和 jobs；
 - 每个 entry 记录 source name、UID、generation 和 resource version；
 - call nodes 保留尚未求值的 `with` expressions，后续在 caller context 中求值；
-- ConfigMaps 不包含 runtime results 或 secret material；
+- revision data 不包含 runtime results 或 secret material；
 - owner references 使其随 root WorkflowRun 被 garbage collection。
 
 Snapshot names 使用确定性的 content-addressed 方式生成。创建过程保持幂等：发生部分失败后，
-reconcile 会先校验并复用匹配的 immutable ConfigMaps，再创建缺失 entries。WorkflowRun
-accepted 前会删除未被引用的 partial snapshots。
+reconcile 会先校验并复用匹配的 immutable ControllerRevision data，再创建缺失 entries。
+Controller 不依赖 mutable revision labels 或 annotations 保证 correctness。WorkflowRun accepted
+前会删除未被引用的 partial revisions。
 
-`WorkflowRun.status.snapshotName` 记录 index ConfigMap 名称。Status 不复制完整 job specs、
-scripts 或 environment values。如果 snapshot 无法满足 Kubernetes object size limits，resolution
-会在执行前失败。
+`WorkflowRun.status.snapshotName` 记录 index ControllerRevision 名称。Status 不复制完整 job
+specs、scripts 或 environment values。如果 snapshot 无法满足 ControllerRevision object limits，
+resolution 会在执行前失败。
 
 一旦 `snapshotName` 持久化，后续 reconcile 只读取 snapshot，不再读取当前 `Workflow`
 objects。child WorkflowRun 继承 root snapshot 和 call-path annotation，因此 nested calls 使用
@@ -147,7 +150,7 @@ snapshot resolution 在创建任何 execution child 前完成：
 4. 将每个 definition version 和 call path 记录到 snapshot。
 5. 拒绝 missing definitions、invalid inputs、unsupported shapes，以及直接或间接 Workflow
    call cycles。
-6. 持久化 immutable snapshot ConfigMaps。
+6. 持久化 immutable snapshot ControllerRevisions。
 7. 根据 snapshot 初始化轻量 status，并设置 `Accepted=True`。
 
 初始安全限制为最大 call depth 8，以及每个 root execution 最多 64 个 reusable Workflow call
@@ -160,7 +163,7 @@ controller 保持现有 load/calculate/apply/patch 结构。
 
 加载的资源增加：
 
-- root snapshot index 和 definition ConfigMaps；
+- root snapshot index 和 definition ControllerRevisions；
 - reconciled WorkflowRun owner 的 direct child WorkflowRuns；
 - inline jobs 对应的 direct child Runs。
 
@@ -207,7 +210,7 @@ Workflow outputs 会提升为 caller job outputs，downstream jobs 通过普通 
   单向变化；
 - 拒绝在 `uses` job 中设置 `runs-on`、`steps` 和 caller-defined `outputs`；
 - 保留 snapshot/call-path labels 和 annotations；
-- 授予 WorkflowRun controller namespace-scoped ConfigMap
+- 授予 WorkflowRun controller namespace-scoped `apps` ControllerRevision
   get/list/watch/create/delete permissions；
 - 除 child Runs 外，watch owned child WorkflowRuns。
 
@@ -232,7 +235,7 @@ retry 或 restart recovery。
 ## Implementation Plan
 
 1. API prerequisites：status references、transition validation、reserved metadata、generated
-   CRDs，以及 ConfigMap/child-WorkflowRun RBAC。
+   CRDs，以及 ControllerRevision/child-WorkflowRun RBAC。
 2. Snapshot storage 和 recursive resolver：version capture、limits、input validation，以及
    cross-Workflow cycle detection。
 3. 从 immutable snapshot 执行 top-level `spec.uses`，修复当前只初始化 status 的缺口。

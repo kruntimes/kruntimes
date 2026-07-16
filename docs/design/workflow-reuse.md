@@ -143,7 +143,7 @@ Validation must enforce that job `uses` and job `steps` are mutually exclusive.
 Reusable Workflow jobs have their own job/workspace/artifact boundary. They
 communicate with callers through inputs, outputs, and artifacts. The concrete
 parent/child execution boundary and immutable snapshot model are defined in
-[Job-Level Reusable Workflow Execution](workflow-job-reuse.md).
+[Job-Level Reusable Workflow Execution](../workflow-job-reuse/).
 
 ## Action
 
@@ -277,7 +277,7 @@ Reference resolution should happen in this order:
 4. Represent each runnable reusable Workflow call as a child WorkflowRun with
    its own job/workspace/artifact boundary, using the immutable execution
    snapshot defined in
-   [Job-Level Reusable Workflow Execution](workflow-job-reuse.md).
+   [Job-Level Reusable Workflow Execution](../workflow-job-reuse/).
 5. Resolve each step-level `uses` to a same-namespace `Action`.
 6. Expand Action steps inline inside the caller job context.
 7. Detect cycles before creating any child Runs.

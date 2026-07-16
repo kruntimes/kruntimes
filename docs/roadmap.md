@@ -234,7 +234,7 @@ wiring from accumulating avoidable conflicts.
     - [ ] review and approve the child WorkflowRun and immutable snapshot model;
     - [ ] add status references, spec transition validation, reserved metadata,
       generated CRDs, and controller RBAC prerequisites;
-    - [ ] add immutable snapshot storage and recursive resolution with version
+    - [ ] add immutable ControllerRevision snapshot storage and recursive resolution with version
       capture, call limits, input validation, and cycle detection;
     - [ ] execute top-level `WorkflowRun.spec.uses` from its snapshot instead of
       only initializing status;

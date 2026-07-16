@@ -136,7 +136,7 @@ Validation 必须保证 job `uses` 和 job `steps` 互斥。
 
 Reusable Workflow jobs 拥有自己的 job/workspace/artifact boundary。它们通过 inputs、
 outputs 和 artifacts 与 caller 通信。具体的 parent/child execution boundary 和 immutable
-snapshot model 见 [Job-Level Reusable Workflow Execution](workflow-job-reuse.md)。
+snapshot model 见 [Job-Level Reusable Workflow Execution](../workflow-job-reuse/)。
 
 ## Action
 
@@ -262,7 +262,7 @@ Reference resolution 应按以下顺序发生：
 1. 将 top-level `WorkflowRun.spec.uses` 解析到同 namespace 下的 `Workflow`。
 2. 将被引用 Workflow 的 jobs 展开到 WorkflowRun execution graph。
 3. 将每个 job-level `uses` 解析到同 namespace 下的 reusable `Workflow`。
-4. 使用 [Job-Level Reusable Workflow Execution](workflow-job-reuse.md) 定义的 immutable
+4. 使用 [Job-Level Reusable Workflow Execution](../workflow-job-reuse/) 定义的 immutable
    execution snapshot，把每个 runnable reusable Workflow call 表示为拥有独立
    job/workspace/artifact boundary 的 child WorkflowRun。
 5. 将每个 step-level `uses` 解析到同 namespace 下的 `Action`。

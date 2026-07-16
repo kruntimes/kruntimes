@@ -3,7 +3,7 @@
 Status: **Proposed for review**
 
 This document refines the job-level `uses` model introduced in
-[Workflow Reuse](workflow-reuse.md). It defines an execution boundary that is
+[Workflow Reuse](../workflow-reuse/). It defines an execution boundary that is
 deterministic across controller restarts and reusable `Workflow` updates.
 
 ## Problem
@@ -128,25 +128,30 @@ initializing `status.jobs` or creating any child, the controller recursively
 resolves the complete namespace-local Workflow call tree and writes an
 immutable execution snapshot.
 
-The snapshot is stored outside status in WorkflowRun-owned, immutable
-ConfigMaps:
+The snapshot is stored outside status in WorkflowRun-owned `ControllerRevision`
+objects. Kubernetes API validation makes a successfully created revision's
+`data` immutable:
 
-- a small index ConfigMap maps stable call paths to definition snapshots;
-- definition ConfigMaps contain normalized Workflow inputs, outputs, and jobs;
+- a small index ControllerRevision maps stable call paths to definition
+  revisions;
+- definition ControllerRevisions contain normalized Workflow inputs, outputs,
+  and jobs in their JSON `data` fields;
 - every entry records source name, UID, generation, and resource version;
 - call nodes retain unevaluated `with` expressions for later evaluation in the
   caller context;
-- ConfigMaps contain no runtime results or secret material;
+- revision data contains no runtime results or secret material;
 - owner references provide garbage collection with the root WorkflowRun.
 
 Snapshot names are deterministic and content-addressed. Creation is idempotent:
 after a partial failure, reconciliation verifies and reuses matching immutable
-ConfigMaps before creating missing entries. Unreferenced partial snapshots are
-deleted before the WorkflowRun is accepted.
+ControllerRevision data before creating missing entries. The controller does
+not rely on mutable revision labels or annotations for correctness.
+Unreferenced partial revisions are deleted before the WorkflowRun is accepted.
 
-`WorkflowRun.status.snapshotName` records the index ConfigMap name. Status does
-not copy full job specs, scripts, or environment values. If a snapshot cannot
-fit Kubernetes object limits, resolution fails before execution.
+`WorkflowRun.status.snapshotName` records the index ControllerRevision name.
+Status does not copy full job specs, scripts, or environment values. If a
+snapshot cannot fit ControllerRevision object limits, resolution fails before
+execution.
 
 Once `snapshotName` is persisted, all reconciliation reads the snapshot rather
 than current `Workflow` objects. A child WorkflowRun inherits the root snapshot
@@ -166,7 +171,7 @@ Snapshot resolution happens before any execution child is created:
 4. Record each definition version and call path in the snapshot.
 5. Reject missing definitions, invalid inputs, unsupported shapes, and direct
    or indirect Workflow call cycles.
-6. Persist immutable snapshot ConfigMaps.
+6. Persist immutable snapshot ControllerRevisions.
 7. Initialize lightweight status from the snapshot and set `Accepted=True`.
 
 Initial safety limits are a maximum call depth of 8 and at most 64 reusable
@@ -180,7 +185,7 @@ The controller keeps the existing load/calculate/apply/patch structure.
 
 Loaded resources add:
 
-- the root snapshot index and definition ConfigMaps;
+- the root snapshot index and definition ControllerRevisions;
 - direct child WorkflowRuns owned by the reconciled WorkflowRun;
 - direct child Runs for inline jobs.
 
@@ -234,7 +239,7 @@ Implementation requires review of these API and operational changes:
   one-way cancellation;
 - reject `runs-on`, `steps`, and caller-defined `outputs` on a `uses` job;
 - reserve snapshot/call-path labels and annotations;
-- grant the WorkflowRun controller namespace-scoped ConfigMap
+- grant the WorkflowRun controller namespace-scoped `apps` ControllerRevision
   get/list/watch/create/delete permissions;
 - watch owned child WorkflowRuns as well as child Runs.
 
@@ -261,7 +266,7 @@ Status should remain lightweight execution state, not an execution-spec store.
 ## Implementation Plan
 
 1. API prerequisites: status references, transition validation, reserved
-   metadata, generated CRDs, and ConfigMap/child-WorkflowRun RBAC.
+   metadata, generated CRDs, and ControllerRevision/child-WorkflowRun RBAC.
 2. Snapshot storage and recursive resolver with version capture, limits, input
    validation, and cross-Workflow cycle detection.
 3. Execute top-level `spec.uses` from the immutable snapshot, fixing the current
