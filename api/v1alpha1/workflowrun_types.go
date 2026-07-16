@@ -2,6 +2,42 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+// WorkflowPhase is the lifecycle phase of a WorkflowRun execution.
+// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed;Cancelled
+type WorkflowPhase string
+
+const (
+	WorkflowPending   WorkflowPhase = "Pending"
+	WorkflowRunning   WorkflowPhase = "Running"
+	WorkflowSucceeded WorkflowPhase = "Succeeded"
+	WorkflowFailed    WorkflowPhase = "Failed"
+	WorkflowCancelled WorkflowPhase = "Cancelled"
+)
+
+// JobPhase is the lifecycle phase of a job within a WorkflowRun.
+// +kubebuilder:validation:Enum=Pending;Waiting;Running;Succeeded;Failed;Skipped
+type JobPhase string
+
+const (
+	JobPending   JobPhase = "Pending"
+	JobWaiting   JobPhase = "Waiting"
+	JobRunning   JobPhase = "Running"
+	JobSucceeded JobPhase = "Succeeded"
+	JobFailed    JobPhase = "Failed"
+	JobSkipped   JobPhase = "Skipped"
+)
+
+// StepPhase is the lifecycle phase of a step within a WorkflowRun job.
+// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed
+type StepPhase string
+
+const (
+	StepPending   StepPhase = "Pending"
+	StepRunning   StepPhase = "Running"
+	StepSucceeded StepPhase = "Succeeded"
+	StepFailed    StepPhase = "Failed"
+)
+
 const (
 	// WorkflowRunAcceptedCondition reports whether the WorkflowRun was accepted by the controller.
 	WorkflowRunAcceptedCondition = "Accepted"
@@ -12,6 +48,16 @@ const (
 	WorkflowJobLabel = "kruntimes.io/workflow-job"
 	// WorkflowStepLabel identifies the workflow step that owns a child Run.
 	WorkflowStepLabel = "kruntimes.io/workflow-step"
+
+	// WorkflowRootRunUIDLabel identifies the root WorkflowRun that owns a
+	// nested child WorkflowRun or Run.
+	WorkflowRootRunUIDLabel = "kruntimes.io/root-workflowrun-uid"
+	// WorkflowSnapshotNameAnnotation identifies the immutable ControllerRevision
+	// snapshot used by a WorkflowRun execution tree.
+	WorkflowSnapshotNameAnnotation = "kruntimes.io/workflow-snapshot-name"
+	// WorkflowCallPathAnnotation identifies a namespace-local reusable Workflow
+	// call path within a snapshot execution tree.
+	WorkflowCallPathAnnotation = "kruntimes.io/workflow-call-path"
 )
 
 // +kubebuilder:object:generate=true
@@ -19,6 +65,8 @@ const (
 // +kubebuilder:validation:XValidation:rule="has(self.jobs) != has(self.uses)",message="exactly one of jobs or uses must be set"
 // +kubebuilder:validation:XValidation:rule="!has(self.with) || has(self.uses)",message="with can only be set when uses is set"
 // +kubebuilder:validation:XValidation:rule="!has(self.jobs) || self.jobs.all(name, !has(self.jobs[name].needs) || self.jobs[name].needs.all(need, need in self.jobs && need != name))",message="each dependency must name another job in this WorkflowRun"
+// +kubebuilder:validation:XValidation:rule="has(self.jobs) == has(oldSelf.jobs) && (!has(self.jobs) || self.jobs == oldSelf.jobs) && has(self.uses) == has(oldSelf.uses) && (!has(self.uses) || self.uses == oldSelf.uses) && has(self.with) == has(oldSelf.with) && (!has(self.with) || self.with == oldSelf.with)",message="jobs, uses, and with are immutable after WorkflowRun creation"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.cancelRequested) || !oldSelf.cancelRequested || (has(self.cancelRequested) && self.cancelRequested)",message="cancelRequested may not transition from true to false"
 type WorkflowRunSpec struct {
 	// Jobs is a map of inline job names to job specs. Jobs run in parallel
 	// unless constrained by needs; the map order is not significant.
@@ -60,6 +108,12 @@ type WorkflowRunStatus struct {
 	// +kubebuilder:validation:MaxProperties=64
 	Jobs map[string]JobStatus `json:"jobs,omitempty"`
 
+	// SnapshotName is the name of the immutable ControllerRevision index that
+	// captures the WorkflowRun's resolved execution definitions.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	SnapshotName string `json:"snapshotName,omitempty"`
+
 	// Message is a human-readable status or error message.
 	// +optional
 	// +kubebuilder:validation:MaxLength=4096
@@ -71,6 +125,54 @@ type WorkflowRunStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// JobStatus tracks the execution status of a WorkflowRun job.
+type JobStatus struct {
+	// Phase is the current phase of the job.
+	Phase JobPhase `json:"phase"`
+
+	// Pre is the resolved list of predecessor jobs that must complete before
+	// this job can start.
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=63
+	Pre []string `json:"pre,omitempty"`
+
+	// WorkflowRunName is the child WorkflowRun created for a job-level reusable
+	// Workflow call. It is empty for inline jobs.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	WorkflowRunName string `json:"workflowRunName,omitempty"`
+
+	// Steps tracks each step in the original job step order.
+	// +optional
+	// +kubebuilder:validation:MaxItems=128
+	Steps []StepStatus `json:"steps,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// StepStatus tracks the execution status of a WorkflowRun step.
+type StepStatus struct {
+	// Name is the step name.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
+	Name string `json:"name"`
+
+	// Phase is the current phase of the step.
+	Phase StepPhase `json:"phase"`
+
+	// RunName is the name of the Run CRD created for this step.
+	// +optional
+	RunName string `json:"runName,omitempty"`
+
+	// Outputs is key-value pairs exposed by this step.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=64
+	Outputs map[string]string `json:"outputs,omitempty"`
 }
 
 // +kubebuilder:object:root=true

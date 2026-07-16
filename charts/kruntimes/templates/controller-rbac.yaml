@@ -114,6 +114,16 @@ rules:
   - apiGroups:
       - apps
     resources:
+      - controllerrevisions
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+  - apiGroups:
+      - apps
+    resources:
       - deployments
     verbs:
       - get

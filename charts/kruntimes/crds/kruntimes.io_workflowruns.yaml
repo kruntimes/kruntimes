@@ -187,6 +187,14 @@ spec:
             - message: each dependency must name another job in this WorkflowRun
               rule: '!has(self.jobs) || self.jobs.all(name, !has(self.jobs[name].needs)
                 || self.jobs[name].needs.all(need, need in self.jobs && need != name))'
+            - message: jobs, uses, and with are immutable after WorkflowRun creation
+              rule: has(self.jobs) == has(oldSelf.jobs) && (!has(self.jobs) || self.jobs
+                == oldSelf.jobs) && has(self.uses) == has(oldSelf.uses) && (!has(self.uses)
+                || self.uses == oldSelf.uses) && has(self.with) == has(oldSelf.with)
+                && (!has(self.with) || self.with == oldSelf.with)
+            - message: cancelRequested may not transition from true to false
+              rule: '!has(oldSelf.cancelRequested) || !oldSelf.cancelRequested ||
+                (has(self.cancelRequested) && self.cancelRequested)'
           status:
             description: WorkflowRunStatus defines the observed state of a WorkflowRun.
             properties:
@@ -254,7 +262,8 @@ spec:
                 x-kubernetes-list-type: map
               jobs:
                 additionalProperties:
-                  description: JobStatus tracks the status of a job.
+                  description: JobStatus tracks the execution status of a WorkflowRun
+                    job.
                   properties:
                     phase:
                       description: Phase is the current phase of the job.
@@ -279,7 +288,8 @@ spec:
                       description: Steps tracks each step in the original job step
                         order.
                       items:
-                        description: StepStatus tracks the status of a step.
+                        description: StepStatus tracks the execution status of a WorkflowRun
+                          step.
                         properties:
                           name:
                             description: Name is the step name.
@@ -312,6 +322,12 @@ spec:
                         type: object
                       maxItems: 128
                       type: array
+                    workflowRunName:
+                      description: |-
+                        WorkflowRunName is the child WorkflowRun created for a job-level reusable
+                        Workflow call. It is empty for inline jobs.
+                      maxLength: 253
+                      type: string
                   required:
                   - phase
                   type: object
@@ -332,6 +348,12 @@ spec:
                 - Succeeded
                 - Failed
                 - Cancelled
+                type: string
+              snapshotName:
+                description: |-
+                  SnapshotName is the name of the immutable ControllerRevision index that
+                  captures the WorkflowRun's resolved execution definitions.
+                maxLength: 253
                 type: string
             required:
             - phase

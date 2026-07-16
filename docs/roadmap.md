@@ -257,8 +257,8 @@ wiring from accumulating avoidable conflicts.
     including child Run creation before status persistence;
   - [ ] implement job-level reusable Workflow calls through the reviewed
     [execution-boundary design](design/workflow-job-reuse.md):
-    - [ ] review and approve the child WorkflowRun and immutable snapshot model;
-    - [ ] add status references, spec transition validation, reserved metadata,
+    - [x] review and approve the child WorkflowRun and immutable snapshot model;
+    - [x] add status references, spec transition validation, reserved metadata,
       generated CRDs, and controller RBAC prerequisites;
     - [ ] add immutable ControllerRevision snapshot storage and recursive resolution with version
       capture, call limits, input validation, and cycle detection;

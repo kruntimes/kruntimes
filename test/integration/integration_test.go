@@ -709,6 +709,74 @@ func TestCRDValidationAllowsWorkflowRunTerminalAPI(t *testing.T) {
 	}
 }
 
+func TestCRDValidationAllowsWorkflowRunSnapshotAndCallStatus(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-workflowrun-snapshot-status-")
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: ns.Name},
+		Spec: v1alpha1.WorkflowRunSpec{
+			Jobs: map[string]v1alpha1.JobSpec{
+				"deploy": {Uses: "deploy-workflow"},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	workflowRun.Status.Phase = v1alpha1.WorkflowPending
+	workflowRun.Status.SnapshotName = "release-snapshot-a1b2c3d4"
+	workflowRun.Status.Jobs = map[string]v1alpha1.JobStatus{
+		"deploy": {Phase: v1alpha1.JobRunning, WorkflowRunName: "release-deploy-a1b2c3d4"},
+	}
+	if err := k8sClient.Status().Update(ctx, workflowRun); err != nil {
+		t.Fatalf("update workflowrun snapshot status: %v", err)
+	}
+}
+
+func TestCRDValidationWorkflowRunExecutionInputsAreImmutable(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-workflowrun-immutable-inputs-")
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: ns.Name},
+		Spec: v1alpha1.WorkflowRunSpec{
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	workflowRun.Spec.Jobs["build"] = v1alpha1.JobSpec{RunsOn: "python", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}}
+	if err := k8sClient.Update(ctx, workflowRun); !apierrors.IsInvalid(err) {
+		t.Fatalf("mutating workflowrun jobs error = %v, want Invalid", err)
+	}
+
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+		t.Fatalf("get workflowrun after rejected update: %v", err)
+	}
+	workflowRun.Spec.CancelRequested = true
+	if err := k8sClient.Update(ctx, workflowRun); err != nil {
+		t.Fatalf("request workflowrun cancellation: %v", err)
+	}
+
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+		t.Fatalf("get cancelled workflowrun: %v", err)
+	}
+	workflowRun.Spec.CancelRequested = false
+	if err := k8sClient.Update(ctx, workflowRun); !apierrors.IsInvalid(err) {
+		t.Fatalf("clearing workflowrun cancellation error = %v, want Invalid", err)
+	}
+}
+
 func TestCRDValidationAllowsWorkflowRunUses(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-workflowrun-uses-validation-")

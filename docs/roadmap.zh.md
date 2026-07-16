@@ -222,8 +222,8 @@ controller wiring 累积不必要的冲突。
   - [ ] 按照完成 review 的
     [execution-boundary design](design/workflow-job-reuse.md) 实现 job-level reusable
     Workflow calls：
-    - [ ] review 并批准 child WorkflowRun 和 immutable snapshot model；
-    - [ ] 增加 status references、spec transition validation、reserved metadata、generated
+    - [x] review 并批准 child WorkflowRun 和 immutable snapshot model；
+    - [x] 增加 status references、spec transition validation、reserved metadata、generated
       CRDs 和 controller RBAC prerequisites；
     - [ ] 增加 immutable ControllerRevision snapshot storage 和 recursive resolution，包括 version capture、
       call limits、input validation 和 cycle detection；
