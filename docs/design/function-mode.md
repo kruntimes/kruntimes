@@ -124,13 +124,18 @@ status:
   phase: Ready
   assignedPod: runtime-python-7f587b4668-njcks
   endpoint:
-    protocol: HTTP
-    url: http://python-runtime-gateway.kruntimes-demo.svc.cluster.local/v1/runs/kube-diagnose-agent/invoke
+    protocol: HTTPS
+    url: https://python-gateway.kruntimes-demo.svc.cluster.local/v1/namespaces/kruntimes-demo/runs/kube-diagnose-agent/2c24c1f0-9f8f-4f80-82d5-3dd16a12d1e6/invoke
+    caBundle: <base64-encoded-PEM>
   conditions:
     - type: Ready
       status: "True"
       reason: FunctionRegistered
 ```
+
+The exact phase, endpoint, retry, timeout, cleanup, routing, authorization, and
+invocation semantics are defined in
+[Function Mode Lifecycle and Invoke Dataplane](../function-mode-lifecycle/).
 
 `Ready` is not terminal for function-mode Runs. Deletion, cancellation, failed
 registration, or idle timeout ends the reservation.
@@ -203,6 +208,9 @@ function mode keeps `handler` under `mode.function`.
 
 ## Runtime Gateway
 
+The detailed gateway routing and authorization contract is defined in
+[Function Mode Lifecycle and Invoke Dataplane](../function-mode-lifecycle/).
+
 Each Runtime should get a gateway Service:
 
 ```text
@@ -217,7 +225,7 @@ invoke request to any runtimed in that Runtime pool, so each runtimed needs an
 ownership cache:
 
 ```text
-Run UID/name -> assigned Runtime Pod -> readiness -> function ID
+Run namespace/name/UID -> assigned Runtime Pod UID -> attempt -> readiness
 ```
 
 Invoke behavior:
@@ -232,10 +240,13 @@ Invoke behavior:
 
 Runtime Servers need a function-mode contract in addition to one-shot execute:
 
-- `RegisterFunction`: prepare code and return a function ID.
+- `RegisterFunction`: prepare code for a Run UID and ownership attempt.
 - `InvokeFunction`: run a request against a registered function.
 - `UnregisterFunction`: release runtime-local state.
 - `FunctionStatus`: report readiness and runtime-local errors.
+
+The idempotency, fencing, timeout, and bounded invoke semantics are defined in
+[Function Mode Lifecycle and Invoke Dataplane](../function-mode-lifecycle/).
 
 Invoke responses should contain bounded structured data:
 
