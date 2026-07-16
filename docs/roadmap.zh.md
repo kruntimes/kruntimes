@@ -159,6 +159,7 @@ controller wiring 累积不必要的冲突。
     当前 emptyDir 默认行为；
   - [x] 增加 `PersistentWorkspace` API types、CRD validation、status 和 controller
     skeleton；
+  - [ ] review Run workspace reference 与 affinity 的专用 API shape，再增加 API skeleton；
   - 为 Run 增加 workspace reference 和 Kubernetes-style Run affinity 字段；
   - 更新 scheduler placement，使其支持 required/preferred Run affinity，同时在无 capacity
     时继续保持 Run Pending；
