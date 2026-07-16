@@ -168,6 +168,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 
 	run.Status.AssignedPod = selected.Name
+	run.Status.AssignedPodUID = string(selected.UID)
 	run.Status.Phase = v1alpha1.RunScheduled
 	scheduledAt := metav1.Now()
 	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
@@ -258,7 +259,7 @@ func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) 
 			continue
 		}
 		switch run.Status.Phase {
-		case v1alpha1.RunScheduled, v1alpha1.RunRunning:
+		case v1alpha1.RunScheduled, v1alpha1.RunRunning, v1alpha1.RunReady:
 			usage[run.Status.AssignedPod]++
 		}
 	}
@@ -357,7 +358,7 @@ func runCapacityReleasedPredicate() predicate.Predicate {
 
 func consumesRuntimeCapacity(phase v1alpha1.RunPhase) bool {
 	switch phase {
-	case v1alpha1.RunScheduled, v1alpha1.RunRunning:
+	case v1alpha1.RunScheduled, v1alpha1.RunRunning, v1alpha1.RunReady:
 		return true
 	default:
 		return false

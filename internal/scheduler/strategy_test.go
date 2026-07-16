@@ -60,6 +60,21 @@ func TestLeastLoaded_Select(t *testing.T) {
 			wantPod: "pod-b",
 		},
 		{
+			name: "ready run consumes capacity",
+			pods: []corev1.Pod{
+				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
+			},
+			tasks: []v1alpha1.Run{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "ready-function", Namespace: "default"},
+					Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunReady, AssignedPod: "pod-a"},
+				},
+			},
+			run:     &v1alpha1.Run{},
+			wantPod: "pod-b",
+		},
+		{
 			name: "most available capacity selected",
 			pods: []corev1.Pod{
 				{

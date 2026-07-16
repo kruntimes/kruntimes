@@ -93,11 +93,12 @@ wiring from accumulating avoidable conflicts.
   - [x] remove top-level `entrypoint`, `args`, and `handler` before API
     stabilization;
   - [x] migrate CLI creation and high-level user docs to use `spec.mode.task`;
-  - [ ] review and approve the
+  - [x] review and approve the
     [function lifecycle and invoke dataplane design](design/function-mode-lifecycle.md);
-  - [ ] add `Ready` phase, assigned Pod UID, endpoint status, immutable
-    execution-input transitions, the function cleanup finalizer constant,
-    generated CRDs, and generic phase-classification tests;
+  - [x] add `Ready`, assigned Pod UID, bounded endpoint status, generated CRDs,
+    and active/non-terminal phase-classification tests;
+  - add immutable execution-input transitions and the function cleanup finalizer
+    constant;
   - [ ] implement registration lifecycle, shared retry integration,
     reservation/idle timeout, finalization, and restart recovery;
 - [ ] Runtime gateway invoke path: create one gateway Service per Runtime, use

@@ -152,6 +152,8 @@ func newRunCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme
 				switch latest.Status.Phase {
 				case v1alpha1.RunRunning:
 					fmt.Fprintf(cmd.OutOrStdout(), "\rRunning on %s...", latest.Status.AssignedPod)
+				case v1alpha1.RunReady:
+					fmt.Fprintf(cmd.OutOrStdout(), "\rReady on %s...", latest.Status.AssignedPod)
 				case v1alpha1.RunScheduled:
 					fmt.Fprintf(cmd.OutOrStdout(), "\rScheduled to %s...", latest.Status.AssignedPod)
 				}

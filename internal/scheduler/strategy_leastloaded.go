@@ -47,7 +47,7 @@ func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []
 			if t.Status.AssignedPod != pod.Name {
 				continue
 			}
-			if t.Status.Phase == v1alpha1.RunScheduled || t.Status.Phase == v1alpha1.RunRunning {
+			if t.Status.Phase == v1alpha1.RunScheduled || t.Status.Phase == v1alpha1.RunRunning || t.Status.Phase == v1alpha1.RunReady {
 				count++
 			}
 		}

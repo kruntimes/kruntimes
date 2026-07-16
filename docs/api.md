@@ -50,8 +50,10 @@ Common status fields:
 
 | Field | Description |
 | --- | --- |
-| `status.phase` | `Pending`, `Scheduled`, `Running`, `Succeeded`, `Failed`, `Timeout`, or `Cancelled`. |
+| `status.phase` | `Pending`, `Scheduled`, `Running`, `Ready`, `Succeeded`, `Failed`, `Timeout`, or `Cancelled`. `Ready` is active and non-terminal; it is used by registered function-mode Runs. |
 | `status.assignedPod` | Runtime Pod selected by the scheduler. |
+| `status.assignedPodUID` | UID of the assigned Runtime Pod, used to distinguish Pod-name reuse during recovery. |
+| `status.endpoint` | Bounded HTTPS invoke endpoint and optional CA bundle for a ready function-mode Run. It is absent for task Runs. |
 | `status.attempt` | Current deterministic attempt count. |
 | `status.outputs` | Bounded structured outputs from `$KRUNTIME_OUTPUTS`. |
 | `status.artifactRefs` | Compact artifact references for files stored outside etcd. |
@@ -86,10 +88,9 @@ spec:
         - echo hello
 ```
 
-Function mode is experimental. The API shape is present so handler
-configuration lives under function mode, but repeated low-latency invocation
-requires the runtime gateway and function runtime contract work tracked in the
-roadmap.
+Function mode is experimental. `Ready` and endpoint status establish its
+lifecycle API, but repeated low-latency invocation still requires the runtime
+gateway and function runtime contract work tracked in the roadmap.
 
 ### Runtime
 

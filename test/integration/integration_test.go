@@ -911,6 +911,68 @@ func TestCRDValidationRejectsInvalidPersistentWorkspaceRuntime(t *testing.T) {
 	}
 }
 
+func TestCRDValidationAllowsReadyFunctionEndpointStatus(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-function-endpoint-status-")
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "function", Namespace: ns.Name},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "python",
+			Mode:    v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "handler.invoke"}},
+		},
+	}
+	if err := k8sClient.Create(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			return err
+		}
+
+		return updateReadyFunctionEndpointStatus(ctx, run)
+	}); err != nil {
+		t.Fatalf("update ready function status: %v", err)
+	}
+}
+
+func updateReadyFunctionEndpointStatus(ctx context.Context, run *v1alpha1.Run) error {
+	run.Status.Phase = v1alpha1.RunReady
+	run.Status.AssignedPod = "runtime-python-abc"
+	run.Status.AssignedPodUID = "a0dc4d2d-2cf3-4f91-a0f2-d7d7bb3c7ae4"
+	run.Status.Endpoint = &v1alpha1.RunEndpoint{
+		Protocol: v1alpha1.RunEndpointProtocolHTTPS,
+		URL:      "https://python-gateway.default.svc.cluster.local/v1/namespaces/default/runs/function/uid/invoke",
+		CABundle: []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"),
+	}
+	return k8sClient.Status().Update(ctx, run)
+}
+
+func TestCRDValidationRejectsUnsupportedFunctionEndpointProtocol(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-function-endpoint-protocol-")
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "function", Namespace: ns.Name},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "python",
+			Mode:    v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "handler.invoke"}},
+		},
+	}
+	if err := k8sClient.Create(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			return err
+		}
+		run.Status.Phase = v1alpha1.RunReady
+		run.Status.Endpoint = &v1alpha1.RunEndpoint{Protocol: v1alpha1.RunEndpointProtocol("HTTP"), URL: "http://example.invalid/invoke"}
+		return k8sClient.Status().Update(ctx, run)
+	})
+	if !apierrors.IsInvalid(err) {
+		t.Fatalf("invalid endpoint protocol error = %v, want Invalid", err)
+	}
+}
+
 func TestCRDValidationRejectsInvalidPersistentWorkspaceMode(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-persistent-workspace-mode-validation-")
