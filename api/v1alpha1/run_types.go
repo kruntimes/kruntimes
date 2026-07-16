@@ -6,18 +6,48 @@ import (
 )
 
 // RunPhase is the lifecycle phase of a Run.
-// +kubebuilder:validation:Enum=Pending;Scheduled;Running;Succeeded;Failed;Timeout;Cancelled
+// +kubebuilder:validation:Enum=Pending;Scheduled;Running;Ready;Succeeded;Failed;Timeout;Cancelled
 type RunPhase string
 
 const (
 	RunPending   RunPhase = "Pending"
 	RunScheduled RunPhase = "Scheduled"
 	RunRunning   RunPhase = "Running"
+	// RunReady is an active, non-terminal function Run that accepts invocations.
+	RunReady     RunPhase = "Ready"
 	RunSucceeded RunPhase = "Succeeded"
 	RunFailed    RunPhase = "Failed"
 	RunTimeout   RunPhase = "Timeout"
 	RunCancelled RunPhase = "Cancelled"
 )
+
+// RunEndpointProtocol identifies the public protocol for invoking a function Run.
+// +kubebuilder:validation:Enum=HTTPS
+type RunEndpointProtocol string
+
+const (
+	// RunEndpointProtocolHTTPS is the initial public invoke protocol.
+	RunEndpointProtocolHTTPS RunEndpointProtocol = "HTTPS"
+)
+
+// +kubebuilder:object:generate=true
+// RunEndpoint is a stable, bounded reference to a function Run invoke endpoint.
+type RunEndpoint struct {
+	// Protocol identifies the endpoint protocol.
+	// +kubebuilder:validation:Required
+	Protocol RunEndpointProtocol `json:"protocol"`
+
+	// URL is the invoke endpoint URL. The path includes the immutable Run UID.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=2048
+	URL string `json:"url"`
+
+	// CABundle is the PEM trust bundle for the endpoint when it is not rooted in
+	// a client-configured trust store.
+	// +optional
+	// +kubebuilder:validation:MaxLength=16384
+	CABundle []byte `json:"caBundle,omitempty"`
+}
 
 // ArtifactType describes how an artifact is represented in storage.
 // +kubebuilder:validation:Enum=file;directory;archive;blob
@@ -300,6 +330,17 @@ type RunStatus struct {
 	// AssignedPod is the name of the Runtime Pod assigned by the scheduler.
 	// +optional
 	AssignedPod string `json:"assignedPod,omitempty"`
+
+	// AssignedPodUID is the UID of AssignedPod. It distinguishes Pod-name reuse
+	// and is set and cleared together with AssignedPod.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	AssignedPodUID string `json:"assignedPodUID,omitempty"`
+
+	// Endpoint is the stable gateway endpoint for a ready function Run.
+	// It is absent for one-shot task Runs.
+	// +optional
+	Endpoint *RunEndpoint `json:"endpoint,omitempty"`
 
 	// Message is a human-readable status or error message.
 	// +optional

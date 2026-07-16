@@ -540,6 +540,12 @@ spec:
                 description: AssignedPod is the name of the Runtime Pod assigned by
                   the scheduler.
                 type: string
+              assignedPodUID:
+                description: |-
+                  AssignedPodUID is the UID of AssignedPod. It distinguishes Pod-name reuse
+                  and is set and cleared together with AssignedPod.
+                maxLength: 253
+                type: string
               attempt:
                 description: Attempt is the current execution attempt number (1-based).
                 format: int32
@@ -610,6 +616,32 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              endpoint:
+                description: |-
+                  Endpoint is the stable gateway endpoint for a ready function Run.
+                  It is absent for one-shot task Runs.
+                properties:
+                  caBundle:
+                    description: |-
+                      CABundle is the PEM trust bundle for the endpoint when it is not rooted in
+                      a client-configured trust store.
+                    format: byte
+                    maxLength: 16384
+                    type: string
+                  protocol:
+                    description: Protocol identifies the endpoint protocol.
+                    enum:
+                    - HTTPS
+                    type: string
+                  url:
+                    description: URL is the invoke endpoint URL. The path includes
+                      the immutable Run UID.
+                    maxLength: 2048
+                    type: string
+                required:
+                - protocol
+                - url
+                type: object
               message:
                 description: |-
                   Message is a human-readable status or error message.
@@ -631,6 +663,7 @@ spec:
                 - Pending
                 - Scheduled
                 - Running
+                - Ready
                 - Succeeded
                 - Failed
                 - Timeout

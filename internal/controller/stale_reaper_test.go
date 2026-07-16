@@ -42,6 +42,9 @@ func TestStaleRunReaperRetriesUsingSharedRetryPolicy(t *testing.T) {
 	if updated.Status.AssignedPod != "" {
 		t.Fatalf("assignedPod = %q, want empty", updated.Status.AssignedPod)
 	}
+	if updated.Status.AssignedPodUID != "" {
+		t.Fatalf("assignedPodUID = %q, want empty", updated.Status.AssignedPodUID)
+	}
 	if updated.Status.Attempt != 2 {
 		t.Fatalf("attempt = %d, want 2", updated.Status.Attempt)
 	}
@@ -231,6 +234,58 @@ func TestStaleRunReaperReturnsStatusUpdateError(t *testing.T) {
 	})
 	if !errors.Is(err, statusErr) {
 		t.Fatalf("Reconcile error = %v, want %v", err, statusErr)
+	}
+}
+
+func TestStaleRunReaperRetriesReadyRunWhenAssignedPodNameIsReused(t *testing.T) {
+	now := metav1.Now()
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-function", Namespace: "default"},
+		Spec: v1alpha1.RunSpec{
+			RetryPolicy: &v1alpha1.RetryPolicy{MaxAttempts: 2},
+		},
+		Status: v1alpha1.RunStatus{
+			Phase:          v1alpha1.RunReady,
+			AssignedPod:    "runtime-a",
+			AssignedPodUID: "old-pod-uid",
+		},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "runtime-a", Namespace: "default", UID: "replacement-pod-uid"},
+		Status: corev1.PodStatus{Conditions: []corev1.PodCondition{
+			{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: now},
+			{Type: v1alpha1.RuntimePodRuntimedReadyCondition, Status: corev1.ConditionTrue, LastProbeTime: now},
+		}},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(staleReaperScheme(t)).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run, pod).
+		Build()
+	reaper := &StaleRunReaper{Client: c, StalenessThreshold: time.Minute}
+
+	if _, err := reaper.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	updated := getRun(t, c, run)
+	if updated.Status.Phase != v1alpha1.RunPending {
+		t.Fatalf("phase = %s, want Pending", updated.Status.Phase)
+	}
+	if updated.Status.AssignedPod != "" || updated.Status.AssignedPodUID != "" {
+		t.Fatalf("assignment = %q/%q, want empty", updated.Status.AssignedPod, updated.Status.AssignedPodUID)
+	}
+}
+
+func TestIsStaleMonitoredRunPhase(t *testing.T) {
+	if !isStaleMonitoredRunPhase(v1alpha1.RunRunning) {
+		t.Fatal("Running Run should be monitored")
+	}
+	if !isStaleMonitoredRunPhase(v1alpha1.RunReady) {
+		t.Fatal("Ready Run should be monitored")
+	}
+	if isStaleMonitoredRunPhase(v1alpha1.RunSucceeded) {
+		t.Fatal("terminal Run should not be monitored")
 	}
 }
 

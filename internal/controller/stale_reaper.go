@@ -22,7 +22,7 @@ import (
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
-// StaleRunReaper watches Running Runs and detects those assigned to
+// StaleRunReaper watches active Runs and detects those assigned to
 // dead or unhealthy Runtime Pods, then either resets them for retry
 // or marks them as Failed.
 type StaleRunReaper struct {
@@ -44,11 +44,11 @@ func (r *StaleRunReaper) runningRunPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			run, ok := e.Object.(*v1alpha1.Run)
-			return ok && run.Status.Phase == v1alpha1.RunRunning && run.Status.AssignedPod != ""
+			return ok && isStaleMonitoredRunPhase(run.Status.Phase) && run.Status.AssignedPod != ""
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			run, ok := e.ObjectNew.(*v1alpha1.Run)
-			return ok && run.Status.Phase == v1alpha1.RunRunning && run.Status.AssignedPod != ""
+			return ok && isStaleMonitoredRunPhase(run.Status.Phase) && run.Status.AssignedPod != ""
 		},
 		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
 		GenericFunc: func(e event.GenericEvent) bool { return false },
@@ -62,7 +62,7 @@ func (r *StaleRunReaper) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if run.Status.Phase != v1alpha1.RunRunning || run.Status.AssignedPod == "" {
+	if !isStaleMonitoredRunPhase(run.Status.Phase) || run.Status.AssignedPod == "" {
 		return ctrl.Result{}, nil
 	}
 
@@ -78,6 +78,12 @@ func (r *StaleRunReaper) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if run.Status.AssignedPodUID != "" && string(pod.UID) != run.Status.AssignedPodUID {
+		if err := r.handleStaleRun(ctx, &run, runretry.ReasonPodGone, "assigned pod was replaced"); err != nil {
+			return ctrl.Result{}, fmt.Errorf("update stale run status: %w", err)
+		}
+		return ctrl.Result{}, nil
 	}
 
 	stale, reason, message := r.stalePodState(&pod, time.Now())
@@ -126,6 +132,7 @@ func (r *StaleRunReaper) handleStaleRun(ctx context.Context, run *v1alpha1.Run, 
 		run.Status.Attempt = nextAttempt
 		run.Status.Phase = v1alpha1.RunPending
 		run.Status.AssignedPod = ""
+		run.Status.AssignedPodUID = ""
 		run.Status.StartTime = nil
 		meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
 			Type: "Running", Status: metav1.ConditionFalse, Reason: reason, Message: msg,
@@ -151,4 +158,8 @@ func (r *StaleRunReaper) handleStaleRun(ctx context.Context, run *v1alpha1.Run, 
 			"Pod %s is unhealthy, marking run as failed: %s", podName, reason)
 	}
 	return nil
+}
+
+func isStaleMonitoredRunPhase(phase v1alpha1.RunPhase) bool {
+	return phase == v1alpha1.RunRunning || phase == v1alpha1.RunReady
 }

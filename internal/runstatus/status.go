@@ -10,6 +10,7 @@ import (
 const (
 	ConditionScheduled = "Scheduled"
 	ConditionRunning   = "Running"
+	ConditionReady     = "Ready"
 	ConditionCompleted = "Completed"
 )
 

@@ -84,6 +84,27 @@ func TestCompletedRunGCIgnoresNonTerminalRun(t *testing.T) {
 	}
 }
 
+func TestCompletedRunGCIgnoresReadyRun(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	completedAt := metav1.NewTime(now.Add(-2 * time.Hour))
+	ttlSeconds := int32(3600)
+	gc, c, run := newCompletedRunGCTest(t, now, &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-function", Namespace: "default"},
+		Spec:       v1alpha1.RunSpec{TTLSecondsAfterFinished: &ttlSeconds},
+		Status: v1alpha1.RunStatus{
+			Phase:          v1alpha1.RunReady,
+			CompletionTime: &completedAt,
+		},
+	})
+
+	if _, err := gc.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if _, err := getRunMaybe(t, c, run); err != nil {
+		t.Fatalf("Ready run was deleted: %v", err)
+	}
+}
+
 func TestCompletedRunGCIgnoresTerminalRunWithoutCompletionTime(t *testing.T) {
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	ttlSeconds := int32(3600)

@@ -158,6 +158,7 @@ func TestReconcileRecordsScheduledCondition(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "runtime-a",
 			Namespace: "default",
+			UID:       "runtime-a-uid",
 			Labels: map[string]string{
 				"runtime": "bash",
 			},
@@ -202,6 +203,9 @@ func TestReconcileRecordsScheduledCondition(t *testing.T) {
 	}
 	if updated.Status.AssignedPod != pod.Name {
 		t.Fatalf("assignedPod = %q, want %q", updated.Status.AssignedPod, pod.Name)
+	}
+	if updated.Status.AssignedPodUID != string(pod.UID) {
+		t.Fatalf("assignedPodUID = %q, want %q", updated.Status.AssignedPodUID, pod.UID)
 	}
 	condition := meta.FindStatusCondition(updated.Status.Conditions, runstatus.ConditionScheduled)
 	if condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "Assigned" {
@@ -409,7 +413,9 @@ func TestRunCapacityReleasedPredicate(t *testing.T) {
 		{name: "scheduled to succeeded", oldPhase: v1alpha1.RunScheduled, newPhase: v1alpha1.RunSucceeded, want: true},
 		{name: "running to failed", oldPhase: v1alpha1.RunRunning, newPhase: v1alpha1.RunFailed, want: true},
 		{name: "running to pending", oldPhase: v1alpha1.RunRunning, newPhase: v1alpha1.RunPending, want: true},
+		{name: "ready to pending", oldPhase: v1alpha1.RunReady, newPhase: v1alpha1.RunPending, want: true},
 		{name: "pending to scheduled", oldPhase: v1alpha1.RunPending, newPhase: v1alpha1.RunScheduled, want: false},
+		{name: "ready stays ready", oldPhase: v1alpha1.RunReady, newPhase: v1alpha1.RunReady, want: false},
 		{name: "running stays running", oldPhase: v1alpha1.RunRunning, newPhase: v1alpha1.RunRunning, want: false},
 		{name: "terminal update", oldPhase: v1alpha1.RunSucceeded, newPhase: v1alpha1.RunFailed, want: false},
 	}
@@ -431,6 +437,9 @@ func TestRunCapacityReleasedPredicate(t *testing.T) {
 	}
 	if !pred.Delete(event.DeleteEvent{Object: &v1alpha1.Run{Status: v1alpha1.RunStatus{Phase: v1alpha1.RunRunning}}}) {
 		t.Fatal("Delete() = false, want true for Running Run")
+	}
+	if !pred.Delete(event.DeleteEvent{Object: &v1alpha1.Run{Status: v1alpha1.RunStatus{Phase: v1alpha1.RunReady}}}) {
+		t.Fatal("Delete() = false, want true for Ready Run")
 	}
 	if pred.Delete(event.DeleteEvent{Object: &v1alpha1.Run{Status: v1alpha1.RunStatus{Phase: v1alpha1.RunSucceeded}}}) {
 		t.Fatal("Delete() = true, want false for terminal Run")

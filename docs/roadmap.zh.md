@@ -84,11 +84,11 @@ controller wiring 累积不必要的冲突。
     和 runtime helpers；
   - [x] 在 API 稳定前删除 top-level 的 `entrypoint`、`args` 和 `handler`；
   - [x] 将 CLI 创建和高层用户文档迁移为使用 `spec.mode.task`；
-  - [ ] review 并确认
+  - [x] review 并确认
     [function lifecycle 和 invoke dataplane 设计](design/function-mode-lifecycle.md)；
-  - [ ] 增加 `Ready` phase、assigned Pod UID、endpoint status、immutable execution-input
-    transitions、function cleanup finalizer constant、generated CRDs 和通用
-    phase-classification tests；
+  - [x] 增加 `Ready`、assigned Pod UID、有界 endpoint status、generated CRDs 和
+    active/non-terminal phase-classification tests；
+  - 增加 immutable execution-input transitions 和 function cleanup finalizer constant；
   - [ ] 实现 registration lifecycle、shared retry integration、reservation/idle timeout、
     finalization 和 restart recovery；
 - [ ] Runtime gateway invoke path：为每个 Runtime 创建一个 gateway Service，把这个
