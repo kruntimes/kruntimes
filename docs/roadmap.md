@@ -229,7 +229,19 @@ wiring from accumulating avoidable conflicts.
   - [x] implement WorkflowRun cancellation propagation;
   - [x] verify controller restart recovery for in-progress inline WorkflowRuns,
     including child Run creation before status persistence;
-  - implement job-level reusable Workflow calls;
+  - [ ] implement job-level reusable Workflow calls through the reviewed
+    [execution-boundary design](design/workflow-job-reuse.md):
+    - [ ] review and approve the child WorkflowRun and immutable snapshot model;
+    - [ ] add status references, spec transition validation, reserved metadata,
+      generated CRDs, and controller RBAC prerequisites;
+    - [ ] add immutable ControllerRevision snapshot storage and recursive resolution with version
+      capture, call limits, input validation, and cycle detection;
+    - [ ] execute top-level `WorkflowRun.spec.uses` from its snapshot instead of
+      only initializing status;
+    - [ ] create and observe child WorkflowRuns for ready job-level calls;
+    - [ ] verify definition mutation isolation, restart recovery, nested calls,
+      cancellation, and invalid graphs;
+    - [ ] integrate call inputs and outputs with expression/output propagation;
   - implement step-level Action expansion;
   - implement expression evaluation for `inputs`, `steps`, and `jobs` contexts;
   - promote child Run outputs into WorkflowRun step/job/workflow outputs;

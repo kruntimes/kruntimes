@@ -197,7 +197,19 @@ controller wiring 累积不必要的冲突。
   - [x] 实现 WorkflowRun cancellation propagation；
   - [x] 验证 in-progress inline WorkflowRuns 的 controller restart recovery，包括
     child Run 已创建但 status 尚未持久化的故障窗口；
-  - 实现 job-level reusable Workflow calls；
+  - [ ] 按照完成 review 的
+    [execution-boundary design](design/workflow-job-reuse.md) 实现 job-level reusable
+    Workflow calls：
+    - [ ] review 并批准 child WorkflowRun 和 immutable snapshot model；
+    - [ ] 增加 status references、spec transition validation、reserved metadata、generated
+      CRDs 和 controller RBAC prerequisites；
+    - [ ] 增加 immutable ControllerRevision snapshot storage 和 recursive resolution，包括 version capture、
+      call limits、input validation 和 cycle detection；
+    - [ ] 从 snapshot 执行 top-level `WorkflowRun.spec.uses`，而不是只初始化 status；
+    - [ ] 为 ready job-level calls 创建并观察 child WorkflowRuns；
+    - [ ] 验证 definition mutation isolation、restart recovery、nested calls、cancellation 和
+      invalid graphs；
+    - [ ] 将 call inputs 和 outputs 接入 expression/output propagation；
   - 实现 step-level Action expansion；
   - 实现 `inputs`、`steps` 和 `jobs` contexts 的 expression evaluation；
   - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；
