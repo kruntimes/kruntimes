@@ -924,9 +924,18 @@ func TestCRDValidationAllowsReadyFunctionEndpointStatus(t *testing.T) {
 	if err := k8sClient.Create(ctx, run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
-		t.Fatalf("get run: %v", err)
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			return err
+		}
+
+		return updateReadyFunctionEndpointStatus(ctx, run)
+	}); err != nil {
+		t.Fatalf("update ready function status: %v", err)
 	}
+}
+
+func updateReadyFunctionEndpointStatus(ctx context.Context, run *v1alpha1.Run) error {
 	run.Status.Phase = v1alpha1.RunReady
 	run.Status.AssignedPod = "runtime-python-abc"
 	run.Status.AssignedPodUID = "a0dc4d2d-2cf3-4f91-a0f2-d7d7bb3c7ae4"
@@ -935,9 +944,7 @@ func TestCRDValidationAllowsReadyFunctionEndpointStatus(t *testing.T) {
 		URL:      "https://python-gateway.default.svc.cluster.local/v1/namespaces/default/runs/function/uid/invoke",
 		CABundle: []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"),
 	}
-	if err := k8sClient.Status().Update(ctx, run); err != nil {
-		t.Fatalf("update ready function status: %v", err)
-	}
+	return k8sClient.Status().Update(ctx, run)
 }
 
 func TestCRDValidationRejectsUnsupportedFunctionEndpointProtocol(t *testing.T) {
@@ -953,12 +960,15 @@ func TestCRDValidationRejectsUnsupportedFunctionEndpointProtocol(t *testing.T) {
 	if err := k8sClient.Create(ctx, run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
-		t.Fatalf("get run: %v", err)
-	}
-	run.Status.Phase = v1alpha1.RunReady
-	run.Status.Endpoint = &v1alpha1.RunEndpoint{Protocol: v1alpha1.RunEndpointProtocol("HTTP"), URL: "http://example.invalid/invoke"}
-	if err := k8sClient.Status().Update(ctx, run); !apierrors.IsInvalid(err) {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			return err
+		}
+		run.Status.Phase = v1alpha1.RunReady
+		run.Status.Endpoint = &v1alpha1.RunEndpoint{Protocol: v1alpha1.RunEndpointProtocol("HTTP"), URL: "http://example.invalid/invoke"}
+		return k8sClient.Status().Update(ctx, run)
+	})
+	if !apierrors.IsInvalid(err) {
 		t.Fatalf("invalid endpoint protocol error = %v, want Invalid", err)
 	}
 }
