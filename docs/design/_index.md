@@ -9,5 +9,6 @@ implemented.
 
 - [Function Mode and Agent Sandboxes](function-mode/)
 - [Workflow Data Sharing](workflow-data-sharing/)
+- [Run Workspace References and Affinity](run-workspace-affinity/)
 - [Workflow Reuse](workflow-reuse/)
 - [Dashboard](dashboard/)

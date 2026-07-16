@@ -158,6 +158,8 @@ wiring from accumulating avoidable conflicts.
     fields while keeping the current emptyDir default behavior;
   - [x] add `PersistentWorkspace` API types, CRD validation, status, and
     controller skeleton;
+  - [ ] review the dedicated Run workspace-reference and affinity API shape
+    before adding the API skeleton;
   - add Run fields for workspace reference and Kubernetes-style Run affinity;
   - update scheduler placement to respect required/preferred Run affinity while
     keeping no-capacity Runs Pending;
