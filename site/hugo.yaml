@@ -31,6 +31,8 @@ module:
       target: content/docs
     - source: ../docs/logo.png
       target: static/img/logo.png
+    - source: ../docs/logo.svg
+      target: static/img/logo.svg
     - source: ../docs/icon.png
       target: static/img/icon.png
     - source: static

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.png" alt="kruntimes logo" />
+  <img src="docs/logo.svg" alt="kruntimes logo" />
 </p>
 
 # kruntimes
