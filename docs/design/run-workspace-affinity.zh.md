@@ -1,6 +1,6 @@
 # Run Workspace 引用与 Affinity
 
-状态：**等待 review 的提案**
+状态：**已评审**
 
 本文固定 Workflow data sharing 下一项前置能力的 API shape：通用的 Run workspace
 引用，以及 Run-to-Run affinity。本文不实现 workspace binding、scheduler placement 或

@@ -502,6 +502,167 @@ func TestCRDValidationAllowsIgnoredInlineRunModeTaskEntrypointTraversal(t *testi
 	}
 }
 
+func TestCRDValidationAllowsRunWorkspaceAndAffinity(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-run-workspace-affinity-")
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: ns.Name},
+		Spec: v1alpha1.RunSpec{
+			Runtime:   "bash",
+			Mode:      v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+			Workspace: &v1alpha1.RunWorkspaceReference{Name: "build-workspace"},
+			Affinity: &v1alpha1.RunAffinity{
+				RunAffinity: &v1alpha1.RunAffinityRules{
+					RequiredDuringSchedulingIgnoredDuringExecution: []v1alpha1.RunAffinityTerm{{
+						LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"workflow": "build"}},
+						TopologyKey:   v1alpha1.RunAffinityTopologyRuntimePod,
+					}},
+				},
+				RunAntiAffinity: &v1alpha1.RunAffinityRules{
+					PreferredDuringSchedulingIgnoredDuringExecution: []v1alpha1.WeightedRunAffinityTerm{{
+						Weight: 100,
+						RunAffinityTerm: v1alpha1.RunAffinityTerm{
+							LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"run-type": "exclusive"}},
+							TopologyKey:   v1alpha1.RunAffinityTopologyRuntimePod,
+						},
+					}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, run); err != nil {
+		t.Fatalf("create run with workspace and affinity: %v", err)
+	}
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+		t.Fatalf("get run with workspace and affinity: %v", err)
+	}
+	if got := run.Spec.Workspace.Kind; got != v1alpha1.RunWorkspaceReferenceKindPersistentWorkspace {
+		t.Fatalf("workspace kind = %q, want %q", got, v1alpha1.RunWorkspaceReferenceKindPersistentWorkspace)
+	}
+	if got := run.Spec.Workspace.APIGroup; got != v1alpha1.RunWorkspaceReferenceAPIGroup {
+		t.Fatalf("workspace apiGroup = %q, want %q", got, v1alpha1.RunWorkspaceReferenceAPIGroup)
+	}
+}
+
+func TestCRDValidationRejectsInvalidRunWorkspaceOrAffinity(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-invalid-run-workspace-affinity-")
+
+	tests := []struct {
+		name string
+		spec v1alpha1.RunSpec
+	}{
+		{
+			name: "unsupported-workspace-kind",
+			spec: v1alpha1.RunSpec{
+				Runtime: "bash", Mode: v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+				Workspace: &v1alpha1.RunWorkspaceReference{Name: "workspace", Kind: "OtherWorkspace"},
+			},
+		},
+		{
+			name: "unsupported-workspace-api-group",
+			spec: v1alpha1.RunSpec{
+				Runtime: "bash", Mode: v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+				Workspace: &v1alpha1.RunWorkspaceReference{Name: "workspace", APIGroup: "example.com/v1"},
+			},
+		},
+		{
+			name: "empty-affinity-selector",
+			spec: runSpecWithRequiredAffinity(v1alpha1.RunAffinityTerm{
+				LabelSelector: &metav1.LabelSelector{},
+				TopologyKey:   v1alpha1.RunAffinityTopologyRuntimePod,
+			}),
+		},
+		{
+			name: "unsupported-affinity-topology",
+			spec: runSpecWithRequiredAffinity(v1alpha1.RunAffinityTerm{
+				LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"workflow": "build"}},
+				TopologyKey:   "topology.kubernetes.io/zone",
+			}),
+		},
+		{
+			name: "zero-preferred-affinity-weight",
+			spec: v1alpha1.RunSpec{
+				Runtime: "bash", Mode: v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+				Affinity: &v1alpha1.RunAffinity{RunAffinity: &v1alpha1.RunAffinityRules{
+					PreferredDuringSchedulingIgnoredDuringExecution: []v1alpha1.WeightedRunAffinityTerm{{
+						Weight: 0,
+						RunAffinityTerm: v1alpha1.RunAffinityTerm{
+							LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"workflow": "build"}},
+							TopologyKey:   v1alpha1.RunAffinityTopologyRuntimePod,
+						},
+					}},
+				}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			run := &v1alpha1.Run{
+				ObjectMeta: metav1.ObjectMeta{Name: tt.name, Namespace: ns.Name},
+				Spec:       tt.spec,
+			}
+			if err := k8sClient.Create(ctx, run); !apierrors.IsInvalid(err) {
+				t.Fatalf("create invalid run error = %v, want Invalid", err)
+			}
+		})
+	}
+}
+
+func TestCRDValidationRejectsRunWorkspaceAndAffinityMutation(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-run-workspace-affinity-immutable-")
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: ns.Name},
+		Spec: v1alpha1.RunSpec{
+			Runtime:   "bash",
+			Mode:      v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+			Workspace: &v1alpha1.RunWorkspaceReference{Name: "build-workspace"},
+		},
+	}
+	if err := k8sClient.Create(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	key := client.ObjectKeyFromObject(run)
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, key, run); err != nil {
+			return err
+		}
+		run.Spec.Workspace.Name = "other-workspace"
+		return k8sClient.Update(ctx, run)
+	})
+	if !apierrors.IsInvalid(err) {
+		t.Fatalf("mutating run workspace error = %v, want Invalid", err)
+	}
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, key, run); err != nil {
+			return err
+		}
+		run.Spec.Affinity = &v1alpha1.RunAffinity{RunAffinity: &v1alpha1.RunAffinityRules{
+			RequiredDuringSchedulingIgnoredDuringExecution: []v1alpha1.RunAffinityTerm{{
+				LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"workflow": "build"}},
+				TopologyKey:   v1alpha1.RunAffinityTopologyRuntimePod,
+			}},
+		}}
+		return k8sClient.Update(ctx, run)
+	})
+	if !apierrors.IsInvalid(err) {
+		t.Fatalf("mutating run affinity error = %v, want Invalid", err)
+	}
+}
+
+func runSpecWithRequiredAffinity(term v1alpha1.RunAffinityTerm) v1alpha1.RunSpec {
+	return v1alpha1.RunSpec{
+		Runtime: "bash",
+		Mode:    v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+		Affinity: &v1alpha1.RunAffinity{RunAffinity: &v1alpha1.RunAffinityRules{
+			RequiredDuringSchedulingIgnoredDuringExecution: []v1alpha1.RunAffinityTerm{term},
+		}},
+	}
+}
+
 func TestCRDValidationRejectsInvalidWorkflowNeeds(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-workflow-validation-")

@@ -22,6 +22,8 @@ kruntimes 暴露 Kubernetes CRDs 和本地 Runtime Server gRPC API。
 | `spec.mode.task.entrypoint` | one-shot task execution 使用的 workspace 内相对路径。绝对路径和 `..` 会被拒绝。 |
 | `spec.mode.task.args` | one-shot task execution 传递给 Runtime Server 的参数或命令 payload。 |
 | `spec.mode.function.handler` | function-mode Runs 使用的 callable `module.function` 入口。 |
+| `spec.workspace` | 可选的 namespace-local `PersistentWorkspace` 引用。默认 kind 为 `PersistentWorkspace`，默认 API group 为 `kruntimes.io/v1alpha1`。 |
+| `spec.affinity` | 可选的 Run-to-Run required 或 preferred placement rules。第一版 topology 为 `kruntimes.io/runtime-pod`。 |
 | `spec.timeoutSeconds` | 执行 timeout。timeout 的终态 phase 是 `Timeout`。 |
 | `spec.retryPolicy` | retry 次数和 backoff。执行语义是 at-least-once。 |
 | `spec.cancelRequested` | 用户取消请求。 |
@@ -39,6 +41,8 @@ kruntimes 暴露 Kubernetes CRDs 和本地 Runtime Server gRPC API。
   shell invocation，并保持旧的多 arg 行为：把 args 拼成以换行分隔的 Bash script lines。
   内置 Python 会执行 `python <args...>`。
 - `spec.mode` 是必填字段。`spec.mode.task` 和 `spec.mode.function` 必须且只能设置一个。
+- `spec.workspace` 与 `spec.affinity` 在创建后 immutable。当前 API 只校验其 shape；workspace
+  binding 与 affinity-aware scheduling 在 roadmap 中单独跟踪。
 - `krt run -- <command> [args...]` CLI 会把 command words 原样存入
   `spec.mode.task.args`，不会额外添加 shell quoting。需要 shell evaluation 时使用
   `krt run -- sh -c '...'`，或者使用 `--file` 的 inline source mode。
