@@ -61,8 +61,7 @@ type FunctionMode struct {
 }
 ```
 
-`mode.task` 和 `mode.function` 必须且只能设置一个。为了兼容现有 one-shot Runs，如果
-`mode` 为空，Run 默认使用 task mode。
+`mode.task` 和 `mode.function` 必须且只能设置一个；`mode` 是 required，不能省略。
 
 One-shot task Runs 仍然是默认模式。`entrypoint` 和 `args` 属于 task mode，因为它们描述
 如何启动一次性进程：
@@ -117,13 +116,17 @@ status:
   phase: Ready
   assignedPod: runtime-python-7f587b4668-njcks
   endpoint:
-    protocol: HTTP
-    url: http://python-runtime-gateway.kruntimes-demo.svc.cluster.local/v1/runs/kube-diagnose-agent/invoke
+    protocol: HTTPS
+    url: https://python-gateway.kruntimes-demo.svc.cluster.local/v1/namespaces/kruntimes-demo/runs/kube-diagnose-agent/2c24c1f0-9f8f-4f80-82d5-3dd16a12d1e6/invoke
+    caBundle: <base64-encoded-PEM>
   conditions:
     - type: Ready
       status: "True"
       reason: FunctionRegistered
 ```
+
+具体 phase、endpoint、retry、timeout、cleanup、routing、authorization 和 invocation 语义见
+[Function Mode 生命周期与 Invoke Dataplane](../function-mode-lifecycle/)。
 
 对于 function-mode Runs，`Ready` 不是 terminal。删除、取消、注册失败或 idle timeout 会结束
 reservation。
@@ -190,6 +193,9 @@ Top-level `handler`、`entrypoint` 和 `args` 不属于目标 Run API。Task mod
 
 ## Runtime Gateway
 
+详细 gateway routing 和 authorization contract 见
+[Function Mode 生命周期与 Invoke Dataplane](../function-mode-lifecycle/)。
+
 每个 Runtime 应该有一个 gateway Service：
 
 ```text
@@ -203,7 +209,7 @@ Service 地址是稳定的。Kubernetes Service 负载均衡可能把 invoke req
 pool 中的任意 runtimed，因此每个 runtimed 都需要 ownership cache：
 
 ```text
-Run UID/name -> assigned Runtime Pod -> readiness -> function ID
+Run namespace/name/UID -> assigned Runtime Pod UID -> attempt -> readiness
 ```
 
 Invoke 行为：
@@ -218,10 +224,13 @@ Invoke 行为：
 
 除了 one-shot execute，Runtime Server 还需要 function-mode contract：
 
-- `RegisterFunction`：准备代码并返回 function ID。
+- `RegisterFunction`：为 Run UID 和 ownership attempt 准备代码。
 - `InvokeFunction`：针对已注册 function 执行一次 request。
 - `UnregisterFunction`：释放 runtime-local state。
 - `FunctionStatus`：报告 readiness 和 runtime-local errors。
+
+幂等、fencing、timeout 和 bounded invoke 语义见
+[Function Mode 生命周期与 Invoke Dataplane](../function-mode-lifecycle/)。
 
 Invoke response 应包含有界结构化数据：
 

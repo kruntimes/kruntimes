@@ -6,6 +6,7 @@
 ## 文档列表
 
 - [Function Mode 和 Agent Sandboxes](function-mode/)
+- [Function Mode 生命周期与 Invoke Dataplane](function-mode-lifecycle/)
 - [Workflow Data Sharing](workflow-data-sharing/)
 - [Workflow Reuse](workflow-reuse/)
 - [Dashboard](dashboard/)

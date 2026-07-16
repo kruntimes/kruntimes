@@ -93,13 +93,30 @@ wiring from accumulating avoidable conflicts.
   - [x] remove top-level `entrypoint`, `args`, and `handler` before API
     stabilization;
   - [x] migrate CLI creation and high-level user docs to use `spec.mode.task`;
-  - add function-mode ready status, endpoint status, and dataplane lifecycle
-    fields;
+  - [ ] review and approve the
+    [function lifecycle and invoke dataplane design](design/function-mode-lifecycle.md);
+  - [ ] add `Ready` phase, assigned Pod UID, endpoint status, immutable
+    execution-input transitions, the function cleanup finalizer constant,
+    generated CRDs, and generic phase-classification tests;
+  - [ ] implement registration lifecycle, shared retry integration,
+    reservation/idle timeout, finalization, and restart recovery;
 - [ ] Runtime gateway invoke path: create one gateway Service per Runtime, use
   that Service as the stable Run invoke endpoint, route requests to the
   runtimed that owns the assigned Runtime Pod, and rely on runtimed's in-memory
   ownership/readiness cache instead of synchronous Kubernetes API reads on the
   invoke path.
+  Initial implementation TODO:
+  - [ ] reconcile a Runtime-owned ClusterIP gateway Service and dedicated
+    runtimed gateway port;
+  - [ ] reconcile Runtime-scoped TLS serving certificates and bounded CA
+    publication, rotation, and Runtime Pod rollout;
+  - [ ] implement watch-backed ownership/readiness caches and bounded local or
+    single-hop peer routing;
+  - [ ] fence registration epochs before stale-pod reassignment and reject
+    mismatched Run UID, attempt, or assigned Pod UID;
+  - [ ] authorize callers through Kubernetes SelfSubjectAccessReview with a
+    bounded decision cache;
+  - [ ] enforce TLS, request, response, concurrency, and proxy-loop limits;
 - [x] Function-mode API cleanup: remove top-level `Run.spec.handler`,
   `Run.spec.entrypoint`, and `Run.spec.args`; keep handler under
   `Run.spec.mode.function.handler` and task input under `Run.spec.mode.task`.
@@ -107,6 +124,12 @@ wiring from accumulating avoidable conflicts.
   unregister APIs; define bounded invoke request inputs, response outputs,
   artifact references, and log access without writing high-frequency invocation
   history into Run status.
+  Initial implementation TODO:
+  - [ ] add idempotent register/status/invoke/unregister protobuf operations
+    keyed by Run UID;
+  - [ ] implement built-in Bash and Python function adapters;
+  - [ ] add bounded invocation outputs/artifact references and structured logs
+    keyed by Run UID and invocation ID;
 - [ ] Function-mode reliability and isolation: cover function registration,
   ready status, local and proxied invoke, repeated invocation, artifact reuse,
   idle timeout, explicit release, runtime pod restart recovery, cleanup, service

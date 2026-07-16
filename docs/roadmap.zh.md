@@ -84,17 +84,38 @@ controller wiring 累积不必要的冲突。
     和 runtime helpers；
   - [x] 在 API 稳定前删除 top-level 的 `entrypoint`、`args` 和 `handler`；
   - [x] 将 CLI 创建和高层用户文档迁移为使用 `spec.mode.task`；
-  - 增加 function-mode ready status、endpoint status 和 dataplane lifecycle 字段；
+  - [ ] review 并确认
+    [function lifecycle 和 invoke dataplane 设计](design/function-mode-lifecycle.md)；
+  - [ ] 增加 `Ready` phase、assigned Pod UID、endpoint status、immutable execution-input
+    transitions、function cleanup finalizer constant、generated CRDs 和通用
+    phase-classification tests；
+  - [ ] 实现 registration lifecycle、shared retry integration、reservation/idle timeout、
+    finalization 和 restart recovery；
 - [ ] Runtime gateway invoke path：为每个 Runtime 创建一个 gateway Service，把这个
   Service 作为稳定的 Run invoke endpoint，将请求路由到拥有 assigned Runtime Pod 的
   runtimed，并在 invoke path 上依赖 runtimed 的内存 ownership/readiness cache，而不是
   同步读取 Kubernetes API。
+  初始实现 TODO：
+  - [ ] reconcile Runtime-owned ClusterIP gateway Service 和专用 runtimed gateway port；
+  - [ ] reconcile Runtime-scoped TLS serving certificates，以及有界 CA publication、
+    rotation 和 Runtime Pod rollout；
+  - [ ] 实现 watch-backed ownership/readiness caches，以及有界 local 或 single-hop peer
+    routing；
+  - [ ] 在 stale-pod reassignment 前 fence registration epoch，并拒绝 Run UID、attempt 或
+    assigned Pod UID mismatch；
+  - [ ] 通过 Kubernetes SelfSubjectAccessReview 和有界 decision cache authorize caller；
+  - [ ] 执行 TLS、request、response、concurrency 和 proxy-loop limits；
 - [x] Function-mode API cleanup：删除 top-level `Run.spec.handler`、
   `Run.spec.entrypoint` 和 `Run.spec.args`；handler 放在
   `Run.spec.mode.function.handler` 下，task input 放在 `Run.spec.mode.task` 下。
 - [ ] Function-mode runtime contract：增加 runtime-server register、invoke 和
   unregister APIs；定义有界 invoke request inputs、response outputs、artifact
   references 和 log access，同时避免把高频 invocation history 写入 Run status。
+  初始实现 TODO：
+  - [ ] 增加以 Run UID 为 key 的幂等 register/status/invoke/unregister protobuf operations；
+  - [ ] 实现内置 Bash 和 Python function adapters；
+  - [ ] 增加有界 invocation outputs/artifact references，以及以 Run UID 和 invocation ID
+    为 key 的 structured logs；
 - [ ] Function-mode reliability and isolation：覆盖 function registration、ready
   status、local/proxied invoke、多次 invocation、artifact reuse、idle timeout、
   explicit release、runtime pod restart recovery、cleanup、service account 选择、
