@@ -20,28 +20,31 @@ import (
 )
 
 const (
-	workflowSnapshotRootKindWorkflowRun = "WorkflowRun"
-	workflowSnapshotRootKindWorkflow    = "Workflow"
-	maxWorkflowSnapshotBytes            = 1 << 20
-	maxWorkflowCallDepth                = 8
-	maxWorkflowCallNodes                = 64
+	maxWorkflowSnapshotBytes = 1 << 20
+	maxWorkflowCallDepth     = 8
+	maxWorkflowCallNodes     = 64
 )
 
-// workflowExecutionSnapshot is controller-private storage. Its payloads are
-// direct WorkflowRunSpec and WorkflowSpec values rather than copied API types.
+// workflowExecutionSnapshot is controller-private storage. It retains the
+// accepted WorkflowRun spec and every resolved reusable Workflow spec.
 type workflowExecutionSnapshot struct {
 	Root      workflowSnapshotRoot             `json:"root"`
 	Workflows map[string]v1alpha1.WorkflowSpec `json:"workflows,omitempty"`
-
-	// rootJobs is decoded from Root.Spec when the snapshot is loaded. It keeps
-	// planning on the immutable execution definition without duplicating it in
-	// the persisted ControllerRevision payload.
-	rootJobs map[string]v1alpha1.JobSpec
 }
 
 type workflowSnapshotRoot struct {
-	Kind string          `json:"kind"`
-	Spec json.RawMessage `json:"spec"`
+	// Spec is the exact accepted WorkflowRun spec for this root execution.
+	Spec v1alpha1.WorkflowRunSpec `json:"spec"`
+	// Workflow is the resolved reusable definition when Spec.Uses is set.
+	// It is omitted for inline WorkflowRuns.
+	Workflow *v1alpha1.WorkflowSpec `json:"workflow,omitempty"`
+}
+
+func (s *workflowExecutionSnapshot) rootJobs() map[string]v1alpha1.JobSpec {
+	if s.Root.Workflow != nil {
+		return s.Root.Workflow.Jobs
+	}
+	return s.Root.Spec.Jobs
 }
 
 type workflowSnapshotResolutionError struct {
@@ -51,42 +54,33 @@ type workflowSnapshotResolutionError struct {
 func (e *workflowSnapshotResolutionError) Error() string { return e.err.Error() }
 func (e *workflowSnapshotResolutionError) Unwrap() error { return e.err }
 
-func (r *WorkflowRunReconciler) resolveWorkflowRunSnapshot(ctx context.Context, workflowRun *v1alpha1.WorkflowRun) (*workflowExecutionSnapshot, map[string]v1alpha1.JobSpec, error) {
-	snapshot := &workflowExecutionSnapshot{Workflows: map[string]v1alpha1.WorkflowSpec{}}
-	var jobs map[string]v1alpha1.JobSpec
+func (r *WorkflowRunReconciler) resolveWorkflowRunSnapshot(ctx context.Context, workflowRun *v1alpha1.WorkflowRun) (*workflowExecutionSnapshot, error) {
+	snapshot := &workflowExecutionSnapshot{
+		Root:      workflowSnapshotRoot{Spec: *workflowRun.Spec.DeepCopy()},
+		Workflows: map[string]v1alpha1.WorkflowSpec{},
+	}
 	var stack []string
 
 	if len(workflowRun.Spec.Jobs) > 0 {
-		raw, err := json.Marshal(workflowRun.Spec)
-		if err != nil {
-			return nil, nil, fmt.Errorf("serialize workflowrun spec: %w", err)
-		}
-		snapshot.Root = workflowSnapshotRoot{Kind: workflowSnapshotRootKindWorkflowRun, Spec: raw}
-		jobs = workflowRun.Spec.Jobs
 	} else {
 		workflow, err := r.getWorkflow(ctx, workflowRun.Namespace, workflowRun.Spec.Uses)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if _, err := bindWorkflowInputs(workflow.Spec.Inputs, workflowRun.Spec.With); err != nil {
-			return nil, nil, &workflowInputBindingError{err: fmt.Errorf("bind workflow inputs for %s/%s: %w", workflowRun.Namespace, workflowRun.Spec.Uses, err)}
+			return nil, &workflowInputBindingError{err: fmt.Errorf("bind workflow inputs for %s/%s: %w", workflowRun.Namespace, workflowRun.Spec.Uses, err)}
 		}
-		raw, err := json.Marshal(workflow.Spec)
-		if err != nil {
-			return nil, nil, fmt.Errorf("serialize workflow spec %s/%s: %w", workflowRun.Namespace, workflow.Name, err)
-		}
-		snapshot.Root = workflowSnapshotRoot{Kind: workflowSnapshotRootKindWorkflow, Spec: raw}
-		jobs = workflow.Spec.Jobs
+		snapshot.Root.Workflow = workflow.Spec.DeepCopy()
 		stack = []string{workflow.Name}
 	}
 
-	if err := r.resolveWorkflowCalls(ctx, workflowRun.Namespace, snapshot, jobs, "root", stack, 0); err != nil {
-		return nil, nil, err
+	if err := r.resolveWorkflowCalls(ctx, workflowRun.Namespace, snapshot, snapshot.rootJobs(), "root", stack, 0); err != nil {
+		return nil, err
 	}
 	if _, err := json.Marshal(snapshot); err != nil {
-		return nil, nil, fmt.Errorf("serialize workflow snapshot: %w", err)
+		return nil, fmt.Errorf("serialize workflow snapshot: %w", err)
 	}
-	return snapshot, jobs, nil
+	return snapshot, nil
 }
 
 func (r *WorkflowRunReconciler) resolveWorkflowCalls(ctx context.Context, namespace string, snapshot *workflowExecutionSnapshot, jobs map[string]v1alpha1.JobSpec, parentPath string, stack []string, depth int) error {
@@ -201,24 +195,17 @@ func loadWorkflowSnapshot(revision *appsv1.ControllerRevision) (*workflowExecuti
 	if err := json.Unmarshal(revision.Data.Raw, snapshot); err != nil {
 		return nil, fmt.Errorf("decode workflow snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
 	}
-	var jobs map[string]v1alpha1.JobSpec
-	switch snapshot.Root.Kind {
-	case workflowSnapshotRootKindWorkflowRun:
-		var spec v1alpha1.WorkflowRunSpec
-		if err := json.Unmarshal(snapshot.Root.Spec, &spec); err != nil {
-			return nil, fmt.Errorf("decode workflowrun root snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
+	if len(snapshot.Root.Spec.Jobs) > 0 {
+		if snapshot.Root.Workflow != nil {
+			return nil, fmt.Errorf("workflow snapshot %s/%s has both inline jobs and a root workflow", revision.Namespace, revision.Name)
 		}
-		jobs = spec.Jobs
-	case workflowSnapshotRootKindWorkflow:
-		var spec v1alpha1.WorkflowSpec
-		if err := json.Unmarshal(snapshot.Root.Spec, &spec); err != nil {
-			return nil, fmt.Errorf("decode workflow root snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
+	} else if snapshot.Root.Spec.Uses != "" {
+		if snapshot.Root.Workflow == nil {
+			return nil, fmt.Errorf("workflow snapshot %s/%s is missing the resolved root workflow", revision.Namespace, revision.Name)
 		}
-		jobs = spec.Jobs
-	default:
-		return nil, fmt.Errorf("workflow snapshot %s/%s has unsupported root kind %q", revision.Namespace, revision.Name, snapshot.Root.Kind)
+	} else {
+		return nil, fmt.Errorf("workflow snapshot %s/%s has no root execution definition", revision.Namespace, revision.Name)
 	}
-	snapshot.rootJobs = jobs
 	return snapshot, nil
 }
 

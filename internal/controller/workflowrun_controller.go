@@ -76,7 +76,7 @@ type workflowRunStepTarget struct {
 
 func workflowRunJobs(resources *workflowRunResources) map[string]v1alpha1.JobSpec {
 	if resources.snapshot != nil {
-		return resources.snapshot.rootJobs
+		return resources.snapshot.rootJobs()
 	}
 	return resources.workflowRun.Spec.Jobs
 }
@@ -213,14 +213,14 @@ func workflowRunStateFor(workflowRun *v1alpha1.WorkflowRun) workflowRunState {
 }
 
 func (r *WorkflowRunReconciler) applyInitializeWorkflowRun(ctx context.Context, workflowRun *v1alpha1.WorkflowRun) error {
-	snapshot, jobs, err := r.resolveWorkflowRunSnapshot(ctx, workflowRun)
+	snapshot, err := r.resolveWorkflowRunSnapshot(ctx, workflowRun)
 	if err != nil {
 		if reason, rejected := workflowRunRejectionReason(err); rejected {
 			return rejectWorkflowRun(workflowRun, reason, err.Error())
 		}
 		return err
 	}
-	if err := validateResolvedWorkflowJobs(jobs); err != nil {
+	if err := validateResolvedWorkflowJobs(snapshot.rootJobs()); err != nil {
 		return rejectWorkflowRun(workflowRun, "WorkflowValidationFailed", err.Error())
 	}
 	snapshotName, persistedSnapshot, err := r.ensureWorkflowSnapshot(ctx, workflowRun, snapshot)
@@ -232,7 +232,7 @@ func (r *WorkflowRunReconciler) applyInitializeWorkflowRun(ctx context.Context, 
 	}
 	workflowRun.Status.Phase = v1alpha1.WorkflowPending
 	workflowRun.Status.Message = ""
-	workflowRun.Status.Jobs = resolvedJobStatuses(persistedSnapshot.rootJobs)
+	workflowRun.Status.Jobs = resolvedJobStatuses(persistedSnapshot.rootJobs())
 	workflowRun.Status.SnapshotName = snapshotName
 	setWorkflowRunAcceptedCondition(workflowRun, metav1.ConditionTrue, "Accepted", "WorkflowRun accepted and initialized")
 	return nil

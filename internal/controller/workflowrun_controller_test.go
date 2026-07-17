@@ -1248,7 +1248,7 @@ func TestWorkflowRunReconcilerExecutesTopLevelUsesFromSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workflowrun resources: %v", err)
 	}
-	if resources.snapshot == nil || resources.snapshot.rootJobs["compile"].Steps[0].Run != "echo snapshot" {
+	if resources.snapshot == nil || resources.snapshot.Root.Spec.Uses != workflow.Name || resources.snapshot.Root.Workflow == nil || resources.snapshot.rootJobs()["compile"].Steps[0].Run != "echo snapshot" {
 		t.Fatalf("loaded snapshot = %#v, want immutable root execution definition", resources.snapshot)
 	}
 	workflow.Spec.Jobs["compile"] = v1alpha1.JobSpec{RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "echo mutable"}}}
@@ -1288,7 +1288,7 @@ func TestResolveWorkflowRunSnapshotResolvesNestedCalls(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(smoke, deploy).Build()
 	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
-	snapshot, _, err := reconciler.resolveWorkflowRunSnapshot(context.Background(), workflowRun)
+	snapshot, err := reconciler.resolveWorkflowRunSnapshot(context.Background(), workflowRun)
 	if err != nil {
 		t.Fatalf("resolve workflow snapshot: %v", err)
 	}
@@ -1316,7 +1316,7 @@ func TestResolveWorkflowRunSnapshotRejectsReuseCycle(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(workflowA, workflowB).Build()
 	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
-	_, _, err := reconciler.resolveWorkflowRunSnapshot(context.Background(), workflowRun)
+	_, err := reconciler.resolveWorkflowRunSnapshot(context.Background(), workflowRun)
 	if err == nil || !strings.Contains(err.Error(), "workflow reuse cycle") {
 		t.Fatalf("resolve workflow snapshot error = %v, want reuse cycle", err)
 	}
