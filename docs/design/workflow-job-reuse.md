@@ -83,6 +83,67 @@ reusable Workflows are called at job level, while their declared outputs are
 consumed through the caller job. The kruntimes implementation remains
 Kubernetes-native and namespace-local.
 
+### Nested Reuse
+
+Reusable Workflows may call other reusable Workflows. For example,
+`deploy-workflow` can use `smoke-test` after it applies the deployment:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Workflow
+metadata:
+  name: deploy-workflow
+spec:
+  inputs:
+    environment: { type: string, required: true }
+  jobs:
+    apply:
+      runs-on: bash
+      steps:
+        - name: deploy
+          run: deploy
+    verify:
+      needs: [apply]
+      uses: smoke-test
+      with:
+        endpoint: https://staging.example.com
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: Workflow
+metadata:
+  name: smoke-test
+spec:
+  inputs:
+    endpoint: { type: string, required: true }
+  jobs:
+    smoke:
+      runs-on: bash
+      steps:
+        - name: check
+          run: check-service
+```
+
+The accepted `release` execution resolves this tree before it starts work:
+
+```text
+root                         WorkflowRun release
+root/jobs/deploy             Workflow deploy-workflow
+root/jobs/deploy/jobs/verify Workflow smoke-test
+```
+
+The root controller creates and observes only the child WorkflowRun for
+`deploy`. That child executes `apply`, then creates and observes its own child
+WorkflowRun for `verify`. Each WorkflowRun has a local jobs status map; a
+parent call job succeeds only when its direct child WorkflowRun succeeds.
+Consequently, `release.status.jobs.deploy` cannot succeed until the nested
+`smoke-test` WorkflowRun has settled.
+
+Cancellation and failure follow the same direct-parent boundary. Cancelling
+`release` requests cancellation of its `deploy` child; that controller then
+requests cancellation of `verify`. Conversely, a failed `smoke-test` makes
+`verify` fail, then makes the `deploy` call fail in `release`. Controllers do
+not need to traverse arbitrary descendants during normal reconciliation.
+
 ## Parent and Child Status
 
 `JobStatus` gains an optional `workflowRunName`, symmetric with
@@ -128,83 +189,100 @@ initializing `status.jobs` or creating any child, the controller recursively
 resolves the complete namespace-local Workflow call tree and writes an
 immutable execution snapshot.
 
-### Snapshot Record Format
+### Snapshot Storage
 
-The snapshot has two JSON record types in `ControllerRevision.data.raw`.
-They are controller-private records, not CRDs, and start with an explicit
-schema version so a future incompatible record format requires a reviewed
-migration rather than silently reinterpreting an accepted execution.
+Each root WorkflowRun owns exactly one snapshot `ControllerRevision`.
+`ControllerRevision.data` is a small envelope around direct serialized public
+specs, not a second Workflow model:
 
-```go
-type WorkflowExecutionSnapshotIndex struct {
-    SchemaVersion string                 `json:"schemaVersion"` // v1alpha1
-    Nodes         []WorkflowSnapshotNode `json:"nodes"`
-}
+- `root.spec` is the exact accepted `WorkflowRun.spec` for an inline root, or
+  the resolved `Workflow.spec` for a root `spec.uses`;
+- `workflows[call-path]` is the exact `Workflow.spec` resolved for each
+  job-level call.
 
-type WorkflowSnapshotNode struct {
-    CallPath           string            `json:"callPath"`
-    DefinitionRevision string            `json:"definitionRevision"`
-    With               map[string]string `json:"with,omitempty"`
-}
+The root revision name is recorded in `WorkflowRun.status.snapshotName`. A
+nested child receives that name and its call path through reserved metadata,
+then reads its definition from the same snapshot. `with` remains in the stored
+caller `JobSpec`, exactly where the user wrote it; it is not copied into a
+controller-specific record.
 
-type WorkflowDefinitionSnapshot struct {
-    SchemaVersion string                 `json:"schemaVersion"` // v1alpha1
-    Source        WorkflowSnapshotSource `json:"source"`
-    Inputs        map[string]WorkflowInputSpec
-    Outputs       map[string]WorkflowOutputSpec
-    Jobs          map[string]JobSpec
-}
+For the `release` example above, the following is an abbreviated but complete
+shape of the snapshot ControllerRevision. Its name is illustrative: the
+controller derives it deterministically from the root WorkflowRun UID.
 
-type WorkflowSnapshotSource struct {
-    Kind            string `json:"kind"` // WorkflowRun or Workflow
-    Name            string `json:"name"`
-    UID             string `json:"uid"`
-    Generation      int64  `json:"generation"`
-    ResourceVersion string `json:"resourceVersion"`
-}
+```yaml
+# The root WorkflowRun owns the single snapshot revision.
+apiVersion: apps/v1
+kind: ControllerRevision
+metadata:
+  name: release-snapshot-root-8d91c3f4
+  namespace: default
+  labels:
+    kruntimes.io/root-workflowrun-uid: 7e4d41cb-69c8-4fa1-8e31-f9135512c22b
+  annotations:
+    kruntimes.io/workflow-call-path: root
+  ownerReferences:
+    - apiVersion: kruntimes.io/v1alpha1
+      kind: WorkflowRun
+      name: release
+      uid: 7e4d41cb-69c8-4fa1-8e31-f9135512c22b
+      controller: true
+      blockOwnerDeletion: true
+revision: 1
+data:
+  root:
+    kind: WorkflowRun
+    spec: # exact accepted WorkflowRun.spec
+      jobs:
+        build: { runs-on: bash, steps: [{ name: package, run: make package }] }
+        deploy: { needs: [build], uses: deploy-workflow, with: { environment: staging } }
+        notify: { needs: [deploy], runs-on: bash, steps: [{ name: send, run: send-notification }] }
+  workflows:
+    root/jobs/deploy: # exact Workflow.spec resolved for this call
+      inputs:
+        environment: { type: string, required: true }
+      jobs:
+        apply: { runs-on: bash, steps: [{ name: deploy, run: deploy }] }
+        verify: { needs: [apply], uses: smoke-test, with: { endpoint: https://staging.example.com } }
+    root/jobs/deploy/jobs/verify: # exact Workflow.spec resolved for the nested call
+      inputs:
+        endpoint: { type: string, required: true }
+      jobs:
+        smoke: { runs-on: bash, steps: [{ name: check, run: check-service }] }
 ```
 
-Every index contains a `root` node. An inline root has a `WorkflowRun`
-definition snapshot; a root `spec.uses` node and every nested call use a
-`Workflow` definition snapshot. A job-level call path appends
-`/jobs/<job-name>` to its caller path. Job names cannot contain `/`, so this is
-unambiguous and stable across reconciliation. `With` remains on the call node,
-where it can later be evaluated in the caller context; it is never merged into
-the callee definition.
+The root snapshot stores the direct `WorkflowRun.spec`, the resolved
+`Workflow.spec` for `root/jobs/deploy`, and the nested `Workflow.spec` for
+`root/jobs/deploy/jobs/verify`. When `deploy` becomes runnable, the controller
+evaluates its stored `with.environment` in the caller context and creates a
+child WorkflowRun with the same snapshot name and the `root/jobs/deploy` call
+path. That child later resolves `verify` from the same snapshot. Neither
+controller reads the current `deploy-workflow` or `smoke-test` object again.
 
-Definition revisions and the index name are content-addressed from canonical
-JSON plus the root WorkflowRun UID. The controller creates definition revisions
-first, then the index, and only then persists `status.snapshotName`. A restart
-therefore either finds a complete matching index or safely recreates missing
-immutable records. Before accepting the WorkflowRun, it deletes only
-root-owned definition revisions that are not referenced by the complete index.
-The resolver rejects a record that exceeds the Kubernetes object size limit
-before it creates an index or execution child.
+A job-level call path appends `/jobs/<job-name>` to its caller path. Job names
+cannot contain `/`, so this is unambiguous and stable across reconciliation.
+The path is a YAML/JSON map key in `ControllerRevision.data`, where `/` is
+valid; it is not a Kubernetes label, annotation, or object name. JSON Pointer
+would escape `/` as `~1`, but snapshot data is immutable and is never patched
+by path. The resolver rejects a stored spec that exceeds Kubernetes object size
+limits before it creates an execution child.
 
-The snapshot is stored outside status in WorkflowRun-owned `ControllerRevision`
-objects. Kubernetes API validation makes a successfully created revision's
-`data` immutable:
+The snapshot is stored outside status in a WorkflowRun-owned
+`ControllerRevision`. Kubernetes API validation makes a successfully created revision's
+`data` immutable. Revision metadata records the root WorkflowRun UID for
+lookup and garbage collection; child WorkflowRun metadata records its call path.
+Revision data contains no runtime results or secret material.
 
-- a small index ControllerRevision maps stable call paths to definition
-  revisions;
-- definition ControllerRevisions contain normalized Workflow inputs, outputs,
-  and jobs in their JSON `data` fields;
-- every entry records source name, UID, generation, and resource version;
-- call nodes retain unevaluated `with` expressions for later evaluation in the
-  caller context;
-- revision data contains no runtime results or secret material;
-- owner references provide garbage collection with the root WorkflowRun.
+Snapshot names are deterministic from the root UID. Creation is idempotent:
+after a partial failure, reconciliation verifies and reuses a matching
+immutable revision before accepting the WorkflowRun.
 
-Snapshot names are deterministic and content-addressed. Creation is idempotent:
-after a partial failure, reconciliation verifies and reuses matching immutable
-ControllerRevision data before creating missing entries. The controller does
-not rely on mutable revision labels or annotations for correctness.
-Unreferenced partial revisions are deleted before the WorkflowRun is accepted.
-
-`WorkflowRun.status.snapshotName` records the index ControllerRevision name.
+`WorkflowRun.status.snapshotName` records the root ControllerRevision name.
 Status does not copy full job specs, scripts, or environment values. If a
-snapshot cannot fit ControllerRevision object limits, resolution fails before
-execution.
+snapshot exceeds 1 MiB after serialization, resolution fails before execution.
+The explicit limit leaves headroom below etcd's commonly configured 1.5 MiB
+request limit; cluster operators may configure different API server or etcd
+limits.
 
 Once `snapshotName` is persisted, all reconciliation reads the snapshot rather
 than current `Workflow` objects. A child WorkflowRun inherits the root snapshot
@@ -221,7 +299,7 @@ Snapshot resolution happens before any execution child is created:
 1. Select inline root jobs or resolve top-level `spec.uses`.
 2. Validate and bind literal top-level inputs.
 3. Recursively resolve every job-level `uses` in the same namespace.
-4. Record each definition version and call path in the snapshot.
+4. Store the complete resolved tree in one immutable snapshot revision.
 5. Reject missing definitions, invalid inputs, unsupported shapes, and direct
    or indirect Workflow call cycles.
 6. Persist immutable snapshot ControllerRevisions.
@@ -238,7 +316,7 @@ The controller keeps the existing load/calculate/apply/patch structure.
 
 Loaded resources add:
 
-- the root snapshot index and definition ControllerRevisions;
+- the root snapshot ControllerRevision;
 - direct child WorkflowRuns owned by the reconciled WorkflowRun;
 - direct child Runs for inline jobs.
 
