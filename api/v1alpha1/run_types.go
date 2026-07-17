@@ -246,9 +246,95 @@ type RunFunctionMode struct {
 	IdleTimeoutSeconds *int32 `json:"idleTimeoutSeconds,omitempty"`
 }
 
+const (
+	// RunWorkspaceReferenceKindPersistentWorkspace is the initial workspace
+	// provider accepted by Run workspace references.
+	RunWorkspaceReferenceKindPersistentWorkspace = "PersistentWorkspace"
+	// RunWorkspaceReferenceAPIGroup is the initial served workspace API group.
+	RunWorkspaceReferenceAPIGroup = "kruntimes.io/v1alpha1"
+	// RunAffinityTopologyRuntimePod co-locates Runs on the same Runtime Pod.
+	RunAffinityTopologyRuntimePod = "kruntimes.io/runtime-pod"
+)
+
+// +kubebuilder:object:generate=true
+// RunWorkspaceReference identifies a namespace-local PersistentWorkspace.
+type RunWorkspaceReference struct {
+	// Name is the PersistentWorkspace name in the Run namespace.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+
+	// Kind identifies the workspace provider kind.
+	// +optional
+	// +kubebuilder:default=PersistentWorkspace
+	// +kubebuilder:validation:Enum=PersistentWorkspace
+	Kind string `json:"kind,omitempty"`
+
+	// APIGroup identifies the served workspace API group and version.
+	// +optional
+	// +kubebuilder:default=kruntimes.io/v1alpha1
+	// +kubebuilder:validation:Enum=kruntimes.io/v1alpha1
+	APIGroup string `json:"apiGroup,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// RunAffinity is a Run-to-Run placement constraint evaluated by the scheduler.
+type RunAffinity struct {
+	// RunAffinity requires or prefers sharing a topology with matching active Runs.
+	// +optional
+	RunAffinity *RunAffinityRules `json:"runAffinity,omitempty"`
+
+	// RunAntiAffinity requires or prefers avoiding a topology with matching active Runs.
+	// +optional
+	RunAntiAffinity *RunAffinityRules `json:"runAntiAffinity,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// RunAffinityRules contains required and preferred Run affinity terms.
+type RunAffinityRules struct {
+	// RequiredDuringSchedulingIgnoredDuringExecution defines hard placement constraints.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	RequiredDuringSchedulingIgnoredDuringExecution []RunAffinityTerm `json:"requiredDuringSchedulingIgnoredDuringExecution,omitempty"`
+
+	// PreferredDuringSchedulingIgnoredDuringExecution defines soft placement preferences.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	PreferredDuringSchedulingIgnoredDuringExecution []WeightedRunAffinityTerm `json:"preferredDuringSchedulingIgnoredDuringExecution,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// WeightedRunAffinityTerm applies a weight to a preferred Run affinity term.
+type WeightedRunAffinityTerm struct {
+	// Weight is the relative preference weight.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	Weight int32 `json:"weight"`
+
+	// RunAffinityTerm is the preferred placement term.
+	RunAffinityTerm RunAffinityTerm `json:"runAffinityTerm"`
+}
+
+// +kubebuilder:object:generate=true
+// RunAffinityTerm matches active namespace-local Runs for one topology.
+// +kubebuilder:validation:XValidation:rule="has(self.labelSelector) && ((has(self.labelSelector.matchLabels) && size(self.labelSelector.matchLabels) > 0) || (has(self.labelSelector.matchExpressions) && size(self.labelSelector.matchExpressions) > 0))",message="labelSelector must not be empty"
+type RunAffinityTerm struct {
+	// LabelSelector selects active namespace-local Runs.
+	// +kubebuilder:validation:Required
+	LabelSelector *metav1.LabelSelector `json:"labelSelector"`
+
+	// TopologyKey identifies the supported Runtime Pod topology.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=kruntimes.io/runtime-pod
+	TopologyKey string `json:"topologyKey"`
+}
+
 // +kubebuilder:object:generate=true
 // RunSpec defines the desired state of Run.
 // +kubebuilder:validation:XValidation:rule="!has(self.mode.task) || !has(self.mode.task.entrypoint) || (has(self.source) && has(self.source.inline)) || (!self.mode.task.entrypoint.startsWith('/') && !self.mode.task.entrypoint.split('/').exists(segment, segment == '..'))",message="mode.task.entrypoint must be a relative path that does not contain '..'"
+// +kubebuilder:validation:XValidation:rule="has(self.workspace) == has(oldSelf.workspace) && (!has(self.workspace) || self.workspace == oldSelf.workspace) && has(self.affinity) == has(oldSelf.affinity) && (!has(self.affinity) || self.affinity == oldSelf.affinity)",message="workspace and affinity are immutable after Run creation"
 type RunSpec struct {
 	// Runtime is the execution environment type (e.g., "python").
 	// It maps to the "runtime" label on Runtime Pods.
@@ -266,6 +352,14 @@ type RunSpec struct {
 	// Mode contains execution-mode-specific configuration.
 	// +kubebuilder:validation:Required
 	Mode RunMode `json:"mode"`
+
+	// Workspace references a namespace-local PersistentWorkspace used by this Run.
+	// +optional
+	Workspace *RunWorkspaceReference `json:"workspace,omitempty"`
+
+	// Affinity constrains or prefers placement relative to other active Runs.
+	// +optional
+	Affinity *RunAffinity `json:"affinity,omitempty"`
 
 	// Env is the list of environment variables to set for execution.
 	// +optional

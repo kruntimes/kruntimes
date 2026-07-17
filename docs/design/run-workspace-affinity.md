@@ -1,6 +1,6 @@
 # Run Workspace References and Affinity
 
-Status: **Proposed for review**
+Status: **Reviewed**
 
 This document fixes the API shape for the next Workflow data-sharing
 prerequisite: a generic Run workspace reference and Run-to-Run affinity. It

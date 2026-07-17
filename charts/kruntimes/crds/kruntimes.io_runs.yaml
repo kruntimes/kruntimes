@@ -54,6 +54,337 @@ spec:
           spec:
             description: RunSpec defines the desired state of Run.
             properties:
+              affinity:
+                description: Affinity constrains or prefers placement relative to
+                  other active Runs.
+                properties:
+                  runAffinity:
+                    description: RunAffinity requires or prefers sharing a topology
+                      with matching active Runs.
+                    properties:
+                      preferredDuringSchedulingIgnoredDuringExecution:
+                        description: PreferredDuringSchedulingIgnoredDuringExecution
+                          defines soft placement preferences.
+                        items:
+                          description: WeightedRunAffinityTerm applies a weight to
+                            a preferred Run affinity term.
+                          properties:
+                            runAffinityTerm:
+                              description: RunAffinityTerm is the preferred placement
+                                term.
+                              properties:
+                                labelSelector:
+                                  description: LabelSelector selects active namespace-local
+                                    Runs.
+                                  properties:
+                                    matchExpressions:
+                                      description: matchExpressions is a list of label
+                                        selector requirements. The requirements are
+                                        ANDed.
+                                      items:
+                                        description: |-
+                                          A label selector requirement is a selector that contains values, a key, and an operator that
+                                          relates the key and values.
+                                        properties:
+                                          key:
+                                            description: key is the label key that
+                                              the selector applies to.
+                                            type: string
+                                          operator:
+                                            description: |-
+                                              operator represents a key's relationship to a set of values.
+                                              Valid operators are In, NotIn, Exists and DoesNotExist.
+                                            type: string
+                                          values:
+                                            description: |-
+                                              values is an array of string values. If the operator is In or NotIn,
+                                              the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                              the values array must be empty. This array is replaced during a strategic
+                                              merge patch.
+                                            items:
+                                              type: string
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                        required:
+                                        - key
+                                        - operator
+                                        type: object
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    matchLabels:
+                                      additionalProperties:
+                                        type: string
+                                      description: |-
+                                        matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                        map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                        operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                      type: object
+                                  type: object
+                                  x-kubernetes-map-type: atomic
+                                topologyKey:
+                                  description: TopologyKey identifies the supported
+                                    Runtime Pod topology.
+                                  enum:
+                                  - kruntimes.io/runtime-pod
+                                  type: string
+                              required:
+                              - labelSelector
+                              - topologyKey
+                              type: object
+                              x-kubernetes-validations:
+                              - message: labelSelector must not be empty
+                                rule: has(self.labelSelector) && ((has(self.labelSelector.matchLabels)
+                                  && size(self.labelSelector.matchLabels) > 0) ||
+                                  (has(self.labelSelector.matchExpressions) && size(self.labelSelector.matchExpressions)
+                                  > 0))
+                            weight:
+                              description: Weight is the relative preference weight.
+                              format: int32
+                              maximum: 100
+                              minimum: 1
+                              type: integer
+                          required:
+                          - runAffinityTerm
+                          - weight
+                          type: object
+                        maxItems: 32
+                        type: array
+                      requiredDuringSchedulingIgnoredDuringExecution:
+                        description: RequiredDuringSchedulingIgnoredDuringExecution
+                          defines hard placement constraints.
+                        items:
+                          description: RunAffinityTerm matches active namespace-local
+                            Runs for one topology.
+                          properties:
+                            labelSelector:
+                              description: LabelSelector selects active namespace-local
+                                Runs.
+                              properties:
+                                matchExpressions:
+                                  description: matchExpressions is a list of label
+                                    selector requirements. The requirements are ANDed.
+                                  items:
+                                    description: |-
+                                      A label selector requirement is a selector that contains values, a key, and an operator that
+                                      relates the key and values.
+                                    properties:
+                                      key:
+                                        description: key is the label key that the
+                                          selector applies to.
+                                        type: string
+                                      operator:
+                                        description: |-
+                                          operator represents a key's relationship to a set of values.
+                                          Valid operators are In, NotIn, Exists and DoesNotExist.
+                                        type: string
+                                      values:
+                                        description: |-
+                                          values is an array of string values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                          the values array must be empty. This array is replaced during a strategic
+                                          merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                matchLabels:
+                                  additionalProperties:
+                                    type: string
+                                  description: |-
+                                    matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                    map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                    operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                  type: object
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            topologyKey:
+                              description: TopologyKey identifies the supported Runtime
+                                Pod topology.
+                              enum:
+                              - kruntimes.io/runtime-pod
+                              type: string
+                          required:
+                          - labelSelector
+                          - topologyKey
+                          type: object
+                          x-kubernetes-validations:
+                          - message: labelSelector must not be empty
+                            rule: has(self.labelSelector) && ((has(self.labelSelector.matchLabels)
+                              && size(self.labelSelector.matchLabels) > 0) || (has(self.labelSelector.matchExpressions)
+                              && size(self.labelSelector.matchExpressions) > 0))
+                        maxItems: 32
+                        type: array
+                    type: object
+                  runAntiAffinity:
+                    description: RunAntiAffinity requires or prefers avoiding a topology
+                      with matching active Runs.
+                    properties:
+                      preferredDuringSchedulingIgnoredDuringExecution:
+                        description: PreferredDuringSchedulingIgnoredDuringExecution
+                          defines soft placement preferences.
+                        items:
+                          description: WeightedRunAffinityTerm applies a weight to
+                            a preferred Run affinity term.
+                          properties:
+                            runAffinityTerm:
+                              description: RunAffinityTerm is the preferred placement
+                                term.
+                              properties:
+                                labelSelector:
+                                  description: LabelSelector selects active namespace-local
+                                    Runs.
+                                  properties:
+                                    matchExpressions:
+                                      description: matchExpressions is a list of label
+                                        selector requirements. The requirements are
+                                        ANDed.
+                                      items:
+                                        description: |-
+                                          A label selector requirement is a selector that contains values, a key, and an operator that
+                                          relates the key and values.
+                                        properties:
+                                          key:
+                                            description: key is the label key that
+                                              the selector applies to.
+                                            type: string
+                                          operator:
+                                            description: |-
+                                              operator represents a key's relationship to a set of values.
+                                              Valid operators are In, NotIn, Exists and DoesNotExist.
+                                            type: string
+                                          values:
+                                            description: |-
+                                              values is an array of string values. If the operator is In or NotIn,
+                                              the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                              the values array must be empty. This array is replaced during a strategic
+                                              merge patch.
+                                            items:
+                                              type: string
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                        required:
+                                        - key
+                                        - operator
+                                        type: object
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    matchLabels:
+                                      additionalProperties:
+                                        type: string
+                                      description: |-
+                                        matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                        map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                        operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                      type: object
+                                  type: object
+                                  x-kubernetes-map-type: atomic
+                                topologyKey:
+                                  description: TopologyKey identifies the supported
+                                    Runtime Pod topology.
+                                  enum:
+                                  - kruntimes.io/runtime-pod
+                                  type: string
+                              required:
+                              - labelSelector
+                              - topologyKey
+                              type: object
+                              x-kubernetes-validations:
+                              - message: labelSelector must not be empty
+                                rule: has(self.labelSelector) && ((has(self.labelSelector.matchLabels)
+                                  && size(self.labelSelector.matchLabels) > 0) ||
+                                  (has(self.labelSelector.matchExpressions) && size(self.labelSelector.matchExpressions)
+                                  > 0))
+                            weight:
+                              description: Weight is the relative preference weight.
+                              format: int32
+                              maximum: 100
+                              minimum: 1
+                              type: integer
+                          required:
+                          - runAffinityTerm
+                          - weight
+                          type: object
+                        maxItems: 32
+                        type: array
+                      requiredDuringSchedulingIgnoredDuringExecution:
+                        description: RequiredDuringSchedulingIgnoredDuringExecution
+                          defines hard placement constraints.
+                        items:
+                          description: RunAffinityTerm matches active namespace-local
+                            Runs for one topology.
+                          properties:
+                            labelSelector:
+                              description: LabelSelector selects active namespace-local
+                                Runs.
+                              properties:
+                                matchExpressions:
+                                  description: matchExpressions is a list of label
+                                    selector requirements. The requirements are ANDed.
+                                  items:
+                                    description: |-
+                                      A label selector requirement is a selector that contains values, a key, and an operator that
+                                      relates the key and values.
+                                    properties:
+                                      key:
+                                        description: key is the label key that the
+                                          selector applies to.
+                                        type: string
+                                      operator:
+                                        description: |-
+                                          operator represents a key's relationship to a set of values.
+                                          Valid operators are In, NotIn, Exists and DoesNotExist.
+                                        type: string
+                                      values:
+                                        description: |-
+                                          values is an array of string values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                          the values array must be empty. This array is replaced during a strategic
+                                          merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                matchLabels:
+                                  additionalProperties:
+                                    type: string
+                                  description: |-
+                                    matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                    map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                    operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                  type: object
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            topologyKey:
+                              description: TopologyKey identifies the supported Runtime
+                                Pod topology.
+                              enum:
+                              - kruntimes.io/runtime-pod
+                              type: string
+                          required:
+                          - labelSelector
+                          - topologyKey
+                          type: object
+                          x-kubernetes-validations:
+                          - message: labelSelector must not be empty
+                            rule: has(self.labelSelector) && ((has(self.labelSelector.matchLabels)
+                              && size(self.labelSelector.matchLabels) > 0) || (has(self.labelSelector.matchExpressions)
+                              && size(self.labelSelector.matchExpressions) > 0))
+                        maxItems: 32
+                        type: array
+                    type: object
+                type: object
               cancelRequested:
                 description: CancelRequested is set to true to request cancellation
                   of a running Run.
@@ -340,6 +671,32 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              workspace:
+                description: Workspace references a namespace-local PersistentWorkspace
+                  used by this Run.
+                properties:
+                  apiGroup:
+                    default: kruntimes.io/v1alpha1
+                    description: APIGroup identifies the served workspace API group
+                      and version.
+                    enum:
+                    - kruntimes.io/v1alpha1
+                    type: string
+                  kind:
+                    default: PersistentWorkspace
+                    description: Kind identifies the workspace provider kind.
+                    enum:
+                    - PersistentWorkspace
+                    type: string
+                  name:
+                    description: Name is the PersistentWorkspace name in the Run namespace.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - name
+                type: object
             required:
             - mode
             - runtime
@@ -351,6 +708,10 @@ spec:
                 && has(self.source.inline)) || (!self.mode.task.entrypoint.startsWith(''/'')
                 && !self.mode.task.entrypoint.split(''/'').exists(segment, segment
                 == ''..''))'
+            - message: workspace and affinity are immutable after Run creation
+              rule: has(self.workspace) == has(oldSelf.workspace) && (!has(self.workspace)
+                || self.workspace == oldSelf.workspace) && has(self.affinity) == has(oldSelf.affinity)
+                && (!has(self.affinity) || self.affinity == oldSelf.affinity)
           status:
             description: RunStatus defines the observed state of Run.
             properties:

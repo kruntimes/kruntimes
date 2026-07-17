@@ -20,6 +20,8 @@ Common spec fields:
 | `spec.mode.task.entrypoint` | Relative path inside the workspace for one-shot task execution. Absolute paths and `..` are rejected. |
 | `spec.mode.task.args` | Arguments or command payload passed to the Runtime Server for one-shot task execution. |
 | `spec.mode.function.handler` | Callable `module.function` entrypoint for function-mode Runs. |
+| `spec.workspace` | Optional namespace-local `PersistentWorkspace` reference. The default kind is `PersistentWorkspace` and the default API group is `kruntimes.io/v1alpha1`. |
+| `spec.affinity` | Optional Run-to-Run required or preferred placement rules. The initial topology is `kruntimes.io/runtime-pod`. |
 | `spec.timeoutSeconds` | Execution timeout. Timeout terminal phase is `Timeout`. |
 | `spec.retryPolicy` | Retry attempts and backoff. Execution is at-least-once. |
 | `spec.cancelRequested` | User cancellation request. |
@@ -41,6 +43,9 @@ Execution input semantics:
   Built-in Python runs `python <args...>`.
 - `spec.mode` is required. Exactly one of `spec.mode.task` or
   `spec.mode.function` must be set.
+- `spec.workspace` and `spec.affinity` are immutable after creation. The API
+  currently validates their shape only; workspace binding and affinity-aware
+  scheduling are tracked separately in the roadmap.
 - The `krt run -- <command> [args...]` CLI stores command words directly in
   `spec.mode.task.args`. It does not add shell quoting. Use
   `krt run -- sh -c '...'` for shell evaluation, or use `--file` for inline
