@@ -351,8 +351,8 @@ spec:
                 type: string
               snapshotName:
                 description: |-
-                  SnapshotName is the name of the immutable ControllerRevision index that
-                  captures the WorkflowRun's resolved execution definitions.
+                  SnapshotName is the name of the immutable ControllerRevision that captures
+                  the WorkflowRun's resolved execution definitions.
                 maxLength: 253
                 type: string
             required:

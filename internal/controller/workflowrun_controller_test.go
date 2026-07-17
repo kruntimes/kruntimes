@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -19,11 +20,20 @@ import (
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
-func TestWorkflowRunReconcilerAcceptsWorkflowRun(t *testing.T) {
+func workflowRunTestScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
+		t.Fatalf("add kruntimes scheme: %v", err)
 	}
+	if err := appsv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add apps scheme: %v", err)
+	}
+	return scheme
+}
+
+func TestWorkflowRunReconcilerAcceptsWorkflowRun(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid", Generation: 3},
@@ -121,10 +131,7 @@ func TestWorkflowRunReconcilerAcceptsWorkflowRun(t *testing.T) {
 }
 
 func TestWorkflowRunReconcilerStartsAllIndependentReadyJobs(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "parallel", Namespace: "default", UID: "workflowrun-uid"},
@@ -299,10 +306,7 @@ func TestJobReadyToStartChecksDependencyStatus(t *testing.T) {
 }
 
 func TestWorkflowRunReconcilerSkipsBlockedJobsAndStartsIndependentJobs(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "failure", Namespace: "default", UID: "workflowrun-uid"},
@@ -351,10 +355,7 @@ func TestWorkflowRunReconcilerSkipsBlockedJobsAndStartsIndependentJobs(t *testin
 }
 
 func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "workflowrun-uid", Generation: 3},
@@ -366,9 +367,15 @@ func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization
 			},
 		},
 	}
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "build-and-test", Namespace: workflowRun.Namespace},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
+		}},
+	}
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(workflowRun).
+		WithObjects(workflowRun, workflow).
 		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
 		Build()
 
@@ -414,10 +421,7 @@ func TestWorkflowRunReconcilerRejectsCyclicJobDAG(t *testing.T) {
 		{name: "reusable", reusable: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			scheme := runtime.NewScheme()
-			if err := v1alpha1.AddToScheme(scheme); err != nil {
-				t.Fatalf("add scheme: %v", err)
-			}
+			scheme := workflowRunTestScheme(t)
 
 			workflowRun := &v1alpha1.WorkflowRun{
 				ObjectMeta: metav1.ObjectMeta{Name: test.name, Namespace: "default", UID: "workflowrun-uid", Generation: 3},
@@ -473,10 +477,7 @@ func TestValidateResolvedWorkflowJobsRejectsUnknownDependency(t *testing.T) {
 }
 
 func TestWorkflowRunReconcilerReusesExistingFirstStepRun(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid", Generation: 3},
@@ -532,10 +533,7 @@ func TestWorkflowRunReconcilerReusesExistingFirstStepRun(t *testing.T) {
 }
 
 func TestWorkflowRunReconcilerRejectsJobWithoutRuntimeDuringInitialization(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid", Generation: 3},
@@ -598,10 +596,7 @@ func TestWorkflowRunReconcilerObservesTerminalChildRuns(t *testing.T) {
 		{runPhase: v1alpha1.RunCancelled, stepPhase: v1alpha1.StepFailed, workflowPhase: v1alpha1.WorkflowFailed},
 	} {
 		t.Run(string(test.runPhase), func(t *testing.T) {
-			scheme := runtime.NewScheme()
-			if err := v1alpha1.AddToScheme(scheme); err != nil {
-				t.Fatalf("add scheme: %v", err)
-			}
+			scheme := workflowRunTestScheme(t)
 			workflowRun := &v1alpha1.WorkflowRun{
 				ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid"},
 				Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
@@ -643,10 +638,7 @@ func TestWorkflowRunReconcilerObservesTerminalChildRuns(t *testing.T) {
 }
 
 func TestWorkflowRunReconcilerCreatesNextStepAfterObservedSuccess(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid"},
@@ -732,10 +724,7 @@ func TestWorkflowRunReconcilerCreatesNextStepAfterObservedSuccess(t *testing.T) 
 }
 
 func TestWorkflowRunReconcilerDoesNotPatchDerivedStatusWhenActionFails(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid"},
@@ -780,10 +769,7 @@ func TestWorkflowRunReconcilerDoesNotPatchDerivedStatusWhenActionFails(t *testin
 }
 
 func TestWorkflowRunReconcilerRecoversAfterRestartAcrossStatusPatchFailure(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid"},
@@ -945,10 +931,7 @@ func TestDeriveTerminalWorkflowRunStatus(t *testing.T) {
 }
 
 func TestWorkflowRunReconcilerRequestsCancellationWithoutStartingNewJobs(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "cancel-build", Namespace: "default", UID: "workflowrun-uid"},
 		Spec: v1alpha1.WorkflowRunSpec{
@@ -1008,10 +991,7 @@ func TestWorkflowRunReconcilerRequestsCancellationWithoutStartingNewJobs(t *test
 }
 
 func TestWorkflowRunReconcilerFinalizesCancellationAfterChildRunsSettle(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "cancelled-build", Namespace: "default", UID: "workflowrun-uid"},
 		Spec: v1alpha1.WorkflowRunSpec{
@@ -1052,10 +1032,7 @@ func TestWorkflowRunReconcilerFinalizesCancellationAfterChildRunsSettle(t *testi
 }
 
 func TestWorkflowRunReconcilerCancelsBeforeCreatingAnyChildRun(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "cancel-pending", Namespace: "default", UID: "workflowrun-uid"},
 		Spec: v1alpha1.WorkflowRunSpec{
@@ -1119,10 +1096,7 @@ func TestNextStepToStartRequiresPrecedingSuccess(t *testing.T) {
 }
 
 func TestWorkflowRunReconcilerPreservesResolvedJobStatus(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", Generation: 4},
@@ -1177,10 +1151,7 @@ func TestWorkflowRunReconcilerPreservesResolvedJobStatus(t *testing.T) {
 }
 
 func TestWorkflowRunReconcilerResolvesReusableWorkflow(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflow := &v1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "build-and-test", Namespace: "default"},
@@ -1226,14 +1197,14 @@ func TestWorkflowRunReconcilerResolvesReusableWorkflow(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
 		t.Fatalf("get workflowrun: %v", err)
 	}
-	if updated.Status.Phase != v1alpha1.WorkflowPending {
-		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowPending)
+	if updated.Status.Phase != v1alpha1.WorkflowRunning {
+		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowRunning)
 	}
 	if len(updated.Status.Jobs) != 2 {
 		t.Fatalf("jobs = %#v, want 2 resolved jobs", updated.Status.Jobs)
 	}
-	if got := updated.Status.Jobs["build"]; got.Phase != v1alpha1.JobPending || len(got.Pre) != 0 || len(got.Steps) != 1 || got.Steps[0].Name != "compile" {
-		t.Fatalf("build status = %#v, want pending compile step", got)
+	if got := updated.Status.Jobs["build"]; got.Phase != v1alpha1.JobRunning || len(got.Pre) != 0 || len(got.Steps) != 1 || got.Steps[0].Name != "compile" || got.Steps[0].RunName == "" {
+		t.Fatalf("build status = %#v, want running compile step", got)
 	}
 	if got := updated.Status.Jobs["test"]; got.Phase != v1alpha1.JobWaiting || len(got.Pre) != 1 || got.Pre[0] != "build" {
 		t.Fatalf("test status = %#v, want waiting on build", got)
@@ -1242,13 +1213,110 @@ func TestWorkflowRunReconcilerResolvesReusableWorkflow(t *testing.T) {
 	if cond == nil || cond.Status != metav1.ConditionTrue {
 		t.Fatalf("condition = %#v, want accepted true", cond)
 	}
+	if updated.Status.SnapshotName == "" {
+		t.Fatal("snapshotName is empty")
+	}
+	var snapshot appsv1.ControllerRevision
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: updated.Namespace, Name: updated.Status.SnapshotName}, &snapshot); err != nil {
+		t.Fatalf("get workflow snapshot: %v", err)
+	}
+}
+
+func TestWorkflowRunReconcilerExecutesTopLevelUsesFromSnapshot(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default"},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"compile": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "echo snapshot"}}},
+		}},
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "release-uid"},
+		Spec:       v1alpha1.WorkflowRunSpec{Uses: workflow.Name},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflow, workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+
+	// Initialization captures the reusable definition but creates no Run yet.
+	reconcileWorkflowRun(t, reconciler, req, 1)
+	workflow.Spec.Jobs["compile"] = v1alpha1.JobSpec{RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "echo mutable"}}}
+	if err := c.Update(context.Background(), workflow); err != nil {
+		t.Fatalf("update reusable workflow: %v", err)
+	}
+
+	reconcileWorkflowRun(t, reconciler, req, 1)
+	var runs v1alpha1.RunList
+	if err := c.List(context.Background(), &runs, client.InNamespace(workflowRun.Namespace)); err != nil {
+		t.Fatalf("list child runs: %v", err)
+	}
+	if len(runs.Items) != 1 || runs.Items[0].Spec.Source == nil || runs.Items[0].Spec.Source.Inline == nil || *runs.Items[0].Spec.Source.Inline != "echo snapshot" {
+		t.Fatalf("child runs = %#v, want execution from immutable snapshot", runs.Items)
+	}
+}
+
+func TestResolveWorkflowRunSnapshotResolvesNestedCalls(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	smoke := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "smoke", Namespace: "default"},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"check": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "check"}}},
+		}},
+	}
+	deploy := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "deploy", Namespace: "default"},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"verify": {Uses: smoke.Name},
+		}},
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: deploy.Name},
+		}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(smoke, deploy).Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	snapshot, _, err := reconciler.resolveWorkflowRunSnapshot(context.Background(), workflowRun)
+	if err != nil {
+		t.Fatalf("resolve workflow snapshot: %v", err)
+	}
+	if _, ok := snapshot.Workflows["root/jobs/deploy"]; !ok {
+		t.Fatalf("snapshot workflows = %#v, want deploy call", snapshot.Workflows)
+	}
+	if _, ok := snapshot.Workflows["root/jobs/deploy/jobs/verify"]; !ok {
+		t.Fatalf("snapshot workflows = %#v, want nested smoke call", snapshot.Workflows)
+	}
+}
+
+func TestResolveWorkflowRunSnapshotRejectsReuseCycle(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflowA := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "workflow-a", Namespace: "default"},
+		Spec:       v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{"call-b": {Uses: "workflow-b"}}},
+	}
+	workflowB := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "workflow-b", Namespace: "default"},
+		Spec:       v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{"call-a": {Uses: "workflow-a"}}},
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default"},
+		Spec:       v1alpha1.WorkflowRunSpec{Uses: workflowA.Name},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(workflowA, workflowB).Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	_, _, err := reconciler.resolveWorkflowRunSnapshot(context.Background(), workflowRun)
+	if err == nil || !strings.Contains(err.Error(), "workflow reuse cycle") {
+		t.Fatalf("resolve workflow snapshot error = %v, want reuse cycle", err)
+	}
 }
 
 func TestWorkflowRunReconcilerFailsWhenReusableWorkflowMissing(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", Generation: 6},
@@ -1289,10 +1357,7 @@ func TestWorkflowRunReconcilerFailsWhenReusableWorkflowMissing(t *testing.T) {
 }
 
 func TestWorkflowRunReconcilerFailsWhenWorkflowInputUnknown(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflow := &v1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "build-and-test", Namespace: "default"},
@@ -1348,10 +1413,7 @@ func TestWorkflowRunReconcilerFailsWhenWorkflowInputUnknown(t *testing.T) {
 }
 
 func TestWorkflowRunReconcilerFailsWhenWorkflowInputRequired(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
+	scheme := workflowRunTestScheme(t)
 
 	workflow := &v1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "build-and-test", Namespace: "default"},
