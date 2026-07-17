@@ -708,10 +708,22 @@ spec:
                 && has(self.source.inline)) || (!self.mode.task.entrypoint.startsWith(''/'')
                 && !self.mode.task.entrypoint.split(''/'').exists(segment, segment
                 == ''..''))'
+            - message: runtime, source, mode, env, timeout, and retryPolicy are immutable
+                after Run creation
+              rule: self.runtime == oldSelf.runtime && has(self.source) == has(oldSelf.source)
+                && (!has(self.source) || self.source == oldSelf.source) && self.mode
+                == oldSelf.mode && has(self.env) == has(oldSelf.env) && (!has(self.env)
+                || self.env == oldSelf.env) && has(self.timeout) == has(oldSelf.timeout)
+                && (!has(self.timeout) || self.timeout == oldSelf.timeout) && has(self.retryPolicy)
+                == has(oldSelf.retryPolicy) && (!has(self.retryPolicy) || self.retryPolicy
+                == oldSelf.retryPolicy)
             - message: workspace and affinity are immutable after Run creation
               rule: has(self.workspace) == has(oldSelf.workspace) && (!has(self.workspace)
                 || self.workspace == oldSelf.workspace) && has(self.affinity) == has(oldSelf.affinity)
                 && (!has(self.affinity) || self.affinity == oldSelf.affinity)
+            - message: cancelRequested may not transition from true to false
+              rule: '!has(oldSelf.cancelRequested) || !oldSelf.cancelRequested ||
+                (has(self.cancelRequested) && self.cancelRequested)'
           status:
             description: RunStatus defines the observed state of Run.
             properties:
