@@ -74,10 +74,6 @@ type workflowRunStepTarget struct {
 	stepIndex int
 }
 
-func workflowRunJobs(resources *workflowRunResources) map[string]v1alpha1.JobSpec {
-	return resources.snapshot.rootJobs()
-}
-
 // WorkflowRunReconciler owns WorkflowRun execution-instance status.
 type WorkflowRunReconciler struct {
 	client.Client
@@ -192,7 +188,7 @@ func calculateWorkflowRunPlan(resources *workflowRunResources) workflowRunPlan {
 	if state == workflowRunStateCancelling {
 		return plan
 	}
-	jobs := workflowRunJobs(resources)
+	jobs := resources.snapshot.rootJobs()
 	if len(jobs) == 0 || len(workflowRun.Status.Jobs) == 0 {
 		return plan
 	}
@@ -428,7 +424,7 @@ func resolvedJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.J
 func (r *WorkflowRunReconciler) applyStartRunnableSteps(ctx context.Context, resources *workflowRunResources, targets []workflowRunStepTarget) error {
 	workflowRun := resources.workflowRun
 	for _, target := range targets {
-		job := workflowRunJobs(resources)[target.jobName]
+		job := resources.snapshot.rootJobs()[target.jobName]
 		run, err := r.createOrReuseStepRun(ctx, resources, target.jobName, job, target.stepIndex)
 		if err != nil {
 			return err

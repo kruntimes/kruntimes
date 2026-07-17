@@ -101,7 +101,7 @@ func (r *WorkflowRunReconciler) resolveWorkflowCalls(ctx context.Context, namesp
 		if len(snapshot.Workflows) >= maxWorkflowCallNodes {
 			return &workflowSnapshotResolutionError{err: fmt.Errorf("workflow call count exceeds %d", maxWorkflowCallNodes)}
 		}
-		if containsString(stack, job.Uses) {
+		if strings.Contains("\x00"+strings.Join(stack, "\x00")+"\x00", "\x00"+job.Uses+"\x00") {
 			cycle := append(append([]string(nil), stack...), job.Uses)
 			return &workflowSnapshotResolutionError{err: fmt.Errorf("workflow reuse cycle: %s", strings.Join(cycle, " -> "))}
 		}
@@ -128,10 +128,6 @@ func (r *WorkflowRunReconciler) getWorkflow(ctx context.Context, namespace strin
 		return nil, fmt.Errorf("get workflow %s/%s: %w", namespace, name, err)
 	}
 	return workflow, nil
-}
-
-func containsString(values []string, value string) bool {
-	return strings.Contains("\x00"+strings.Join(values, "\x00")+"\x00", "\x00"+value+"\x00")
 }
 
 func (r *WorkflowRunReconciler) ensureWorkflowSnapshot(ctx context.Context, workflowRun *v1alpha1.WorkflowRun, snapshot *workflowExecutionSnapshot) (string, *workflowExecutionSnapshot, error) {
