@@ -653,6 +653,125 @@ func TestCRDValidationRejectsRunWorkspaceAndAffinityMutation(t *testing.T) {
 	}
 }
 
+func TestCRDValidationRunExecutionInputsAreImmutable(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-run-immutable-inputs-")
+	inline := "echo original"
+	timeout := metav1.Duration{Duration: time.Minute}
+	ttl := int32(60)
+
+	newRun := func(t *testing.T) *v1alpha1.Run {
+		t.Helper()
+		run := &v1alpha1.Run{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "build-", Namespace: ns.Name},
+			Spec: v1alpha1.RunSpec{
+				Runtime: "bash",
+				Source:  &v1alpha1.CodeSource{Inline: &inline},
+				Mode: v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{
+					Entrypoint: "script",
+					Args:       []string{"--verbose"},
+				}},
+				Env:     []corev1.EnvVar{{Name: "LOG_LEVEL", Value: "info"}},
+				Timeout: &timeout,
+				RetryPolicy: &v1alpha1.RetryPolicy{
+					MaxAttempts: 2,
+				},
+				TTLSecondsAfterFinished: &ttl,
+			},
+		}
+		if err := k8sClient.Create(ctx, run); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		return run
+	}
+	updateRun := func(run *v1alpha1.Run, mutate func(*v1alpha1.Run)) error {
+		key := client.ObjectKeyFromObject(run)
+		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			current := &v1alpha1.Run{}
+			if err := k8sClient.Get(ctx, key, current); err != nil {
+				return err
+			}
+			mutate(current)
+			return k8sClient.Update(ctx, current)
+		})
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*v1alpha1.Run)
+	}{
+		{
+			name: "runtime",
+			mutate: func(run *v1alpha1.Run) {
+				run.Spec.Runtime = "python"
+			},
+		},
+		{
+			name: "source",
+			mutate: func(run *v1alpha1.Run) {
+				updated := "echo updated"
+				run.Spec.Source.Inline = &updated
+			},
+		},
+		{
+			name: "mode",
+			mutate: func(run *v1alpha1.Run) {
+				run.Spec.Mode = v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "main.handle"}}
+			},
+		},
+		{
+			name: "env",
+			mutate: func(run *v1alpha1.Run) {
+				run.Spec.Env[0].Value = "debug"
+			},
+		},
+		{
+			name: "timeout",
+			mutate: func(run *v1alpha1.Run) {
+				run.Spec.Timeout.Duration = 2 * time.Minute
+			},
+		},
+		{
+			name: "retry-policy",
+			mutate: func(run *v1alpha1.Run) {
+				run.Spec.RetryPolicy.MaxAttempts = 3
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			run := newRun(t)
+			if err := updateRun(run, tt.mutate); !apierrors.IsInvalid(err) {
+				t.Fatalf("mutating run %s error = %v, want Invalid", tt.name, err)
+			}
+		})
+	}
+
+	t.Run("cancel-request-is-one-way", func(t *testing.T) {
+		run := newRun(t)
+		if err := updateRun(run, func(run *v1alpha1.Run) {
+			run.Spec.CancelRequested = true
+		}); err != nil {
+			t.Fatalf("request run cancellation: %v", err)
+		}
+		if err := updateRun(run, func(run *v1alpha1.Run) {
+			run.Spec.CancelRequested = false
+		}); !apierrors.IsInvalid(err) {
+			t.Fatalf("clearing run cancellation error = %v, want Invalid", err)
+		}
+	})
+
+	t.Run("ttl-remains-mutable", func(t *testing.T) {
+		run := newRun(t)
+		updatedTTL := int32(120)
+		if err := updateRun(run, func(run *v1alpha1.Run) {
+			run.Spec.TTLSecondsAfterFinished = &updatedTTL
+		}); err != nil {
+			t.Fatalf("update run ttl: %v", err)
+		}
+	})
+}
+
 func runSpecWithRequiredAffinity(term v1alpha1.RunAffinityTerm) v1alpha1.RunSpec {
 	return v1alpha1.RunSpec{
 		Runtime: "bash",
