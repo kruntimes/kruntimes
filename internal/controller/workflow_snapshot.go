@@ -131,12 +131,7 @@ func (r *WorkflowRunReconciler) getWorkflow(ctx context.Context, namespace strin
 }
 
 func containsString(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
+	return strings.Contains("\x00"+strings.Join(values, "\x00")+"\x00", "\x00"+value+"\x00")
 }
 
 func (r *WorkflowRunReconciler) ensureWorkflowSnapshot(ctx context.Context, workflowRun *v1alpha1.WorkflowRun, snapshot *workflowExecutionSnapshot) (string, *workflowExecutionSnapshot, error) {
@@ -155,9 +150,6 @@ func (r *WorkflowRunReconciler) ensureWorkflowSnapshot(ctx context.Context, work
 			Namespace: workflowRun.Namespace,
 			Labels: map[string]string{
 				v1alpha1.WorkflowRootRunUIDLabel: string(workflowRun.UID),
-			},
-			Annotations: map[string]string{
-				v1alpha1.WorkflowCallPathAnnotation: "root",
 			},
 		},
 		Revision: 1,
@@ -195,15 +187,14 @@ func loadWorkflowSnapshot(revision *appsv1.ControllerRevision) (*workflowExecuti
 	if err := json.Unmarshal(revision.Data.Raw, snapshot); err != nil {
 		return nil, fmt.Errorf("decode workflow snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
 	}
-	if len(snapshot.Root.Spec.Jobs) > 0 {
-		if snapshot.Root.Workflow != nil {
-			return nil, fmt.Errorf("workflow snapshot %s/%s has both inline jobs and a root workflow", revision.Namespace, revision.Name)
-		}
-	} else if snapshot.Root.Spec.Uses != "" {
-		if snapshot.Root.Workflow == nil {
-			return nil, fmt.Errorf("workflow snapshot %s/%s is missing the resolved root workflow", revision.Namespace, revision.Name)
-		}
-	} else {
+	switch {
+	case len(snapshot.Root.Spec.Jobs) > 0 && snapshot.Root.Workflow != nil:
+		return nil, fmt.Errorf("workflow snapshot %s/%s has both inline jobs and a root workflow", revision.Namespace, revision.Name)
+	case len(snapshot.Root.Spec.Jobs) > 0:
+	case snapshot.Root.Spec.Uses != "" && snapshot.Root.Workflow == nil:
+		return nil, fmt.Errorf("workflow snapshot %s/%s is missing the resolved root workflow", revision.Namespace, revision.Name)
+	case snapshot.Root.Spec.Uses != "":
+	default:
 		return nil, fmt.Errorf("workflow snapshot %s/%s has no root execution definition", revision.Namespace, revision.Name)
 	}
 	return snapshot, nil

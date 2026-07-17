@@ -221,8 +221,6 @@ metadata:
   namespace: default
   labels:
     kruntimes.io/root-workflowrun-uid: 7e4d41cb-69c8-4fa1-8e31-f9135512c22b
-  annotations:
-    kruntimes.io/workflow-call-path: root
   ownerReferences:
     - apiVersion: kruntimes.io/v1alpha1
       kind: WorkflowRun

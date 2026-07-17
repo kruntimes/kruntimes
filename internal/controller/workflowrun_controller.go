@@ -75,10 +75,7 @@ type workflowRunStepTarget struct {
 }
 
 func workflowRunJobs(resources *workflowRunResources) map[string]v1alpha1.JobSpec {
-	if resources.snapshot != nil {
-		return resources.snapshot.rootJobs()
-	}
-	return resources.workflowRun.Spec.Jobs
+	return resources.snapshot.rootJobs()
 }
 
 // WorkflowRunReconciler owns WorkflowRun execution-instance status.
@@ -131,16 +128,27 @@ func (r *WorkflowRunReconciler) loadWorkflowRunResources(ctx context.Context, ke
 	}
 
 	resources := &workflowRunResources{workflowRun: workflowRun}
-	if workflowRun.Status.SnapshotName != "" {
-		revision := &appsv1.ControllerRevision{}
-		if err := r.Get(ctx, client.ObjectKey{Namespace: workflowRun.Namespace, Name: workflowRun.Status.SnapshotName}, revision); err != nil {
-			return nil, fmt.Errorf("get workflow snapshot %s/%s: %w", workflowRun.Namespace, workflowRun.Status.SnapshotName, err)
+	snapshotName := workflowRun.Status.SnapshotName
+	if snapshotName == "" {
+		snapshotName = workflowSnapshotName(workflowRun)
+	}
+	revision := &appsv1.ControllerRevision{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: workflowRun.Namespace, Name: snapshotName}, revision); err == nil {
+		if revision.Labels[v1alpha1.WorkflowRootRunUIDLabel] != string(workflowRun.UID) {
+			return nil, fmt.Errorf("workflow snapshot %s/%s belongs to another workflowrun", revision.Namespace, revision.Name)
 		}
 		snapshot, err := loadWorkflowSnapshot(revision)
 		if err != nil {
 			return nil, err
 		}
 		resources.snapshot = snapshot
+	} else if !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("get workflow snapshot %s/%s: %w", workflowRun.Namespace, snapshotName, err)
+	} else if workflowRun.Status.SnapshotName != "" {
+		return nil, fmt.Errorf("get workflow snapshot %s/%s: %w", workflowRun.Namespace, snapshotName, err)
+	}
+	if resources.snapshot == nil && workflowRun.Status.Jobs != nil {
+		return nil, fmt.Errorf("workflowrun %s/%s has initialized jobs without an execution snapshot", workflowRun.Namespace, workflowRun.Name)
 	}
 
 	var runs v1alpha1.RunList
@@ -188,7 +196,7 @@ func calculateWorkflowRunPlan(resources *workflowRunResources) workflowRunPlan {
 	if len(jobs) == 0 || len(workflowRun.Status.Jobs) == 0 {
 		return plan
 	}
-	if targets := runnableStepTargets(workflowRun, jobs); len(targets) > 0 {
+	if targets := runnableStepTargets(workflowRun.Status.Jobs, jobs); len(targets) > 0 {
 		plan.action = workflowRunActionStartRunnableSteps
 		plan.targets = targets
 		return plan
@@ -212,37 +220,45 @@ func workflowRunStateFor(workflowRun *v1alpha1.WorkflowRun) workflowRunState {
 	return workflowRunStatePending
 }
 
-func (r *WorkflowRunReconciler) applyInitializeWorkflowRun(ctx context.Context, workflowRun *v1alpha1.WorkflowRun) error {
-	snapshot, err := r.resolveWorkflowRunSnapshot(ctx, workflowRun)
-	if err != nil {
-		if reason, rejected := workflowRunRejectionReason(err); rejected {
-			return rejectWorkflowRun(workflowRun, reason, err.Error())
+func (r *WorkflowRunReconciler) applyInitializeWorkflowRun(ctx context.Context, resources *workflowRunResources) error {
+	workflowRun := resources.workflowRun
+	snapshot := resources.snapshot
+	snapshotName := workflowRun.Status.SnapshotName
+	if snapshot == nil {
+		var err error
+		snapshot, err = r.resolveWorkflowRunSnapshot(ctx, workflowRun)
+		if err != nil {
+			if reason, rejected := workflowRunRejectionReason(err); rejected {
+				return rejectWorkflowRun(workflowRun, reason, err.Error())
+			}
+			return err
 		}
-		return err
-	}
-	if err := validateResolvedWorkflowJobs(snapshot.rootJobs()); err != nil {
-		return rejectWorkflowRun(workflowRun, "WorkflowValidationFailed", err.Error())
-	}
-	snapshotName, persistedSnapshot, err := r.ensureWorkflowSnapshot(ctx, workflowRun, snapshot)
-	if err != nil {
-		if reason, rejected := workflowRunRejectionReason(err); rejected {
-			return rejectWorkflowRun(workflowRun, reason, err.Error())
+		if err := validateResolvedWorkflowJobs(snapshot.rootJobs()); err != nil {
+			return rejectWorkflowRun(workflowRun, "WorkflowValidationFailed", err.Error())
 		}
-		return err
+		persistedName, persistedSnapshot, err := r.ensureWorkflowSnapshot(ctx, workflowRun, snapshot)
+		if err != nil {
+			if reason, rejected := workflowRunRejectionReason(err); rejected {
+				return rejectWorkflowRun(workflowRun, reason, err.Error())
+			}
+			return err
+		}
+		snapshotName = persistedName
+		snapshot = persistedSnapshot
+		resources.snapshot = snapshot
 	}
 	workflowRun.Status.Phase = v1alpha1.WorkflowPending
 	workflowRun.Status.Message = ""
-	workflowRun.Status.Jobs = resolvedJobStatuses(persistedSnapshot.rootJobs())
+	workflowRun.Status.Jobs = resolvedJobStatuses(snapshot.rootJobs())
 	workflowRun.Status.SnapshotName = snapshotName
 	setWorkflowRunAcceptedCondition(workflowRun, metav1.ConditionTrue, "Accepted", "WorkflowRun accepted and initialized")
 	return nil
 }
 
 func (r *WorkflowRunReconciler) applyWorkflowRunAction(ctx context.Context, resources *workflowRunResources, plan workflowRunPlan) error {
-	workflowRun := resources.workflowRun
 	switch plan.action {
 	case workflowRunActionInitialize:
-		return r.applyInitializeWorkflowRun(ctx, workflowRun)
+		return r.applyInitializeWorkflowRun(ctx, resources)
 	case workflowRunActionStartRunnableSteps:
 		return r.applyStartRunnableSteps(ctx, resources, plan.targets)
 	case workflowRunActionRequestChildRunCancellation:
@@ -456,7 +472,7 @@ func recordStepRun(workflowRun *v1alpha1.WorkflowRun, jobName string, stepIndex 
 	workflowRun.Status.Phase = v1alpha1.WorkflowRunning
 }
 
-func runnableStepTargets(workflowRun *v1alpha1.WorkflowRun, jobs map[string]v1alpha1.JobSpec) []workflowRunStepTarget {
+func runnableStepTargets(statuses map[string]v1alpha1.JobStatus, jobs map[string]v1alpha1.JobSpec) []workflowRunStepTarget {
 	jobNames := make([]string, 0, len(jobs))
 	for jobName := range jobs {
 		jobNames = append(jobNames, jobName)
@@ -466,11 +482,11 @@ func runnableStepTargets(workflowRun *v1alpha1.WorkflowRun, jobs map[string]v1al
 	targets := make([]workflowRunStepTarget, 0, len(jobNames))
 	for _, jobName := range jobNames {
 		job := jobs[jobName]
-		status, ok := workflowRun.Status.Jobs[jobName]
+		status, ok := statuses[jobName]
 		if !ok || len(status.Steps) != len(job.Steps) {
 			continue
 		}
-		if jobReadyToStart(status, workflowRun.Status.Jobs) && status.Steps[0].RunName == "" {
+		if jobReadyToStart(status, statuses) && status.Steps[0].RunName == "" {
 			targets = append(targets, workflowRunStepTarget{jobName: jobName, stepIndex: 0})
 			continue
 		}

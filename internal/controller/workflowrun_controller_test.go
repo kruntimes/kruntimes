@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -176,14 +177,14 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 			Jobs:  resolvedJobStatuses(map[string]v1alpha1.JobSpec{"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}}}),
 		},
 	}
-	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: pending})
+	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: pending, snapshot: snapshotForWorkflowRun(pending)})
 	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableSteps || len(plan.targets) != 1 || plan.targets[0] != (workflowRunStepTarget{jobName: "build", stepIndex: 0}) {
 		t.Fatalf("pending plan = %#v, want Pending + StartRunnableSteps(build[0])", plan)
 	}
 
 	cancelled := pending.DeepCopy()
 	cancelled.Status.Phase = v1alpha1.WorkflowCancelled
-	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: cancelled})
+	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: cancelled, snapshot: snapshotForWorkflowRun(cancelled)})
 	if plan.state != workflowRunStateTerminal || plan.action != workflowRunActionNone {
 		t.Fatalf("cancelled plan = %#v, want Terminal + None", plan)
 	}
@@ -194,6 +195,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 	plan = calculateWorkflowRunPlan(&workflowRunResources{
 		workflowRun: cancelling,
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
+		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
 	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildRunCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
 		t.Fatalf("cancelling plan = %#v, want Cancelling + RequestChildRunCancellation(build-run)", plan)
@@ -205,9 +207,16 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 	plan = calculateWorkflowRunPlan(&workflowRunResources{
 		workflowRun: cancelling,
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
+		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
 	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildRunCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
 		t.Fatalf("late child plan = %#v, want cancellation repair", plan)
+	}
+}
+
+func snapshotForWorkflowRun(workflowRun *v1alpha1.WorkflowRun) *workflowExecutionSnapshot {
+	return &workflowExecutionSnapshot{
+		Root: workflowSnapshotRoot{Spec: *workflowRun.Spec.DeepCopy()},
 	}
 }
 
@@ -230,6 +239,7 @@ func TestCalculateWorkflowRunPlanProjectsStatusBeforeStartingReadyJobs(t *testin
 	plan := calculateWorkflowRunPlan(&workflowRunResources{
 		workflowRun: workflowRun,
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): buildRun},
+		snapshot:    snapshotForWorkflowRun(workflowRun),
 	})
 	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
 	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
@@ -255,7 +265,7 @@ func TestPlanWorkflowRunStartsAllRunnableSteps(t *testing.T) {
 		},
 	}
 
-	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun})
+	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
 	want := []workflowRunStepTarget{{jobName: "build", stepIndex: 1}, {jobName: "lint", stepIndex: 0}}
 	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
@@ -277,7 +287,7 @@ func TestCalculateWorkflowRunPlanFinalizesJobsBeforeStartingReadyJobs(t *testing
 		},
 	}
 
-	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun})
+	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
 	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
 	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
@@ -747,13 +757,18 @@ func TestWorkflowRunReconcilerDoesNotPatchDerivedStatusWhenActionFails(t *testin
 		WithObjects(workflowRun, compileRun).
 		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
 		WithInterceptorFuncs(interceptor.Funcs{
-			Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+			Create: func(ctx context.Context, underlying client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if _, ok := obj.(*appsv1.ControllerRevision); ok {
+					return underlying.Create(ctx, obj, opts...)
+				}
 				return createErr
 			},
 		}).
 		Build()
 	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
-	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)})
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+	seedInitializedWorkflowRunSnapshot(t, reconciler, req)
+	_, err := reconciler.Reconcile(context.Background(), req)
 	if !errors.Is(err, createErr) {
 		t.Fatalf("Reconcile error = %v, want %v", err, createErr)
 	}
@@ -811,6 +826,7 @@ func TestWorkflowRunReconcilerRecoversAfterRestartAcrossStatusPatchFailure(t *te
 	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
 
 	firstController := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	seedInitializedWorkflowRunSnapshot(t, firstController, req)
 	if _, err := firstController.Reconcile(context.Background(), req); !errors.Is(err, statusErr) {
 		t.Fatalf("first Reconcile error = %v, want %v", err, statusErr)
 	}
@@ -1266,6 +1282,74 @@ func TestWorkflowRunReconcilerExecutesTopLevelUsesFromSnapshot(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunReconcilerRecoversSnapshotBeforeStatusPatch(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default"},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"compile": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "echo snapshot"}}},
+		}},
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "release-uid"},
+		Spec:       v1alpha1.WorkflowRunSpec{Uses: workflow.Name},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflow, workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+
+	// Simulate a crash after the immutable revision is created but before the
+	// WorkflowRun status patch records its name.
+	snapshot, err := reconciler.resolveWorkflowRunSnapshot(context.Background(), workflowRun)
+	if err != nil {
+		t.Fatalf("resolve workflow snapshot: %v", err)
+	}
+	if _, _, err := reconciler.ensureWorkflowSnapshot(context.Background(), workflowRun, snapshot); err != nil {
+		t.Fatalf("persist workflow snapshot: %v", err)
+	}
+	workflow.Spec.Jobs["compile"] = v1alpha1.JobSpec{RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "echo mutable"}}}
+	if err := c.Update(context.Background(), workflow); err != nil {
+		t.Fatalf("update reusable workflow: %v", err)
+	}
+
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+	reconcileWorkflowRun(t, reconciler, req, 2)
+	var runs v1alpha1.RunList
+	if err := c.List(context.Background(), &runs, client.InNamespace(workflowRun.Namespace)); err != nil {
+		t.Fatalf("list child runs: %v", err)
+	}
+	if len(runs.Items) != 1 || runs.Items[0].Spec.Source == nil || runs.Items[0].Spec.Source.Inline == nil || *runs.Items[0].Spec.Source.Inline != "echo snapshot" {
+		t.Fatalf("child runs = %#v, want execution from recovered immutable snapshot", runs.Items)
+	}
+}
+
+func TestWorkflowRunReconcilerRejectsInitializedRunWithoutSnapshot(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "echo build"}}},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowPending,
+			Jobs:  resolvedJobStatuses(map[string]v1alpha1.JobSpec{"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "echo build"}}}}),
+		},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)})
+	if err == nil || !strings.Contains(err.Error(), "initialized jobs without an execution snapshot") {
+		t.Fatalf("Reconcile error = %v, want missing execution snapshot", err)
+	}
+}
+
 func TestResolveWorkflowRunSnapshotResolvesNestedCalls(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 	smoke := &v1alpha1.Workflow{
@@ -1493,10 +1577,38 @@ func ptrTo(value string) *string {
 
 func reconcileWorkflowRun(t *testing.T, reconciler *WorkflowRunReconciler, req ctrl.Request, times int) {
 	t.Helper()
+	seedInitializedWorkflowRunSnapshot(t, reconciler, req)
 	for range times {
 		if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
 			t.Fatalf("reconcile workflowrun: %v", err)
 		}
+	}
+}
+
+// Existing plan tests construct an already-initialized WorkflowRun directly.
+// Seed the immutable revision they would have received during initialization so
+// they exercise the same execution model as a real reconciliation.
+func seedInitializedWorkflowRunSnapshot(t *testing.T, reconciler *WorkflowRunReconciler, req ctrl.Request) {
+	t.Helper()
+	workflowRun := &v1alpha1.WorkflowRun{}
+	if err := reconciler.Get(context.Background(), req.NamespacedName, workflowRun); err != nil {
+		t.Fatalf("get workflowrun fixture: %v", err)
+	}
+	if workflowRun.Status.Jobs == nil || workflowRun.Status.SnapshotName != "" {
+		return
+	}
+	revision := &appsv1.ControllerRevision{}
+	if err := reconciler.Get(context.Background(), client.ObjectKey{Namespace: workflowRun.Namespace, Name: workflowSnapshotName(workflowRun)}, revision); err == nil {
+		return
+	} else if !apierrors.IsNotFound(err) {
+		t.Fatalf("get workflow snapshot fixture: %v", err)
+	}
+	snapshot, err := reconciler.resolveWorkflowRunSnapshot(context.Background(), workflowRun)
+	if err != nil {
+		t.Fatalf("resolve workflow snapshot fixture: %v", err)
+	}
+	if _, _, err := reconciler.ensureWorkflowSnapshot(context.Background(), workflowRun, snapshot); err != nil {
+		t.Fatalf("persist workflow snapshot fixture: %v", err)
 	}
 }
 
