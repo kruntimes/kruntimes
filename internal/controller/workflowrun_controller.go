@@ -59,7 +59,7 @@ const (
 type workflowRunResources struct {
 	workflowRun *v1alpha1.WorkflowRun
 	childRuns   map[string]*v1alpha1.Run
-	jobs        map[string]v1alpha1.JobSpec
+	snapshot    *workflowExecutionSnapshot
 }
 
 type workflowRunPlan struct {
@@ -75,8 +75,8 @@ type workflowRunStepTarget struct {
 }
 
 func workflowRunJobs(resources *workflowRunResources) map[string]v1alpha1.JobSpec {
-	if resources.jobs != nil {
-		return resources.jobs
+	if resources.snapshot != nil {
+		return resources.snapshot.rootJobs
 	}
 	return resources.workflowRun.Spec.Jobs
 }
@@ -132,15 +132,15 @@ func (r *WorkflowRunReconciler) loadWorkflowRunResources(ctx context.Context, ke
 
 	resources := &workflowRunResources{workflowRun: workflowRun}
 	if workflowRun.Status.SnapshotName != "" {
-		snapshot := &appsv1.ControllerRevision{}
-		if err := r.Get(ctx, client.ObjectKey{Namespace: workflowRun.Namespace, Name: workflowRun.Status.SnapshotName}, snapshot); err != nil {
+		revision := &appsv1.ControllerRevision{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: workflowRun.Namespace, Name: workflowRun.Status.SnapshotName}, revision); err != nil {
 			return nil, fmt.Errorf("get workflow snapshot %s/%s: %w", workflowRun.Namespace, workflowRun.Status.SnapshotName, err)
 		}
-		_, jobs, err := loadWorkflowSnapshot(snapshot)
+		snapshot, err := loadWorkflowSnapshot(revision)
 		if err != nil {
 			return nil, err
 		}
-		resources.jobs = jobs
+		resources.snapshot = snapshot
 	}
 
 	var runs v1alpha1.RunList
@@ -223,7 +223,7 @@ func (r *WorkflowRunReconciler) applyInitializeWorkflowRun(ctx context.Context, 
 	if err := validateResolvedWorkflowJobs(jobs); err != nil {
 		return rejectWorkflowRun(workflowRun, "WorkflowValidationFailed", err.Error())
 	}
-	snapshotName, snapshotJobs, err := r.ensureWorkflowSnapshot(ctx, workflowRun, snapshot)
+	snapshotName, persistedSnapshot, err := r.ensureWorkflowSnapshot(ctx, workflowRun, snapshot)
 	if err != nil {
 		if reason, rejected := workflowRunRejectionReason(err); rejected {
 			return rejectWorkflowRun(workflowRun, reason, err.Error())
@@ -232,7 +232,7 @@ func (r *WorkflowRunReconciler) applyInitializeWorkflowRun(ctx context.Context, 
 	}
 	workflowRun.Status.Phase = v1alpha1.WorkflowPending
 	workflowRun.Status.Message = ""
-	workflowRun.Status.Jobs = resolvedJobStatuses(snapshotJobs)
+	workflowRun.Status.Jobs = resolvedJobStatuses(persistedSnapshot.rootJobs)
 	workflowRun.Status.SnapshotName = snapshotName
 	setWorkflowRunAcceptedCondition(workflowRun, metav1.ConditionTrue, "Accepted", "WorkflowRun accepted and initialized")
 	return nil

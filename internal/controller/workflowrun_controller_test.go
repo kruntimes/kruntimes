@@ -1244,6 +1244,13 @@ func TestWorkflowRunReconcilerExecutesTopLevelUsesFromSnapshot(t *testing.T) {
 
 	// Initialization captures the reusable definition but creates no Run yet.
 	reconcileWorkflowRun(t, reconciler, req, 1)
+	resources, err := reconciler.loadWorkflowRunResources(context.Background(), client.ObjectKeyFromObject(workflowRun))
+	if err != nil {
+		t.Fatalf("load workflowrun resources: %v", err)
+	}
+	if resources.snapshot == nil || resources.snapshot.rootJobs["compile"].Steps[0].Run != "echo snapshot" {
+		t.Fatalf("loaded snapshot = %#v, want immutable root execution definition", resources.snapshot)
+	}
 	workflow.Spec.Jobs["compile"] = v1alpha1.JobSpec{RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "echo mutable"}}}
 	if err := c.Update(context.Background(), workflow); err != nil {
 		t.Fatalf("update reusable workflow: %v", err)

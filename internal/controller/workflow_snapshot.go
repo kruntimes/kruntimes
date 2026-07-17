@@ -32,6 +32,11 @@ const (
 type workflowExecutionSnapshot struct {
 	Root      workflowSnapshotRoot             `json:"root"`
 	Workflows map[string]v1alpha1.WorkflowSpec `json:"workflows,omitempty"`
+
+	// rootJobs is decoded from Root.Spec when the snapshot is loaded. It keeps
+	// planning on the immutable execution definition without duplicating it in
+	// the persisted ControllerRevision payload.
+	rootJobs map[string]v1alpha1.JobSpec
 }
 
 type workflowSnapshotRoot struct {
@@ -140,7 +145,7 @@ func containsString(values []string, value string) bool {
 	return false
 }
 
-func (r *WorkflowRunReconciler) ensureWorkflowSnapshot(ctx context.Context, workflowRun *v1alpha1.WorkflowRun, snapshot *workflowExecutionSnapshot) (string, map[string]v1alpha1.JobSpec, error) {
+func (r *WorkflowRunReconciler) ensureWorkflowSnapshot(ctx context.Context, workflowRun *v1alpha1.WorkflowRun, snapshot *workflowExecutionSnapshot) (string, *workflowExecutionSnapshot, error) {
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		return "", nil, fmt.Errorf("serialize workflow snapshot: %w", err)
@@ -168,11 +173,11 @@ func (r *WorkflowRunReconciler) ensureWorkflowSnapshot(ctx context.Context, work
 		return "", nil, fmt.Errorf("set workflowrun owner reference on snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
 	}
 	if err := r.Create(ctx, revision); err == nil {
-		_, jobs, loadErr := loadWorkflowSnapshot(revision)
+		loaded, loadErr := loadWorkflowSnapshot(revision)
 		if loadErr != nil {
 			return "", nil, loadErr
 		}
-		return name, jobs, nil
+		return name, loaded, nil
 	} else if !apierrors.IsAlreadyExists(err) {
 		return "", nil, fmt.Errorf("create workflow snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
 	}
@@ -184,36 +189,37 @@ func (r *WorkflowRunReconciler) ensureWorkflowSnapshot(ctx context.Context, work
 	if existing.Labels[v1alpha1.WorkflowRootRunUIDLabel] != string(workflowRun.UID) {
 		return "", nil, fmt.Errorf("workflow snapshot %s/%s belongs to another workflowrun", existing.Namespace, existing.Name)
 	}
-	_, jobs, err := loadWorkflowSnapshot(existing)
+	loaded, err := loadWorkflowSnapshot(existing)
 	if err != nil {
 		return "", nil, err
 	}
-	return name, jobs, nil
+	return name, loaded, nil
 }
 
-func loadWorkflowSnapshot(revision *appsv1.ControllerRevision) (*workflowExecutionSnapshot, map[string]v1alpha1.JobSpec, error) {
+func loadWorkflowSnapshot(revision *appsv1.ControllerRevision) (*workflowExecutionSnapshot, error) {
 	snapshot := &workflowExecutionSnapshot{}
 	if err := json.Unmarshal(revision.Data.Raw, snapshot); err != nil {
-		return nil, nil, fmt.Errorf("decode workflow snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
+		return nil, fmt.Errorf("decode workflow snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
 	}
 	var jobs map[string]v1alpha1.JobSpec
 	switch snapshot.Root.Kind {
 	case workflowSnapshotRootKindWorkflowRun:
 		var spec v1alpha1.WorkflowRunSpec
 		if err := json.Unmarshal(snapshot.Root.Spec, &spec); err != nil {
-			return nil, nil, fmt.Errorf("decode workflowrun root snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
+			return nil, fmt.Errorf("decode workflowrun root snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
 		}
 		jobs = spec.Jobs
 	case workflowSnapshotRootKindWorkflow:
 		var spec v1alpha1.WorkflowSpec
 		if err := json.Unmarshal(snapshot.Root.Spec, &spec); err != nil {
-			return nil, nil, fmt.Errorf("decode workflow root snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
+			return nil, fmt.Errorf("decode workflow root snapshot %s/%s: %w", revision.Namespace, revision.Name, err)
 		}
 		jobs = spec.Jobs
 	default:
-		return nil, nil, fmt.Errorf("workflow snapshot %s/%s has unsupported root kind %q", revision.Namespace, revision.Name, snapshot.Root.Kind)
+		return nil, fmt.Errorf("workflow snapshot %s/%s has unsupported root kind %q", revision.Namespace, revision.Name, snapshot.Root.Kind)
 	}
-	return snapshot, jobs, nil
+	snapshot.rootJobs = jobs
+	return snapshot, nil
 }
 
 func workflowSnapshotName(workflowRun *v1alpha1.WorkflowRun) string {
