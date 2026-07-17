@@ -108,8 +108,8 @@ type WorkflowRunStatus struct {
 	// +kubebuilder:validation:MaxProperties=64
 	Jobs map[string]JobStatus `json:"jobs,omitempty"`
 
-	// SnapshotName is the name of the immutable ControllerRevision index that
-	// captures the WorkflowRun's resolved execution definitions.
+	// SnapshotName is the name of the immutable ControllerRevision that captures
+	// the WorkflowRun's resolved execution definitions.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	SnapshotName string `json:"snapshotName,omitempty"`

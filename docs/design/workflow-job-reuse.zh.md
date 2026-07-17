@@ -176,8 +176,9 @@ immutable execution snapshot。
 `ControllerRevision.data` 是对直接序列化的 public specs 的一个很小的 envelope，不引入第二套
 Workflow model：
 
-- inline root 的 `root.spec` 是 accepted 时完整的 `WorkflowRun.spec`；root `spec.uses` 则保存
-  解析到的 `Workflow.spec`；
+- `root.spec` 始终是 accepted 时完整的 `WorkflowRun.spec`；
+- root 使用 reusable Workflow 时，`root.workflow` 保存该引用解析到的完整 `Workflow.spec`；
+  inline root 则省略它；
 - `workflows[call-path]` 是每个 job-level call 解析到的完整 `Workflow.spec`。
 
 root revision name 保存在 `WorkflowRun.status.snapshotName`。nested child 通过保留 metadata 接收
@@ -196,8 +197,6 @@ metadata:
   namespace: default
   labels:
     kruntimes.io/root-workflowrun-uid: 7e4d41cb-69c8-4fa1-8e31-f9135512c22b
-  annotations:
-    kruntimes.io/workflow-call-path: root
   ownerReferences:
     - apiVersion: kruntimes.io/v1alpha1
       kind: WorkflowRun
@@ -208,7 +207,6 @@ metadata:
 revision: 1
 data:
   root:
-    kind: WorkflowRun
     spec: # accepted 时完整的 WorkflowRun.spec
       jobs:
         build: { runs-on: bash, steps: [{ name: package, run: make package }] }
@@ -228,7 +226,8 @@ data:
         smoke: { runs-on: bash, steps: [{ name: check, run: check-service }] }
 ```
 
-root snapshot 直接保存 `WorkflowRun.spec`、`root/jobs/deploy` 对应的解析后 `Workflow.spec`，以及
+root snapshot 始终保存 `WorkflowRun.spec`。root 使用 `spec.uses` 时，还会在 `root.workflow`
+保存解析后的 `Workflow.spec`。它还保存 `root/jobs/deploy` 对应的解析后 `Workflow.spec`，以及
 `root/jobs/deploy/jobs/verify` 对应的 nested `Workflow.spec`。当 `deploy` runnable 时，controller
 在 caller context 中求值已存储的 `with.environment`，并使用相同的 snapshot name 与
 `root/jobs/deploy` call path 创建 child WorkflowRun。该 child 后续会从同一份 snapshot 解析

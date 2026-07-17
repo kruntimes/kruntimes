@@ -195,8 +195,10 @@ Each root WorkflowRun owns exactly one snapshot `ControllerRevision`.
 `ControllerRevision.data` is a small envelope around direct serialized public
 specs, not a second Workflow model:
 
-- `root.spec` is the exact accepted `WorkflowRun.spec` for an inline root, or
-  the resolved `Workflow.spec` for a root `spec.uses`;
+- `root.spec` is always the exact accepted `WorkflowRun.spec`;
+- `root.workflow`, when the root uses a reusable Workflow, is the exact
+  resolved `Workflow.spec` for that reference; it is omitted for an inline
+  root;
 - `workflows[call-path]` is the exact `Workflow.spec` resolved for each
   job-level call.
 
@@ -219,8 +221,6 @@ metadata:
   namespace: default
   labels:
     kruntimes.io/root-workflowrun-uid: 7e4d41cb-69c8-4fa1-8e31-f9135512c22b
-  annotations:
-    kruntimes.io/workflow-call-path: root
   ownerReferences:
     - apiVersion: kruntimes.io/v1alpha1
       kind: WorkflowRun
@@ -231,7 +231,6 @@ metadata:
 revision: 1
 data:
   root:
-    kind: WorkflowRun
     spec: # exact accepted WorkflowRun.spec
       jobs:
         build: { runs-on: bash, steps: [{ name: package, run: make package }] }
@@ -251,9 +250,10 @@ data:
         smoke: { runs-on: bash, steps: [{ name: check, run: check-service }] }
 ```
 
-The root snapshot stores the direct `WorkflowRun.spec`, the resolved
-`Workflow.spec` for `root/jobs/deploy`, and the nested `Workflow.spec` for
-`root/jobs/deploy/jobs/verify`. When `deploy` becomes runnable, the controller
+The root snapshot always stores the direct `WorkflowRun.spec`. For a root
+`spec.uses`, it also stores that resolved `Workflow.spec` at `root.workflow`.
+It stores the resolved `Workflow.spec` for `root/jobs/deploy`, and the nested
+`Workflow.spec` for `root/jobs/deploy/jobs/verify`. When `deploy` becomes runnable, the controller
 evaluates its stored `with.environment` in the caller context and creates a
 child WorkflowRun with the same snapshot name and the `root/jobs/deploy` call
 path. That child later resolves `verify` from the same snapshot. Neither
