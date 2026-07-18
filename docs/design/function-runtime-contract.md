@@ -25,28 +25,23 @@ Adding these RPCs changes the experimental custom Runtime protocol. The exact
 shape and semantics below require review before `runtime.proto`, generated
 stubs, or built-in Runtime implementations change.
 
-## Registration Epoch
+## Registration Identity
 
-Every operation is scoped to a Run UID and attempt:
+For a task Run, `Run.status.attempt` counts execution attempts. For a function
+Run, it counts registration lifecycle attempts: the initial registration is
+`1`, and the shared retry engine increments it only after a registration
+failure enters retry or reassignment. Retrying an uncertain Pod-local
+`RegisterFunction` RPC for the same registration attempt is idempotent and
+does not change Run status.
 
-```protobuf
-message FunctionIdentity {
-  // Kubernetes Run UID, never its mutable name.
-  string run_uid = 1;
-  // One-based Run execution attempt from Run.status.attempt.
-  int32 attempt = 2;
-}
-```
-
-`attempt` is not an invocation counter. It is the current one-based execution
-attempt from `Run.status.attempt`: the initial execution is `1`, and the shared
-retry engine increments it before a retry is scheduled. `invocation_id` is
+`registration_attempt` is not an invocation counter. `invocation_id` is
 separate caller-generated correlation data for one function call.
 
-`run_uid` plus `attempt` is the local registration epoch. runtimed invokes a
-local Runtime Server only while it owns that exact execution epoch. A stale
-operation must never change or remove a newer registration for the same Run
-UID.
+`RegisterFunction` uses Run UID plus `registration_attempt` to establish a
+new local registration generation. It returns an opaque `registration_id`.
+All later Pod-local operations use that ID instead of repeating the attempt.
+The Runtime Server binds the ID to its Run UID and registration attempt, and a
+stale ID must never change, invoke, or remove a newer registration.
 
 `registration_digest` is a lowercase SHA-256 digest calculated by runtimed
 from canonical, immutable registration inputs: resolved source identity,
@@ -54,17 +49,18 @@ handler, environment, and runtime-visible registration settings. It excludes
 the transient working-directory path. It is an idempotency check, not a
 credential.
 
-### Example Calls and Retry Fence
+### Example Calls and Registration Fence
 
 The following illustrates the Pod-local calls made by runtimed. It is an
 example of the proposed protocol, not a public gateway command.
 
-1. A function Run with UID `2b5d...` starts its first execution on Runtime Pod
-   A. `Run.status.attempt` is `1`, so runtimed A registers the function:
+1. A function Run with UID `2b5d...` starts its first registration on Runtime
+   Pod A. `Run.status.attempt` is `1`, so runtimed A registers the function:
 
    ```console
    grpcurl -plaintext -d '{
-     "identity": {"runUid": "2b5d...", "attempt": 1},
+     "runUid": "2b5d...",
+     "registrationAttempt": 1,
      "workingDir": "/workspace/runs/2b5d",
      "handler": "handler.handle",
      "idleTimeoutSeconds": 300,
@@ -72,12 +68,27 @@ example of the proposed protocol, not a public gateway command.
    }' 127.0.0.1:9090 executor.v1.Runtime/RegisterFunction
    ```
 
+   A successful response contains a server-generated registration reference:
+
+   ```json
+   {
+     "registration": {
+       "runUid": "2b5d...",
+       "registrationId": "reg_01J..."
+     },
+     "state": "FUNCTION_REGISTRATION_STATE_READY"
+   }
+   ```
+
 2. A gateway request is routed to runtimed A. It assigns an invocation ID and
    sends the payload without creating another Kubernetes object:
 
    ```console
    grpcurl -plaintext -d '{
-     "identity": {"runUid": "2b5d...", "attempt": 1},
+     "registration": {
+       "runUid": "2b5d...",
+       "registrationId": "reg_01J..."
+     },
      "invocationId": "01J...",
      "contentType": "application/json",
      "input": "eyJjb21tYW5kIjoic3RhdHVzIn0="
@@ -85,18 +96,19 @@ example of the proposed protocol, not a public gateway command.
    ```
 
    In protobuf JSON, `bytes` is base64-encoded; the decoded input is
-   `{"command":"status"}`. Another call gets another `invocation_id`, but keeps
-   attempt `1` while the same Run execution remains active.
+   `{"command":"status"}`. Another call gets another `invocation_id`, but uses
+   the same registration ID while this registration remains active.
 
-3. If the Runtime Pod is lost and the existing retry policy allows a retry, the
-   shared retry engine advances `Run.status.attempt` to `2` before the scheduler
-   assigns Runtime Pod B. runtimed B registers `{run_uid: "2b5d...", attempt:
-   2}`. A delayed register, invoke, or unregister request for attempt `1` must
-   return `FailedPrecondition` once that Runtime Server has observed attempt
-   `2`; it cannot replace or delete the newer registration.
+3. If the registration fails and the retry policy allows recovery, the shared
+   retry engine advances `Run.status.attempt` to `2` before the scheduler
+   assigns or reassigns a Runtime Pod. The next `RegisterFunction` uses
+   `registration_attempt: 2` and receives a new registration ID. An invoke or
+   unregister request carrying `reg_01J...` must return `FailedPrecondition`
+   after the newer registration supersedes it; it cannot affect the new
+   registration.
 
 The gateway and runtimed also fence routing using assigned Pod identity. The
-attempt fence protects the Runtime Server's local registration state; it does
+registration ID protects the Runtime Server's local registration state; it does
 not make an invocation exactly once.
 
 ## Proposed Protobuf API
@@ -112,29 +124,32 @@ service Runtime {
   rpc UnregisterFunction(UnregisterFunctionRequest) returns (UnregisterFunctionResponse);
 }
 
-message FunctionIdentity {
+message FunctionRegistration {
+  // Kubernetes Run UID, never its mutable name.
   string run_uid = 1;
-  int32 attempt = 2;
+  // Opaque Runtime Server-generated ID for one local registration generation.
+  string registration_id = 2;
 }
 
 message RegisterFunctionRequest {
-  FunctionIdentity identity = 1;
-  string working_dir = 2;
-  string handler = 3;
-  map<string, string> env = 4;
-  int64 idle_timeout_seconds = 5;
-  string registration_digest = 6;
+  string run_uid = 1;
+  int32 registration_attempt = 2;
+  string working_dir = 3;
+  string handler = 4;
+  map<string, string> env = 5;
+  int64 idle_timeout_seconds = 6;
+  string registration_digest = 7;
 }
 
 message RegisterFunctionResponse {
-  FunctionIdentity identity = 1;
+  FunctionRegistration registration = 1;
   FunctionRegistrationState state = 2;
 }
 
-message FunctionStatusRequest { FunctionIdentity identity = 1; }
+message FunctionStatusRequest { FunctionRegistration registration = 1; }
 
 message FunctionStatusResponse {
-  FunctionIdentity identity = 1;
+  FunctionRegistration registration = 1;
   FunctionRegistrationState state = 2;
   int32 in_flight = 3;
   int64 last_activity_unix_nano = 4;
@@ -142,7 +157,7 @@ message FunctionStatusResponse {
 }
 
 message InvokeFunctionRequest {
-  FunctionIdentity identity = 1;
+  FunctionRegistration registration = 1;
   string invocation_id = 2;
   bytes input = 3;
   string content_type = 4;
@@ -156,7 +171,7 @@ message FunctionArtifactOutput {
 }
 
 message InvokeFunctionResponse {
-  FunctionIdentity identity = 1;
+  FunctionRegistration registration = 1;
   string invocation_id = 2;
   bytes output = 3;
   string content_type = 4;
@@ -165,12 +180,12 @@ message InvokeFunctionResponse {
 }
 
 message UnregisterFunctionRequest {
-  FunctionIdentity identity = 1;
+  FunctionRegistration registration = 1;
   bool cancel_in_flight = 2;
   int64 drain_timeout_millis = 3;
 }
 
-message UnregisterFunctionResponse { FunctionIdentity identity = 1; }
+message UnregisterFunctionResponse { FunctionRegistration registration = 1; }
 
 enum FunctionRegistrationState {
   FUNCTION_REGISTRATION_STATE_UNSPECIFIED = 0;
@@ -189,27 +204,29 @@ never written to `Run.status`.
 ## Registration and Status Semantics
 
 `RegisterFunction` validates its working directory, handler, environment,
-timeout, and digest before accepting work.
+timeout, digest, and one-based `registration_attempt` before accepting work.
 
-- Repeating the same identity and digest returns the current state without
-  reinitializing the function.
-- A different digest for the same identity returns `AlreadyExists` and does
-  not replace the registration.
-- A stale attempt returns `FailedPrecondition`; it cannot affect a newer
-  registration.
+- Repeating the same Run UID, registration attempt, and digest returns the
+  current registration reference without reinitializing the function.
+- A different digest for the same Run UID and registration attempt returns
+  `AlreadyExists` and does not replace the registration.
+- A higher registration attempt supersedes an older local registration and
+  creates a new opaque registration ID. A lower attempt returns
+  `FailedPrecondition`.
 - Permanent initialization failure is surfaced as `FAILED` with a bounded
   `fatal_error` through `FunctionStatus`.
 
 `FunctionStatus` only reads local Runtime Server state. `last_activity_unix_nano`
 is zero until there is completed or in-flight work to report. `fatal_error` is
-bounded diagnostic text, not logs. `NotFound` means no exact registration;
-`FailedPrecondition` means a mismatched epoch. runtimed polls it at a bounded
-cadence for health and idle timeout, never writing each activity update to
-Kubernetes.
+bounded diagnostic text, not logs. `NotFound` means no registration has this
+Run UID; `FailedPrecondition` means its registration ID is stale, draining, or
+unready. runtimed polls it at a bounded cadence for health and idle timeout,
+never writing each activity update to Kubernetes.
 
 ## Invocation Semantics
 
-`InvokeFunction` requires a `READY` registration for the exact identity. v0.x
+`InvokeFunction` requires a `READY` registration for the supplied registration
+reference. v0.x
 allows one in-flight invocation per function Run and does not queue requests.
 
 - `invocation_id` is caller-generated correlation data, limited to 128 bytes.
@@ -242,15 +259,16 @@ invokes. With `cancel_in_flight=false`, it waits no longer than
 `drain_timeout_millis` for the active invocation. With `cancel_in_flight=true`,
 it cancels immediately, then releases registration-local state.
 
-Unregistering an absent exact epoch succeeds. Unregistering an old attempt
-while a newer attempt exists returns `FailedPrecondition`, preventing late
-cleanup from deleting a recovered registration.
+Unregistering an absent registration succeeds. Unregistering a stale
+registration ID returns `FailedPrecondition` and cannot delete a newer
+registration for the same Run UID.
 
 ## Limits and Error Mapping
 
 | Value | Initial limit | Enforcement |
 | --- | ---: | --- |
 | Request body | 1 MiB | Gateway and runtimed |
+| Registration ID | 128 bytes | Runtime Server and runtimed |
 | Invocation ID | 128 bytes | Gateway and runtimed |
 | Response body | 1 MiB | runtimed |
 | Outputs | Existing Run output limits | runtimed |
@@ -262,8 +280,8 @@ cleanup from deleting a recovered registration.
 | --- | --- | --- |
 | `InvalidArgument` | Invalid handler, path, payload, or limit | HTTP 400 |
 | `NotFound` | Unknown registration | HTTP 404 or 503 after cache recheck |
-| `AlreadyExists` | Same epoch, different digest | Registration failure |
-| `FailedPrecondition` | Stale, draining, or unready epoch | HTTP 503 |
+| `AlreadyExists` | Same registration attempt, different digest | Registration failure |
+| `FailedPrecondition` | Stale registration ID or unready registration | HTTP 503 |
 | `ResourceExhausted` | Invocation already active | HTTP 429 |
 | `DeadlineExceeded` | Invocation deadline elapsed | HTTP 504 |
 | `Unavailable` | Runtime Server cannot accept work | HTTP 503 and lifecycle recovery |
@@ -289,8 +307,9 @@ there is no fallback that emulates function invocation through `Execute`.
 
 ## Review Decisions Requested
 
-1. Use Run UID plus attempt as the registration epoch and stale-operation
-   fence.
+1. Use `Run.status.attempt` as the function registration lifecycle attempt;
+   use the Runtime Server-generated registration ID for subsequent local calls
+   and stale-operation fencing.
 2. Use opaque bytes plus content type for local invoke payloads; JSON is the
    first gateway encoding.
 3. Let Runtime Servers declare validated relative artifact paths while

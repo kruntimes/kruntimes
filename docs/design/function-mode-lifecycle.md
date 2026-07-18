@@ -142,9 +142,11 @@ The normal function lifecycle is:
 Pending -> Scheduled -> Running (preparing/registering) -> Ready
 ```
 
-`Run.status.startTime` is set when runtimed claims the Run. `attempt` counts
-registration attempts, including the initial attempt, using the existing
-shared retry engine.
+`Run.status.startTime` is set when runtimed claims the Run. In function mode,
+`Run.status.attempt` counts registration lifecycle attempts, including the
+initial attempt, using the existing shared retry engine. Retrying an uncertain
+Pod-local registration RPC for the same attempt is idempotent and does not
+increment status.
 
 Terminal transitions are:
 
@@ -169,7 +171,7 @@ Runtime Server error that invalidates registration makes the Run not ready and
 enters registration recovery.
 
 The Runtime Server owns the precise last-activity clock for a registration
-epoch and exposes it through `FunctionStatus`; it is not checkpointed on every
+generation and exposes it through `FunctionStatus`; it is not checkpointed on every
 invoke to etcd. If the Runtime Server process recovers its registration, it
 also recovers that clock. If the Runtime Pod is replaced, registration creates
 a new epoch and resets the idle timer. This avoids early expiry and avoids a
@@ -177,11 +179,12 @@ high-frequency Run status write path.
 
 ## Ownership Epoch and Fencing
 
-Run UID is the stable external function identity. Each registration is fenced
-by an ownership epoch made from `status.attempt`, `assignedPod`, and
-`assignedPodUID`. runtimed and Runtime Server lifecycle calls carry Run UID and
-attempt; a local gateway invokes only when its active epoch matches the newest
-cache entry.
+Run UID is the stable external function identity. A new registration is fenced
+by `status.attempt`, `assignedPod`, and `assignedPodUID`. `RegisterFunction`
+carries the Run UID and registration attempt, then returns an opaque local
+registration ID. `FunctionStatus`, `InvokeFunction`, and `UnregisterFunction`
+carry that registration ID instead of repeating the attempt. A local gateway
+invokes only when its active assignment matches the newest cache entry.
 
 Pod readiness or a stale heartbeat alone is not proof that an old function has
 stopped. Recovery first makes the old assignment unreachable through the
@@ -192,8 +195,9 @@ gateway Service and confirms one of these fences:
 - the old owning runtimed acknowledged unregister for that epoch.
 
 Only then may shared retry clear assignment and schedule a new attempt. Peer
-requests carry the expected Run UID and attempt and are rejected on mismatch.
-This prevents normal recovery from routing to two epochs at once. kruntimes
+routing requests carry the expected Run UID, registration attempt, and assigned
+Pod UID and are rejected on mismatch. This prevents normal recovery from
+routing to two assignments at once. kruntimes
 still does not promise exactly-once invocation when a network fails after
 dispatch; that separate ambiguity is defined by the invoke contract below.
 
@@ -325,14 +329,16 @@ The internal gRPC API gains idempotent lifecycle operations keyed by Run UID:
 
 - `RegisterFunction`: register working directory, handler, and environment;
 - `FunctionStatus`: report registered/readiness state, fatal errors, in-flight
-  count, and last activity for the current registration epoch;
+  count, and last activity for the current registration generation;
 - `InvokeFunction`: execute one bounded request with an invocation ID and
   timeout;
 - `UnregisterFunction`: stop new work and release the registration.
 
-Registering the same Run UID and attempt with the same immutable configuration
-succeeds idempotently. Registering that epoch with different configuration
-fails. Unregistering an absent epoch succeeds. Exact protobuf fields and
+Registering the same Run UID and registration attempt with the same immutable
+configuration succeeds idempotently and returns the same opaque registration
+ID. Registering that attempt with different configuration fails. A higher
+registration attempt creates a new generation and invalidates the old ID.
+Unregistering an absent registration succeeds. Exact protobuf fields and
 Bash/Python adapter behavior are a separate implementation PR, but they must
 preserve these semantics.
 
