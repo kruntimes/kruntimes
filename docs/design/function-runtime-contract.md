@@ -179,8 +179,10 @@ through the Runtime ArtifactStore, and returns public `ArtifactRef` values.
 This keeps storage credentials and external coordinates out of custom Runtime
 Servers.
 
-stdout and stderr use structured runtime logs keyed by Run UID and invocation
-ID. They are neither RPC response fields nor `Run.status.message` content.
+Runtime logs are structured by Run UID and invocation ID. Adapter-captured
+function output populates the RPC `output` field and is not automatically
+logged. Built-in Bash uses handler stdout as function output and stderr as
+structured logs; neither is written to `Run.status.message`.
 
 ## Unregistration
 
@@ -218,11 +220,17 @@ cleanup from deleting a recovered registration.
 ## Built-in Runtime Requirements
 
 Python imports `module.function`, passes decoded JSON input, and encodes its
-return value as JSON output. Bash treats its handler as a runtime-defined
-executable entrypoint and receives input through standard input or a bounded
-file, never shell-string interpolation. Both adapters operate beneath the
-registered working directory, honor context cancellation, and permit only one
-active invocation per registration.
+return value as JSON output. Bash follows the [AWS Lambda custom-runtime
+handler model](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-walkthrough.html):
+its handler is `file.function`, where `file` names a `.sh` file relative
+to the registered working directory. During registration, the Bash Runtime
+sources `file.sh` and validates that `function` exists. For an
+`application/json` invocation, it calls that function with the payload as one
+quoted positional argument and captures its stdout as the response output. It
+never evaluates either the handler or request payload as shell source, and it
+does not interpolate request data into a command string. Both adapters operate
+beneath the registered working directory, honor context cancellation, and
+permit only one active invocation per registration.
 
 Existing task-only Runtime Servers remain valid. Function mode is enabled only
 after a future compatibility/health handshake confirms support for these RPCs;
