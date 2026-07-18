@@ -7,6 +7,7 @@
 
 - [Function Mode 和 Agent Sandboxes](function-mode/)
 - [Function Mode 生命周期与 Invoke Dataplane](function-mode-lifecycle/)
+- [Function Runtime Server 协议](function-runtime-contract/)
 - [Workflow Data Sharing](workflow-data-sharing/)
 - [Run Workspace 引用与 Affinity](run-workspace-affinity/)
 - [Workflow Reuse](workflow-reuse/)
