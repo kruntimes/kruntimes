@@ -35,17 +35,64 @@ plane。
 message FunctionIdentity {
   // Kubernetes Run UID，不使用可变的 name。
   string run_uid = 1;
-  // 从一开始计数的 Run retry/ownership attempt。
+  // 来自 Run.status.attempt、从一开始计数的 execution attempt。
   int32 attempt = 2;
 }
 ```
 
-`run_uid` 加 `attempt` 构成本地 registration epoch。runtimed 只有在拥有该 epoch 时才能调用
-本地 Runtime Server。过期操作绝不能修改或删除同一 Run UID 的新注册。
+`attempt` 不是 invocation counter。它是 `Run.status.attempt` 中当前从一开始计数的 execution
+attempt：初始 execution 为 `1`，shared retry engine 在调度 retry 前递增该值。每一次 function
+调用使用独立、由 caller 生成的 `invocation_id`。
+
+`run_uid` 加 `attempt` 构成本地 registration epoch。runtimed 只有在拥有该 execution epoch 时才能
+调用本地 Runtime Server。过期操作绝不能修改或删除同一 Run UID 的新注册。
 
 `registration_digest` 是 runtimed 对规范化且不可变的注册输入计算得到的小写 SHA-256：已
 解析的 source identity、handler、environment 和 Runtime 可见的注册设置。它不包含短暂的
 working-directory 路径；它是幂等校验，不是凭据。
+
+### 调用与 Retry Fence 示例
+
+以下展示 runtimed 发往 Pod-local Runtime Server 的调用。它是建议协议的示例，不是公开 gateway
+命令。
+
+1. UID 为 `2b5d...` 的 function Run 在 Runtime Pod A 上开始第一次 execution。此时
+   `Run.status.attempt` 为 `1`，runtimed A 注册该 function：
+
+   ```console
+   grpcurl -plaintext -d '{
+     "identity": {"runUid": "2b5d...", "attempt": 1},
+     "workingDir": "/workspace/runs/2b5d",
+     "handler": "handler.handle",
+     "idleTimeoutSeconds": 300,
+     "registrationDigest": "sha256:..."
+   }' 127.0.0.1:9090 executor.v1.Runtime/RegisterFunction
+   ```
+
+2. gateway 将请求路由到 runtimed A。它分配 invocation ID，并发送 payload，不创建新的
+   Kubernetes object：
+
+   ```console
+   grpcurl -plaintext -d '{
+     "identity": {"runUid": "2b5d...", "attempt": 1},
+     "invocationId": "01J...",
+     "contentType": "application/json",
+     "input": "eyJjb21tYW5kIjoic3RhdHVzIn0="
+   }' 127.0.0.1:9090 executor.v1.Runtime/InvokeFunction
+   ```
+
+   在 protobuf JSON 中，`bytes` 使用 base64 编码；解码后的 input 为
+   `{"command":"status"}`。另一调用会使用新的 `invocation_id`，但只要同一 Run execution 仍在
+   活动，attempt 保持为 `1`。
+
+3. 如果 Runtime Pod 丢失且现有 retry policy 允许 retry，shared retry engine 会在 scheduler
+   分配 Runtime Pod B 前将 `Run.status.attempt` 推进到 `2`。runtimed B 注册
+   `{run_uid: "2b5d...", attempt: 2}`。Runtime Server 已经观察到 attempt `2` 后，延迟到达的
+   attempt `1` register、invoke 或 unregister 必须返回 `FailedPrecondition`；它不能替换或删除
+   较新的 registration。
+
+gateway 和 runtimed 还会使用 assigned Pod identity 对 routing 做 fence。attempt fence 保护的是
+Runtime Server 的本地 registration state；它不保证 invocation exactly once。
 
 ## 建议的 Protobuf API
 

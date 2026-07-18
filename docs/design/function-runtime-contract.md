@@ -33,20 +33,71 @@ Every operation is scoped to a Run UID and attempt:
 message FunctionIdentity {
   // Kubernetes Run UID, never its mutable name.
   string run_uid = 1;
-  // One-based Run retry and ownership attempt.
+  // One-based Run execution attempt from Run.status.attempt.
   int32 attempt = 2;
 }
 ```
 
+`attempt` is not an invocation counter. It is the current one-based execution
+attempt from `Run.status.attempt`: the initial execution is `1`, and the shared
+retry engine increments it before a retry is scheduled. `invocation_id` is
+separate caller-generated correlation data for one function call.
+
 `run_uid` plus `attempt` is the local registration epoch. runtimed invokes a
-local Runtime Server only while it owns that exact epoch. A stale operation
-must never change or remove a newer registration for the same Run UID.
+local Runtime Server only while it owns that exact execution epoch. A stale
+operation must never change or remove a newer registration for the same Run
+UID.
 
 `registration_digest` is a lowercase SHA-256 digest calculated by runtimed
 from canonical, immutable registration inputs: resolved source identity,
 handler, environment, and runtime-visible registration settings. It excludes
 the transient working-directory path. It is an idempotency check, not a
 credential.
+
+### Example Calls and Retry Fence
+
+The following illustrates the Pod-local calls made by runtimed. It is an
+example of the proposed protocol, not a public gateway command.
+
+1. A function Run with UID `2b5d...` starts its first execution on Runtime Pod
+   A. `Run.status.attempt` is `1`, so runtimed A registers the function:
+
+   ```console
+   grpcurl -plaintext -d '{
+     "identity": {"runUid": "2b5d...", "attempt": 1},
+     "workingDir": "/workspace/runs/2b5d",
+     "handler": "handler.handle",
+     "idleTimeoutSeconds": 300,
+     "registrationDigest": "sha256:..."
+   }' 127.0.0.1:9090 executor.v1.Runtime/RegisterFunction
+   ```
+
+2. A gateway request is routed to runtimed A. It assigns an invocation ID and
+   sends the payload without creating another Kubernetes object:
+
+   ```console
+   grpcurl -plaintext -d '{
+     "identity": {"runUid": "2b5d...", "attempt": 1},
+     "invocationId": "01J...",
+     "contentType": "application/json",
+     "input": "eyJjb21tYW5kIjoic3RhdHVzIn0="
+   }' 127.0.0.1:9090 executor.v1.Runtime/InvokeFunction
+   ```
+
+   In protobuf JSON, `bytes` is base64-encoded; the decoded input is
+   `{"command":"status"}`. Another call gets another `invocation_id`, but keeps
+   attempt `1` while the same Run execution remains active.
+
+3. If the Runtime Pod is lost and the existing retry policy allows a retry, the
+   shared retry engine advances `Run.status.attempt` to `2` before the scheduler
+   assigns Runtime Pod B. runtimed B registers `{run_uid: "2b5d...", attempt:
+   2}`. A delayed register, invoke, or unregister request for attempt `1` must
+   return `FailedPrecondition` once that Runtime Server has observed attempt
+   `2`; it cannot replace or delete the newer registration.
+
+The gateway and runtimed also fence routing using assigned Pod identity. The
+attempt fence protects the Runtime Server's local registration state; it does
+not make an invocation exactly once.
 
 ## Proposed Protobuf API
 
