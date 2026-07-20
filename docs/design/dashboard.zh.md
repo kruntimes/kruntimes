@@ -92,16 +92,29 @@ dashboard 也能展示正确的 logs。
 
 dashboard 默认必须是只读的。
 
-推荐的生产模型是 Kubernetes-native：
+建议的 v0.x 生产模型是 Kubernetes bearer-token login：
 
-- authentication 来自 Kubernetes 或集群身份集成；
-- authorization 使用 Kubernetes RBAC；
-- namespace 可见性遵循用户权限；
-- logs 和 artifacts 访问需要显式权限，而不仅仅是 dashboard 访问权限；
+- 浏览器只通过 dashboard 的 HTTPS origin 发送 Kubernetes bearer token；backend 不创建
+  dashboard 专用 identity 或 session；
+- backend 使用该 bearer token、in-cluster API server 地址和 cluster CA 创建 request-scoped
+  Kubernetes client。它绝不使用 dashboard ServiceAccount 代表用户读取资源；
+- namespace 可见性和读取权限由 Kubernetes API authorization 决定，而不是 dashboard
+  自己维护 policy；
+- 初始 UI 可以 best-effort 列出 namespaces。若 token 没有 list Namespace objects 的权限，
+  UI 必须允许用户输入 namespace name，并展示 API 的正常 authorization 结果；
+- logs 访问需要同一个 token 能够读取 Run 及其 assigned Pod、创建 `krt logs` 所使用的 Pod
+  `portforward` subresource，并在 runtimed log fallback 需要时读取 `log` subresource；
+- artifacts 访问需要 Run read permission，以及选定 artifact-store backend 所定义的权限；
 - 默认隐藏 secrets、service account tokens、environment variables 和 raw pod specs，
   除非未来明确增加 privileged operator view。
 
-本地开发可以支持 kubeconfig-backed 模式，但它应该被记录为开发模式，而不是生产默认模式。
+这与 Kubernetes Dashboard token login 的初始用户体验一致。集群 identity integration 可以在
+dashboard 外部 mint 或 exchange bearer token，但 v0.x 不定义 external-auth header protocol、
+impersonation model 或 custom identity provider。
+
+本地开发中，`krt` 可以 port-forward dashboard，并通过 local-only proxy 提供当前 kubeconfig
+credential。这个 convenience path 不是生产 authentication mode，并且不能让浏览器在本地会话结束
+后保留 kubeconfig credential 或 token。
 
 ## 内部 API 形状
 
@@ -144,7 +157,7 @@ Run list endpoint 应尽量支持 server-side pagination 和过滤：
 
 1. 增加本文档，并在 roadmap 中保持 TODO 明确。
 2. 增加 dashboard backend package，接入只读 Kubernetes client。
-3. 定义生产和本地开发 auth modes。
+3. 实现已 review 的 bearer-token production mode，以及 local-only kubeconfig proxy mode。
 4. 实现 Run list/detail APIs，并增加 unit tests。
 5. 通过 backend-controlled 路径实现 log tail/follow。
 6. 增加 frontend Run list/detail/log views。
@@ -152,11 +165,9 @@ Run list endpoint 应尽量支持 server-side pagination 和过滤：
 8. 增加 E2E smoke coverage：安装 dashboard、创建 Run、列出 Run、打开 detail、读取 logs。
 9. 在相关 APIs 稳定后增加 WorkflowRun/Workflow/Action/PersistentWorkspace views。
 
-## 待确认问题
+## 剩余问题
 
 - dashboard 应该放在主 kruntimes chart、独立 chart，还是两者都支持？
-- 第一版生产 auth mode 应该是什么：service account with impersonation、Kubernetes API
-  proxy integration，还是 dashboard 前置 external auth？
 - log access 是否继续使用 port-forward 语义，还是迁移到专用的 cluster-internal log proxy
   service？
 - 当 artifact stores 位于集群外部时，artifact downloads 应如何授权和代理？

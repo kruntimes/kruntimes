@@ -282,6 +282,9 @@ wiring from accumulating avoidable conflicts.
   Initial implementation TODO:
   - [x] add a read-only [Dashboard design document](design/dashboard/) covering
     scope, architecture, RBAC, log access, and implementation sequence;
+  - [ ] review and define the v0.x Kubernetes bearer-token login model,
+    request-scoped Kubernetes clients, and the local-only kubeconfig proxy
+    boundary;
   - add a dashboard backend with read-only Kubernetes API access;
   - implement Run list/detail APIs with namespace-aware RBAC;
   - proxy Run log tail/follow through a backend-controlled path;
