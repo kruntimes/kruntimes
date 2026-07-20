@@ -250,6 +250,45 @@ spec:
 `krt wf run -f` also accepts a small GitHub Actions style workflow file and
 converts it to an inline `WorkflowRun`.
 
+To call a reusable Workflow from one job, create the definition first, then
+use its name from a caller job. The `deploy` job below becomes a child
+`WorkflowRun`; `notify` waits for that complete child execution.
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Workflow
+metadata:
+  name: deploy
+spec:
+  jobs:
+    apply:
+      runs-on: bash
+      steps:
+        - name: deploy
+          run: ./deploy.sh
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  name: release
+spec:
+  jobs:
+    package:
+      runs-on: bash
+      steps:
+        - name: build
+          run: make package
+    deploy:
+      needs: [package]
+      uses: deploy
+    notify:
+      needs: [deploy]
+      runs-on: bash
+      steps:
+        - name: announce
+          run: ./notify.sh
+```
+
 For reusable Workflow definitions:
 
 ```bash
