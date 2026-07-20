@@ -51,13 +51,13 @@ definitions。当前 experimental `Workflow` CRD 表示 execution instance。这
 
 | Kind | 角色 |
 | --- | --- |
-| `WorkflowRun` | Execution instance。inline 定义 jobs，或调用一个 reusable `Workflow`。 |
-| `Workflow` | Reusable workflow definition。可被 `WorkflowRun` 或 job 调用。 |
+| `WorkflowRun` | 带 inline jobs 的 execution instance。 |
+| `Workflow` | Reusable workflow definition。可被 trigger 为 inline `WorkflowRun`，或被 job 调用。 |
 | `Action` | Reusable step group。可被 `WorkflowRun` 或 `Workflow` 中的 step 调用。 |
 
 ## WorkflowRun
 
-`WorkflowRun` 是用户用来启动执行的对象。它支持 inline jobs，或 top-level workflow call。
+`WorkflowRun` 是执行工作的对象，始终包含 inline jobs。
 
 Inline 形态：
 
@@ -76,20 +76,8 @@ spec:
             echo "building"
 ```
 
-Reusable Workflow call 形态：
-
-```yaml
-apiVersion: kruntimes.io/v1alpha1
-kind: WorkflowRun
-metadata:
-  name: release-demo
-spec:
-  uses: build-and-test
-  with:
-    image: agent:v0.1.0
-```
-
-Validation 必须保证 top-level `uses` 和 inline `jobs` 互斥。
+`krt workflow trigger build-and-test --input image=agent:v0.1.0` 会解析模板 inputs，
+并创建等价的 inline WorkflowRun。WorkflowRun 不暴露 top-level `uses` 或 `with` API。
 
 ## Reusable Workflow
 
@@ -135,8 +123,10 @@ spec:
 Validation 必须保证 job `uses` 和 job `steps` 互斥。
 
 Reusable Workflow jobs 拥有自己的 job/workspace/artifact boundary。它们通过 inputs、
-outputs 和 artifacts 与 caller 通信。具体的 parent/child execution boundary 和 immutable
-snapshot model 见 [Job-Level Reusable Workflow Execution](../workflow-job-reuse/)。
+outputs 和 artifacts 与 caller 通信。每次调用创建带自身 local snapshot 的 inline child
+WorkflowRun；child snapshot 保留 source Workflow output contract，但不维护 shared root-wide
+execution tree。具体 execution boundary 见
+[Job-Level Reusable Workflow Execution](../workflow-job-reuse/)。
 
 ## Action
 
@@ -219,28 +209,31 @@ outputs:
 - 缺少 required inputs 时 validation 或 reconcile 早期失败；
 - 未知 input names 时 validation 或 reconcile 早期失败。
 
-WorkflowRun controller 应在展开 child jobs 或 steps 之前完成 input binding：
+trigger client 在创建 inline root WorkflowRun 前完成 input binding。WorkflowRun controller
+在创建 ready child call 时完成 input binding：
 
 1. 从 callee 声明的 `inputs` 开始。
 2. 应用每个 input 的 `default`。
 3. 覆盖 caller 通过 `with` 传入的 values。
 4. 拒绝缺少 required inputs 的调用。
 5. 拒绝未知的 `with` keys。
-6. 在创建 Runs 之前，将轻量 resolved DAG edges 存入 `WorkflowRun.status.jobs`。
+6. 在创建 child 前，将 inputs 渲染到 child WorkflowRun 的 inline jobs。
 
-已经启动的 WorkflowRun 不应观察到被引用 `Workflow` 或 `Action` 的后续变更。Reusable
-definitions 可以随时间变化，但每个 WorkflowRun 一旦 accepted，它的执行必须是确定的。后续
-可以增加显式 revisioning；第一版应捕获足够的 resolved data，让 retries 和 controller
-restart 后的恢复保持稳定。
+WorkflowRun 创建后，它的 inline jobs 和 local snapshot 都是 immutable。Reusable Workflow
+calls 是 late-bound：waiting call job 变为 runnable 前模板可以变化，但 child WorkflowRun
+创建后模板不能再改变它。child snapshot 会保留 source output contract，因此模板变化后 parent
+output projection 仍是确定的。后续可以通过显式 template revisioning 支持更早 binding。
 
 Step outputs 来自 child Run 结果。step 将小型 key-value outputs 写入
 `KRUNTIME_OUTPUTS`；runtimed 将其持久化到 child Run status。WorkflowRun controller
 读取这些 child Run outputs，并提升到匹配的有序
 `WorkflowRun.status.jobs.<job>.steps[]` entry。
 
-Job outputs 在 job 内所有 steps 成功后计算。Workflow outputs 在 reusable Workflow 内所有
-jobs 成功后计算。当 expression 引用了不存在的 job、step 或 output key 时，output
-evaluation 必须让 WorkflowRun 失败。
+Job outputs 在 job 内所有 steps 成功后计算，并保存到
+`WorkflowRun.status.jobs.<job>.outputs`。Reusable Workflow 的 declared outputs 根据成功
+child WorkflowRun 的 local job status 求值，再投影到 caller job 相同的 `outputs` map。
+当 expression 引用了不存在的 job、step 或 output key 时，output evaluation 必须使受影响
+job 失败。
 
 ## Reference Resolution
 
@@ -259,15 +252,14 @@ format。
 
 Reference resolution 应按以下顺序发生：
 
-1. 将 top-level `WorkflowRun.spec.uses` 解析到同 namespace 下的 `Workflow`。
-2. 将被引用 Workflow 的 jobs 展开到 WorkflowRun execution graph。
-3. 将每个 job-level `uses` 解析到同 namespace 下的 reusable `Workflow`。
-4. 使用 [Job-Level Reusable Workflow Execution](../workflow-job-reuse/) 定义的 immutable
+1. `krt workflow trigger` 解析指定 reusable Workflow 并创建 inline root WorkflowRun。
+2. 将每个 ready job-level `uses` 解析到同 namespace 下的 reusable `Workflow`。
+3. 使用 [Job-Level Reusable Workflow Execution](../workflow-job-reuse/) 定义的 immutable
    execution snapshot，把每个 runnable reusable Workflow call 表示为拥有独立
    job/workspace/artifact boundary 的 child WorkflowRun。
-5. 将每个 step-level `uses` 解析到同 namespace 下的 `Action`。
-6. 将 Action steps inline 展开到 caller job context。
-7. 在创建任何 child Runs 之前检测 cycles。
+4. 将每个 step-level `uses` 解析到同 namespace 下的 `Action`。
+5. 将 Action steps inline 展开到 caller job context。
+6. 在创建任何 child Runs 之前检测 cycles。
 
 Workflow calls 之间的 cycles 必须被拒绝。第一版中 Action 不应再调用另一个 Action，因为
 nested Action expansion 目前不需要，而且会增加 cycle detection 的复杂度。Reusable
@@ -498,9 +490,10 @@ status:
 4. 增加 `Action` API types、CRD validation、status 和 controller skeleton。
    Namespace-local resolution、input binding、output propagation 和 WorkflowRun
    execution 是后续独立实现步骤。
-5. 实现轻量 DAG edge snapshotting 和 top-level `WorkflowRun.spec.uses` 的
-   namespace-local resolution。
-6. 实现 top-level reusable Workflow calls 的 input binding。
+5. 实现 `krt workflow trigger`：校验 inputs、渲染 reusable Workflow，并创建 inline
+   root WorkflowRun。
+6. 为 ready job-level calls 实现 per-WorkflowRun snapshots 和直接 child
+   WorkflowRun 创建。
 7. 实现 ready jobs 的 inline WorkflowRun first-step Run creation。
 8. 将 WorkflowRun controller reconciliation 重构为 load/calculate/apply/patch 结构：
    默认推导 status，并将 external side effects 建模为 actions。
@@ -532,12 +525,8 @@ status:
 - `Workflow` 现在是 reusable definition skeleton，不再执行 child Runs。
 - Inline WorkflowRuns 会初始化 `status.jobs[*].pre` 和有序
   `status.jobs[*].steps`。
-- Top-level `WorkflowRun.spec.uses` 会解析同 namespace 下的 reusable
-  Workflow，并基于被引用 Workflow 的 jobs 初始化 `status.jobs`。Missing
-  references 会在创建 child Runs 前让 WorkflowRun 失败。
-- Top-level reusable Workflow calls 会提前绑定 string inputs：应用 defaults，
-  missing required inputs 会失败，unknown `with` keys 也会失败。Bound values 会等到
-  WorkflowRun execution 实现后再用于 child Runs。
+- 早期的 top-level `WorkflowRun.spec.uses` prototype 已被 rendered inline
+  WorkflowRun trigger 模型取代，必须在 Workflow API 稳定前删除。
 - Inline 和 resolved reusable Workflow job DAG 会在初始化 status graph 或创建 child Runs
   前拒绝 unknown dependencies 和 multi-job cycles。
 - 旧 Workflow execution model 的 stale E2E stubs 已删除，保证迁移期间 E2E 聚焦于

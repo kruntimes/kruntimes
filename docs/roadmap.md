@@ -199,8 +199,8 @@ wiring from accumulating avoidable conflicts.
 - [ ] Workflow reuse model: split execution instances from reusable
   definitions before Workflow APIs stabilize. Target model:
   - replace the current execution-instance `Workflow` API with `WorkflowRun`;
-  - `WorkflowRun.spec` supports either inline `jobs` or top-level `uses` plus
-    `with` inputs;
+  - `WorkflowRun.spec` contains inline `jobs` only; `krt workflow trigger`
+    renders a reusable Workflow into an inline execution instance;
   - add a reusable `Workflow` CRD whose jobs can be called from a
     `WorkflowRun` job with `uses: <workflow-name>` and optional `with`;
   - add a reusable `Action` CRD whose steps can be called from a
@@ -209,8 +209,8 @@ wiring from accumulating avoidable conflicts.
   - keep names namespace-local in the first version; avoid verbose
     `workflowRef` and `actionRef` fields until cross-namespace or remote
     references are required;
-  - validation must enforce mutually exclusive shapes: top-level `uses` vs
-    inline `jobs`, job `uses` vs `steps`, and step `uses` vs `run`;
+  - validation must enforce clear local shapes: WorkflowRun inline jobs, job
+    `uses` vs `steps`, and step `uses` vs `run`;
   - Actions run inside the caller job context and share that job runtime,
     workspace, artifacts, and environment unless a future API explicitly
     overrides them;
@@ -231,9 +231,8 @@ wiring from accumulating avoidable conflicts.
   - [x] update CLI verbs and docs so execution uses `WorkflowRun`;
   - [x] initialize lightweight `status.jobs[*].pre` and ordered `steps` for
     inline WorkflowRuns;
-  - [x] implement namespace-local top-level `WorkflowRun.spec.uses`
-    resolution;
-  - [x] implement input binding for top-level reusable Workflow calls;
+  - [x] explore top-level `WorkflowRun.spec.uses` resolution and input binding;
+    superseded by rendered inline WorkflowRun triggering;
   - [x] audit existing E2E tests before inline execution changes, and remove or
     update stale cases that still use the old Workflow execution model so
     `make e2e` stays passing during the migration;
@@ -259,17 +258,18 @@ wiring from accumulating avoidable conflicts.
     including child Run creation before status persistence;
   - [ ] implement job-level reusable Workflow calls through the reviewed
     [execution-boundary design](design/workflow-job-reuse.md):
-    - [x] review and approve the child WorkflowRun and immutable snapshot model;
-    - [x] add status references, spec transition validation, reserved metadata,
-      generated CRDs, and controller RBAC prerequisites;
-    - [x] add immutable ControllerRevision snapshot storage and recursive resolution with version
-      capture, call limits, input validation, and cycle detection;
-    - [x] execute top-level `WorkflowRun.spec.uses` from its snapshot instead of
-      only initializing status;
-    - [ ] create and observe child WorkflowRuns for ready job-level calls;
-    - [ ] verify definition mutation isolation, restart recovery, nested calls,
+    - [x] review and approve the direct child WorkflowRun and local snapshot model;
+    - [ ] remove root `WorkflowRun.spec.uses`/`with` and implement template
+      triggering as rendered inline WorkflowRun creation;
+    - [ ] add a per-WorkflowRun immutable snapshot with the local execution
+      spec and a frozen source output contract for materialized children;
+    - [ ] create and observe child WorkflowRuns for ready job-level calls,
+      including input rendering and output-contract capture;
+    - [ ] project inline and child Workflow outputs into bounded
+      `WorkflowRun.status.jobs.<job>.outputs` values;
+    - [ ] verify late-binding behavior before child creation, deterministic
+      behavior after child creation, restart recovery, nested calls,
       cancellation, and invalid graphs;
-    - [ ] integrate call inputs and outputs with expression/output propagation;
   - implement step-level Action expansion;
   - implement expression evaluation for `inputs`, `steps`, and `jobs` contexts;
   - promote child Run outputs into WorkflowRun step/job/workflow outputs;

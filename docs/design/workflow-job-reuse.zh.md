@@ -1,38 +1,42 @@
-# Job-Level Reusable Workflow Execution
+# Job 级可复用 Workflow 执行
 
-状态：**提案，等待 review**
+状态：**待评审**
 
-本文细化 [Workflow Reuse](../workflow-reuse/) 中的 job-level `uses` 模型，定义一个在
-controller restart 和 reusable `Workflow` 更新后仍保持确定性的 execution boundary。
-
-## 问题
-
-现有设计提出将 job-level reusable Workflow call 展开为 nested job group，但没有定义：
-
-- caller `needs` 如何连接 callee roots 和 leaves；
-- nested jobs 如何出现在 `WorkflowRun.status.jobs`；
-- nested execution path 如何满足 Kubernetes label 长度限制；
-- cancellation、failure、outputs 和 restart recovery 如何跨越 call boundary；
-- 已 accepted 的 WorkflowRun 如何避免观察到 referenced `Workflow` 的后续修改。
-
-最后一点已经造成 top-level `WorkflowRun.spec.uses` 的实现缺口：controller 会根据 referenced
-definition 初始化 status，但执行仍读取 `WorkflowRun.spec.jobs`；对于该 shape，此字段为空。
+本文定义 v0.x 中 job 级可复用 Workflow 的执行边界，并替代此前的全树 snapshot 与 `callPath` 方案。
 
 ## 决策
 
-job-level reusable Workflow call 使用 child `WorkflowRun` 表示。caller job 仍是一个逻辑
-dependency 和 output 节点。called Workflow 的 jobs 保留在 child WorkflowRun 的本地状态中，
-而不是扁平化到 parent status map。
+`WorkflowRun` 只表示带 inline jobs 的一次执行，不在 root 引用可复用 `Workflow`。`Workflow` 是模板：
 
-该方案会为每次 call 增加一个 Kubernetes object 和 controller transition。这些开销不在 Run
-调度热路径上，换来明确的 ownership、有界命名、本地 status、递归 cancellation，以及独立的
-workspace/artifact boundary。
+- `krt workflow trigger <name>` 读取模板、校验并渲染 inputs，然后创建带 inline jobs 的 `WorkflowRun`；
+- job 的 `uses` 表示一次可复用 Workflow 调用；
+- 该 job ready 后，parent 创建一个带 inline jobs 的 child `WorkflowRun`；
+- 每个 WorkflowRun 都拥有自己的 immutable execution snapshot，只协调直接 jobs 和直接 child WorkflowRuns。
 
-第一版保持 namespace-local，不增加新的 public invocation CRD。
+这使嵌套复用天然递归，而不要求一个 controller 携带 root 范围的执行树。parent 将每次调用视为一个 job；child 拥有该调用展开的全部 jobs。
 
-## 用户模型
+## 为什么采用这个模型
 
-API 保持直接：
+旧方案在执行前递归解析所有 Workflow，并把整棵树保存在 root 共享的 `ControllerRevision` 中。它要求 snapshot/call-path annotations，并让 child 从祖先 snapshot 中读取自己的 jobs。该模型难以理解，Action 复用也会继承相同的全局树复杂度，并耦合不相关的 controller reconcile。
+
+本模型的 ownership 很直接：
+
+```text
+WorkflowRun release
+  直接 job: build
+  直接调用 job: deploy
+    WorkflowRun release-call-deploy
+      直接 job: apply
+      直接调用 job: verify
+        WorkflowRun release-call-deploy-call-verify
+          直接 job: smoke
+```
+
+每个 controller 只创建和观察自己所 reconcile 的 WorkflowRun 直接拥有的对象。parent/child 状态传播、取消、artifacts 以及未来 PersistentWorkspace 的边界因此都是局部的。
+
+## API 形式
+
+`WorkflowRun.spec.jobs` 必填。删除 `WorkflowRun.spec.uses` 和 `WorkflowRun.spec.with`。直接使用 `kubectl create` 时必须提供 inline jobs。
 
 ```yaml
 apiVersion: kruntimes.io/v1alpha1
@@ -50,317 +54,135 @@ spec:
       needs: [build]
       uses: deploy-workflow
       with:
-        environment: staging
-    notify:
-      needs: [deploy]
-      runs-on: bash
-      steps:
-        - name: send
-          run: send-notification
+        environment: ${{ jobs.build.outputs.environment }}
 ```
 
-`deploy` 表现为一个 caller job：
-
-- 只有 `build` 成功后才启动；
-- child WorkflowRun 内可以并行执行多个 jobs；
-- 只有 child WorkflowRun succeeded 时它才 succeeded；
-- `notify` 等待完整 child WorkflowRun，而不是某个内部 leaf；
-- called Workflow outputs 成为 `deploy` job outputs；
-- called jobs 不与 caller jobs 共享 workspace。
-
-该语义保留了
-[GitHub Actions reusable-workflow model](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)
-中有价值的部分：reusable Workflow 在 job level 调用，并通过 caller job 使用其 outputs。
-kruntimes 的实现仍保持 Kubernetes-native 和 namespace-local。
-
-### 嵌套 Reuse
-
-reusable Workflow 可以继续调用其他 reusable Workflow。例如，`deploy-workflow` 在完成部署后可以
-调用 `smoke-test`：
-
-```yaml
-apiVersion: kruntimes.io/v1alpha1
-kind: Workflow
-metadata:
-  name: deploy-workflow
-spec:
-  inputs:
-    environment: { type: string, required: true }
-  jobs:
-    apply:
-      runs-on: bash
-      steps:
-        - name: deploy
-          run: deploy
-    verify:
-      needs: [apply]
-      uses: smoke-test
-      with:
-        endpoint: https://staging.example.com
----
-apiVersion: kruntimes.io/v1alpha1
-kind: Workflow
-metadata:
-  name: smoke-test
-spec:
-  inputs:
-    endpoint: { type: string, required: true }
-  jobs:
-    smoke:
-      runs-on: bash
-      steps:
-        - name: check
-          run: check-service
-```
-
-accepted 的 `release` execution 会在启动工作前解析整个调用树：
+复用模板的标准触发方式为：
 
 ```text
-root                         WorkflowRun release
-root/jobs/deploy             Workflow deploy-workflow
-root/jobs/deploy/jobs/verify Workflow smoke-test
+krt workflow trigger deploy-workflow --input environment=staging
+  -> 校验模板 inputs
+  -> 将 inputs 渲染到 inline jobs
+  -> 创建 WorkflowRun
 ```
 
-root controller 只创建并观察 `deploy` 对应的 child WorkflowRun。该 child 执行 `apply` 后，会创建并
-观察 `verify` 对应的自己的 child WorkflowRun。每个 WorkflowRun 都有本地 jobs status map；parent
-call job 只有在其 direct child WorkflowRun succeeded 后才会 succeeded。因此，嵌套的
-`smoke-test` WorkflowRun settled 前，`release.status.jobs.deploy` 不会 succeeded。
+最终 WorkflowRun 保存的是渲染后的 jobs，而不是模板引用，因此模板后续修改不会改变已创建的 root execution。
 
-cancellation 和 failure 也遵循相同的 direct-parent boundary。取消 `release` 会请求取消它的
-`deploy` child；该 controller 随后请求取消 `verify`。反过来，`smoke-test` failed 会先让 `verify`
-failed，再让 `release` 中的 `deploy` call failed。controller 在正常 reconciliation 中不需要遍历任意
-depth 的 descendants。
+## 调用可复用 Workflow
 
-## Parent 和 Child Status
+`deploy` ready 后，parent controller：
 
-`JobStatus` 增加可选 `workflowRunName`，与 `StepStatus.runName` 对称：
+1. 从同一 namespace 读取 `deploy-workflow`。
+2. 使用 caller context 渲染 `with`，并校验 callee inputs。
+3. 将 `inputs.*` 渲染到 callee jobs。
+4. 用这些 inline jobs 创建直接 child WorkflowRun。
+5. 设置 owner reference，并将 child 名称写入 `parent.status.jobs.deploy.workflowRunName`。
+
+child 正常执行，也可以为其 `uses` jobs 创建自己的直接 child WorkflowRuns。parent 不拥有也不检查 grandchildren。
+
+调用是**延迟绑定**：被引用的 Workflow 在 caller job ready 时读取。此前的模板修改会影响尚未创建的 child；child 创建后，其渲染 jobs 和 snapshot 都是 immutable。未来若需要更早绑定，应引入显式 template versioning，而不是恢复全树 snapshot。
+
+## 局部 Snapshot 与 Output Contract
+
+每个 WorkflowRun 自己拥有一个 `ControllerRevision`，名称由自身 UID 确定，并记录在 `status.snapshotName`。它只包含：
+
+- `spec`：接受的 inline `WorkflowRun.spec`，包括本地 jobs topology；
+- `outputContract`：仅当该 WorkflowRun 从可复用 Workflow materialize 出来时，保存 source Workflow 声明的 `spec.outputs` 及可选 source identity，用于诊断。
+
+```yaml
+apiVersion: apps/v1
+kind: ControllerRevision
+metadata:
+  name: release-call-deploy-snapshot-8d91c3f4
+  ownerReferences:
+    - apiVersion: kruntimes.io/v1alpha1
+      kind: WorkflowRun
+      name: release-call-deploy
+data:
+  spec:
+    jobs:
+      apply:
+        runs-on: bash
+        steps: [{ name: deploy, run: deploy --environment=staging }]
+  outputContract:
+    workflowName: deploy-workflow
+    outputs:
+      endpoint:
+        value: ${{ jobs.apply.outputs.endpoint }}
+```
+
+output contract 是 child 创建后保留的唯一 source-template 数据。parent 必须使用与实际执行 jobs 配套的 output 定义；如果 child 完成后读取可变的当前 Workflow，模板变更会让同一执行产生不同的 parent output。
+
+没有共享 snapshot、没有 `callPath`，child WorkflowRun 上也没有 snapshot annotation。一个 snapshot 只由自己的 WorkflowRun 拥有和使用。
+
+## Inputs 与 Outputs
+
+`JobStatus` 增加有界的 `outputs` map。inline job 和可复用 Workflow 调用的输出都在同一位置暴露：
 
 ```yaml
 status:
   jobs:
     deploy:
-      phase: Running
-      pre: [build]
-      workflowRunName: release-deploy-7f6d98c04a
+      phase: Succeeded
+      workflowRunName: release-call-deploy
+      outputs:
+        endpoint: https://staging.example.com
 ```
 
-call job 有 `workflowRunName`，没有 step statuses。child WorkflowRun 包含自己的本地
-`status.jobs` map。因此 nested names 不需要编码到 parent map key 或 child Run label 中。
+inline job 的所有 steps 成功后，controller 使用 `JobSpec.outputs` 和 Run status 中的 step outputs 计算 job output。可复用调用的 child WorkflowRun 成功后，parent 读取 child 的局部 snapshot，用冻结的 `outputContract` 对 `child.status.jobs` 求值，并将结果写到 caller job 的 `JobStatus.outputs`。
 
-child WorkflowRun 使用 controller owner reference 指向 parent。其名称由 parent UID 和 caller
-job name 确定性生成。保留的 labels 和 annotations 会记录 root WorkflowRun UID、snapshot 和
-call path，用于 recovery 和诊断。
+下游渲染统一使用：
 
-parent controller watch owned child WorkflowRuns，并按如下规则投影状态：
+```yaml
+${{ jobs.deploy.outputs.endpoint }}
+```
+
+只有显式声明、有界、结构化的键值 outputs 可以进入 status。日志和大文件不进入 status，继续使用 logging 和 artifact 机制。缺失引用或 output 求值失败会在启动下一个 dependent target 前使受影响 job 失败。
+
+## 状态、失败与取消
+
+可复用调用 job 有 `workflowRunName`，没有 step statuses。parent 如下投影其直接 child 的状态：
 
 | Child WorkflowRun | Caller job |
 | --- | --- |
 | `Pending` 或 `Running` | `Running` |
-| `Succeeded` | `Succeeded` |
+| `Succeeded` 且 output 求值成功 | `Succeeded` |
+| `Succeeded` 但 output 求值失败 | `Failed` |
 | `Failed` | `Failed` |
-| 非 parent cancellation 导致的 `Cancelled` | `Failed` |
+| parent 未取消时的 `Cancelled` | `Failed` |
 
-parent cancellation 期间，controller 会请求取消 active child WorkflowRuns 和 direct child
-Runs。两类 children 都 settled 后，parent 才进入 `Cancelled`。从未启动的 jobs 保持原有
-`Pending` 或 `Waiting` phase。
+取消时，每个 WorkflowRun 只请求取消直接 child Runs 和直接 child WorkflowRuns。parent 仅在这些直接 children 都结束后变为 terminal；递归取消通过 owner watches 和每个 child 的自身 reconcile 自然完成。
 
-## Immutable Execution Snapshot
+## Controller 职责
 
-accepted execution 不能再次读取 mutable `Workflow` definitions。在初始化 `status.jobs` 或
-创建任何 child 前，controller 会递归解析完整的 namespace-local Workflow call tree，并写入
-immutable execution snapshot。
+每次 reconcile 中，WorkflowRun controller：
 
-### Snapshot Storage
+1. 加载 WorkflowRun、其局部 snapshot、直接 child Runs 和直接 child WorkflowRuns。
+2. 从这些资源推导本地 job 和 WorkflowRun status。
+3. 根据 snapshot spec 与已完成 dependency outputs 计算可运行的本地 targets。
+4. 创建所有相互独立的 ready targets：inline step 创建 Run，`uses` job 创建 child WorkflowRun。
+5. 仅当推导状态变化时 patch status。
 
-每个 root WorkflowRun 恰好 owner 一个 snapshot `ControllerRevision`。
-`ControllerRevision.data` 是对直接序列化的 public specs 的一个很小的 envelope，不引入第二套
-Workflow model：
+Scheduler 和 runtimed 仍然只处理独立 `Run`，不了解 Workflow reuse、snapshot 或 output contract。
 
-- `root.spec` 始终是 accepted 时完整的 `WorkflowRun.spec`；
-- root 使用 reusable Workflow 时，`root.workflow` 保存该引用解析到的完整 `Workflow.spec`；
-  inline root 则省略它；
-- `workflows[call-path]` 是每个 job-level call 解析到的完整 `Workflow.spec`。
+## 校验与限制
 
-root revision name 保存在 `WorkflowRun.status.snapshotName`。nested child 通过保留 metadata 接收
-该名称及自身的 call path，并从同一个 snapshot 读取 definition。`with` 保留在存储的 caller
-`JobSpec` 中，和用户提交的内容完全一致；不会复制到 controller-specific record。
+- `WorkflowRun.spec.jobs` 非空，创建后 immutable。
+- WorkflowRun 自身不能包含 `uses` 或 `with`。
+- 调用 job 包含 `needs`、`uses` 和可选 `with`，不能包含 `runs-on` 或 `steps`。
+- 创建 child 前校验 inputs 和 expression references。
+- 在创建 child 前，沿 active parent/child call chain 检测 Workflow cycle；初始最大嵌套深度为 8。
+- job 与 step outputs 受 CRD 大小限制；artifacts 不是 outputs。
 
-以上面的 `release` 为例，下面展示 snapshot ControllerRevision 的完整结构（内容经过必要简化）。
-其名称仅用于示例：controller 会从 root WorkflowRun UID 确定性生成名称。
+## 可复用 Actions
 
-```yaml
-# root WorkflowRun owns 唯一的 snapshot revision。
-apiVersion: apps/v1
-kind: ControllerRevision
-metadata:
-  name: release-snapshot-root-8d91c3f4
-  namespace: default
-  labels:
-    kruntimes.io/root-workflowrun-uid: 7e4d41cb-69c8-4fa1-8e31-f9135512c22b
-  ownerReferences:
-    - apiVersion: kruntimes.io/v1alpha1
-      kind: WorkflowRun
-      name: release
-      uid: 7e4d41cb-69c8-4fa1-8e31-f9135512c22b
-      controller: true
-      blockOwnerDeletion: true
-revision: 1
-data:
-  root:
-    spec: # accepted 时完整的 WorkflowRun.spec
-      jobs:
-        build: { runs-on: bash, steps: [{ name: package, run: make package }] }
-        deploy: { needs: [build], uses: deploy-workflow, with: { environment: staging } }
-        notify: { needs: [deploy], runs-on: bash, steps: [{ name: send, run: send-notification }] }
-  workflows:
-    root/jobs/deploy: # 此 call 解析到的完整 Workflow.spec
-      inputs:
-        environment: { type: string, required: true }
-      jobs:
-        apply: { runs-on: bash, steps: [{ name: deploy, run: deploy }] }
-        verify: { needs: [apply], uses: smoke-test, with: { endpoint: https://staging.example.com } }
-    root/jobs/deploy/jobs/verify: # nested call 解析到的完整 Workflow.spec
-      inputs:
-        endpoint: { type: string, required: true }
-      jobs:
-        smoke: { runs-on: bash, steps: [{ name: check, run: check-service }] }
-```
+本文不定义 Action 的执行机制，但确立一条原则：复用在直接 execution boundary 展开。未来 Action 将在 caller step/Run 中解析，而不加入 root 范围的 Workflow snapshot 或 controller traversal tree。
 
-root snapshot 始终保存 `WorkflowRun.spec`。root 使用 `spec.uses` 时，还会在 `root.workflow`
-保存解析后的 `Workflow.spec`。它还保存 `root/jobs/deploy` 对应的解析后 `Workflow.spec`，以及
-`root/jobs/deploy/jobs/verify` 对应的 nested `Workflow.spec`。当 `deploy` runnable 时，controller
-在 caller context 中求值已存储的 `with.environment`，并使用相同的 snapshot name 与
-`root/jobs/deploy` call path 创建 child WorkflowRun。该 child 后续会从同一份 snapshot 解析
-`verify`。两个 controller 都不会再次读取当前的 `deploy-workflow` 或 `smoke-test` object。
+## 实现计划
 
-job-level call path 在 caller path 后增加 `/jobs/<job-name>`。job name 不允许包含 `/`，因此它在
-reconciliation 间没有歧义且保持稳定。该 path 是 `ControllerRevision.data` 中的 YAML/JSON map key，
-`/` 在这里合法；它不是 Kubernetes label、annotation 或 object name。JSON Pointer 会将 `/` 转义为
-`~1`，但 snapshot data 不可变，controller 不会按 path patch 它。resolver 会在创建 execution child 前
-拒绝超过 Kubernetes object size limit 的存储 spec。
-
-snapshot 不放在 status 中，而是存储在由 WorkflowRun owner 的一个 `ControllerRevision` 中。
-Kubernetes API validation 会使已成功创建 revision 的 `data` 不可变。revision metadata 记录 root
-WorkflowRun UID，用于 lookup 和 garbage collection；child WorkflowRun metadata 记录自身的 call
-path。revision data 不包含 runtime results 或 secret material。
-
-Snapshot name 由 root UID 确定性生成。创建过程保持幂等：发生部分失败后，reconcile 会先校验并
-复用匹配的 immutable revision，再接受 WorkflowRun。
-
-`WorkflowRun.status.snapshotName` 记录 root ControllerRevision 名称。Status 不复制完整 job specs、
-scripts 或 environment values。如果 snapshot 序列化后超过 1 MiB，resolution 会在执行前失败。
-这个显式限制为 etcd 常见的 1.5 MiB request limit 留出余量；cluster operator 可以配置不同的 API
-server 或 etcd limits。
-
-一旦 `snapshotName` 持久化，后续 reconcile 只读取 snapshot，不再读取当前 `Workflow`
-objects。child WorkflowRun 继承 root snapshot 和 call-path annotation，因此 nested calls 使用
-同一份 immutable tree。
-
-root WorkflowRun spec 也是 execution input。创建后，`jobs`、`uses` 和 `with` 不可修改；
-`cancelRequested` 只允许从 false 变成 true，不能恢复为 false。这些规则需要 CRD transition
-validation。
-
-## Resolution 和 Cycle Detection
-
-snapshot resolution 在创建任何 execution child 前完成：
-
-1. 选择 inline root jobs，或者解析 top-level `spec.uses`。
-2. 校验并绑定 literal top-level inputs。
-3. 递归解析同 namespace 中的所有 job-level `uses`。
-4. 将完整的解析树存储到一个 immutable snapshot revision。
-5. 拒绝 missing definitions、invalid inputs、unsupported shapes，以及直接或间接 Workflow
-   call cycles。
-6. 持久化 immutable snapshot ControllerRevisions。
-7. 根据 snapshot 初始化轻量 status，并设置 `Accepted=True`。
-
-初始安全限制为最大 call depth 8，以及每个 root execution 最多 64 个 reusable Workflow call
-nodes。超过任一限制都会在创建 child 前拒绝 WorkflowRun。即使 graph 无环，这些限制也能防止
-意外递归扩张。
-
-## Reconciliation
-
-controller 保持现有 load/calculate/apply/patch 结构。
-
-加载的资源增加：
-
-- root snapshot ControllerRevision；
-- reconciled WorkflowRun owner 的 direct child WorkflowRuns；
-- inline jobs 对应的 direct child Runs。
-
-plan 可以产生两类 runnable target：
-
-- inline step target 创建或复用 child Run；
-- reusable call target 创建或复用 child WorkflowRun。
-
-一次 reconcile 可以并行启动所有当前 ready targets，但每个 caller job 最多一个 target。创建的
-child identities 会在单次 status patch 前记录到 desired status。确定性名称和 owner watches
-能够在 restart 后修复 create-before-status-patch failure。
-
-top-level `spec.uses` 不创建 wrapper child WorkflowRun。root WorkflowRun 会根据 immutable
-snapshot 初始化并执行 root jobs。只有 job-level calls 创建 child WorkflowRuns。
-
-## Job Shape 和 Outputs
-
-call job 支持 `needs`、`uses` 和 `with`。v0.x 不支持 `runs-on`、`steps` 或 caller-defined
-`outputs`。called Workflow 为其内部 jobs 选择 runtimes，并通过 `Workflow.spec.outputs` 暴露
-outputs。
-
-input expressions 只在 call job ready 时求值，并使用 caller 已完成 dependency outputs。求值后
-的具体值放入 child WorkflowRun 的 immutable `with` map。Secret inputs 继续保持 out of scope，
-直到单独的 secret-handling design 完成 review。
-
-output evaluation 仍属于现有 expression/output propagation story。本文只确定 boundary：child
-Workflow outputs 会提升为 caller job outputs，downstream jobs 通过普通 jobs context 访问。
-
-## Component Boundaries
-
-- WorkflowRun controller 负责 resolution、snapshots、child WorkflowRuns、child Runs、status
-  projection 和 cancellation propagation。
-- Workflow 和 Action controllers 继续只校验 definitions。
-- Scheduler 和 runtimed 继续只看到独立 Runs，不感知 Workflow calls 和 snapshots。
-- PersistentWorkspace 和 ArtifactStore 行为属于 called jobs，不属于 synthetic caller job。
-
-## API 和 RBAC Changes
-
-实现前需要 review 以下 API 和运维变更：
-
-- 增加 `WorkflowRun.status.snapshotName`；
-- 增加 `JobStatus.workflowRunName`；
-- 增加 WorkflowRun spec transition validation，保证 execution inputs immutable 且 cancellation
-  单向变化；
-- 拒绝在 `uses` job 中设置 `runs-on`、`steps` 和 caller-defined `outputs`；
-- 保留 snapshot/call-path labels 和 annotations；
-- 授予 WorkflowRun controller namespace-scoped `apps` ControllerRevision
-  get/list/watch/create/delete permissions；
-- 除 child Runs 外，watch owned child WorkflowRuns。
-
-## Rejected Alternatives
-
-### 将 callee jobs 扁平化到 parent status
-
-扁平化可以避免 child WorkflowRun objects，但需要 synthetic caller nodes、将 external dependency
-edges 重写到 callee roots 和 leaves、把 nested paths 泄漏到 labels，并在一个 status map 中混合
-独立的 workspace/artifact boundaries。Nested cancellation 和 output aggregation 也更难解释。
-
-### 每次 reconcile 都读取当前 Workflow
-
-该方案简单，但 reusable definition 被修改时会改变 in-progress execution，无法提供确定性的
-retry 或 restart recovery。
-
-### 将 resolved definitions 复制到 WorkflowRun status
-
-这会扩大 status，并可能复制 scripts 和 environment values。Status 应保持轻量 execution state，
-而不是 execution-spec store。
-
-## Implementation Plan
-
-1. API prerequisites：status references、transition validation、reserved metadata、generated
-   CRDs，以及 ControllerRevision/child-WorkflowRun RBAC。
-2. Snapshot storage 和 recursive resolver：version capture、limits、input validation，以及
-   cross-Workflow cycle detection。
-3. 从 immutable snapshot 执行 top-level `spec.uses`，修复当前只初始化 status 的缺口。
-4. 为 ready job-level calls 创建并观察 child WorkflowRuns，包括 dependency 和 terminal
-   propagation。
-5. 增加 restart、mutation、nested-call、cancellation 和 invalid-graph tests。
-6. 在现有 output propagation work 中集成 expression inputs 和 child Workflow outputs。
-7. 增加 E2E coverage，然后更新最终 workflow demo。
+1. 以 local WorkflowRun snapshot envelope 与 `JobStatus.outputs` 替换当前全树 snapshot 和 `callPath` API。
+2. 删除 root `WorkflowRun.spec.uses`/`with`；实现 `krt workflow trigger` 的模板 input 校验、渲染和 inline WorkflowRun 创建。
+3. 实现直接 child WorkflowRun 创建、input rendering 和冻结 output contracts。
+4. 实现局部 job-output 求值、child-output projection、restart recovery 和模板变更语义测试。
+5. 添加 nested calls、output propagation、cancellation、child 创建前后模板更新的 E2E coverage。
+6. 单独设计 Action expansion，并沿用相同的直接边界原则。
