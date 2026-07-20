@@ -19,7 +19,8 @@ four Pod-local operations called only by runtimed:
 
 The Runtime Server does not read Kubernetes objects, authenticate callers,
 route gateway requests, upload artifacts, or schedule capacity. Those concerns
-remain with runtimed, the Runtime gateway, and the control plane.
+remain with runtimed, the Runtime gateway, and the control plane. Invocation
+artifacts are out of scope for v0.x.
 
 Adding these RPCs changes the experimental custom Runtime protocol. The exact
 shape and semantics below require review before `runtime.proto`, generated
@@ -164,19 +165,12 @@ message InvokeFunctionRequest {
   int64 timeout_millis = 5;
 }
 
-message FunctionArtifactOutput {
-  string name = 1;
-  string relative_path = 2;
-  string content_type = 3;
-}
-
 message InvokeFunctionResponse {
   FunctionRegistration registration = 1;
   string invocation_id = 2;
   bytes output = 3;
   string content_type = 4;
   map<string, string> outputs = 5;
-  repeated FunctionArtifactOutput artifacts = 6;
 }
 
 message UnregisterFunctionRequest {
@@ -240,12 +234,9 @@ allows one in-flight invocation per function Run and does not queue requests.
   maps to HTTP 503 for draining, stale, or unready registration.
 
 `outputs` follow the key, count, and value bounds used by `Run.status.outputs`.
-Runtime Server artifact results are declarations of locally written files, not
-external artifact references. Each `relative_path` is non-empty, relative, and
-cannot contain a `..` segment. runtimed validates declarations, uploads files
-through the Runtime ArtifactStore, and returns public `ArtifactRef` values.
-This keeps storage credentials and external coordinates out of custom Runtime
-Servers.
+Function invocations do not produce artifact declarations or `ArtifactRef`
+values in v0.x. A future artifact design must define lifecycle, retention, and
+storage boundaries before extending this local protocol.
 
 Runtime logs are structured by Run UID and invocation ID. Adapter-captured
 function output populates the RPC `output` field and is not automatically
@@ -272,7 +263,6 @@ registration for the same Run UID.
 | Invocation ID | 128 bytes | Gateway and runtimed |
 | Response body | 1 MiB | runtimed |
 | Outputs | Existing Run output limits | runtimed |
-| Artifact declarations | Existing ArtifactRef count and metadata limits | runtimed |
 | In-flight calls | One per function Run | Runtime Server |
 | `fatal_error` | 4 KiB | Runtime Server |
 
@@ -312,8 +302,7 @@ there is no fallback that emulates function invocation through `Execute`.
    and stale-operation fencing.
 2. Use opaque bytes plus content type for local invoke payloads; JSON is the
    first gateway encoding.
-3. Let Runtime Servers declare validated relative artifact paths while
-   runtimed owns upload and public ArtifactRef creation.
+3. Keep invocation artifacts out of scope for v0.x.
 4. Do not promise invocation-ID deduplication or automatic execution retry.
 5. Limit v0.x to one in-flight invocation per registered function Run.
 

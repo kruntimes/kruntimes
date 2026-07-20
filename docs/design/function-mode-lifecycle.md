@@ -20,8 +20,7 @@ it leaves several correctness and security questions unresolved:
   lookup on the hot path;
 - how callers are authenticated and authorized;
 - whether a transport retry may execute an invocation twice;
-- how invocation concurrency, payloads, outputs, artifacts, and logs remain
-  bounded;
+- how invocation concurrency, payloads, outputs, and logs remain bounded;
 - which state belongs in Run status and which state remains in the dataplane.
 
 Adding only a `Ready` phase and an endpoint field would leave these behaviors
@@ -307,10 +306,11 @@ Initial limits are:
 - request body: 1 MiB;
 - invocation ID: 128 bytes;
 - outputs: the same key/count/value limits as bounded Run outputs;
-- artifact references: the same count and metadata limits as Run artifact
-  references;
 - one in-flight invocation per function Run in v0.x;
 - no unbounded server-side queue.
+
+Invocation artifacts are out of scope for v0.x. Existing task-mode artifact
+storage and cleanup remain unchanged.
 
 The Runtime gateway never automatically retries an invocation after dispatch
 to an owner or Runtime Server. A connection failure may have an unknown

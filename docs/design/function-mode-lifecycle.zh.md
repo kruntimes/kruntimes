@@ -17,7 +17,7 @@ invocation semantics。
 - invoke request 如何在热路径不查询 Kubernetes API 的情况下到达 owning runtimed；
 - caller 如何完成 authentication 和 authorization；
 - transport retry 是否可能导致 invocation 被执行两次；
-- invocation concurrency、payload、outputs、artifacts 和 logs 如何保持有界；
+- invocation concurrency、payload、outputs 和 logs 如何保持有界；
 - 哪些状态属于 Run status，哪些应留在 dataplane。
 
 只增加 `Ready` phase 和 endpoint 字段会让这些行为继续保持未定义，并增加后续兼容成本。
@@ -264,9 +264,10 @@ X-Kruntime-Invocation-ID: <caller-generated-id>
 - request body：1 MiB；
 - invocation ID：128 bytes；
 - outputs：使用 bounded Run outputs 相同的 key/count/value limits；
-- artifact references：使用 Run artifact references 相同的 count 和 metadata limits；
 - v0.x 中每个 function Run 只允许一个 in-flight invocation；
 - 不提供无界 server-side queue。
+
+invocation artifact 不属于 v0.x 范围。已有 task-mode artifact storage 和 cleanup 保持不变。
 
 Runtime gateway 在 dispatch 到 owner 或 Runtime Server 后绝不自动 retry invocation。连接失败
 可能代表 unknown execution outcome。SDK 也默认不 retry execution。未来 deduplication 或

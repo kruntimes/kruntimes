@@ -22,7 +22,7 @@ Run API，也不会把 Runtime Server 暴露到 Runtime Pod 外。
 
 Runtime Server 不读取 Kubernetes 对象、不认证调用方、不路由 gateway 请求、不上传
 artifact，也不调度 capacity。这些职责分别属于 runtimed、Runtime gateway 和 control
-plane。
+plane。invocation artifact 不属于 v0.x 范围。
 
 新增 RPC 会改变实验期 custom Runtime protocol。以下精确 message shape 和语义必须在修改
 `runtime.proto`、生成 stubs 或内置 Runtime 实现前完成评审。
@@ -158,19 +158,12 @@ message InvokeFunctionRequest {
   int64 timeout_millis = 5;
 }
 
-message FunctionArtifactOutput {
-  string name = 1;
-  string relative_path = 2;
-  string content_type = 3;
-}
-
 message InvokeFunctionResponse {
   FunctionRegistration registration = 1;
   string invocation_id = 2;
   bytes output = 3;
   string content_type = 4;
   map<string, string> outputs = 5;
-  repeated FunctionArtifactOutput artifacts = 6;
 }
 
 message UnregisterFunctionRequest {
@@ -223,10 +216,9 @@ in-flight invocation，并且不排队。
   不影响 function Run 生命周期。draining、stale 或未就绪注册的 `FailedPrecondition` 映射为
   HTTP 503。
 
-`outputs` 使用与 `Run.status.outputs` 相同的 key、数量和 value 限制。Runtime Server 返回的
-artifact 只是本地写入文件的声明，并不是外部 artifact 引用。每个 `relative_path` 必须非空、
-相对且不含 `..` segment。runtimed 校验声明，经 Runtime ArtifactStore 上传文件，再返回公开
-的 `ArtifactRef`。这让 storage credentials 和外部坐标不会进入 custom Runtime Server。
+`outputs` 使用与 `Run.status.outputs` 相同的 key、数量和 value 限制。v0.x 的 function
+invocation 不生成 artifact declaration 或 `ArtifactRef`。未来需要先定义 lifecycle、retention 和
+storage boundary，才能扩展这个 local protocol。
 
 runtime logs 以 Run UID 和 invocation ID 为 key 进行结构化记录。adapter 捕获的 function output
 写入 RPC 的 `output` field，而不会自动记录为日志。内置 Bash 将 handler stdout 作为 function
@@ -250,7 +242,6 @@ output，将 stderr 作为结构化日志；两者都不写入 `Run.status.messa
 | Invocation ID | 128 bytes | Gateway 与 runtimed |
 | Response body | 1 MiB | runtimed |
 | Outputs | 现有 Run output 限制 | runtimed |
-| Artifact declarations | 现有 ArtifactRef 数量和 metadata 限制 | runtimed |
 | In-flight calls | 每个 function Run 一个 | Runtime Server |
 | `fatal_error` | 4 KiB | Runtime Server |
 
@@ -283,7 +274,7 @@ function mode；不得通过 `Execute` 模拟 function invocation。
 1. 在 function mode 中使用 `Run.status.attempt` 表示 registration lifecycle attempt；后续本地
    调用使用 Runtime Server 生成的 registration ID，并以它 fence stale operation。
 2. 本地 invoke payload 使用 opaque bytes 加 content type；JSON 是第一个 gateway 编码。
-3. Runtime Server 只声明已校验的相对 artifact 路径；runtimed 负责上传和创建公开 ArtifactRef。
+3. invocation artifact 不属于 v0.x 范围。
 4. 不承诺 invocation-ID 去重，也不承诺自动 execution retry。
 5. v0.x 每个已注册 function Run 最多一个 in-flight invocation。
 
