@@ -231,10 +231,10 @@ controller wiring 累积不必要的冲突。
     - [x] 增加 immutable ControllerRevision snapshot storage 和 recursive resolution，包括 version capture、
       call limits、input validation 和 cycle detection；
     - [x] 从 snapshot 执行 top-level `WorkflowRun.spec.uses`，而不是只初始化 status；
-    - [ ] 为 ready job-level calls 创建并观察 child WorkflowRuns；
-    - [ ] 验证 definition mutation isolation、restart recovery、nested calls、cancellation 和
+    - [x] 为 ready job-level calls 创建并观察 child WorkflowRuns；
+    - [x] 验证 definition mutation isolation、restart recovery、nested calls、cancellation 和
       invalid graphs；
-    - [ ] 将 call inputs 和 outputs 接入 expression/output propagation；
+    - [ ] 将 call input values 和 outputs 接入 expression/output propagation；
   - 实现 step-level Action expansion；
   - 实现 `inputs`、`steps` 和 `jobs` contexts 的 expression evaluation；
   - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；

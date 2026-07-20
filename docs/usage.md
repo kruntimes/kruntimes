@@ -201,11 +201,13 @@ delivery deterministic and safe.
 Full stdout and stderr are exposed through structured runtimed logs keyed by
 Run UID. They are not copied wholesale into `status.message`.
 
-## WorkflowRun Skeleton
+## WorkflowRun
 
-`WorkflowRun` is the target execution-instance API for the reusable workflow
-model. The current v0.x skeleton accepts inline jobs or a namespace-local
-reusable Workflow reference, but execution is not implemented yet.
+`WorkflowRun` executes inline jobs or a namespace-local reusable `Workflow`.
+Jobs without dependencies start in parallel; steps inside one job run
+sequentially. A job may instead use another `Workflow`, which the controller
+executes as an owned child `WorkflowRun`. The child must finish successfully
+before dependent caller jobs can start.
 
 Create an inline WorkflowRun manifest:
 
@@ -258,8 +260,7 @@ krt wf delete build-and-test -n default
 ```
 
 `krt wf trigger` creates a `WorkflowRun` with `spec.uses` pointing at the
-reusable Workflow. The created `WorkflowRun` remains pending until WorkflowRun
-execution is implemented.
+reusable Workflow.
 
 `krt wf run cancel` is reserved for the future cancellation API and currently
 returns a clear unsupported error.

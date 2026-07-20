@@ -195,11 +195,12 @@ Retry 语义是 at-least-once。Runtime Servers 必须让重复 `Execute` delive
 完整 stdout 和 stderr 通过带 Run UID 的结构化 runtimed logs 暴露。它们不会被完整复制到
 `status.message`。
 
-## WorkflowRun Skeleton
+## WorkflowRun
 
-`WorkflowRun` 是 reusable workflow model 的目标 execution-instance API。当前 v0.x
-skeleton 接受 inline jobs，或 namespace-local reusable Workflow reference，但尚未实现
-执行逻辑。
+`WorkflowRun` 执行 inline jobs 或 namespace-local reusable `Workflow`。没有 dependency 的
+jobs 会并行启动，一个 job 内的 steps 顺序执行。一个 job 也可以使用另一个 `Workflow`；
+controller 会将它作为 owned child `WorkflowRun` 执行。该 child 必须成功结束，依赖它的 caller
+jobs 才能开始。
 
 创建一个 inline WorkflowRun manifest：
 
@@ -251,8 +252,7 @@ krt wf trigger build-and-test --set ref=main -n default
 krt wf delete build-and-test -n default
 ```
 
-`krt wf trigger` 会创建一个 `spec.uses` 指向 reusable Workflow 的 `WorkflowRun`。在
-WorkflowRun execution 实现前，创建出来的 `WorkflowRun` 会保持 pending。
+`krt wf trigger` 会创建一个 `spec.uses` 指向 reusable Workflow 的 `WorkflowRun`。
 
 `krt wf run cancel` 是为未来 cancellation API 预留的命令；当前会返回明确的 unsupported
 error。

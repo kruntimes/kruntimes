@@ -1,6 +1,6 @@
 # Job-Level Reusable Workflow Execution
 
-Status: **Proposed for review**
+Status: **Implemented in PR #301; output propagation remains proposed**
 
 This document refines the job-level `uses` model introduced in
 [Workflow Reuse](../workflow-reuse/). It defines an execution boundary that is
@@ -74,7 +74,7 @@ spec:
 - its child WorkflowRun may execute multiple jobs in parallel;
 - it succeeds only when the child WorkflowRun succeeds;
 - `notify` waits for the complete child WorkflowRun, not one internal leaf;
-- called Workflow outputs become outputs of the `deploy` job;
+- output promotion from the called Workflow to the `deploy` job is deferred;
 - called jobs do not share a workspace with caller jobs.
 
 This follows the useful part of the
@@ -338,7 +338,7 @@ Only job-level calls create child WorkflowRuns.
 
 A call job supports `needs`, `uses`, and `with`. It does not support `runs-on`,
 `steps`, or caller-defined `outputs` in v0.x. The called Workflow selects
-runtimes for its own jobs and exposes outputs through `Workflow.spec.outputs`.
+runtimes for its own jobs. `Workflow.spec.outputs` is not evaluated yet.
 
 Input expressions are evaluated only when the call job becomes runnable, using
 the caller's completed dependency outputs. The resulting concrete values are
@@ -346,9 +346,8 @@ placed in the child WorkflowRun's immutable `with` map. Secret inputs remain
 out of scope until a separate secret-handling design is reviewed.
 
 Output evaluation remains part of the existing expression/output propagation
-story. This design only fixes the boundary: child Workflow outputs are promoted
-to caller job outputs, and downstream jobs access them through the normal jobs
-context.
+story. The future boundary is that child Workflow outputs become caller job
+outputs, and downstream jobs access them through the normal jobs context.
 
 ## Component Boundaries
 

@@ -1,6 +1,6 @@
 # Job-Level Reusable Workflow Execution
 
-状态：**提案，等待 review**
+状态：**已在 PR #301 实现；output propagation 仍是提案**
 
 本文细化 [Workflow Reuse](../workflow-reuse/) 中的 job-level `uses` 模型，定义一个在
 controller restart 和 reusable `Workflow` 更新后仍保持确定性的 execution boundary。
@@ -65,7 +65,7 @@ spec:
 - child WorkflowRun 内可以并行执行多个 jobs；
 - 只有 child WorkflowRun succeeded 时它才 succeeded；
 - `notify` 等待完整 child WorkflowRun，而不是某个内部 leaf；
-- called Workflow outputs 成为 `deploy` job outputs；
+- 将 called Workflow outputs 提升为 `deploy` job outputs 的能力暂缓；
 - called jobs 不与 caller jobs 共享 workspace。
 
 该语义保留了
@@ -302,15 +302,14 @@ snapshot 初始化并执行 root jobs。只有 job-level calls 创建 child Work
 ## Job Shape 和 Outputs
 
 call job 支持 `needs`、`uses` 和 `with`。v0.x 不支持 `runs-on`、`steps` 或 caller-defined
-`outputs`。called Workflow 为其内部 jobs 选择 runtimes，并通过 `Workflow.spec.outputs` 暴露
-outputs。
+`outputs`。called Workflow 为其内部 jobs 选择 runtimes。`Workflow.spec.outputs` 尚不求值。
 
 input expressions 只在 call job ready 时求值，并使用 caller 已完成 dependency outputs。求值后
 的具体值放入 child WorkflowRun 的 immutable `with` map。Secret inputs 继续保持 out of scope，
 直到单独的 secret-handling design 完成 review。
 
-output evaluation 仍属于现有 expression/output propagation story。本文只确定 boundary：child
-Workflow outputs 会提升为 caller job outputs，downstream jobs 通过普通 jobs context 访问。
+output evaluation 仍属于现有 expression/output propagation story。未来的 boundary 是：child
+Workflow outputs 成为 caller job outputs，downstream jobs 通过普通 jobs context 访问。
 
 ## Component Boundaries
 

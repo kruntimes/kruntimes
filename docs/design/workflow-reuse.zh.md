@@ -1,6 +1,8 @@
 # Workflow Reuse
 
-本文描述 v0.x 的目标设计，当前尚未实现。
+本文描述 target v0.x model。`WorkflowRun`、immutable snapshot、top-level reuse 以及
+job-level reusable Workflow execution 已逐步实现；Action expansion 和 output propagation
+仍是未来工作。
 
 目标是在 Workflow API 稳定前拆分 workflow execution instances 和 reusable workflow/step
 definitions。当前 experimental `Workflow` CRD 表示 execution instance。这个形态对 CI/CD
@@ -134,9 +136,10 @@ spec:
 
 Validation 必须保证 job `uses` 和 job `steps` 互斥。
 
-Reusable Workflow jobs 拥有自己的 job/workspace/artifact boundary。它们通过 inputs、
-outputs 和 artifacts 与 caller 通信。具体的 parent/child execution boundary 和 immutable
-snapshot model 见 [Job-Level Reusable Workflow Execution](../workflow-job-reuse/)。
+Reusable Workflow jobs 作为 child WorkflowRuns 执行，并拥有自己的 local job status boundary。
+input validation 和 immutable snapshot binding 已支持；workspace sharing、output propagation 和
+artifact transfer 仍是未来工作。具体的 parent/child execution boundary 和 immutable snapshot
+model 见 [Job-Level Reusable Workflow Execution](../workflow-job-reuse/)。
 
 ## Action
 
@@ -550,6 +553,10 @@ status:
 - WorkflowRun cancellation 会停止创建新的 child Runs，幂等地请求取消 active child Runs，
   并在它们 settled 后 finalize 为 `Cancelled`。从未启动的 jobs 保留 `Pending` 或
   `Waiting` phase。
+- Ready 的 `uses` job 会创建 owned child WorkflowRun。完整 call tree 会在执行前解析到
+  root immutable ControllerRevision；child controller 根据 call path 只执行 snapshot-bound
+  local jobs。direct child 的 terminal phase 会投影到 caller job，cancellation 通过 direct
+  ownership 传播。expression values 和 outputs 仍不会传播。
 - Restart recovery 已覆盖 create-before-status-patch 故障窗口：replacement controller
   通过 durable labels 发现 child Runs、修复 step status，并继续观察 terminal state，且
   不会重复创建 Runs。

@@ -266,10 +266,10 @@ wiring from accumulating avoidable conflicts.
       capture, call limits, input validation, and cycle detection;
     - [x] execute top-level `WorkflowRun.spec.uses` from its snapshot instead of
       only initializing status;
-    - [ ] create and observe child WorkflowRuns for ready job-level calls;
-    - [ ] verify definition mutation isolation, restart recovery, nested calls,
+    - [x] create and observe child WorkflowRuns for ready job-level calls;
+    - [x] verify definition mutation isolation, restart recovery, nested calls,
       cancellation, and invalid graphs;
-    - [ ] integrate call inputs and outputs with expression/output propagation;
+    - [ ] integrate call input values and outputs with expression/output propagation;
   - implement step-level Action expansion;
   - implement expression evaluation for `inputs`, `steps`, and `jobs` contexts;
   - promote child Run outputs into WorkflowRun step/job/workflow outputs;

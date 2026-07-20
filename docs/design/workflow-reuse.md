@@ -1,6 +1,9 @@
 # Workflow Reuse
 
-This document describes a target v0.x design. It is not implemented yet.
+This document describes the target v0.x model. The `WorkflowRun`, immutable
+snapshot, top-level reuse, and job-level reusable Workflow execution portions
+are implemented incrementally; Action expansion and output propagation remain
+future work.
 
 The goal is to split workflow execution instances from reusable workflow and
 step definitions before the Workflow API stabilizes. The current experimental
@@ -140,9 +143,10 @@ spec:
 
 Validation must enforce that job `uses` and job `steps` are mutually exclusive.
 
-Reusable Workflow jobs have their own job/workspace/artifact boundary. They
-communicate with callers through inputs, outputs, and artifacts. The concrete
-parent/child execution boundary and immutable snapshot model are defined in
+Reusable Workflow jobs execute as child WorkflowRuns with their own local job
+status boundary. Input validation and immutable snapshot binding are available;
+workspace sharing, output propagation, and artifact transfer remain future
+work. The concrete parent/child execution boundary and immutable snapshot model are defined in
 [Job-Level Reusable Workflow Execution](../workflow-job-reuse/).
 
 ## Action
@@ -602,6 +606,12 @@ Current implementation status:
 - WorkflowRun cancellation stops new child Run creation, idempotently requests
   cancellation for active child Runs, and finalizes as `Cancelled` after they
   settle. Jobs that never started retain their `Pending` or `Waiting` phase.
+- Job-level reusable Workflow calls create owned child WorkflowRuns for ready
+  `uses` jobs. The complete call tree is resolved into the root immutable
+  ControllerRevision before execution; child controllers use their call path to
+  execute only their snapshot-bound local jobs. A direct child terminal phase
+  is projected into the caller job, and cancellation propagates by direct
+  ownership. Expression values and outputs are still not propagated.
 - Restart recovery is verified across the create-before-status-patch failure
   window: a replacement controller discovers child Runs through durable labels,
   repairs step status, and continues terminal observation without duplicates.
