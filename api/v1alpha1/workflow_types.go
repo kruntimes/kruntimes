@@ -59,6 +59,7 @@ type WorkflowSpec struct {
 // JobSpec defines a single job within a workflow.
 // +kubebuilder:validation:XValidation:rule="has(self.steps) != has(self.uses)",message="exactly one of steps or uses must be set"
 // +kubebuilder:validation:XValidation:rule="!has(self.with) || has(self.uses)",message="with can only be set when uses is set"
+// +kubebuilder:validation:XValidation:rule="!has(self.uses) || !has(self.outputs)",message="outputs may not be set when uses is set"
 type JobSpec struct {
 	// RunsOn is the runtime to use for all steps in this job (e.g., "bash", "python").
 	// Runtime names are propagated to Kubernetes label values.

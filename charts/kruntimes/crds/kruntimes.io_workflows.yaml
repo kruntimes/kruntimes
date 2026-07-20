@@ -170,6 +170,8 @@ spec:
                     rule: has(self.steps) != has(self.uses)
                   - message: with can only be set when uses is set
                     rule: '!has(self.with) || has(self.uses)'
+                  - message: outputs may not be set when uses is set
+                    rule: '!has(self.uses) || !has(self.outputs)'
                 description: |-
                   Jobs is a map of reusable job names to job specs. Jobs run in parallel
                   unless constrained by needs; the map order is not significant.

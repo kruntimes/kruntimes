@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -153,7 +154,7 @@ func TestWorkflowRunReconcilerStartsAllIndependentReadyJobs(t *testing.T) {
 	reconcileWorkflowRun(t, reconciler, req, 1)
 	assertChildRunCount(t, c, workflowRun.Namespace, 0)
 
-	// A single StartRunnableSteps transition creates all independent ready jobs.
+	// A single StartRunnableTargets transition creates all independent ready jobs.
 	reconcileWorkflowRun(t, reconciler, req, 1)
 	assertChildRunCount(t, c, workflowRun.Namespace, 2)
 	// A subsequent reconcile sees the next step as running and creates nothing.
@@ -178,8 +179,8 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		},
 	}
 	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: pending, snapshot: snapshotForWorkflowRun(pending)})
-	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableSteps || len(plan.targets) != 1 || plan.targets[0] != (workflowRunStepTarget{jobName: "build", stepIndex: 0}) {
-		t.Fatalf("pending plan = %#v, want Pending + StartRunnableSteps(build[0])", plan)
+	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableTargets || len(plan.targets) != 1 || plan.targets[0] != (workflowRunTarget{jobName: "build", stepIndex: 0}) {
+		t.Fatalf("pending plan = %#v, want Pending + StartRunnableTargets(build[0])", plan)
 	}
 
 	cancelled := pending.DeepCopy()
@@ -197,8 +198,8 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
 		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
-	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildRunCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
-		t.Fatalf("cancelling plan = %#v, want Cancelling + RequestChildRunCancellation(build-run)", plan)
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
+		t.Fatalf("cancelling plan = %#v, want Cancelling + RequestChildCancellation(build-run)", plan)
 	}
 
 	// A late child Run watch must repair an early Cancelled projection caused by
@@ -209,7 +210,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
 		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
-	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildRunCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
 		t.Fatalf("late child plan = %#v, want cancellation repair", plan)
 	}
 }
@@ -241,9 +242,9 @@ func TestCalculateWorkflowRunPlanProjectsStatusBeforeStartingReadyJobs(t *testin
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): buildRun},
 		snapshot:    snapshotForWorkflowRun(workflowRun),
 	})
-	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
-		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
+	want := []workflowRunTarget{{jobName: "lint", stepIndex: 0}}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
+		t.Fatalf("plan = %#v, want Running + StartRunnableTargets(%#v)", plan, want)
 	}
 	if workflowRun.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded {
 		t.Fatalf("build status = %#v, want derived succeeded job", workflowRun.Status.Jobs["build"])
@@ -266,9 +267,9 @@ func TestPlanWorkflowRunStartsAllRunnableSteps(t *testing.T) {
 	}
 
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
-	want := []workflowRunStepTarget{{jobName: "build", stepIndex: 1}, {jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
-		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
+	want := []workflowRunTarget{{jobName: "build", stepIndex: 1}, {jobName: "lint", stepIndex: 0}}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
+		t.Fatalf("plan = %#v, want Running + StartRunnableTargets(%#v)", plan, want)
 	}
 }
 
@@ -288,9 +289,9 @@ func TestCalculateWorkflowRunPlanFinalizesJobsBeforeStartingReadyJobs(t *testing
 	}
 
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
-	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
-		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
+	want := []workflowRunTarget{{jobName: "lint", stepIndex: 0}}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
+		t.Fatalf("plan = %#v, want Running + StartRunnableTargets(%#v)", plan, want)
 	}
 	if workflowRun.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded {
 		t.Fatalf("build status = %#v, want derived succeeded job", workflowRun.Status.Jobs["build"])
@@ -364,7 +365,7 @@ func TestWorkflowRunReconcilerSkipsBlockedJobsAndStartsIndependentJobs(t *testin
 	}
 }
 
-func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization(t *testing.T) {
+func TestWorkflowRunReconcilerCreatesChildWorkflowRunForJobLevelUses(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
@@ -400,18 +401,262 @@ func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
 		t.Fatalf("get workflowrun: %v", err)
 	}
-	if updated.Status.Phase != v1alpha1.WorkflowFailed {
-		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowFailed)
+	if updated.Status.Phase != v1alpha1.WorkflowRunning {
+		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowRunning)
 	}
-	if !strings.Contains(updated.Status.Message, "job-level uses is not implemented yet") {
-		t.Fatalf("message = %q, want job-level uses not implemented", updated.Status.Message)
+	job := updated.Status.Jobs["release"]
+	if job.Phase != v1alpha1.JobRunning || job.WorkflowRunName == "" || len(job.Steps) != 0 {
+		t.Fatalf("job = %#v, want running call job with child workflowrun", job)
 	}
-	if updated.Status.Jobs != nil {
-		t.Fatalf("jobs = %#v, want nil for rejected workflowrun", updated.Status.Jobs)
+	var children v1alpha1.WorkflowRunList
+	if err := c.List(context.Background(), &children, client.InNamespace(workflowRun.Namespace)); err != nil {
+		t.Fatalf("list child workflowruns: %v", err)
 	}
-	cond := apimeta.FindStatusCondition(updated.Status.Conditions, v1alpha1.WorkflowRunAcceptedCondition)
-	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "WorkflowValidationFailed" {
-		t.Fatalf("condition = %#v, want validation rejection", cond)
+	if len(children.Items) != 2 {
+		t.Fatalf("workflowruns = %#v, want parent and child", children.Items)
+	}
+	var child *v1alpha1.WorkflowRun
+	for i := range children.Items {
+		if children.Items[i].Name == updated.Name {
+			continue
+		}
+		child = &children.Items[i]
+	}
+	if child == nil || child.Name != job.WorkflowRunName || child.Spec.Uses != workflow.Name || child.Annotations[v1alpha1.WorkflowSnapshotNameAnnotation] != updated.Status.SnapshotName || child.Annotations[v1alpha1.WorkflowCallPathAnnotation] != "root/jobs/release" {
+		t.Fatalf("child = %#v, want snapshot-bound release child", child)
+	}
+	if !metav1.IsControlledBy(child, &updated) {
+		t.Fatalf("child owner = %#v, want parent workflowrun", child.OwnerReferences)
+	}
+}
+
+func TestWorkflowRunReconcilerInitializesChildWorkflowRunFromParentSnapshot(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "deploy", Namespace: "default"},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"apply": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "echo snapshot"}}},
+		}},
+	}
+	parent := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "release-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: workflow.Name},
+		}},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflow, parent).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	parentRequest := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
+	reconcileWorkflowRun(t, reconciler, parentRequest, 2)
+
+	var parentUpdated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(parent), &parentUpdated); err != nil {
+		t.Fatalf("get parent workflowrun: %v", err)
+	}
+	childName := parentUpdated.Status.Jobs["deploy"].WorkflowRunName
+	child := &v1alpha1.WorkflowRun{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: parent.Namespace, Name: childName}, child); err != nil {
+		t.Fatalf("get child workflowrun: %v", err)
+	}
+
+	workflow.Spec.Jobs["apply"] = v1alpha1.JobSpec{RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "echo mutable"}}}
+	if err := c.Update(context.Background(), workflow); err != nil {
+		t.Fatalf("mutate reusable workflow: %v", err)
+	}
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(child)}, 2)
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(child), child); err != nil {
+		t.Fatalf("refresh child workflowrun: %v", err)
+	}
+
+	var runs v1alpha1.RunList
+	if err := c.List(context.Background(), &runs, client.InNamespace(parent.Namespace)); err != nil {
+		t.Fatalf("list child runs: %v", err)
+	}
+	if len(runs.Items) != 1 || runs.Items[0].Spec.Source == nil || runs.Items[0].Spec.Source.Inline == nil || *runs.Items[0].Spec.Source.Inline != "echo snapshot" {
+		t.Fatalf("child runs = %#v, want execution from parent snapshot", runs.Items)
+	}
+	if child.Status.SnapshotName != parentUpdated.Status.SnapshotName {
+		t.Fatalf("child snapshotName = %q, want %q", child.Status.SnapshotName, parentUpdated.Status.SnapshotName)
+	}
+}
+
+func TestCalculateWorkflowRunPlanProjectsChildWorkflowRunTerminalState(t *testing.T) {
+	parent := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", UID: "release-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: "deploy-workflow"},
+			"notify": {RunsOn: "bash", Needs: []string{"deploy"}, Steps: []v1alpha1.StepSpec{{Name: "send", Run: "notify"}}},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"deploy": {Phase: v1alpha1.JobRunning, WorkflowRunName: "release-call"},
+				"notify": {Phase: v1alpha1.JobWaiting, Pre: []string{"deploy"}, Steps: []v1alpha1.StepStatus{{Name: "send", Phase: v1alpha1.StepPending}}},
+			},
+		},
+	}
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release-call"},
+		Status:     v1alpha1.WorkflowRunStatus{Phase: v1alpha1.WorkflowSucceeded},
+	}
+	plan := calculateWorkflowRunPlan(&workflowRunResources{
+		workflowRun:       parent,
+		childWorkflowRuns: map[string]*v1alpha1.WorkflowRun{"deploy": child},
+		snapshot:          snapshotForWorkflowRun(parent),
+	})
+	want := []workflowRunTarget{{jobName: "notify", stepIndex: 0}}
+	if plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
+		t.Fatalf("plan = %#v, want runnable notify step", plan)
+	}
+	if parent.Status.Jobs["deploy"].Phase != v1alpha1.JobSucceeded {
+		t.Fatalf("deploy = %#v, want succeeded from child workflowrun", parent.Status.Jobs["deploy"])
+	}
+}
+
+func TestCalculateWorkflowRunPlanCancelsActiveChildWorkflowRun(t *testing.T) {
+	parent := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", UID: "release-uid"},
+		Spec:       v1alpha1.WorkflowRunSpec{CancelRequested: true},
+		Status:     v1alpha1.WorkflowRunStatus{Phase: v1alpha1.WorkflowRunning, Jobs: map[string]v1alpha1.JobStatus{}},
+	}
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release-call"},
+		Status:     v1alpha1.WorkflowRunStatus{Phase: v1alpha1.WorkflowRunning},
+	}
+	plan := calculateWorkflowRunPlan(&workflowRunResources{
+		workflowRun:       parent,
+		childWorkflowRuns: map[string]*v1alpha1.WorkflowRun{"deploy": child},
+		snapshot:          snapshotForWorkflowRun(parent),
+	})
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !slices.Equal(plan.workflowRunNames, []string{"release-call"}) {
+		t.Fatalf("plan = %#v, want cancellation of active child workflowrun", plan)
+	}
+}
+
+func TestWorkflowRunReconcilerReusesChildWorkflowRunCreatedBeforeParentStatus(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "deploy", Namespace: "default"},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"apply": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "deploy"}}},
+		}},
+	}
+	parent := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "release-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: workflow.Name},
+		}},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflow, parent).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	snapshot, err := reconciler.resolveWorkflowRunSnapshot(context.Background(), parent)
+	if err != nil {
+		t.Fatalf("resolve parent snapshot: %v", err)
+	}
+	snapshotName, _, err := reconciler.ensureWorkflowSnapshot(context.Background(), parent, snapshot)
+	if err != nil {
+		t.Fatalf("persist parent snapshot: %v", err)
+	}
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      workflowChildWorkflowRunName(parent, "deploy"),
+			Namespace: parent.Namespace,
+			Labels: map[string]string{
+				v1alpha1.WorkflowRootRunUIDLabel: string(parent.UID),
+			},
+			Annotations: map[string]string{
+				v1alpha1.WorkflowSnapshotNameAnnotation: snapshotName,
+				v1alpha1.WorkflowCallPathAnnotation:     "root/jobs/deploy",
+			},
+		},
+		Spec: v1alpha1.WorkflowRunSpec{Uses: workflow.Name},
+	}
+	if err := controllerutil.SetControllerReference(parent, child, scheme); err != nil {
+		t.Fatalf("set child owner: %v", err)
+	}
+	if err := c.Create(context.Background(), child); err != nil {
+		t.Fatalf("create child workflowrun: %v", err)
+	}
+
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
+	reconcileWorkflowRun(t, reconciler, request, 2)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(parent), &updated); err != nil {
+		t.Fatalf("get parent workflowrun: %v", err)
+	}
+	if updated.Status.Jobs["deploy"].WorkflowRunName != child.Name {
+		t.Fatalf("deploy = %#v, want existing child %q", updated.Status.Jobs["deploy"], child.Name)
+	}
+	var children v1alpha1.WorkflowRunList
+	if err := c.List(context.Background(), &children, client.InNamespace(parent.Namespace)); err != nil {
+		t.Fatalf("list workflowruns: %v", err)
+	}
+	if len(children.Items) != 2 {
+		t.Fatalf("workflowruns = %#v, want parent and existing child only", children.Items)
+	}
+}
+
+func TestWorkflowRunReconcilerRequestsCancellationOfChildWorkflowRun(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "deploy", Namespace: "default"},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"apply": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "run", Run: "deploy"}}},
+		}},
+	}
+	parent := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "release-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{
+			Jobs:            map[string]v1alpha1.JobSpec{"deploy": {Uses: workflow.Name}},
+			CancelRequested: true,
+		},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"deploy": {Phase: v1alpha1.JobRunning, WorkflowRunName: "release-call"},
+			},
+		},
+	}
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "release-call",
+			Namespace: parent.Namespace,
+			Labels: map[string]string{
+				v1alpha1.WorkflowRootRunUIDLabel: string(parent.UID),
+			},
+			Annotations: map[string]string{
+				v1alpha1.WorkflowCallPathAnnotation: "root/jobs/deploy",
+			},
+		},
+		Spec:   v1alpha1.WorkflowRunSpec{Uses: workflow.Name},
+		Status: v1alpha1.WorkflowRunStatus{Phase: v1alpha1.WorkflowRunning},
+	}
+	if err := controllerutil.SetControllerReference(parent, child, scheme); err != nil {
+		t.Fatalf("set child owner: %v", err)
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflow, parent, child).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}, 1)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(child), &updated); err != nil {
+		t.Fatalf("get child workflowrun: %v", err)
+	}
+	if !updated.Spec.CancelRequested {
+		t.Fatalf("child spec = %#v, want cancellation request", updated.Spec)
 	}
 }
 

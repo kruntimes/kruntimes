@@ -47,6 +47,17 @@ func (s *workflowExecutionSnapshot) rootJobs() map[string]v1alpha1.JobSpec {
 	return s.Root.Spec.Jobs
 }
 
+func (s *workflowExecutionSnapshot) jobsAt(callPath string) (map[string]v1alpha1.JobSpec, bool) {
+	if callPath == "" || callPath == "root" {
+		return s.rootJobs(), true
+	}
+	workflow, ok := s.Workflows[callPath]
+	if !ok {
+		return nil, false
+	}
+	return workflow.Jobs, true
+}
+
 type workflowSnapshotResolutionError struct {
 	err error
 }
