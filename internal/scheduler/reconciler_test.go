@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
@@ -210,6 +211,72 @@ func TestReconcileRecordsScheduledCondition(t *testing.T) {
 	condition := meta.FindStatusCondition(updated.Status.Conditions, runstatus.ConditionScheduled)
 	if condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "Assigned" {
 		t.Fatalf("Scheduled condition = %#v, want true/Assigned", condition)
+	}
+}
+
+func TestReconcileSchedulesRunToRequiredAffinityPod(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add kruntimes scheme: %v", err)
+	}
+
+	now := metav1.Now()
+	readyPod := func(name string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: "default",
+				Labels:    map[string]string{"runtime": "bash"},
+				Annotations: map[string]string{
+					runtimepod.CapacityAnnotation(v1alpha1.RuntimeResourceRuns): "2",
+				},
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				Conditions: []corev1.PodCondition{
+					{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+					{Type: v1alpha1.RuntimePodRuntimedReadyCondition, Status: corev1.ConditionTrue, LastProbeTime: now},
+				},
+			},
+		}
+	}
+
+	target := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", Labels: map[string]string{"stage": "build"}},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "runtime-a"},
+	}
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Affinity: &v1alpha1.RunAffinity{RunAffinity: &v1alpha1.RunAffinityRules{
+				RequiredDuringSchedulingIgnoredDuringExecution: []v1alpha1.RunAffinityTerm{{
+					LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"stage": "build"}},
+					TopologyKey:   v1alpha1.RunAffinityTopologyRuntimePod,
+				}},
+			}},
+		},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run, target, readyPod("runtime-a"), readyPod("runtime-b")).
+		Build()
+	reconciler := &RunReconciler{Client: k8sClient, Log: logr.Discard(), Strategy: &LeastLoaded{}}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	var updated v1alpha1.Run
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &updated); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.RunScheduled || updated.Status.AssignedPod != "runtime-a" {
+		t.Fatalf("status = %#v, want Scheduled on runtime-a", updated.Status)
 	}
 }
 

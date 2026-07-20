@@ -6,7 +6,6 @@ import (
 	"sort"
 
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
@@ -17,7 +16,7 @@ type LeastLoaded struct{}
 
 func (s *LeastLoaded) Name() string { return "least-loaded" }
 
-func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []corev1.Pod, run *v1alpha1.Run) (*corev1.Pod, error) {
+func (s *LeastLoaded) Select(_ context.Context, candidates []corev1.Pod, run *v1alpha1.Run, runs []v1alpha1.Run) (*corev1.Pod, error) {
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no candidate pods")
 	}
@@ -26,6 +25,7 @@ func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []
 		pod       *corev1.Pod
 		load      int
 		available int32
+		affinity  int32
 	}
 
 	pods := make([]podLoad, 0, len(candidates))
@@ -35,15 +35,8 @@ func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []
 			continue
 		}
 
-		var tasks v1alpha1.RunList
-		if err := c.List(ctx, &tasks,
-			client.InNamespace(pod.Namespace),
-		); err != nil {
-			continue
-		}
-
 		count := 0
-		for _, t := range tasks.Items {
+		for _, t := range runs {
 			if t.Status.AssignedPod != pod.Name {
 				continue
 			}
@@ -52,7 +45,11 @@ func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []
 			}
 		}
 		capacity := runtimepod.RunsCapacity(pod, v1alpha1.RuntimeDefaultRunsCapacity)
-		pods = append(pods, podLoad{pod: pod, load: count, available: capacity - int32(count)})
+		score, err := preferredRunAffinityScore(run, pod, runs)
+		if err != nil {
+			return nil, err
+		}
+		pods = append(pods, podLoad{pod: pod, load: count, available: capacity - int32(count), affinity: score})
 	}
 
 	if len(pods) == 0 {
@@ -60,6 +57,9 @@ func (s *LeastLoaded) Select(ctx context.Context, c client.Client, candidates []
 	}
 
 	sort.Slice(pods, func(i, j int) bool {
+		if pods[i].affinity != pods[j].affinity {
+			return pods[i].affinity > pods[j].affinity
+		}
 		if pods[i].available != pods[j].available {
 			return pods[i].available > pods[j].available
 		}
