@@ -1402,14 +1402,18 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"'FUNCTION_REGISTRATION_STATE_REGISTERING\x10\x01\x12%\n" +
 	"!FUNCTION_REGISTRATION_STATE_READY\x10\x02\x12(\n" +
 	"$FUNCTION_REGISTRATION_STATE_DRAINING\x10\x03\x12&\n" +
-	"\"FUNCTION_REGISTRATION_STATE_FAILED\x10\x042\x98\x03\n" +
+	"\"FUNCTION_REGISTRATION_STATE_FAILED\x10\x042\x96\x06\n" +
 	"\aRuntime\x12D\n" +
 	"\aExecute\x12\x1b.executor.v1.ExecuteRequest\x1a\x1c.executor.v1.ExecuteResponse\x12A\n" +
 	"\x06Status\x12\x1a.executor.v1.StatusRequest\x1a\x1b.executor.v1.StatusResponse\x12;\n" +
 	"\x04List\x12\x18.executor.v1.ListRequest\x1a\x19.executor.v1.ListResponse\x12A\n" +
 	"\x06Cancel\x12\x1a.executor.v1.CancelRequest\x1a\x1b.executor.v1.CancelResponse\x12A\n" +
 	"\x06Forget\x12\x1a.executor.v1.ForgetRequest\x1a\x1b.executor.v1.ForgetResponse\x12A\n" +
-	"\x06Health\x12\x1a.executor.v1.HealthRequest\x1a\x1b.executor.v1.HealthResponse2\x8f\x03\n" +
+	"\x06Health\x12\x1a.executor.v1.HealthRequest\x1a\x1b.executor.v1.HealthResponse\x12_\n" +
+	"\x10RegisterFunction\x12$.executor.v1.RegisterFunctionRequest\x1a%.executor.v1.RegisterFunctionResponse\x12Y\n" +
+	"\x0eFunctionStatus\x12\".executor.v1.FunctionStatusRequest\x1a#.executor.v1.FunctionStatusResponse\x12Y\n" +
+	"\x0eInvokeFunction\x12\".executor.v1.InvokeFunctionRequest\x1a#.executor.v1.InvokeFunctionResponse\x12e\n" +
+	"\x12UnregisterFunction\x12&.executor.v1.UnregisterFunctionRequest\x1a'.executor.v1.UnregisterFunctionResponse2\x8f\x03\n" +
 	"\x0fFunctionRuntime\x12_\n" +
 	"\x10RegisterFunction\x12$.executor.v1.RegisterFunctionRequest\x1a%.executor.v1.RegisterFunctionResponse\x12Y\n" +
 	"\x0eFunctionStatus\x12\".executor.v1.FunctionStatusRequest\x1a#.executor.v1.FunctionStatusResponse\x12Y\n" +
@@ -1479,22 +1483,30 @@ var file_api_runtime_v1_runtime_proto_depIdxs = []int32{
 	8,  // 17: executor.v1.Runtime.Cancel:input_type -> executor.v1.CancelRequest
 	10, // 18: executor.v1.Runtime.Forget:input_type -> executor.v1.ForgetRequest
 	12, // 19: executor.v1.Runtime.Health:input_type -> executor.v1.HealthRequest
-	15, // 20: executor.v1.FunctionRuntime.RegisterFunction:input_type -> executor.v1.RegisterFunctionRequest
-	17, // 21: executor.v1.FunctionRuntime.FunctionStatus:input_type -> executor.v1.FunctionStatusRequest
-	19, // 22: executor.v1.FunctionRuntime.InvokeFunction:input_type -> executor.v1.InvokeFunctionRequest
-	21, // 23: executor.v1.FunctionRuntime.UnregisterFunction:input_type -> executor.v1.UnregisterFunctionRequest
-	3,  // 24: executor.v1.Runtime.Execute:output_type -> executor.v1.ExecuteResponse
-	5,  // 25: executor.v1.Runtime.Status:output_type -> executor.v1.StatusResponse
-	7,  // 26: executor.v1.Runtime.List:output_type -> executor.v1.ListResponse
-	9,  // 27: executor.v1.Runtime.Cancel:output_type -> executor.v1.CancelResponse
-	11, // 28: executor.v1.Runtime.Forget:output_type -> executor.v1.ForgetResponse
-	13, // 29: executor.v1.Runtime.Health:output_type -> executor.v1.HealthResponse
-	16, // 30: executor.v1.FunctionRuntime.RegisterFunction:output_type -> executor.v1.RegisterFunctionResponse
-	18, // 31: executor.v1.FunctionRuntime.FunctionStatus:output_type -> executor.v1.FunctionStatusResponse
-	20, // 32: executor.v1.FunctionRuntime.InvokeFunction:output_type -> executor.v1.InvokeFunctionResponse
-	22, // 33: executor.v1.FunctionRuntime.UnregisterFunction:output_type -> executor.v1.UnregisterFunctionResponse
-	24, // [24:34] is the sub-list for method output_type
-	14, // [14:24] is the sub-list for method input_type
+	15, // 20: executor.v1.Runtime.RegisterFunction:input_type -> executor.v1.RegisterFunctionRequest
+	17, // 21: executor.v1.Runtime.FunctionStatus:input_type -> executor.v1.FunctionStatusRequest
+	19, // 22: executor.v1.Runtime.InvokeFunction:input_type -> executor.v1.InvokeFunctionRequest
+	21, // 23: executor.v1.Runtime.UnregisterFunction:input_type -> executor.v1.UnregisterFunctionRequest
+	15, // 24: executor.v1.FunctionRuntime.RegisterFunction:input_type -> executor.v1.RegisterFunctionRequest
+	17, // 25: executor.v1.FunctionRuntime.FunctionStatus:input_type -> executor.v1.FunctionStatusRequest
+	19, // 26: executor.v1.FunctionRuntime.InvokeFunction:input_type -> executor.v1.InvokeFunctionRequest
+	21, // 27: executor.v1.FunctionRuntime.UnregisterFunction:input_type -> executor.v1.UnregisterFunctionRequest
+	3,  // 28: executor.v1.Runtime.Execute:output_type -> executor.v1.ExecuteResponse
+	5,  // 29: executor.v1.Runtime.Status:output_type -> executor.v1.StatusResponse
+	7,  // 30: executor.v1.Runtime.List:output_type -> executor.v1.ListResponse
+	9,  // 31: executor.v1.Runtime.Cancel:output_type -> executor.v1.CancelResponse
+	11, // 32: executor.v1.Runtime.Forget:output_type -> executor.v1.ForgetResponse
+	13, // 33: executor.v1.Runtime.Health:output_type -> executor.v1.HealthResponse
+	16, // 34: executor.v1.Runtime.RegisterFunction:output_type -> executor.v1.RegisterFunctionResponse
+	18, // 35: executor.v1.Runtime.FunctionStatus:output_type -> executor.v1.FunctionStatusResponse
+	20, // 36: executor.v1.Runtime.InvokeFunction:output_type -> executor.v1.InvokeFunctionResponse
+	22, // 37: executor.v1.Runtime.UnregisterFunction:output_type -> executor.v1.UnregisterFunctionResponse
+	16, // 38: executor.v1.FunctionRuntime.RegisterFunction:output_type -> executor.v1.RegisterFunctionResponse
+	18, // 39: executor.v1.FunctionRuntime.FunctionStatus:output_type -> executor.v1.FunctionStatusResponse
+	20, // 40: executor.v1.FunctionRuntime.InvokeFunction:output_type -> executor.v1.InvokeFunctionResponse
+	22, // 41: executor.v1.FunctionRuntime.UnregisterFunction:output_type -> executor.v1.UnregisterFunctionResponse
+	28, // [28:42] is the sub-list for method output_type
+	14, // [14:28] is the sub-list for method input_type
 	14, // [14:14] is the sub-list for extension type_name
 	14, // [14:14] is the sub-list for extension extendee
 	0,  // [0:14] is the sub-list for field type_name
