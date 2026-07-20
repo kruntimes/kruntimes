@@ -97,8 +97,8 @@ wiring from accumulating avoidable conflicts.
     [function lifecycle and invoke dataplane design](design/function-mode-lifecycle.md);
   - [x] add `Ready`, assigned Pod UID, bounded endpoint status, generated CRDs,
     and active/non-terminal phase-classification tests;
-  - add immutable execution-input transitions and the function cleanup finalizer
-    constant;
+  - [x] add immutable execution-input transitions and the function cleanup
+    finalizer constant;
   - [ ] implement registration lifecycle, shared retry integration,
     reservation/idle timeout, finalization, and restart recovery;
 - [ ] Runtime gateway invoke path: create one gateway Service per Runtime, use
@@ -126,6 +126,8 @@ wiring from accumulating avoidable conflicts.
   artifact references, and log access without writing high-frequency invocation
   history into Run status.
   Initial implementation TODO:
+  - [ ] review and approve the
+    [Function Runtime Server Contract](design/function-runtime-contract.md);
   - [ ] add idempotent register/status/invoke/unregister protobuf operations
     keyed by Run UID;
   - [ ] implement built-in Bash and Python function adapters;
@@ -260,9 +262,9 @@ wiring from accumulating avoidable conflicts.
     - [x] review and approve the child WorkflowRun and immutable snapshot model;
     - [x] add status references, spec transition validation, reserved metadata,
       generated CRDs, and controller RBAC prerequisites;
-    - [ ] add immutable ControllerRevision snapshot storage and recursive resolution with version
+    - [x] add immutable ControllerRevision snapshot storage and recursive resolution with version
       capture, call limits, input validation, and cycle detection;
-    - [ ] execute top-level `WorkflowRun.spec.uses` from its snapshot instead of
+    - [x] execute top-level `WorkflowRun.spec.uses` from its snapshot instead of
       only initializing status;
     - [ ] create and observe child WorkflowRuns for ready job-level calls;
     - [ ] verify definition mutation isolation, restart recovery, nested calls,

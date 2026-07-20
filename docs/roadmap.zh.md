@@ -88,7 +88,8 @@ controller wiring 累积不必要的冲突。
     [function lifecycle 和 invoke dataplane 设计](design/function-mode-lifecycle.md)；
   - [x] 增加 `Ready`、assigned Pod UID、有界 endpoint status、generated CRDs 和
     active/non-terminal phase-classification tests；
-  - 增加 immutable execution-input transitions 和 function cleanup finalizer constant；
+  - [x] 增加 immutable execution-input transitions 和 function cleanup finalizer
+    constant；
   - [ ] 实现 registration lifecycle、shared retry integration、reservation/idle timeout、
     finalization 和 restart recovery；
 - [ ] Runtime gateway invoke path：为每个 Runtime 创建一个 gateway Service，把这个
@@ -112,6 +113,8 @@ controller wiring 累积不必要的冲突。
   unregister APIs；定义有界 invoke request inputs、response outputs、artifact
   references 和 log access，同时避免把高频 invocation history 写入 Run status。
   初始实现 TODO：
+  - [ ] review 并确认
+    [Function Runtime Server 协议](design/function-runtime-contract.md)；
   - [ ] 增加以 Run UID 为 key 的幂等 register/status/invoke/unregister protobuf operations；
   - [ ] 实现内置 Bash 和 Python function adapters；
   - [ ] 增加有界 invocation outputs/artifact references，以及以 Run UID 和 invocation ID
@@ -225,9 +228,9 @@ controller wiring 累积不必要的冲突。
     - [x] review 并批准 child WorkflowRun 和 immutable snapshot model；
     - [x] 增加 status references、spec transition validation、reserved metadata、generated
       CRDs 和 controller RBAC prerequisites；
-    - [ ] 增加 immutable ControllerRevision snapshot storage 和 recursive resolution，包括 version capture、
+    - [x] 增加 immutable ControllerRevision snapshot storage 和 recursive resolution，包括 version capture、
       call limits、input validation 和 cycle detection；
-    - [ ] 从 snapshot 执行 top-level `WorkflowRun.spec.uses`，而不是只初始化 status；
+    - [x] 从 snapshot 执行 top-level `WorkflowRun.spec.uses`，而不是只初始化 status；
     - [ ] 为 ready job-level calls 创建并观察 child WorkflowRuns；
     - [ ] 验证 definition mutation isolation、restart recovery、nested calls、cancellation 和
       invalid graphs；
