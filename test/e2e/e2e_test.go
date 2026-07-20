@@ -437,6 +437,36 @@ func waitForAnyTerminalRunPhase(t *testing.T, run *v1alpha1.Run, timeout time.Du
 	}
 }
 
+func waitForWorkflowRunPhase(t *testing.T, workflowRun *v1alpha1.WorkflowRun, timeout time.Duration, expected v1alpha1.WorkflowPhase) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	var lastPhase v1alpha1.WorkflowPhase
+	for {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+			t.Fatalf("get workflowrun: %v", err)
+		}
+		if workflowRun.Status.Phase != lastPhase {
+			t.Logf("WorkflowRun %s: phase=%s", workflowRun.Name, workflowRun.Status.Phase)
+			lastPhase = workflowRun.Status.Phase
+		}
+
+		switch workflowRun.Status.Phase {
+		case expected:
+			return
+		case v1alpha1.WorkflowSucceeded, v1alpha1.WorkflowFailed, v1alpha1.WorkflowCancelled:
+			t.Fatalf("expected phase=%s, got phase=%s, message=%s", expected, workflowRun.Status.Phase, workflowRun.Status.Message)
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for WorkflowRun %s, last phase=%s, message=%s", workflowRun.Name, workflowRun.Status.Phase, workflowRun.Status.Message)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
 func findRunCondition(run *v1alpha1.Run, typ string) *metav1.Condition {
 	for i := range run.Status.Conditions {
 		if run.Status.Conditions[i].Type == typ {
@@ -539,6 +569,70 @@ func TestFullRunLifecycle(t *testing.T) {
 		t.Fatalf("success message contains stdout: %q", run.Status.Message)
 	}
 	t.Logf("Run completed successfully: %s", run.Status.Message)
+}
+
+func TestWorkflowRunCallsReusableWorkflow(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-reusable-workflow-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.WorkflowSpec{
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {
+					RunsOn: "bash",
+					Steps: []v1alpha1.StepSpec{{
+						Name: "package",
+						Run:  "echo reusable-workflow",
+					}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), workflow); err != nil {
+		t.Fatalf("create reusable workflow: %v", err)
+	}
+
+	parent := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-workflow-call-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.WorkflowRunSpec{
+			Jobs: map[string]v1alpha1.JobSpec{
+				"release": {Uses: workflow.Name},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), parent); err != nil {
+		t.Fatalf("create parent workflowrun: %v", err)
+	}
+
+	waitForWorkflowRunPhase(t, parent, 60*time.Second, v1alpha1.WorkflowSucceeded)
+	job, ok := parent.Status.Jobs["release"]
+	if !ok {
+		t.Fatal("parent WorkflowRun does not report the release job")
+	}
+	if job.Phase != v1alpha1.JobSucceeded {
+		t.Fatalf("parent release job phase=%s, want Succeeded", job.Phase)
+	}
+	if job.WorkflowRunName == "" {
+		t.Fatal("parent release job does not reference its child WorkflowRun")
+	}
+
+	child := &v1alpha1.WorkflowRun{}
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: job.WorkflowRunName}, child); err != nil {
+		t.Fatalf("get child workflowrun: %v", err)
+	}
+	if child.Status.Phase != v1alpha1.WorkflowSucceeded {
+		t.Fatalf("child WorkflowRun phase=%s, want Succeeded", child.Status.Phase)
+	}
+	childJob, ok := child.Status.Jobs["build"]
+	if !ok || len(childJob.Steps) != 1 || childJob.Steps[0].RunName == "" {
+		t.Fatalf("child WorkflowRun build status=%#v, want one executed step", childJob)
+	}
 }
 
 func TestFilesystemArtifacts(t *testing.T) {

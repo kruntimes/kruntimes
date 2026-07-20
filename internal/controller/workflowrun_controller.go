@@ -94,7 +94,7 @@ type WorkflowRunReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=kruntimes.io,resources=workflowruns,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=kruntimes.io,resources=workflowruns,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflowruns/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflows,verbs=get;list;watch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;create;patch
