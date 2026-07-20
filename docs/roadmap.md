@@ -189,6 +189,9 @@ wiring from accumulating avoidable conflicts.
   - [x] add Run fields for workspace reference and Kubernetes-style Run affinity;
   - update scheduler placement to respect required/preferred Run affinity while
     keeping no-capacity Runs Pending;
+  - [ ] review and define `RuntimePodLocal` binding semantics: deterministic
+    ready-Pod selection without capacity reservation, planned path ownership,
+    and sticky `Lost` status after bound-Pod deletion;
   - update runtimed workspace preparation and cleanup to support referenced
     persistent workspaces without knowing Workflow semantics;
   - promote child Run artifact refs into Workflow status and add explicit step
