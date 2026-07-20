@@ -4,7 +4,7 @@ title: "Function Runtime Server 协议"
 
 # Function Runtime Server 协议
 
-状态：**待评审**
+状态：**已接受；正在实现**
 
 本文定义 function-mode Run 的内部 gRPC 协议。它细化了
 [Function Mode 生命周期与 Invoke Dataplane](../function-mode-lifecycle/)，但不改变公开

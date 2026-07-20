@@ -1,6 +1,6 @@
 # Function Runtime Server Contract
 
-Status: **Proposed for review**
+Status: **Accepted; implementation in progress**
 
 This document defines the internal gRPC contract for function-mode Runs. It
 refines [Function Mode Lifecycle and Invoke Dataplane](../function-mode-lifecycle/)

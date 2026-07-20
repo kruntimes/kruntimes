@@ -15,6 +15,11 @@ service Runtime {
     // Running executions must be cancelled before they can be forgotten.
     rpc Forget(ForgetRequest) returns (ForgetResponse);
     rpc Health(HealthRequest) returns (HealthResponse);
+    // Function-mode lifecycle operations are Pod-local and called by runtimed.
+    rpc RegisterFunction(RegisterFunctionRequest) returns (RegisterFunctionResponse);
+    rpc FunctionStatus(FunctionStatusRequest) returns (FunctionStatusResponse);
+    rpc InvokeFunction(InvokeFunctionRequest) returns (InvokeFunctionResponse);
+    rpc UnregisterFunction(UnregisterFunctionRequest) returns (UnregisterFunctionResponse);
 }
 
 message ExecuteRequest {
@@ -78,4 +83,73 @@ message HealthRequest {}
 message HealthResponse {
     bool healthy = 1;
     string message = 2;
+}
+
+// FunctionRegistration identifies one Runtime Server-local registration epoch.
+message FunctionRegistration {
+    // Kubernetes Run UID, not its mutable name.
+    string run_uid = 1;
+    // Opaque Runtime Server-generated ID for this local registration generation.
+    string registration_id = 2;
+}
+
+enum FunctionRegistrationState {
+    FUNCTION_REGISTRATION_STATE_UNSPECIFIED = 0;
+    FUNCTION_REGISTRATION_STATE_REGISTERING = 1;
+    FUNCTION_REGISTRATION_STATE_READY = 2;
+    FUNCTION_REGISTRATION_STATE_DRAINING = 3;
+    FUNCTION_REGISTRATION_STATE_FAILED = 4;
+}
+
+message RegisterFunctionRequest {
+    string run_uid = 1;
+    int32 registration_attempt = 2;
+    string working_dir = 3;
+    string handler = 4;
+    map<string, string> env = 5;
+    int64 idle_timeout_seconds = 6;
+    string registration_digest = 7;
+}
+
+message RegisterFunctionResponse {
+    FunctionRegistration registration = 1;
+    FunctionRegistrationState state = 2;
+}
+
+message FunctionStatusRequest {
+    FunctionRegistration registration = 1;
+}
+
+message FunctionStatusResponse {
+    FunctionRegistration registration = 1;
+    FunctionRegistrationState state = 2;
+    int32 in_flight = 3;
+    int64 last_activity_unix_nano = 4;
+    string fatal_error = 5;
+}
+
+message InvokeFunctionRequest {
+    FunctionRegistration registration = 1;
+    string invocation_id = 2;
+    bytes input = 3;
+    string content_type = 4;
+    int64 timeout_millis = 5;
+}
+
+message InvokeFunctionResponse {
+    FunctionRegistration registration = 1;
+    string invocation_id = 2;
+    bytes output = 3;
+    string content_type = 4;
+    map<string, string> outputs = 5;
+}
+
+message UnregisterFunctionRequest {
+    FunctionRegistration registration = 1;
+    bool cancel_in_flight = 2;
+    int64 drain_timeout_millis = 3;
+}
+
+message UnregisterFunctionResponse {
+    FunctionRegistration registration = 1;
 }
