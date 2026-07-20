@@ -75,16 +75,20 @@ covers backlog drain after earlier Runs finish.
 
 ### Output Fields
 
-- `latency.schedule`: benchmark-observed time from local create request start
-  until the scheduler assigns a Runtime Pod.
-- `latency.dispatch`: benchmark-observed time from local create request start
-  until runtimed marks the Run started.
-- `latency.execution`: benchmark-observed time from Run start to terminal Run
-  status. This excludes benchmark backlog queueing before runtimed starts the
-  Run, but it is still bounded by the benchmark poll interval.
-- `latency.complete`: benchmark-observed time from local create request start
-  until terminal Run status. This is end-to-end latency and includes time
-  waiting for Runtime capacity when the benchmark is capacity constrained.
+- `latency.schedule`: time from local create request start until the scheduler
+  writes the `Scheduled=True` condition.
+- `latency.dispatch`: time from local create request start until runtimed writes
+  `status.startTime`.
+- `latency.execution`: time from `status.startTime` to
+  `status.completionTime`. This excludes queueing before runtimed starts the
+  Run.
+- `latency.complete`: time from local create request start until
+  `status.completionTime`. This is end-to-end latency and includes time waiting
+  for Runtime capacity when the benchmark is capacity constrained.
+
+The harness polls the Kubernetes API to discover state changes, but it derives
+lifecycle latency from the timestamps written into `Run.status`; the polling
+interval therefore does not inflate a reported transition duration.
 - `throughput.runsPerSecond`: successful terminal Runs divided by benchmark wall
   time.
 - `capacity.maxObservedRunningRuns`: maximum concurrent Running Runs observed

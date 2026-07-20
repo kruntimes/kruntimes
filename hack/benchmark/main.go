@@ -13,6 +13,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runstatus"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
@@ -520,7 +522,6 @@ func waitForAllTerminal(ctx context.Context, k8sClient client.Client, opts optio
 		}
 		*listLatencies = append(*listLatencies, time.Since(start))
 
-		now := time.Now()
 		runningByPod := map[string]int{}
 		terminal := 0
 		for i := range list.Items {
@@ -531,15 +532,7 @@ func waitForAllTerminal(ctx context.Context, k8sClient client.Client, opts optio
 			}
 			obs.Phase = run.Status.Phase
 			obs.AssignedPod = run.Status.AssignedPod
-			if obs.ScheduledAt.IsZero() && run.Status.AssignedPod != "" {
-				obs.ScheduledAt = now
-			}
-			if obs.StartedAt.IsZero() && run.Status.StartTime != nil {
-				obs.StartedAt = now
-			}
-			if obs.FinishedAt.IsZero() && isTerminal(run.Status.Phase) {
-				obs.FinishedAt = now
-			}
+			observeRunLifecycle(obs, run)
 			if run.Status.AssignedPod != "" {
 				key := run.Name + "/" + run.Status.AssignedPod
 				if _, ok := assignedSeen[key]; !ok {
@@ -570,6 +563,24 @@ func waitForAllTerminal(ctx context.Context, k8sClient client.Client, opts optio
 		return fmt.Errorf("wait for benchmark Runs to finish: %w", err)
 	}
 	return nil
+}
+
+// observeRunLifecycle records controller-written lifecycle timestamps rather
+// than the benchmark's next polling time. Polling is only used to discover the
+// latest status object.
+func observeRunLifecycle(obs *runObservation, run *v1alpha1.Run) {
+	if obs.ScheduledAt.IsZero() {
+		condition := apimeta.FindStatusCondition(run.Status.Conditions, runstatus.ConditionScheduled)
+		if condition != nil && condition.Status == metav1.ConditionTrue {
+			obs.ScheduledAt = condition.LastTransitionTime.Time
+		}
+	}
+	if obs.StartedAt.IsZero() && run.Status.StartTime != nil {
+		obs.StartedAt = run.Status.StartTime.Time
+	}
+	if obs.FinishedAt.IsZero() && run.Status.CompletionTime != nil {
+		obs.FinishedAt = run.Status.CompletionTime.Time
+	}
 }
 
 func benchmarkRun(opts options, benchID string, index int, sleep time.Duration) *v1alpha1.Run {
