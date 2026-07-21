@@ -1057,24 +1057,6 @@ func TestCRDValidationWorkflowRunExecutionInputsAreImmutable(t *testing.T) {
 	}
 }
 
-func TestCRDValidationAllowsWorkflowRunUses(t *testing.T) {
-	ctx := context.Background()
-	ns := testNamespace(t, "test-workflowrun-uses-validation-")
-
-	workflowRun := &v1alpha1.WorkflowRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "reusable", Namespace: ns.Name},
-		Spec: v1alpha1.WorkflowRunSpec{
-			Uses: "build-and-test",
-			With: map[string]string{
-				"ref": "main",
-			},
-		},
-	}
-	if err := k8sClient.Create(ctx, workflowRun); err != nil {
-		t.Fatalf("create workflowrun uses: %v", err)
-	}
-}
-
 func TestCRDValidationRejectsInvalidWorkflowRunShape(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-workflowrun-shape-validation-")
@@ -1084,36 +1066,8 @@ func TestCRDValidationRejectsInvalidWorkflowRunShape(t *testing.T) {
 		spec v1alpha1.WorkflowRunSpec
 	}{
 		{
-			name: "missing-jobs-and-uses",
+			name: "missing-jobs",
 			spec: v1alpha1.WorkflowRunSpec{},
-		},
-		{
-			name: "jobs-and-uses",
-			spec: v1alpha1.WorkflowRunSpec{
-				Uses: "build-and-test",
-				Jobs: map[string]v1alpha1.JobSpec{
-					"test": {
-						RunsOn: "bash",
-						Steps:  []v1alpha1.StepSpec{{Name: "unit", Run: "make test"}},
-					},
-				},
-			},
-		},
-		{
-			name: "inline-with-inputs",
-			spec: v1alpha1.WorkflowRunSpec{
-				With: map[string]string{"ref": "main"},
-				Jobs: map[string]v1alpha1.JobSpec{
-					"test": {
-						RunsOn: "bash",
-						Steps:  []v1alpha1.StepSpec{{Name: "unit", Run: "make test"}},
-					},
-				},
-			},
-		},
-		{
-			name: "invalid-uses-name",
-			spec: v1alpha1.WorkflowRunSpec{Uses: "bad/name"},
 		},
 		{
 			name: "unknown-need",

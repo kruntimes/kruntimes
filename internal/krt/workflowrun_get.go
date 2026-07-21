@@ -43,10 +43,6 @@ func newWorkflowRunGetCmd(getter genericclioptions.RESTClientGetter, scheme *run
 			if workflowRun.Status.Message != "" {
 				fmt.Fprintf(w, "Message:\t%s\n", workflowRun.Status.Message)
 			}
-			if workflowRun.Spec.Uses != "" {
-				fmt.Fprintf(w, "Uses:\t%s\n", workflowRun.Spec.Uses)
-				fmt.Fprintf(w, "Inputs:\t%d\n", len(workflowRun.Spec.With))
-			}
 			fmt.Fprintf(w, "Jobs:\t%d\n", len(workflowRun.Spec.Jobs))
 			for jobName, job := range workflowRun.Spec.Jobs {
 				if job.Uses != "" {

@@ -246,8 +246,8 @@ wiring from accumulating avoidable conflicts.
   - [x] implement job terminal-state aggregation from observed step states;
   - [x] add terminal-status and cancellation API prerequisites, regenerated CRDs,
     and child Run patch RBAC;
-  - [x] validate inline and resolved Workflow job DAGs for unknown dependencies
-    and multi-job cycles before creating child Runs;
+  - [x] validate inline WorkflowRun job DAGs for unknown dependencies and
+    multi-job cycles before creating child Runs;
   - [x] implement deterministic failed-dependency propagation to `JobSkipped`;
   - [x] implement WorkflowRun terminal aggregation;
   - [x] implement WorkflowRun cancellation propagation;
@@ -256,10 +256,12 @@ wiring from accumulating avoidable conflicts.
   - [ ] implement job-level reusable Workflow calls through the reviewed
     [execution-boundary design](design/workflow-job-reuse.md):
     - [x] review and approve the direct child WorkflowRun and local snapshot model;
-    - [ ] remove root `WorkflowRun.spec.uses`/`with` and implement template
+    - [x] remove root `WorkflowRun.spec.uses`/`with` and implement template
       triggering as rendered inline WorkflowRun creation;
-    - [ ] add a per-WorkflowRun immutable snapshot with the local execution
-      spec and a frozen source output contract for materialized children;
+    - [x] add a per-WorkflowRun immutable snapshot with the local execution
+      spec and bounded `JobStatus.outputs`;
+    - [ ] capture the frozen source output contract in each materialized child
+      snapshot;
     - [ ] create and observe child WorkflowRuns for ready job-level calls,
       including input rendering and output-contract capture;
     - [ ] project inline and child Workflow outputs into bounded

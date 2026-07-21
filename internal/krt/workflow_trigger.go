@@ -8,8 +8,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/workflowtemplate"
 )
 
 func newWorkflowTriggerCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Scheme) *cobra.Command {
@@ -34,6 +36,14 @@ func newWorkflowTriggerCmd(getter genericclioptions.RESTClientGetter, scheme *ru
 				return err
 			}
 			workflowName := args[0]
+			workflow := &v1alpha1.Workflow{}
+			if err := c.Get(cmd.Context(), client.ObjectKey{Namespace: namespace, Name: workflowName}, workflow); err != nil {
+				return fmt.Errorf("get workflow %s: %w", workflowName, err)
+			}
+			jobs, err := workflowtemplate.Materialize(workflow.Spec, inputs)
+			if err != nil {
+				return fmt.Errorf("materialize workflow %s: %w", workflowName, err)
+			}
 			workflowRun := &v1alpha1.WorkflowRun{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:         name,
@@ -41,8 +51,7 @@ func newWorkflowTriggerCmd(getter genericclioptions.RESTClientGetter, scheme *ru
 					Namespace:    namespace,
 				},
 				Spec: v1alpha1.WorkflowRunSpec{
-					Uses: workflowName,
-					With: inputs,
+					Jobs: jobs,
 				},
 			}
 			if name != "" {

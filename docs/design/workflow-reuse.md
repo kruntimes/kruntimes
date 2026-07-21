@@ -1,31 +1,22 @@
 # Workflow Reuse
 
-This document describes a target v0.x design. It is not implemented yet.
-
-The goal is to split workflow execution instances from reusable workflow and
-step definitions before the Workflow API stabilizes. The current experimental
-`Workflow` CRD represents an execution instance. That shape is too limiting for
-CI/CD and automation use cases where teams need reusable workflows and reusable
-step groups.
+This document defines the v0.x workflow reuse model. The execution-instance
+split and template triggering are implemented; job-level workflow calls and
+reusable Actions remain planned.
 
 ## Current State
 
-The current experimental Workflow API provides:
+The current API provides:
 
-- one `Workflow` object as the execution instance;
-- inline `jobs`;
-- inline step `run` scripts;
-- `needs` dependencies;
-- bounded step/job outputs;
-- a future-looking `uses` field that is currently rejected by validation.
+- `WorkflowRun` execution instances with immutable inline `jobs`;
+- reusable `Workflow` definitions with declared inputs and output contracts;
+- `krt wf trigger`, which validates template inputs and materializes an inline
+  WorkflowRun;
+- inline step `run` scripts, `needs` dependencies, and bounded step/job
+  outputs.
 
-It does not yet provide:
-
-- reusable workflow definitions;
-- reusable action definitions;
-- workflow calls from jobs;
-- action calls from steps;
-- a clean separation between definition status and run status.
+Job-level workflow calls and reusable Action calls are represented in the API
+but are not yet executed by the controller.
 
 ## Goals
 

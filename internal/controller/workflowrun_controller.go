@@ -25,18 +25,6 @@ import (
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
-type workflowInputBindingError struct {
-	err error
-}
-
-func (e *workflowInputBindingError) Error() string {
-	return e.err.Error()
-}
-
-func (e *workflowInputBindingError) Unwrap() error {
-	return e.err
-}
-
 type workflowRunState string
 
 const (
@@ -83,7 +71,6 @@ type WorkflowRunReconciler struct {
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflowruns,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflowruns/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=kruntimes.io,resources=workflows,verbs=get;list;watch
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;create;patch
 // +kubebuilder:rbac:groups=apps,resources=controllerrevisions,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
@@ -130,7 +117,7 @@ func (r *WorkflowRunReconciler) loadWorkflowRunResources(ctx context.Context, ke
 	}
 	revision := &appsv1.ControllerRevision{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: workflowRun.Namespace, Name: snapshotName}, revision); err == nil {
-		if revision.Labels[v1alpha1.WorkflowRootRunUIDLabel] != string(workflowRun.UID) {
+		if revision.Labels[v1alpha1.WorkflowRunUIDLabel] != string(workflowRun.UID) {
 			return nil, fmt.Errorf("workflow snapshot %s/%s belongs to another workflowrun", revision.Namespace, revision.Name)
 		}
 		snapshot, err := loadWorkflowSnapshot(revision)
@@ -188,7 +175,10 @@ func calculateWorkflowRunPlan(resources *workflowRunResources) workflowRunPlan {
 	if state == workflowRunStateCancelling {
 		return plan
 	}
-	jobs := resources.snapshot.rootJobs()
+	if resources.snapshot == nil {
+		return plan
+	}
+	jobs := resources.snapshot.Spec.Jobs
 	if len(jobs) == 0 || len(workflowRun.Status.Jobs) == 0 {
 		return plan
 	}
@@ -222,20 +212,15 @@ func (r *WorkflowRunReconciler) applyInitializeWorkflowRun(ctx context.Context, 
 	snapshotName := workflowRun.Status.SnapshotName
 	if snapshot == nil {
 		var err error
-		snapshot, err = r.resolveWorkflowRunSnapshot(ctx, workflowRun)
-		if err != nil {
-			if reason, rejected := workflowRunRejectionReason(err); rejected {
-				return rejectWorkflowRun(workflowRun, reason, err.Error())
-			}
-			return err
-		}
-		if err := validateResolvedWorkflowJobs(snapshot.rootJobs()); err != nil {
+		snapshot = workflowSnapshotForRun(workflowRun)
+		if err := validateWorkflowRunJobs(snapshot.Spec.Jobs); err != nil {
 			return rejectWorkflowRun(workflowRun, "WorkflowValidationFailed", err.Error())
 		}
 		persistedName, persistedSnapshot, err := r.ensureWorkflowSnapshot(ctx, workflowRun, snapshot)
 		if err != nil {
-			if reason, rejected := workflowRunRejectionReason(err); rejected {
-				return rejectWorkflowRun(workflowRun, reason, err.Error())
+			var snapshotErr *workflowSnapshotError
+			if errors.As(err, &snapshotErr) {
+				return rejectWorkflowRun(workflowRun, "WorkflowValidationFailed", err.Error())
 			}
 			return err
 		}
@@ -245,7 +230,7 @@ func (r *WorkflowRunReconciler) applyInitializeWorkflowRun(ctx context.Context, 
 	}
 	workflowRun.Status.Phase = v1alpha1.WorkflowPending
 	workflowRun.Status.Message = ""
-	workflowRun.Status.Jobs = resolvedJobStatuses(snapshot.rootJobs())
+	workflowRun.Status.Jobs = resolvedJobStatuses(snapshot.Spec.Jobs)
 	workflowRun.Status.SnapshotName = snapshotName
 	setWorkflowRunAcceptedCondition(workflowRun, metav1.ConditionTrue, "Accepted", "WorkflowRun accepted and initialized")
 	return nil
@@ -272,22 +257,7 @@ func (r *WorkflowRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func workflowRunRejectionReason(err error) (string, bool) {
-	var inputErr *workflowInputBindingError
-	var snapshotErr *workflowSnapshotResolutionError
-	switch {
-	case apierrors.IsNotFound(err):
-		return "WorkflowResolutionFailed", true
-	case errors.As(err, &inputErr):
-		return "WorkflowInputBindingFailed", true
-	case errors.As(err, &snapshotErr):
-		return "WorkflowResolutionFailed", true
-	default:
-		return "", false
-	}
-}
-
-func validateResolvedWorkflowJobs(jobs map[string]v1alpha1.JobSpec) error {
+func validateWorkflowRunJobs(jobs map[string]v1alpha1.JobSpec) error {
 	jobNames := make([]string, 0, len(jobs))
 	for jobName := range jobs {
 		jobNames = append(jobNames, jobName)
@@ -369,33 +339,6 @@ func setWorkflowRunAcceptedCondition(workflowRun *v1alpha1.WorkflowRun, status m
 	})
 }
 
-func bindWorkflowInputs(inputs map[string]v1alpha1.WorkflowInputSpec, with map[string]string) (map[string]string, error) {
-	for name := range with {
-		if _, ok := inputs[name]; !ok {
-			return nil, fmt.Errorf("unknown input %q", name)
-		}
-	}
-
-	bound := make(map[string]string, len(inputs))
-	names := make([]string, 0, len(inputs))
-	for name := range inputs {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		input := inputs[name]
-		value, ok := with[name]
-		if !ok {
-			value = input.Default
-		}
-		if value == "" && input.Required && !ok && input.Default == "" {
-			return nil, fmt.Errorf("missing required input %q", name)
-		}
-		bound[name] = value
-	}
-	return bound, nil
-}
-
 func resolvedJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.JobStatus {
 	statuses := make(map[string]v1alpha1.JobStatus, len(jobs))
 	for jobName, job := range jobs {
@@ -424,7 +367,7 @@ func resolvedJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.J
 func (r *WorkflowRunReconciler) applyStartRunnableSteps(ctx context.Context, resources *workflowRunResources, targets []workflowRunStepTarget) error {
 	workflowRun := resources.workflowRun
 	for _, target := range targets {
-		job := resources.snapshot.rootJobs()[target.jobName]
+		job := resources.snapshot.Spec.Jobs[target.jobName]
 		run, err := r.createOrReuseStepRun(ctx, resources, target.jobName, job, target.stepIndex)
 		if err != nil {
 			return err

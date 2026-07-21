@@ -1,29 +1,18 @@
 # Workflow Reuse
 
-本文描述 v0.x 的目标设计，当前尚未实现。
-
-目标是在 Workflow API 稳定前拆分 workflow execution instances 和 reusable workflow/step
-definitions。当前 experimental `Workflow` CRD 表示 execution instance。这个形态对 CI/CD
-和 automation 场景不够用，因为团队需要 reusable workflows 和 reusable step groups。
+本文定义 v0.x workflow reuse model。execution-instance split 和 template trigger 已经实现；
+job-level workflow call 与 reusable Action 仍在规划中。
 
 ## 当前状态
 
-当前 experimental Workflow API 提供：
+当前 API 提供：
 
-- 一个作为 execution instance 的 `Workflow` 对象；
-- inline `jobs`；
-- inline step `run` scripts；
-- `needs` dependencies；
-- 有界 step/job outputs；
-- 一个 future-looking `uses` 字段，但目前 validation 会拒绝它。
+- 带 immutable inline `jobs` 的 `WorkflowRun` execution instances；
+- 带 declared inputs 和 output contracts 的 reusable `Workflow` definitions；
+- `krt wf trigger`，用于校验 template inputs 并 materialize inline WorkflowRun；
+- inline step `run` scripts、`needs` dependencies，以及有界 step/job outputs。
 
-当前尚不支持：
-
-- reusable workflow definitions；
-- reusable action definitions；
-- job 调用 workflow；
-- step 调用 action；
-- definition status 和 run status 的清晰分离。
+job-level workflow call 与 reusable Action call 已在 API 中表示，但 controller 尚未执行它们。
 
 ## 目标
 

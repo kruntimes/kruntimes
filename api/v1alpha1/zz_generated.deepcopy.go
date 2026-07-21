@@ -314,6 +314,13 @@ func (in *JobStatus) DeepCopyInto(out *JobStatus) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.Outputs != nil {
+		in, out := &in.Outputs, &out.Outputs
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.Steps != nil {
 		in, out := &in.Steps, &out.Steps
 		*out = make([]StepStatus, len(*in))
@@ -1232,13 +1239,6 @@ func (in *WorkflowRunSpec) DeepCopyInto(out *WorkflowRunSpec) {
 		*out = make(map[string]JobSpec, len(*in))
 		for key, val := range *in {
 			(*out)[key] = *val.DeepCopy()
-		}
-	}
-	if in.With != nil {
-		in, out := &in.With, &out.With
-		*out = make(map[string]string, len(*in))
-		for key, val := range *in {
-			(*out)[key] = val
 		}
 	}
 }

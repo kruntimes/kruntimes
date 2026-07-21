@@ -213,8 +213,8 @@ controller wiring 累积不必要的冲突。
   - [x] 根据 observed step states 实现 job terminal-state aggregation；
   - [x] 增加 terminal-status 和 cancellation API prerequisites、重新生成 CRDs，以及 child Run
     patch RBAC；
-  - [x] 在创建 child Runs 前校验 inline 和 resolved Workflow job DAG 中的 unknown
-    dependencies 和 multi-job cycles；
+  - [x] 在创建 child Runs 前校验 inline WorkflowRun job DAG 中的 unknown dependencies
+    和 multi-job cycles；
   - [x] 实现 deterministic failed-dependency propagation 到 `JobSkipped`；
   - [x] 实现 WorkflowRun terminal aggregation；
   - [x] 实现 WorkflowRun cancellation propagation；
@@ -224,10 +224,11 @@ controller wiring 累积不必要的冲突。
     [execution-boundary design](design/workflow-job-reuse.md) 实现 job-level reusable
     Workflow calls：
     - [x] review 并批准 direct child WorkflowRun 和 local snapshot model；
-    - [ ] 删除 root `WorkflowRun.spec.uses`/`with`，并实现 template trigger 到 rendered inline
+    - [x] 删除 root `WorkflowRun.spec.uses`/`with`，并实现 template trigger 到 rendered inline
       WorkflowRun 的创建；
-    - [ ] 为每个 WorkflowRun 增加 immutable snapshot，其中包含 local execution spec，以及
-      materialized child 的 frozen source output contract；
+    - [x] 为每个 WorkflowRun 增加包含 local execution spec 和有界 `JobStatus.outputs` 的
+      immutable snapshot；
+    - [ ] 在每个 materialized child snapshot 中保存 frozen source output contract；
     - [ ] 为 ready job-level calls 创建并观察 child WorkflowRuns，包括 input rendering 和
       output-contract capture；
     - [ ] 将 inline 和 child Workflow outputs 投影到有界的

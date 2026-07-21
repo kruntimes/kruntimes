@@ -186,37 +186,34 @@ tracked in the roadmap.
 ### WorkflowRun
 
 `WorkflowRun` is the execution-instance API for the reusable workflow model.
-The controller currently resolves top-level reusable Workflow references and
-inputs, executes inline jobs as sequential step Runs, derives step and job
-status, aggregates settled jobs into a terminal WorkflowRun phase, and
-propagates cancellation to active child Runs. Reusable job calls, Action
-expansion, and output propagation remain in the roadmap.
+It always contains inline jobs. `krt wf trigger` materializes a reusable
+Workflow by validating inputs and rendering them into inline jobs before it
+creates the WorkflowRun. The controller executes inline jobs as sequential step
+Runs, derives step and job status, aggregates settled jobs into a terminal
+WorkflowRun phase, and propagates cancellation to active child Runs. Reusable
+job calls, Action expansion, and output propagation remain in the roadmap.
 
 Before initializing the status graph or creating child Runs, the controller
-rejects inline and resolved reusable Workflow job graphs with unknown
-dependencies or dependency cycles. The rejection message includes a stable
-cycle path for diagnosis.
+rejects inline job graphs with unknown dependencies or dependency cycles. The
+rejection message includes a stable cycle path for diagnosis.
 
 Current spec shape:
 
 | Field | Description |
 | --- | --- |
-| `spec.jobs` | Inline jobs to execute. Exactly one of `spec.jobs` or `spec.uses` must be set. |
-| `spec.uses` | Namespace-local reusable Workflow name to execute. Exactly one of `spec.jobs` or `spec.uses` must be set. |
-| `spec.with` | String inputs passed to the reusable Workflow named by `spec.uses`. |
+| `spec.jobs` | Required inline jobs to execute. |
 | `spec.cancelRequested` | Requests cancellation. It may transition only from `false` to `true`. The controller stops creating child Runs, sets `cancelRequested` on every active child Run, and waits for them to settle. |
 
-After creation, `spec.jobs`, `spec.uses`, and `spec.with` are immutable execution
-inputs. This prevents an accepted WorkflowRun from observing a different
-definition while it is running.
+After creation, `spec.jobs` is immutable. This prevents an accepted WorkflowRun
+from observing a different execution definition while it is running.
 
 Current status fields:
 
 | Field | Description |
 | --- | --- |
 | `status.phase` | `Pending`, `Running`, `Succeeded`, `Failed`, or `Cancelled`. After all jobs settle, the controller sets `Failed` if any job failed and `Succeeded` otherwise. A cancellation request results in `Cancelled` after active child Runs settle. |
-| `status.jobs` | Lightweight resolved job status keyed by job name. Each job records `pre`, ordered step statuses, and, for a reusable call, its child `workflowRunName`. |
-| `status.snapshotName` | Immutable ControllerRevision index for the resolved execution tree. The snapshot resolver is tracked in the roadmap. |
+| `status.jobs` | Lightweight job status keyed by name. Each job records `pre`, ordered step statuses, optional bounded `outputs`, and, for a reusable call, its child `workflowRunName`. |
+| `status.snapshotName` | Immutable ControllerRevision index for this WorkflowRun's inline execution definition. |
 | `status.conditions` | Lifecycle conditions. The skeleton controller records `Accepted=True`. |
 
 Job phases are `Pending`, `Waiting`, `Running`, `Succeeded`, `Failed`, and
