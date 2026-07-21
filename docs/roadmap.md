@@ -231,11 +231,8 @@ wiring from accumulating avoidable conflicts.
   - [x] update CLI verbs and docs so execution uses `WorkflowRun`;
   - [x] initialize lightweight `status.jobs[*].pre` and ordered `steps` for
     inline WorkflowRuns;
-  - [x] explore top-level `WorkflowRun.spec.uses` resolution and input binding;
-    superseded by rendered inline WorkflowRun triggering;
-  - [x] audit existing E2E tests before inline execution changes, and remove or
-    update stale cases that still use the old Workflow execution model so
-    `make e2e` stays passing during the migration;
+  - [x] audit existing E2E tests before inline execution changes and update
+    affected cases so `make e2e` stays passing during implementation;
   - [x] implement inline WorkflowRun first-step Run creation for ready jobs;
   - [x] refactor WorkflowRun controller reconciliation into a
     load/calculate/apply/patch structure where status is derived on every

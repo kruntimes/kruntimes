@@ -387,8 +387,8 @@ API change 需要重新生成 CRDs，并为 WorkflowRun controller 增加 patch 
 
 Inline WorkflowRun execution 应拆成小的、可 review 的步骤落地：
 
-1. 在修改 execution behavior 前，先审计现有 E2E tests。移除或更新仍在测试旧
-   Workflow execution model 的失效 case，保证整个迁移过程中 `make e2e` 始终可以通过。
+1. 在修改 execution behavior 前，先审计现有 E2E tests，并更新受影响的 cases，保证
+   整个实现过程中 `make e2e` 始终可以通过。
 2. 只为 ready inline jobs 创建第一个 child Run，将 child Run name 记录到对应的有序
    step status，并通过 labels 发现已有 child Runs 来保证创建幂等。
 3. 在增加更多 execution states 之前，将 WorkflowRun controller 重构为
@@ -525,12 +525,9 @@ status:
 - `Workflow` 现在是 reusable definition skeleton，不再执行 child Runs。
 - Inline WorkflowRuns 会初始化 `status.jobs[*].pre` 和有序
   `status.jobs[*].steps`。
-- 早期的 top-level `WorkflowRun.spec.uses` prototype 已被 rendered inline
-  WorkflowRun trigger 模型取代，必须在 Workflow API 稳定前删除。
-- Inline 和 resolved reusable Workflow job DAG 会在初始化 status graph 或创建 child Runs
-  前拒绝 unknown dependencies 和 multi-job cycles。
-- 旧 Workflow execution model 的 stale E2E stubs 已删除，保证迁移期间 E2E 聚焦于
-  仍应保持 passing 的行为。
+- WorkflowRun template trigger 和 job-level reusable Workflow calls 仍待实现。
+- Inline WorkflowRun job DAG 会在初始化 status graph 或创建 child Runs 前拒绝 unknown
+  dependencies 和 multi-job cycles。
 - Inline WorkflowRuns 会为 runnable jobs 创建 first-step 和 next-step child Runs，并将
   child Run names 记录到有序 step status 中。
 - WorkflowRuns 会观察 terminal child Run phases、复制到匹配的 step status、聚合
@@ -542,4 +539,3 @@ status:
 - Restart recovery 已覆盖 create-before-status-patch 故障窗口：replacement controller
   通过 durable labels 发现 child Runs、修复 step status，并继续观察 terminal state，且
   不会重复创建 Runs。
-- 旧 Workflow execution E2E coverage 暂时 skip，等待 WorkflowRun execution 实现后恢复。

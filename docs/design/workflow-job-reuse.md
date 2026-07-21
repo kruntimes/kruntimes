@@ -3,8 +3,7 @@
 Status: **Proposed for review**
 
 This document defines the v0.x execution boundary for job-level reusable
-Workflows. It intentionally replaces the earlier whole-tree snapshot and
-`callPath` proposal.
+Workflows.
 
 ## Decision
 
@@ -23,16 +22,9 @@ This makes nested reuse recursive without requiring one controller to carry a
 root-wide execution tree. A parent sees each reusable call as one job. The
 child owns all jobs that were expanded from that call.
 
-## Why This Model
+## Execution Topology
 
-The former model resolved every nested Workflow before execution and stored one
-large ControllerRevision shared by the root and all descendants. It required
-reserved snapshot/call-path annotations and made each child retrieve its job
-topology from an ancestor's snapshot. That is difficult to explain, makes
-Action reuse inherit the same global-tree mechanism, and couples unrelated
-controller reconciliations.
-
-The local model has simple ownership:
+The model has simple ownership:
 
 ```text
 WorkflowRun release
@@ -106,8 +98,7 @@ Calls are deliberately **late-bound**: a referenced Workflow is read when its
 caller job becomes runnable. A template update before that point affects a
 child that has not yet been created. Once the child exists, its rendered jobs
 and snapshot are immutable. Explicit template versioning can provide earlier
-binding in a future API; this design does not hide late binding behind a global
-snapshot.
+binding in a future API.
 
 ## Local Snapshot and Output Contract
 
@@ -148,8 +139,7 @@ definition that accompanied the jobs which ran. Reading a mutable current
 Workflow after a child completes would make the same execution produce
 different parent output values after a template edit.
 
-There is no shared snapshot, no `callPath`, and no snapshot annotation on a
-child WorkflowRun. A snapshot is owned and used only by its own WorkflowRun.
+A snapshot is owned and used only by its own WorkflowRun.
 
 ## Inputs and Outputs
 
@@ -243,9 +233,8 @@ being added to a root-wide Workflow snapshot or controller traversal tree.
 
 ## Implementation Plan
 
-1. Replace the current whole-tree snapshot and `callPath` API with the local
-   WorkflowRun snapshot envelope and `JobStatus.outputs`.
-2. Remove root `WorkflowRun.spec.uses`/`with`; implement `krt workflow
+1. Add the local WorkflowRun snapshot envelope and `JobStatus.outputs`.
+2. Implement `krt workflow
    trigger` as template input validation, rendering, and inline WorkflowRun
    creation.
 3. Implement direct child WorkflowRun creation with input rendering and frozen

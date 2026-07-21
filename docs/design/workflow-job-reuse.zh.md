@@ -2,7 +2,7 @@
 
 状态：**待评审**
 
-本文定义 v0.x 中 job 级可复用 Workflow 的执行边界，并替代此前的全树 snapshot 与 `callPath` 方案。
+本文定义 v0.x 中 job 级可复用 Workflow 的执行边界。
 
 ## 决策
 
@@ -15,9 +15,7 @@
 
 这使嵌套复用天然递归，而不要求一个 controller 携带 root 范围的执行树。parent 将每次调用视为一个 job；child 拥有该调用展开的全部 jobs。
 
-## 为什么采用这个模型
-
-旧方案在执行前递归解析所有 Workflow，并把整棵树保存在 root 共享的 `ControllerRevision` 中。它要求 snapshot/call-path annotations，并让 child 从祖先 snapshot 中读取自己的 jobs。该模型难以理解，Action 复用也会继承相同的全局树复杂度，并耦合不相关的 controller reconcile。
+## 执行拓扑
 
 本模型的 ownership 很直接：
 
@@ -80,7 +78,7 @@ krt workflow trigger deploy-workflow --input environment=staging
 
 child 正常执行，也可以为其 `uses` jobs 创建自己的直接 child WorkflowRuns。parent 不拥有也不检查 grandchildren。
 
-调用是**延迟绑定**：被引用的 Workflow 在 caller job ready 时读取。此前的模板修改会影响尚未创建的 child；child 创建后，其渲染 jobs 和 snapshot 都是 immutable。未来若需要更早绑定，应引入显式 template versioning，而不是恢复全树 snapshot。
+调用是**延迟绑定**：被引用的 Workflow 在 caller job ready 时读取。模板修改会影响尚未创建的 child；child 创建后，其渲染 jobs 和 snapshot 都是 immutable。未来若需要更早绑定，应引入显式 template versioning。
 
 ## 局部 Snapshot 与 Output Contract
 
@@ -113,7 +111,7 @@ data:
 
 output contract 是 child 创建后保留的唯一 source-template 数据。parent 必须使用与实际执行 jobs 配套的 output 定义；如果 child 完成后读取可变的当前 Workflow，模板变更会让同一执行产生不同的 parent output。
 
-没有共享 snapshot、没有 `callPath`，child WorkflowRun 上也没有 snapshot annotation。一个 snapshot 只由自己的 WorkflowRun 拥有和使用。
+一个 snapshot 只由自己的 WorkflowRun 拥有和使用。
 
 ## Inputs 与 Outputs
 
@@ -180,8 +178,8 @@ Scheduler 和 runtimed 仍然只处理独立 `Run`，不了解 Workflow reuse、
 
 ## 实现计划
 
-1. 以 local WorkflowRun snapshot envelope 与 `JobStatus.outputs` 替换当前全树 snapshot 和 `callPath` API。
-2. 删除 root `WorkflowRun.spec.uses`/`with`；实现 `krt workflow trigger` 的模板 input 校验、渲染和 inline WorkflowRun 创建。
+1. 增加 local WorkflowRun snapshot envelope 与 `JobStatus.outputs`。
+2. 实现 `krt workflow trigger` 的模板 input 校验、渲染和 inline WorkflowRun 创建。
 3. 实现直接 child WorkflowRun 创建、input rendering 和冻结 output contracts。
 4. 实现局部 job-output 求值、child-output projection、restart recovery 和模板变更语义测试。
 5. 添加 nested calls、output propagation、cancellation、child 创建前后模板更新的 E2E coverage。

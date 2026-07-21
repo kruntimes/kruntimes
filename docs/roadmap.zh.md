@@ -199,10 +199,8 @@ controller wiring 累积不必要的冲突。
     语义的 `krt wf` verbs；
   - [x] 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`；
   - [x] 为 inline WorkflowRuns 初始化轻量 `status.jobs[*].pre` 和有序 `steps`；
-  - [x] 探索 top-level `WorkflowRun.spec.uses` 的 namespace-local resolution 和
-    input binding；该方案已被 rendered inline WorkflowRun trigger 取代；
-  - [x] 在 inline execution changes 开始前审计现有 E2E tests，移除或更新仍使用旧
-    Workflow execution model 的失效 cases，保证迁移过程中 `make e2e` 始终可以通过；
+  - [x] 在 inline execution changes 开始前审计现有 E2E tests，并更新受影响的 cases，
+    保证整个实现过程中 `make e2e` 始终可以通过；
   - [x] 实现 ready jobs 的 inline WorkflowRun first-step Run creation；
   - [x] 将 WorkflowRun controller reconciliation 重构为
     load/calculate/apply/patch 结构：每次 reconciliation 默认推导 status，只有 external

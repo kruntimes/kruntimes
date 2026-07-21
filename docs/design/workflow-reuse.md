@@ -421,9 +421,8 @@ WorkflowRun controller to patch child Runs for cancellation.
 
 Inline WorkflowRun execution should land in small, reviewable steps:
 
-1. Before changing execution behavior, audit the existing E2E tests. Remove or
-   update stale cases that still exercise the old Workflow execution model so
-   `make e2e` can stay passing throughout the migration.
+1. Before changing execution behavior, audit the existing E2E tests and update
+   affected cases so `make e2e` remains passing throughout the implementation.
 2. Create only the first child Run for each ready inline job, record the child
    Run name on the matching ordered step status, and make creation idempotent
    by discovering existing child Runs through labels.
@@ -574,13 +573,10 @@ Current implementation status:
   child Runs.
 - Inline WorkflowRuns initialize `status.jobs[*].pre` and ordered
   `status.jobs[*].steps`.
-- The earlier top-level `WorkflowRun.spec.uses` prototype is superseded by the
-  rendered inline WorkflowRun trigger model. It must be removed before the
-  Workflow API stabilizes.
-- Inline and resolved reusable Workflow job DAGs reject unknown dependencies
-  and multi-job cycles before status graph initialization or child Run creation.
-- Stale E2E stubs for the old Workflow execution model have been removed so
-  E2E stays focused on behavior that should still pass during the migration.
+- WorkflowRun template triggering and job-level reusable Workflow calls remain
+  pending implementation.
+- Inline WorkflowRun job DAGs reject unknown dependencies and multi-job cycles
+  before status graph initialization or child Run creation.
 - Inline WorkflowRuns create first-step and next-step child Runs for runnable
   jobs and record child Run names in ordered step status.
 - WorkflowRuns observe terminal child Run phases, copy them into matching step
@@ -593,5 +589,3 @@ Current implementation status:
 - Restart recovery is verified across the create-before-status-patch failure
   window: a replacement controller discovers child Runs through durable labels,
   repairs step status, and continues terminal observation without duplicates.
-- Old Workflow execution E2E coverage is skipped until WorkflowRun execution
-  lands.
