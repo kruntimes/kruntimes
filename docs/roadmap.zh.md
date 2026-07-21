@@ -173,15 +173,16 @@ controller wiring 累积不必要的冲突。
     job-to-job artifact passing、Runtime Pod loss、cleanup 和权限边界。
 - [ ] Workflow reuse model：在 Workflow API 稳定前拆分执行实例和可复用定义。目标模型：
   - 将当前表示 execution instance 的 `Workflow` API 替换为 `WorkflowRun`；
-  - `WorkflowRun.spec` 支持 inline `jobs`，也支持 top-level `uses` 加 `with` inputs；
+  - `WorkflowRun.spec` 只包含 inline `jobs`；`krt workflow trigger` 将 reusable
+    Workflow 渲染为 inline execution instance；
   - 新增可复用 `Workflow` CRD，`WorkflowRun` 的 job 可以通过 `uses: <workflow-name>`
     和可选 `with` 调用同 namespace 下的 Workflow；
   - 新增可复用 `Action` CRD，`WorkflowRun` 或 `Workflow` 的 step 可以通过
     `uses: <action-name>` 和可选 `with` 调用同 namespace 下的 Action；
   - 第一版保持 namespace-local 名称引用；在需要 cross-namespace 或 remote references 之前，
     不引入冗长的 `workflowRef` 和 `actionRef` 字段；
-  - validation 必须保证互斥 shape：top-level `uses` vs inline `jobs`、job `uses`
-    vs `steps`、step `uses` vs `run`；
+  - validation 必须保证清晰的 local shapes：WorkflowRun inline jobs、job `uses` vs
+    `steps`、step `uses` vs `run`；
   - Action 在 caller job context 内运行，默认共享 caller job 的 runtime、workspace、
     artifacts 和 environment，除非未来 API 显式 override；
   - reusable Workflow job 拥有自己的 job/workspace/artifact boundary，并通过 inputs、
@@ -198,11 +199,8 @@ controller wiring 累积不必要的冲突。
     语义的 `krt wf` verbs；
   - [x] 更新 CLI verbs 和 docs，使 execution 使用 `WorkflowRun`；
   - [x] 为 inline WorkflowRuns 初始化轻量 `status.jobs[*].pre` 和有序 `steps`；
-  - [x] 实现 top-level `WorkflowRun.spec.uses` 的 namespace-local
-    resolution；
-  - [x] 实现 top-level reusable Workflow calls 的 input binding；
-  - [x] 在 inline execution changes 开始前审计现有 E2E tests，移除或更新仍使用旧
-    Workflow execution model 的失效 cases，保证迁移过程中 `make e2e` 始终可以通过；
+  - [x] 在 inline execution changes 开始前审计现有 E2E tests，并更新受影响的 cases，
+    保证整个实现过程中 `make e2e` 始终可以通过；
   - [x] 实现 ready jobs 的 inline WorkflowRun first-step Run creation；
   - [x] 将 WorkflowRun controller reconciliation 重构为
     load/calculate/apply/patch 结构：每次 reconciliation 默认推导 status，只有 external
@@ -225,16 +223,17 @@ controller wiring 累积不必要的冲突。
   - [ ] 按照完成 review 的
     [execution-boundary design](design/workflow-job-reuse.md) 实现 job-level reusable
     Workflow calls：
-    - [x] review 并批准 child WorkflowRun 和 immutable snapshot model；
-    - [x] 增加 status references、spec transition validation、reserved metadata、generated
-      CRDs 和 controller RBAC prerequisites；
-    - [x] 增加 immutable ControllerRevision snapshot storage 和 recursive resolution，包括 version capture、
-      call limits、input validation 和 cycle detection；
-    - [x] 从 snapshot 执行 top-level `WorkflowRun.spec.uses`，而不是只初始化 status；
-    - [ ] 为 ready job-level calls 创建并观察 child WorkflowRuns；
-    - [ ] 验证 definition mutation isolation、restart recovery、nested calls、cancellation 和
-      invalid graphs；
-    - [ ] 将 call inputs 和 outputs 接入 expression/output propagation；
+    - [x] review 并批准 direct child WorkflowRun 和 local snapshot model；
+    - [ ] 删除 root `WorkflowRun.spec.uses`/`with`，并实现 template trigger 到 rendered inline
+      WorkflowRun 的创建；
+    - [ ] 为每个 WorkflowRun 增加 immutable snapshot，其中包含 local execution spec，以及
+      materialized child 的 frozen source output contract；
+    - [ ] 为 ready job-level calls 创建并观察 child WorkflowRuns，包括 input rendering 和
+      output-contract capture；
+    - [ ] 将 inline 和 child Workflow outputs 投影到有界的
+      `WorkflowRun.status.jobs.<job>.outputs`；
+    - [ ] 验证 child 创建前的 late-binding、child 创建后的 deterministic behavior、restart
+      recovery、nested calls、cancellation 和 invalid graphs；
   - 实现 step-level Action expansion；
   - 实现 `inputs`、`steps` 和 `jobs` contexts 的 expression evaluation；
   - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；

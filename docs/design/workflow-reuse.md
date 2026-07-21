@@ -54,14 +54,13 @@ The target split is:
 
 | Kind | Role |
 | --- | --- |
-| `WorkflowRun` | Execution instance. Defines jobs inline or calls one reusable `Workflow`. |
-| `Workflow` | Reusable workflow definition. Can be called from a `WorkflowRun` or from a job. |
+| `WorkflowRun` | Execution instance with inline jobs. |
+| `Workflow` | Reusable workflow definition. It is triggered into an inline `WorkflowRun` or called from a job. |
 | `Action` | Reusable step group. Can be called from a step inside a `WorkflowRun` or `Workflow`. |
 
 ## WorkflowRun
 
-`WorkflowRun` is the object users create to start work. It supports either
-inline jobs or a top-level workflow call.
+`WorkflowRun` is the object that executes work. It always contains inline jobs.
 
 Inline form:
 
@@ -80,21 +79,9 @@ spec:
             echo "building"
 ```
 
-Reusable Workflow call form:
-
-```yaml
-apiVersion: kruntimes.io/v1alpha1
-kind: WorkflowRun
-metadata:
-  name: release-demo
-spec:
-  uses: build-and-test
-  with:
-    image: agent:v0.1.0
-```
-
-Validation must enforce that top-level `uses` and inline `jobs` are mutually
-exclusive.
+`krt workflow trigger build-and-test --input image=agent:v0.1.0` resolves the
+template inputs and creates an equivalent inline WorkflowRun. `WorkflowRun`
+does not expose a top-level `uses` or `with` API.
 
 ## Reusable Workflow
 
@@ -141,8 +128,10 @@ spec:
 Validation must enforce that job `uses` and job `steps` are mutually exclusive.
 
 Reusable Workflow jobs have their own job/workspace/artifact boundary. They
-communicate with callers through inputs, outputs, and artifacts. The concrete
-parent/child execution boundary and immutable snapshot model are defined in
+communicate with callers through inputs, outputs, and artifacts. Each call
+creates an inline child WorkflowRun with its own local snapshot; the child
+snapshot retains the source Workflow output contract, but no shared root-wide
+execution tree. The concrete execution boundary is defined in
 [Job-Level Reusable Workflow Execution](../workflow-job-reuse/).
 
 ## Action
@@ -226,32 +215,34 @@ For v0.x, validation should prefer a narrow model:
 - missing required inputs fail validation or reconcile early;
 - unknown input names fail validation or reconcile early.
 
-The WorkflowRun controller should bind inputs before expanding child jobs or
-steps:
+The trigger client binds inputs before creating an inline root WorkflowRun. The
+WorkflowRun controller binds inputs when it creates a ready child call:
 
 1. Start from the callee's declared `inputs`.
 2. Apply each input `default`.
 3. Overlay caller-provided `with` values.
 4. Reject missing required inputs.
 5. Reject unknown `with` keys.
-6. Store the lightweight resolved DAG edges in `WorkflowRun.status.jobs`
-   before creating Runs.
+6. Render inputs into the child WorkflowRun's inline jobs before creating it.
 
-Do not let an already-started WorkflowRun observe mutable changes to a
-referenced `Workflow` or `Action`. Reusable definitions may change over time,
-but each WorkflowRun execution must be deterministic once accepted. Later work
-can add explicit revisioning; the first version should capture enough resolved
-data to make retries and controller restarts stable.
+Once a WorkflowRun exists, its inline jobs and local snapshot are immutable.
+Reusable Workflow calls are late-bound: a template can change before a waiting
+call job becomes runnable, but cannot change a child WorkflowRun after it has
+been created. The child's snapshot retains the source output contract so parent
+output projection remains deterministic after template changes. Later work can
+add explicit template revisioning for earlier binding.
 
 Step outputs come from child Run results. A step writes small key-value outputs
 to `KRUNTIME_OUTPUTS`; runtimed persists them to the child Run status. The
 WorkflowRun controller reads those child Run outputs and promotes them into the
 matching ordered `WorkflowRun.status.jobs.<job>.steps[]` entry.
 
-Job outputs are evaluated after all steps in the job succeed. Workflow outputs
-are evaluated after all jobs in the reusable Workflow succeed. Output
-evaluation must fail the WorkflowRun when an expression references a missing
-job, step, or output key.
+Job outputs are evaluated after all steps in the job succeed and stored in
+`WorkflowRun.status.jobs.<job>.outputs`. A reusable Workflow's declared outputs
+are evaluated from the successful child WorkflowRun's local job status and
+projected into the caller job's same `outputs` map. Output evaluation must fail
+the affected job when an expression references a missing job, step, or output
+key.
 
 ## Reference Resolution
 
@@ -270,17 +261,16 @@ supported long-term before the execution model is stable.
 
 Reference resolution should happen in this order:
 
-1. Resolve a top-level `WorkflowRun.spec.uses` to a `Workflow` in the same
-   namespace.
-2. Expand the referenced Workflow jobs into the WorkflowRun execution graph.
-3. Resolve each job-level `uses` to a same-namespace reusable `Workflow`.
-4. Represent each runnable reusable Workflow call as a child WorkflowRun with
+1. `krt workflow trigger` resolves a selected reusable Workflow and creates an
+   inline root WorkflowRun.
+2. Resolve each ready job-level `uses` to a same-namespace reusable `Workflow`.
+3. Represent each runnable reusable Workflow call as a child WorkflowRun with
    its own job/workspace/artifact boundary, using the immutable execution
    snapshot defined in
    [Job-Level Reusable Workflow Execution](../workflow-job-reuse/).
-5. Resolve each step-level `uses` to a same-namespace `Action`.
-6. Expand Action steps inline inside the caller job context.
-7. Detect cycles before creating any child Runs.
+4. Resolve each step-level `uses` to a same-namespace `Action`.
+5. Expand Action steps inline inside the caller job context.
+6. Detect cycles before creating any child Runs.
 
 Cycles must be rejected across Workflow calls. An Action must not call another
 Action in the first version because nested Action expansion is not needed yet
@@ -431,9 +421,8 @@ WorkflowRun controller to patch child Runs for cancellation.
 
 Inline WorkflowRun execution should land in small, reviewable steps:
 
-1. Before changing execution behavior, audit the existing E2E tests. Remove or
-   update stale cases that still exercise the old Workflow execution model so
-   `make e2e` can stay passing throughout the migration.
+1. Before changing execution behavior, audit the existing E2E tests and update
+   affected cases so `make e2e` remains passing throughout the implementation.
 2. Create only the first child Run for each ready inline job, record the child
    Run name on the matching ordered step status, and make creation idempotent
    by discovering existing child Runs through labels.
@@ -546,9 +535,10 @@ the implementation lands.
 4. Add `Action` API types, CRD validation, status, and controller skeleton.
    Namespace-local resolution, input binding, output propagation, and
    WorkflowRun execution are separate follow-up implementation steps.
-5. Implement lightweight DAG edge snapshotting and namespace-local top-level
-   `WorkflowRun.spec.uses` resolution.
-6. Implement input binding for top-level reusable Workflow calls.
+5. Implement `krt workflow trigger` to validate inputs, render a reusable
+   Workflow, and create an inline root WorkflowRun.
+6. Implement per-WorkflowRun snapshots and direct child WorkflowRun creation
+   for ready job-level calls.
 7. Implement inline WorkflowRun first-step Run creation for ready jobs.
 8. Refactor WorkflowRun controller reconciliation into a
    load/calculate/apply/patch structure with default status projection and
@@ -583,16 +573,10 @@ Current implementation status:
   child Runs.
 - Inline WorkflowRuns initialize `status.jobs[*].pre` and ordered
   `status.jobs[*].steps`.
-- Top-level `WorkflowRun.spec.uses` resolves a same-namespace reusable
-  Workflow and initializes `status.jobs` from the referenced Workflow jobs.
-  Missing references fail the WorkflowRun before child Runs are created.
-- Top-level reusable Workflow calls bind string inputs early: defaults are
-  applied, missing required inputs fail, and unknown `with` keys fail. Bound
-  values are not evaluated into child Runs until WorkflowRun execution lands.
-- Inline and resolved reusable Workflow job DAGs reject unknown dependencies
-  and multi-job cycles before status graph initialization or child Run creation.
-- Stale E2E stubs for the old Workflow execution model have been removed so
-  E2E stays focused on behavior that should still pass during the migration.
+- WorkflowRun template triggering and job-level reusable Workflow calls remain
+  pending implementation.
+- Inline WorkflowRun job DAGs reject unknown dependencies and multi-job cycles
+  before status graph initialization or child Run creation.
 - Inline WorkflowRuns create first-step and next-step child Runs for runnable
   jobs and record child Run names in ordered step status.
 - WorkflowRuns observe terminal child Run phases, copy them into matching step
@@ -605,5 +589,3 @@ Current implementation status:
 - Restart recovery is verified across the create-before-status-patch failure
   window: a replacement controller discovers child Runs through durable labels,
   repairs step status, and continues terminal observation without duplicates.
-- Old Workflow execution E2E coverage is skipped until WorkflowRun execution
-  lands.
