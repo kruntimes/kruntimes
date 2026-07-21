@@ -141,6 +141,47 @@ different parent output values after a template edit.
 
 A snapshot is owned and used only by its own WorkflowRun.
 
+## Call Provenance and Cycle Detection
+
+Workflow reuse must not create an unbounded chain such as `A -> B -> A`. The
+controller detects a cycle before it creates a child WorkflowRun; it never
+relies on later cleanup to stop recursive creation.
+
+`krt wf trigger` and the WorkflowRun controller use the reserved
+`kruntimes.io/workflow-source` annotation only when they create a materialized
+WorkflowRun. During that WorkflowRun's first reconciliation, the controller
+validates the namespace-local Workflow name and freezes it in the local
+snapshot:
+
+```yaml
+data:
+  spec: { ... }
+  source:
+    workflow: build-and-test
+```
+
+The annotation is not an execution input and is not a user-facing
+`WorkflowRun.spec` field. A directly created inline WorkflowRun has no source.
+After the snapshot exists, planning reads only the snapshot, not the mutable
+annotation or the current Workflow definition.
+
+Before creating a `uses: <target>` child, the controller follows the current
+WorkflowRun's owner chain and reads each ancestor's frozen `source.workflow`.
+It appends the target to that ordered ancestry:
+
+- if the target is already present, the call job becomes `Failed` with a
+  deterministic message such as `workflow call cycle: A -> B -> A`; no child
+  is created;
+- if the resulting template depth exceeds 8, the call job becomes `Failed`
+  with a depth-limit message; no child is created;
+- a missing or invalid parent provenance is a deterministic call-resolution
+  failure, not a retryable controller error.
+
+Normal failed-dependency propagation then marks dependent jobs `Skipped`, and
+ordinary WorkflowRun terminal aggregation determines the parent phase. This is
+local to each WorkflowRun: no scheduler or runtimed behavior changes, and no
+root-wide execution-tree object is introduced.
+
 ## Inputs and Outputs
 
 `JobStatus` gains a bounded `outputs` map. All job outputs, whether produced by
@@ -220,8 +261,9 @@ They have no Workflow reuse, snapshot, or output-contract behavior.
 - A call job has `needs`, `uses`, and optional `with`; it cannot contain
   `runs-on` or `steps`.
 - Inputs and expression references are validated before creating a child.
-- Workflow cycles are detected along the active parent/child call chain before
-  a child is created. The initial maximum nesting depth is 8.
+- Workflow cycles are detected from frozen call provenance along the active
+  parent/child owner chain before a child is created. The initial maximum
+  nesting depth is 8.
 - Job and step outputs are bounded by CRD limits; artifacts are not outputs.
 
 ## Reusable Actions
@@ -241,6 +283,7 @@ being added to a root-wide Workflow snapshot or controller traversal tree.
    output contracts.
 4. Implement local job-output evaluation, child-output projection, restart
    recovery, and template-mutation semantics tests.
-5. Add E2E coverage for nested calls, output propagation, cancellation, and
+5. Add E2E coverage for nested calls, including self-references and
+   `A -> B -> A` cycle rejection, output propagation, cancellation, and
    template updates before versus after child creation.
 6. Design Action expansion separately, using the same direct-boundary rule.

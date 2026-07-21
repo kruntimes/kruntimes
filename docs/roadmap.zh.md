@@ -234,7 +234,8 @@ controller wiring 累积不必要的冲突。
     - [ ] 将 inline 和 child Workflow outputs 投影到有界的
       `WorkflowRun.status.jobs.<job>.outputs`；
     - [ ] 验证 child 创建前的 late-binding、child 创建后的 deterministic behavior、restart
-      recovery、nested calls、cancellation 和 invalid graphs；
+      recovery、nested calls、cancellation 和 invalid graphs，包括创建 child 前拒绝
+      `A -> B -> A` cycle；
   - 实现 step-level Action expansion；
   - 实现 `inputs`、`steps` 和 `jobs` contexts 的 expression evaluation；
   - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；
