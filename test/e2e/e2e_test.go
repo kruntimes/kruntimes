@@ -376,6 +376,36 @@ func waitForRun(t *testing.T, run *v1alpha1.Run, timeout time.Duration) {
 	waitForRunPhase(t, run, timeout, v1alpha1.RunSucceeded)
 }
 
+func waitForWorkflowRunPhase(t *testing.T, workflowRun *v1alpha1.WorkflowRun, timeout time.Duration, expected v1alpha1.WorkflowPhase) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	var lastPhase v1alpha1.WorkflowPhase
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for workflowrun %s, last phase=%s, msg=%s", workflowRun.Name, lastPhase, workflowRun.Status.Message)
+		default:
+		}
+
+		time.Sleep(500 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+			t.Fatalf("get workflowrun: %v", err)
+		}
+		if workflowRun.Status.Phase != lastPhase {
+			t.Logf("WorkflowRun %s: phase=%s", workflowRun.Name, workflowRun.Status.Phase)
+			lastPhase = workflowRun.Status.Phase
+		}
+		switch workflowRun.Status.Phase {
+		case expected:
+			return
+		case v1alpha1.WorkflowSucceeded, v1alpha1.WorkflowFailed, v1alpha1.WorkflowCancelled:
+			t.Fatalf("expected phase=%s, got phase=%s, msg=%s", expected, workflowRun.Status.Phase, workflowRun.Status.Message)
+		}
+	}
+}
+
 func waitForRunPhase(t *testing.T, run *v1alpha1.Run, timeout time.Duration, expected v1alpha1.RunPhase) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -539,6 +569,62 @@ func TestFullRunLifecycle(t *testing.T) {
 		t.Fatalf("success message contains stdout: %q", run.Status.Message)
 	}
 	t.Logf("Run completed successfully: %s", run.Status.Message)
+}
+
+func TestWorkflowTriggerMaterializesAndExecutesTemplate(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-template-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{
+			Inputs: map[string]v1alpha1.WorkflowInputSpec{
+				"message": {Required: true},
+			},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"build": {
+					RunsOn: "bash",
+					Steps: []v1alpha1.StepSpec{{
+						Name: "render",
+						Run:  "test \"$MESSAGE\" = \"${{ inputs.message }}\"",
+						Env:  map[string]string{"MESSAGE": "${{ inputs.message }}"},
+					}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), workflow); err != nil {
+		t.Fatalf("create reusable workflow: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflow) })
+
+	workflowRunName := "e2e-trigger-" + nameSuffix
+	cmd := krt.NewRootCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"wf", "trigger", workflow.Name, "--name", workflowRunName, "--set", "message=rendered-by-e2e", "--namespace", testNamespace})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("trigger workflow: %v\nstderr: %s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), workflowRunName) {
+		t.Fatalf("trigger output = %q, want workflowrun name %q", stdout.String(), workflowRunName)
+	}
+
+	workflowRun := &v1alpha1.WorkflowRun{ObjectMeta: metav1.ObjectMeta{Name: workflowRunName, Namespace: testNamespace}}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+		t.Fatalf("get materialized workflowrun: %v", err)
+	}
+	step := workflowRun.Spec.Jobs["build"].Steps[0]
+	if step.Run != "test \"$MESSAGE\" = \"rendered-by-e2e\"" || step.Env["MESSAGE"] != "rendered-by-e2e" {
+		t.Fatalf("materialized step = %#v, want rendered inputs", step)
+	}
+
+	waitForWorkflowRunPhase(t, workflowRun, 30*time.Second, v1alpha1.WorkflowSucceeded)
+	if workflowRun.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded {
+		t.Fatalf("build job status = %#v, want Succeeded", workflowRun.Status.Jobs["build"])
+	}
 }
 
 func TestFilesystemArtifacts(t *testing.T) {
