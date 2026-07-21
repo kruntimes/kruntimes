@@ -85,7 +85,7 @@ child 正常执行，也可以为其 `uses` jobs 创建自己的直接 child Wor
 每个 WorkflowRun 自己拥有一个 `ControllerRevision`，名称由自身 UID 确定，并记录在 `status.snapshotName`。它只包含：
 
 - `spec`：接受的 inline `WorkflowRun.spec`，包括本地 jobs topology；
-- `outputContract`：仅当该 WorkflowRun 从可复用 Workflow materialize 出来时，保存 source Workflow 声明的 `spec.outputs` 及可选 source identity，用于诊断。
+- `outputContract`：仅当该 WorkflowRun 从可复用 Workflow materialize 出来时，保存一个以 source Workflow 名称为 key 的单项 map；其 value 是该 Workflow 声明的 `spec.outputs`。
 
 ```yaml
 apiVersion: apps/v1
@@ -103,10 +103,10 @@ data:
         runs-on: bash
         steps: [{ name: deploy, run: deploy --environment=staging }]
   outputContract:
-    workflowName: deploy-workflow
-    outputs:
-      endpoint:
-        value: ${{ jobs.apply.outputs.endpoint }}
+    deploy-workflow:
+      outputs:
+        endpoint:
+          value: ${{ jobs.apply.outputs.endpoint }}
 ```
 
 output contract 是 child 创建后保留的唯一 source-template 数据。parent 必须使用与实际执行 jobs 配套的 output 定义；如果 child 完成后读取可变的当前 Workflow，模板变更会让同一执行产生不同的 parent output。

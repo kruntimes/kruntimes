@@ -107,9 +107,9 @@ its own UID and recorded in `status.snapshotName`. Its data contains exactly:
 
 - `spec`: the accepted inline `WorkflowRun.spec`, including its local job
   topology;
-- `outputContract`: only for a child materialized from a reusable Workflow,
-  the source Workflow's declared `spec.outputs` and optional source identity
-  for diagnostics.
+- `outputContract`: only for a child materialized from a reusable Workflow, a
+  single-entry map keyed by the source Workflow name. Its value is that
+  Workflow's declared `spec.outputs`.
 
 ```yaml
 apiVersion: apps/v1
@@ -127,10 +127,10 @@ data:
         runs-on: bash
         steps: [{ name: deploy, run: deploy --environment=staging }]
   outputContract:
-    workflowName: deploy-workflow
-    outputs:
-      endpoint:
-        value: ${{ jobs.apply.outputs.endpoint }}
+    deploy-workflow:
+      outputs:
+        endpoint:
+          value: ${{ jobs.apply.outputs.endpoint }}
 ```
 
 The output contract is the only source-template data retained after child
