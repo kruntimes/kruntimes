@@ -72,16 +72,17 @@ drain。
 
 ### 输出字段
 
-- `latency.schedule`：benchmark observer 从本地 create request start 到 scheduler 分配
-  Runtime Pod 的观测时间。
-- `latency.dispatch`：benchmark observer 从本地 create request start 到 runtimed 将 Run
-  标记为 started 的观测时间。
-- `latency.execution`：benchmark observer 从 Run start 到 Run 进入 terminal status 的观测
-  时间。它不包含 runtimed 启动 Run 前的 benchmark backlog queueing，但仍受 benchmark
-  poll interval 影响。
-- `latency.complete`：benchmark observer 从本地 create request start 到 terminal Run status
-  的观测时间。这是端到端 latency；当 benchmark 受 capacity 限制时，它会包含等待 Runtime
-  capacity 的时间。
+- `latency.schedule`：从本地 create request start 到 scheduler 写入
+  `Scheduled=True` condition 的时间。
+- `latency.dispatch`：从本地 create request start 到 runtimed 写入
+  `status.startTime` 的时间。
+- `latency.execution`：从 `status.startTime` 到 `status.completionTime` 的时间。
+  它不包含 runtimed 启动 Run 前的 queueing。
+- `latency.complete`：从本地 create request start 到 `status.completionTime` 的时间。
+  这是端到端 latency；当 benchmark 受 capacity 限制时，它会包含等待 Runtime capacity 的时间。
+
+Harness 会通过轮询 Kubernetes API 发现状态变化，但生命周期延迟取自写入
+`Run.status` 的 timestamps；因此 poll interval 不会放大报告中的 transition duration。
 - `throughput.runsPerSecond`：成功 terminal Runs 除以 benchmark wall time。
 - `capacity.maxObservedRunningRuns`：polling 期间观察到的最大并发 Running Runs 数。
 - `capacity.observedPendingAtCapacity`：当所有配置的 Runtime slots 被占用时，是否观察到
