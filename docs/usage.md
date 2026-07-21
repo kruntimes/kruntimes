@@ -232,7 +232,7 @@ krt wf run get ci-demo -n default
 krt wf run delete ci-demo -n default
 ```
 
-Create a WorkflowRun that references a reusable Workflow:
+Create an inline WorkflowRun directly:
 
 ```yaml
 apiVersion: kruntimes.io/v1alpha1
@@ -240,9 +240,12 @@ kind: WorkflowRun
 metadata:
   name: release-demo
 spec:
-  uses: build-and-test
-  with:
-    ref: main
+  jobs:
+    build:
+      runs-on: bash
+      steps:
+        - name: package
+          run: make package
 ```
 
 `krt wf run -f` also accepts a small GitHub Actions style workflow file and
@@ -257,9 +260,9 @@ krt wf trigger build-and-test --set ref=main -n default
 krt wf delete build-and-test -n default
 ```
 
-`krt wf trigger` creates a `WorkflowRun` with `spec.uses` pointing at the
-reusable Workflow. The created `WorkflowRun` remains pending until WorkflowRun
-execution is implemented.
+`krt wf trigger` reads the reusable Workflow, validates the supplied inputs,
+renders `inputs.*` expressions into inline jobs, and creates the resulting
+`WorkflowRun`.
 
 `krt wf run cancel` is reserved for the future cancellation API and currently
 returns a clear unsupported error.

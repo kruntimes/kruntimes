@@ -165,33 +165,15 @@ spec:
                 - message: job names must be valid Kubernetes label values with at
                     most 63 characters
                   rule: self.all(name, size(name) <= 63 && name.matches('^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$'))
-              uses:
-                description: Uses references a reusable Workflow in the same namespace.
-                maxLength: 253
-                minLength: 1
-                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
-                type: string
-              with:
-                additionalProperties:
-                  type: string
-                description: With passes string inputs to the reusable Workflow referenced
-                  by Uses.
-                maxProperties: 256
-                type: object
+            required:
+            - jobs
             type: object
             x-kubernetes-validations:
-            - message: exactly one of jobs or uses must be set
-              rule: has(self.jobs) != has(self.uses)
-            - message: with can only be set when uses is set
-              rule: '!has(self.with) || has(self.uses)'
             - message: each dependency must name another job in this WorkflowRun
-              rule: '!has(self.jobs) || self.jobs.all(name, !has(self.jobs[name].needs)
-                || self.jobs[name].needs.all(need, need in self.jobs && need != name))'
-            - message: jobs, uses, and with are immutable after WorkflowRun creation
-              rule: has(self.jobs) == has(oldSelf.jobs) && (!has(self.jobs) || self.jobs
-                == oldSelf.jobs) && has(self.uses) == has(oldSelf.uses) && (!has(self.uses)
-                || self.uses == oldSelf.uses) && has(self.with) == has(oldSelf.with)
-                && (!has(self.with) || self.with == oldSelf.with)
+              rule: self.jobs.all(name, !has(self.jobs[name].needs) || self.jobs[name].needs.all(need,
+                need in self.jobs && need != name))
+            - message: jobs are immutable after WorkflowRun creation
+              rule: self.jobs == oldSelf.jobs
             - message: cancelRequested may not transition from true to false
               rule: '!has(oldSelf.cancelRequested) || !oldSelf.cancelRequested ||
                 (has(self.cancelRequested) && self.cancelRequested)'
@@ -265,6 +247,15 @@ spec:
                   description: JobStatus tracks the execution status of a WorkflowRun
                     job.
                   properties:
+                    outputs:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        Outputs is the bounded key-value output map exposed by this job. Inline
+                        jobs derive values from their steps; reusable Workflow calls derive values
+                        from their child WorkflowRun output contract.
+                      maxProperties: 64
+                      type: object
                     phase:
                       description: Phase is the current phase of the job.
                       enum:

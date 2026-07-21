@@ -48,46 +48,22 @@ const (
 	WorkflowJobLabel = "kruntimes.io/workflow-job"
 	// WorkflowStepLabel identifies the workflow step that owns a child Run.
 	WorkflowStepLabel = "kruntimes.io/workflow-step"
-
-	// WorkflowRootRunUIDLabel identifies the root WorkflowRun that owns a
-	// nested child WorkflowRun or Run.
-	WorkflowRootRunUIDLabel = "kruntimes.io/root-workflowrun-uid"
-	// WorkflowSnapshotNameAnnotation identifies the immutable ControllerRevision
-	// snapshot used by a WorkflowRun execution tree.
-	WorkflowSnapshotNameAnnotation = "kruntimes.io/workflow-snapshot-name"
-	// WorkflowCallPathAnnotation identifies a namespace-local reusable Workflow
-	// call path within a snapshot execution tree.
-	WorkflowCallPathAnnotation = "kruntimes.io/workflow-call-path"
 )
 
 // +kubebuilder:object:generate=true
 // WorkflowRunSpec defines one workflow execution instance.
-// +kubebuilder:validation:XValidation:rule="has(self.jobs) != has(self.uses)",message="exactly one of jobs or uses must be set"
-// +kubebuilder:validation:XValidation:rule="!has(self.with) || has(self.uses)",message="with can only be set when uses is set"
-// +kubebuilder:validation:XValidation:rule="!has(self.jobs) || self.jobs.all(name, !has(self.jobs[name].needs) || self.jobs[name].needs.all(need, need in self.jobs && need != name))",message="each dependency must name another job in this WorkflowRun"
-// +kubebuilder:validation:XValidation:rule="has(self.jobs) == has(oldSelf.jobs) && (!has(self.jobs) || self.jobs == oldSelf.jobs) && has(self.uses) == has(oldSelf.uses) && (!has(self.uses) || self.uses == oldSelf.uses) && has(self.with) == has(oldSelf.with) && (!has(self.with) || self.with == oldSelf.with)",message="jobs, uses, and with are immutable after WorkflowRun creation"
+// +kubebuilder:validation:XValidation:rule="self.jobs.all(name, !has(self.jobs[name].needs) || self.jobs[name].needs.all(need, need in self.jobs && need != name))",message="each dependency must name another job in this WorkflowRun"
+// +kubebuilder:validation:XValidation:rule="self.jobs == oldSelf.jobs",message="jobs are immutable after WorkflowRun creation"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.cancelRequested) || !oldSelf.cancelRequested || (has(self.cancelRequested) && self.cancelRequested)",message="cancelRequested may not transition from true to false"
 type WorkflowRunSpec struct {
 	// Jobs is a map of inline job names to job specs. Jobs run in parallel
 	// unless constrained by needs; the map order is not significant.
 	// Job names become Kubernetes label values on child Runs.
-	// +optional
+	// +required
 	// +kubebuilder:validation:MinProperties=1
 	// +kubebuilder:validation:MaxProperties=64
 	// +kubebuilder:validation:XValidation:rule="self.all(name, size(name) <= 63 && name.matches('^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$'))",message="job names must be valid Kubernetes label values with at most 63 characters"
 	Jobs map[string]JobSpec `json:"jobs,omitempty"`
-
-	// Uses references a reusable Workflow in the same namespace.
-	// +optional
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
-	Uses string `json:"uses,omitempty"`
-
-	// With passes string inputs to the reusable Workflow referenced by Uses.
-	// +optional
-	// +kubebuilder:validation:MaxProperties=256
-	With map[string]string `json:"with,omitempty"`
 
 	// CancelRequested requests cancellation of this WorkflowRun. Once observed,
 	// the controller stops creating child Runs and requests cancellation of
@@ -145,6 +121,13 @@ type JobStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	WorkflowRunName string `json:"workflowRunName,omitempty"`
+
+	// Outputs is the bounded key-value output map exposed by this job. Inline
+	// jobs derive values from their steps; reusable Workflow calls derive values
+	// from their child WorkflowRun output contract.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=64
+	Outputs map[string]string `json:"outputs,omitempty"`
 
 	// Steps tracks each step in the original job step order.
 	// +optional

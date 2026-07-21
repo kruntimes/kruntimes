@@ -226,7 +226,7 @@ krt wf run get ci-demo -n default
 krt wf run delete ci-demo -n default
 ```
 
-创建一个引用 reusable Workflow 的 WorkflowRun：
+直接创建 inline WorkflowRun：
 
 ```yaml
 apiVersion: kruntimes.io/v1alpha1
@@ -234,9 +234,12 @@ kind: WorkflowRun
 metadata:
   name: release-demo
 spec:
-  uses: build-and-test
-  with:
-    ref: main
+  jobs:
+    build:
+      runs-on: bash
+      steps:
+        - name: package
+          run: make package
 ```
 
 `krt wf run -f` 也接受一个小型 GitHub Actions 风格 workflow file，并将其转换为 inline
@@ -251,8 +254,8 @@ krt wf trigger build-and-test --set ref=main -n default
 krt wf delete build-and-test -n default
 ```
 
-`krt wf trigger` 会创建一个 `spec.uses` 指向 reusable Workflow 的 `WorkflowRun`。在
-WorkflowRun execution 实现前，创建出来的 `WorkflowRun` 会保持 pending。
+`krt wf trigger` 会读取 reusable Workflow、校验传入 inputs、将 `inputs.*` expressions
+渲染到 inline jobs，并创建对应的 `WorkflowRun`。
 
 `krt wf run cancel` 是为未来 cancellation API 预留的命令；当前会返回明确的 unsupported
 error。

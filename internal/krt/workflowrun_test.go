@@ -14,9 +14,12 @@ kind: WorkflowRun
 metadata:
   name: build
 spec:
-  uses: build-and-test
-  with:
-    ref: main
+  jobs:
+    build:
+      runs-on: bash
+      steps:
+        - name: compile
+          run: make build
 `)
 
 	workflowRun, err := parseWorkflowRun(data, "team-a")
@@ -29,8 +32,8 @@ spec:
 	if workflowRun.Namespace != "team-a" {
 		t.Fatalf("namespace = %q, want team-a", workflowRun.Namespace)
 	}
-	if workflowRun.Spec.Uses != "build-and-test" || workflowRun.Spec.With["ref"] != "main" {
-		t.Fatalf("spec = %#v, want uses with ref", workflowRun.Spec)
+	if job := workflowRun.Spec.Jobs["build"]; job.RunsOn != "bash" || len(job.Steps) != 1 || job.Steps[0].Run != "make build" {
+		t.Fatalf("spec = %#v, want inline build job", workflowRun.Spec)
 	}
 }
 
