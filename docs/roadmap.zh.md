@@ -72,21 +72,19 @@ controller wiring 累积不必要的冲突。
 - [x] Benchmark correctness：诊断为什么 `latency.complete` 明显高于手动创建单个
   Run 的体感耗时，并明确 benchmark 测的是端到端 latency、调度 latency、
   watch/update latency，还是 runtime execution time。
-- [ ] Scheduler framework 与批量规划：将独立的 per-Run placement 替换为按
+- [ ] Scheduler framework 与 Run 间亲和性：将独立的 per-Run placement 替换为按
   `(namespace, runtime)` queue key 工作的 leader-owned、有界 planner。在改变 scheduler behavior 前，
-  review [Scheduler Framework 与批量规划](design/scheduler-framework.md) architecture。
+  review [Scheduler Framework 与 Run 间亲和性](design/scheduler-framework.md) architecture。
   初始实现 TODO：
-  - [ ] review queue ownership、有界 batch、snapshot、PreFilter、Filter、Score、Reserve、Bind、
+  - [ ] review queue ownership、有界 planning cycle、snapshot、PreFilter、Filter、Score、Reserve、Bind、
     status 和 retry semantics；
   - [ ] 在 queue/planner interfaces 后重构 scheduler internals，同时保留当前 observable behavior 和
     metrics；
-  - [ ] 增加 deterministic batch planning、capacity reservation、bind-conflict 和 restart-recovery coverage；
-  - [ ] 实现 same-cycle planned affinity targets 和 self-affinity bootstrap，并增加 integration 和 E2E
+  - [ ] 增加 deterministic planning、capacity reservation、bind-conflict 和 restart-recovery coverage；
+  - [ ] 实现 same-cycle planned affinity targets 和 Run 间亲和性 bootstrap，并增加 integration 和 E2E
     coverage；
   - [ ] 在增加 `Run.spec.priority` 或等价 API 前，通过独立 API design 定义 priority、fairness 和
     starvation policy；
-  - [ ] 只有当 Workflow 或 batch demo 证明需要 all-or-nothing placement 时，才设计 explicit
-    scheduling groups。
 - [ ] Agent sandbox 所需的 Function-mode Runs：定义 mutually exclusive 的
   `Run.spec.mode.task` 和 `Run.spec.mode.function` 语义，让 function Run 可以 reserve
   预热 Runtime Pod，向 runtimed/runtime-server 注册 callable function，保持 ready 状态

@@ -79,23 +79,21 @@ wiring from accumulating avoidable conflicts.
   than a manually observed single Run, and clarify whether benchmarks measure
   end-to-end latency, scheduling latency, watch/update latency, or runtime
   execution time.
-- [ ] Scheduler framework and batch planning: replace independent per-Run
+- [ ] Scheduler framework and Inter-Run Affinity: replace independent per-Run
   placement with a leader-owned, bounded planner per `(namespace, runtime)`
-  queue key. Review the [Scheduler Framework and Batch Planning](design/scheduler-framework.md)
+  queue key. Review the [Scheduler Framework and Inter-Run Affinity](design/scheduler-framework.md)
   architecture before changing scheduler behavior.
   Initial implementation TODO:
-  - [ ] review queue ownership, bounded batch, snapshot, PreFilter, Filter,
+  - [ ] review queue ownership, bounded planning cycle, snapshot, PreFilter, Filter,
     Score, Reserve, Bind, status, and retry semantics;
   - [ ] refactor scheduler internals behind queue/planner interfaces while
     preserving current observable behavior and metrics;
-  - [ ] add deterministic batch planning, capacity reservation, bind-conflict,
+  - [ ] add deterministic planning, capacity reservation, bind-conflict,
     and restart-recovery coverage;
-  - [ ] implement same-cycle planned affinity targets and self-affinity
+  - [ ] implement same-cycle planned affinity targets and Inter-Run Affinity
     bootstrap, with integration and E2E coverage;
   - [ ] define priority, fairness, and starvation policy in a separate API
     design before adding `Run.spec.priority` or equivalent API;
-  - [ ] design explicit scheduling groups only when a Workflow or batch demo
-    proves an all-or-nothing placement requirement.
 - [ ] Function-mode Runs for agent sandboxes: define mutually exclusive
   `Run.spec.mode.task` and `Run.spec.mode.function` semantics so a function Run
   can reserve a pre-warmed Runtime Pod, register a callable function with
