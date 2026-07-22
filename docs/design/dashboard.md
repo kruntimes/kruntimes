@@ -121,8 +121,10 @@ The proposed v0.x production model is Kubernetes bearer-token login:
 - log access needs the same token to read the Run and its assigned Pod, create
   the Pod `portforward` subresource used by `krt logs`, and read the `log`
   subresource when runtimed log fallback is needed;
-- artifact access requires the Run read permission plus the artifact-store
-  permission defined by the selected backend;
+- artifact access requires the Run read permission and, when the dashboard
+  reaches runtimed's artifact endpoint, permission to read the assigned Pod and
+  create its `portforward` subresource. Direct artifact-store access also
+  requires the permission defined by the selected backend;
 - secrets, service account tokens, environment variables, and raw pod specs are
   hidden unless a future privileged operator view explicitly exposes them.
 
@@ -144,7 +146,8 @@ identity represented by the login token; it is distinct from the ServiceAccount
 used by the dashboard Deployment itself. The following example grants one
 namespace read-only Run, Runtime, Workflow, and log access; it does not grant
 access to Secrets or workload mutation verbs. It grants only the
-`pods/portforward` `create` subresource permission required to read logs:
+`pods/portforward` `create` subresource permission required to read logs and
+download artifacts through runtimed:
 
 ```yaml
 apiVersion: v1
