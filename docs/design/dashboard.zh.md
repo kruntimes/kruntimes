@@ -116,6 +116,65 @@ impersonation model 或 custom identity provider。
 credential。这个 convenience path 不是生产 authentication mode，并且不能让浏览器在本地会话结束
 后保留 kubeconfig credential 或 token。
 
+### 创建 Dashboard 登录 Token
+
+operator 应在每个允许 dashboard 用户查看的 namespace 中，为最小权限 ServiceAccount 创建短期
+token。以下示例授予单个 namespace 的只读 Run、Runtime、Workflow 和日志访问，不授予 Secrets
+或任何 write verb：
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kruntimes-dashboard-viewer
+  namespace: team-a
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kruntimes-dashboard-viewer
+  namespace: team-a
+rules:
+  - apiGroups: ["kruntimes.io"]
+    resources: ["runs", "runtimes", "workflowruns", "workflows", "actions", "persistentworkspaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kruntimes-dashboard-viewer
+  namespace: team-a
+subjects:
+  - kind: ServiceAccount
+    name: kruntimes-dashboard-viewer
+    namespace: team-a
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kruntimes-dashboard-viewer
+```
+
+应用该 manifest 后，生成有时限的 token，并将其粘贴到 dashboard 登录页面：
+
+```bash
+kubectl apply -f dashboard-viewer.yaml
+kubectl -n team-a create token kruntimes-dashboard-viewer --duration=1h
+```
+
+`kubectl create token` 要求 Kubernetes 1.24 或更高版本。日常 dashboard 访问不要使用
+cluster-admin credential。cluster identity system 也可以提供等价 user token；dashboard 会将两者
+都视为标准 Kubernetes bearer token。若要浏览多个 namespaces，可以创建等价的 namespace-scoped
+bindings，或者在审查其范围后显式授予额外的 cluster-level read access。
+
 ## 内部 API 形状
 
 dashboard frontend 可以使用随二进制版本演进的内部 HTTP API。v0.x 不应把它文档化为稳定的

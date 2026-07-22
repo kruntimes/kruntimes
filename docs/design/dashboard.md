@@ -132,6 +132,69 @@ current kubeconfig credential to a local-only proxy. That convenience path is
 not a production authentication mode and must not make the browser retain the
 kubeconfig credential or token after the local session ends.
 
+### Creating a Dashboard Login Token
+
+An operator should create a short-lived token for a least-privilege ServiceAccount
+in each namespace that a dashboard user may inspect. The following example
+grants one namespace read-only Run, Runtime, Workflow, and log access; it does
+not grant access to Secrets or any write verb:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kruntimes-dashboard-viewer
+  namespace: team-a
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kruntimes-dashboard-viewer
+  namespace: team-a
+rules:
+  - apiGroups: ["kruntimes.io"]
+    resources: ["runs", "runtimes", "workflowruns", "workflows", "actions", "persistentworkspaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kruntimes-dashboard-viewer
+  namespace: team-a
+subjects:
+  - kind: ServiceAccount
+    name: kruntimes-dashboard-viewer
+    namespace: team-a
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kruntimes-dashboard-viewer
+```
+
+Apply the manifest, then mint a bounded token and paste it into the dashboard
+login page:
+
+```bash
+kubectl apply -f dashboard-viewer.yaml
+kubectl -n team-a create token kruntimes-dashboard-viewer --duration=1h
+```
+
+`kubectl create token` requires Kubernetes 1.24 or later. Do not use a
+cluster-admin credential for routine dashboard access. Cluster identity systems
+may provide an equivalent user token instead; the dashboard treats both as a
+standard Kubernetes bearer token. To browse multiple namespaces, create
+equivalent namespace-scoped bindings or explicitly grant the additional
+cluster-level read access after reviewing its scope.
+
 ## Internal API Shape
 
 The dashboard frontend can use an internal, versioned-for-the-binary HTTP API.
