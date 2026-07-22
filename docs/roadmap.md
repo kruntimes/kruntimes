@@ -268,7 +268,8 @@ wiring from accumulating avoidable conflicts.
       `WorkflowRun.status.jobs.<job>.outputs` values;
     - [ ] verify late-binding behavior before child creation, deterministic
       behavior after child creation, restart recovery, nested calls,
-      cancellation, and invalid graphs;
+      cancellation, and invalid graphs, including `A -> B -> A` cycle
+      rejection before child creation;
   - implement step-level Action expansion;
   - implement expression evaluation for `inputs`, `steps`, and `jobs` contexts;
   - promote child Run outputs into WorkflowRun step/job/workflow outputs;

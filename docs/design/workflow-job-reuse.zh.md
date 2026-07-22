@@ -113,6 +113,27 @@ output contract 是 child 创建后保留的唯一 source-template 数据。pare
 
 一个 snapshot 只由自己的 WorkflowRun 拥有和使用。
 
+## Workflow Call Graph Validation
+
+Workflow reuse 不能创建 `A -> B -> A` 这样的无界调用链。cycle validation 在解析 reusable
+Workflow definitions 时完成，且必须在为所选模板或 call job 创建任何 WorkflowRun **之前**完成。
+
+`krt wf trigger A` 递归读取从 `A` 的 job-level `uses` 可达的所有 namespace-local Workflow。
+它在渲染 inputs 和创建 inline root WorkflowRun 前校验 missing references、cycles 和初始最大
+嵌套深度 8。对于 `A -> B -> A`，trigger 以确定性的
+`workflow call cycle: A -> B -> A` error 失败，且不创建 WorkflowRun。
+
+WorkflowRun controller 对 ready inline job 的 `uses: A` 应用相同的 graph validation。它在
+渲染 inputs 或创建直接 child WorkflowRun 前校验以 `A` 为根的图。确定性的 validation failure
+只将对应 call job 标为 `Failed`；不创建 child，也不重试。之后正常的 failed-dependency
+propagation 会将 dependent jobs 标为 `Skipped`，普通的 WorkflowRun terminal aggregation 决定
+parent phase。
+
+CLI 和 controller 必须共享同一个 graph-validation implementation 和 error format，以便两个
+路径对相同的 Workflow graph 作出相同决定。shared logic 加载 namespace-local Workflow
+definitions，以当前 name stack 做 depth-first traversal，不保存 provenance annotations、
+owner-chain metadata 或 root-wide execution tree。scheduler 和 runtimed 行为不变。
+
 ## Inputs 与 Outputs
 
 `JobStatus` 增加有界的 `outputs` map。inline job 和可复用 Workflow 调用的输出都在同一位置暴露：
@@ -169,7 +190,8 @@ Scheduler 和 runtimed 仍然只处理独立 `Run`，不了解 Workflow reuse、
 - WorkflowRun 自身不能包含 `uses` 或 `with`。
 - 调用 job 包含 `needs`、`uses` 和可选 `with`，不能包含 `runs-on` 或 `steps`。
 - 创建 child 前校验 inputs 和 expression references。
-- 在创建 child 前，沿 active parent/child call chain 检测 Workflow cycle；初始最大嵌套深度为 8。
+- 在创建 root 或 child WorkflowRun 前，在解析被引用的 Workflow graph 时检测 Workflow cycle；
+  初始最大嵌套深度为 8。
 - job 与 step outputs 受 CRD 大小限制；artifacts 不是 outputs。
 
 ## 可复用 Actions
@@ -182,5 +204,6 @@ Scheduler 和 runtimed 仍然只处理独立 `Run`，不了解 Workflow reuse、
 2. 实现 `krt workflow trigger` 的模板 input 校验、渲染和 inline WorkflowRun 创建。
 3. 实现直接 child WorkflowRun 创建、input rendering 和冻结 output contracts。
 4. 实现局部 job-output 求值、child-output projection、restart recovery 和模板变更语义测试。
-5. 添加 nested calls、output propagation、cancellation、child 创建前后模板更新的 E2E coverage。
+5. 添加 nested calls E2E coverage，包括 self-reference 和 `A -> B -> A` cycle rejection、
+   output propagation、cancellation，以及 child 创建前后模板更新。
 6. 单独设计 Action expansion，并沿用相同的直接边界原则。

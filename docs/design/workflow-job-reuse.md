@@ -141,6 +141,34 @@ different parent output values after a template edit.
 
 A snapshot is owned and used only by its own WorkflowRun.
 
+## Workflow Call Graph Validation
+
+Workflow reuse must not create an unbounded chain such as `A -> B -> A`. Cycle
+validation happens while resolving reusable Workflow definitions, before any
+WorkflowRun is created for the selected template or call job.
+
+`krt wf trigger A` recursively reads every namespace-local Workflow reachable
+from `A` through job-level `uses`. It validates missing references, cycles, and
+the initial maximum nesting depth of 8 before rendering inputs and creating the
+inline root WorkflowRun. For `A -> B -> A`, triggering fails with a
+deterministic `workflow call cycle: A -> B -> A` error and creates no
+WorkflowRun.
+
+The WorkflowRun controller applies the same graph validation when a ready
+inline job references `uses: A`. It validates the graph rooted at `A` before
+rendering inputs or creating the direct child WorkflowRun. A deterministic
+validation failure marks only that call job `Failed`; it creates no child and
+is not retried. Normal failed-dependency propagation then marks dependent jobs
+`Skipped`, and ordinary WorkflowRun terminal aggregation determines the parent
+phase.
+
+The CLI and controller must share one graph-validation implementation and
+error format so both paths make the same decision for the same Workflow graph.
+The shared logic loads namespace-local Workflow definitions, performs a
+depth-first traversal with the current name stack, and does not persist
+provenance annotations, owner-chain metadata, or a root-wide execution tree.
+Scheduler and runtimed behavior is unchanged.
+
 ## Inputs and Outputs
 
 `JobStatus` gains a bounded `outputs` map. All job outputs, whether produced by
@@ -220,8 +248,9 @@ They have no Workflow reuse, snapshot, or output-contract behavior.
 - A call job has `needs`, `uses`, and optional `with`; it cannot contain
   `runs-on` or `steps`.
 - Inputs and expression references are validated before creating a child.
-- Workflow cycles are detected along the active parent/child call chain before
-  a child is created. The initial maximum nesting depth is 8.
+- Workflow cycles are detected while resolving the referenced Workflow graph
+  before a root or child WorkflowRun is created. The initial maximum nesting
+  depth is 8.
 - Job and step outputs are bounded by CRD limits; artifacts are not outputs.
 
 ## Reusable Actions
@@ -241,6 +270,7 @@ being added to a root-wide Workflow snapshot or controller traversal tree.
    output contracts.
 4. Implement local job-output evaluation, child-output projection, restart
    recovery, and template-mutation semantics tests.
-5. Add E2E coverage for nested calls, output propagation, cancellation, and
+5. Add E2E coverage for nested calls, including self-references and
+   `A -> B -> A` cycle rejection, output propagation, cancellation, and
    template updates before versus after child creation.
 6. Design Action expansion separately, using the same direct-boundary rule.
