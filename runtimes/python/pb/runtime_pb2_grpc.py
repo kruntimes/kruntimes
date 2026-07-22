@@ -66,26 +66,6 @@ class RuntimeStub(object):
                 request_serializer=runtime__pb2.HealthRequest.SerializeToString,
                 response_deserializer=runtime__pb2.HealthResponse.FromString,
                 _registered_method=True)
-        self.RegisterFunction = channel.unary_unary(
-                '/executor.v1.Runtime/RegisterFunction',
-                request_serializer=runtime__pb2.RegisterFunctionRequest.SerializeToString,
-                response_deserializer=runtime__pb2.RegisterFunctionResponse.FromString,
-                _registered_method=True)
-        self.FunctionStatus = channel.unary_unary(
-                '/executor.v1.Runtime/FunctionStatus',
-                request_serializer=runtime__pb2.FunctionStatusRequest.SerializeToString,
-                response_deserializer=runtime__pb2.FunctionStatusResponse.FromString,
-                _registered_method=True)
-        self.InvokeFunction = channel.unary_unary(
-                '/executor.v1.Runtime/InvokeFunction',
-                request_serializer=runtime__pb2.InvokeFunctionRequest.SerializeToString,
-                response_deserializer=runtime__pb2.InvokeFunctionResponse.FromString,
-                _registered_method=True)
-        self.UnregisterFunction = channel.unary_unary(
-                '/executor.v1.Runtime/UnregisterFunction',
-                request_serializer=runtime__pb2.UnregisterFunctionRequest.SerializeToString,
-                response_deserializer=runtime__pb2.UnregisterFunctionResponse.FromString,
-                _registered_method=True)
 
 
 class RuntimeServicer(object):
@@ -131,31 +111,6 @@ class RuntimeServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def RegisterFunction(self, request, context):
-        """Function-mode lifecycle operations are Pod-local and called by runtimed.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def FunctionStatus(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def InvokeFunction(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def UnregisterFunction(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
 
 def add_RuntimeServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -188,26 +143,6 @@ def add_RuntimeServicer_to_server(servicer, server):
                     servicer.Health,
                     request_deserializer=runtime__pb2.HealthRequest.FromString,
                     response_serializer=runtime__pb2.HealthResponse.SerializeToString,
-            ),
-            'RegisterFunction': grpc.unary_unary_rpc_method_handler(
-                    servicer.RegisterFunction,
-                    request_deserializer=runtime__pb2.RegisterFunctionRequest.FromString,
-                    response_serializer=runtime__pb2.RegisterFunctionResponse.SerializeToString,
-            ),
-            'FunctionStatus': grpc.unary_unary_rpc_method_handler(
-                    servicer.FunctionStatus,
-                    request_deserializer=runtime__pb2.FunctionStatusRequest.FromString,
-                    response_serializer=runtime__pb2.FunctionStatusResponse.SerializeToString,
-            ),
-            'InvokeFunction': grpc.unary_unary_rpc_method_handler(
-                    servicer.InvokeFunction,
-                    request_deserializer=runtime__pb2.InvokeFunctionRequest.FromString,
-                    response_serializer=runtime__pb2.InvokeFunctionResponse.SerializeToString,
-            ),
-            'UnregisterFunction': grpc.unary_unary_rpc_method_handler(
-                    servicer.UnregisterFunction,
-                    request_deserializer=runtime__pb2.UnregisterFunctionRequest.FromString,
-                    response_serializer=runtime__pb2.UnregisterFunctionResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -374,114 +309,6 @@ class Runtime(object):
             '/executor.v1.Runtime/Health',
             runtime__pb2.HealthRequest.SerializeToString,
             runtime__pb2.HealthResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def RegisterFunction(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/executor.v1.Runtime/RegisterFunction',
-            runtime__pb2.RegisterFunctionRequest.SerializeToString,
-            runtime__pb2.RegisterFunctionResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def FunctionStatus(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/executor.v1.Runtime/FunctionStatus',
-            runtime__pb2.FunctionStatusRequest.SerializeToString,
-            runtime__pb2.FunctionStatusResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def InvokeFunction(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/executor.v1.Runtime/InvokeFunction',
-            runtime__pb2.InvokeFunctionRequest.SerializeToString,
-            runtime__pb2.InvokeFunctionResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def UnregisterFunction(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/executor.v1.Runtime/UnregisterFunction',
-            runtime__pb2.UnregisterFunctionRequest.SerializeToString,
-            runtime__pb2.UnregisterFunctionResponse.FromString,
             options,
             channel_credentials,
             insecure,
