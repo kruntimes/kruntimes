@@ -246,6 +246,8 @@ controller wiring 累积不必要的冲突。
   初始实现 TODO：
   - [x] 增加只读 [Dashboard 设计文档](design/dashboard/)，覆盖 scope、architecture、
     RBAC、log access 和 implementation sequence；
+  - [ ] review 并定义 v0.x Kubernetes bearer-token login 模型、request-scoped Kubernetes
+    clients，以及 local-only kubeconfig proxy 边界；
   - 增加 dashboard backend，提供只读 Kubernetes API access；
   - 实现 Run list/detail APIs，并遵守 namespace-aware RBAC；
   - 通过 backend-controlled 路径代理 Run log tail/follow；

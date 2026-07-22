@@ -102,18 +102,109 @@ show the correct logs even when Runtime Pods handle multiple Runs.
 
 The dashboard must be read-only by default.
 
-The preferred production model is Kubernetes-native:
+The proposed v0.x production model is Kubernetes bearer-token login:
 
-- authentication comes from Kubernetes or the cluster's identity integration;
-- authorization uses Kubernetes RBAC;
-- namespace visibility follows the user's permissions;
-- log and artifact access require explicit permission, not just dashboard
-  access;
+- the user enters a Kubernetes bearer token into the dashboard. The browser
+  holds it in memory only and sends it as an `Authorization: Bearer` header
+  over the dashboard's HTTPS origin; it must not write the token to
+  localStorage, sessionStorage, cookies, or disk. The backend does not create
+  a dashboard-specific identity or session, and must not persist or log the
+  token, including in HTTP access logs;
+- the backend creates a request-scoped Kubernetes client with that bearer token,
+  the in-cluster API server address, and the cluster CA. It never uses the
+  dashboard ServiceAccount to read resources on a user's behalf;
+- Kubernetes API authorization, rather than dashboard-maintained policy,
+  decides namespace visibility and read access;
+- the initial UI may offer a best-effort namespace list. If the token cannot
+  list Namespace objects, the UI must let the user enter a namespace name and
+  show the API's normal authorization result;
+- log access needs the same token to read the Run and its assigned Pod, create
+  the Pod `portforward` subresource used by `krt logs`, and read the `log`
+  subresource when runtimed log fallback is needed;
+- artifact access requires the Run read permission and, when the dashboard
+  reaches runtimed's artifact endpoint, permission to read the assigned Pod and
+  create its `portforward` subresource. Direct artifact-store access also
+  requires the permission defined by the selected backend;
 - secrets, service account tokens, environment variables, and raw pod specs are
   hidden unless a future privileged operator view explicitly exposes them.
 
-For local development, a kubeconfig-backed mode is acceptable, but it should be
-documented as a development mode rather than the production default.
+This has the same initial user experience as Kubernetes Dashboard token login.
+Cluster identity integrations may mint or exchange the bearer token outside the
+dashboard, but v0.x does not define an external-auth header protocol,
+impersonation model, or a custom identity provider.
+
+For local development, `krt` can port-forward the dashboard and supply the
+current kubeconfig credential to a local-only proxy. That convenience path is
+not a production authentication mode and must not make the browser retain the
+kubeconfig credential or token after the local session ends.
+
+### Creating a Dashboard Login Token
+
+An operator should create a short-lived token for a least-privilege *viewer*
+ServiceAccount in each namespace that a dashboard user may inspect. This is the
+identity represented by the login token; it is distinct from the ServiceAccount
+used by the dashboard Deployment itself. The following example grants one
+namespace read-only Run, Runtime, Workflow, and log access; it does not grant
+access to Secrets or workload mutation verbs. It grants only the
+`pods/portforward` `create` subresource permission required to read logs and
+download artifacts through runtimed:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kruntimes-dashboard-viewer
+  namespace: team-a
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kruntimes-dashboard-viewer
+  namespace: team-a
+rules:
+  - apiGroups: ["kruntimes.io"]
+    resources: ["runs", "runtimes", "workflowruns", "workflows", "actions", "persistentworkspaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kruntimes-dashboard-viewer
+  namespace: team-a
+subjects:
+  - kind: ServiceAccount
+    name: kruntimes-dashboard-viewer
+    namespace: team-a
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kruntimes-dashboard-viewer
+```
+
+Apply the manifest, then mint a bounded token and paste it into the dashboard
+login page. The dashboard keeps the token only for the current in-memory
+browser session:
+
+```bash
+kubectl apply -f dashboard-viewer.yaml
+kubectl -n team-a create token kruntimes-dashboard-viewer --duration=1h
+```
+
+`kubectl create token` requires Kubernetes 1.24 or later. Do not use a
+cluster-admin credential for routine dashboard access. Cluster identity systems
+may provide an equivalent user token instead; the dashboard treats both as a
+standard Kubernetes bearer token. To browse multiple namespaces, create
+equivalent namespace-scoped bindings or explicitly grant the additional
+cluster-level read access after reviewing its scope.
 
 ## Internal API Shape
 
@@ -159,7 +250,8 @@ is proven.
 
 1. Add this design document and keep the roadmap explicit.
 2. Add a dashboard backend package with read-only Kubernetes client wiring.
-3. Define the production and local-development auth modes.
+3. Implement the reviewed bearer-token production mode and the local-only
+   kubeconfig proxy mode.
 4. Implement Run list/detail APIs with unit tests.
 5. Implement log tail/follow through a backend-controlled path.
 6. Add the frontend Run list/detail/log views.
@@ -169,13 +261,10 @@ is proven.
 9. Add WorkflowRun/Workflow/Action/PersistentWorkspace views after the
    corresponding APIs stabilize.
 
-## Open Questions
+## Remaining Questions
 
 - Should the dashboard ship in the main kruntimes chart, a separate chart, or
   both?
-- Which production auth mode should be first: service account with
-  impersonation, Kubernetes API proxy integration, or external auth in front of
-  the dashboard?
 - Should log access continue to use port-forward semantics or move to a
   dedicated cluster-internal log proxy service?
 - How should artifact downloads be authorized and proxied when artifact stores
