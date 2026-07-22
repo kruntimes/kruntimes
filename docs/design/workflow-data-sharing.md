@@ -143,14 +143,14 @@ The binding controller should use the following v0.x rules:
 1. An unbound workspace waits while its referenced Runtime has no ready Runtime
    Pods. It does not consume or reserve Run capacity while waiting or after it
    is bound.
-2. When candidates exist, the controller selects the lexicographically first
-   ready Runtime Pod. The choice is deterministic for a stable Pod set; later
-   scheduling work uses `status.boundPod` rather than trying to repeat this
-   selection.
+2. When candidates exist, the controller sorts ready Runtime Pods by
+   `metadata.name` and selects the lexicographically first Pod. The choice is
+   deterministic for a stable Pod set; later scheduling work uses
+   `status.boundPod` rather than trying to repeat this selection.
 3. The controller records `status.phase: Bound`, `status.runtime`,
-   `status.boundPod`, and the planned local path
-   `/workspace/persistent/<workspace-name>`. It does not create the directory
-   itself: runtimed creates it when a referenced Run starts.
+   `status.boundPod`, and `status.path: /workspace/persistent/<workspace-name>`.
+   It does not create the directory itself: runtimed creates it when a
+   referenced Run starts.
 4. A Bound workspace remains bound while its Pod exists, even if that Pod is
    temporarily not ready. The status conditions make the availability problem
    visible, and Runs referring to it stay Pending until later scheduler and

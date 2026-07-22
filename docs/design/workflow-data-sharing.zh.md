@@ -131,11 +131,12 @@ binding controller 在 v0.x 中应遵循以下规则：
 
 1. 未绑定 workspace 在其引用的 Runtime 没有 ready Runtime Pods 时保持等待。无论等待或已经绑定，
    它都不会消耗或预留 Run capacity。
-2. 有候选 Pod 时，controller 选择按名称字典序最小的 ready Runtime Pod。在稳定 Pod 集合下该选择是
-   deterministic 的；后续调度工作使用 `status.boundPod`，而不是试图重复这个选择。
+2. 有候选 Pod 时，controller 先按 `metadata.name` 对 ready Runtime Pod 排序，再选择名称字典序最小的
+   Pod。在稳定 Pod 集合下该选择是 deterministic 的；后续调度工作使用 `status.boundPod`，而不是试图
+   重复这个选择。
 3. controller 记录 `status.phase: Bound`、`status.runtime`、`status.boundPod`，以及计划使用的本地
-   路径 `/workspace/persistent/<workspace-name>`。controller 不会自行创建目录；runtimed 在引用它的
-   Run 启动时创建。
+   `status.path: /workspace/persistent/<workspace-name>`。controller 不会自行创建目录；runtimed 在引用
+   它的 Run 启动时创建。
 4. Bound workspace 在 Pod 仍存在时保持绑定，即使该 Pod 暂时不 ready。status conditions 会让
    availability 问题可见；引用它的 Runs 将保持 Pending，直到后续 scheduler 和 runtimed 工作能够
    安全地使用这个 binding。
