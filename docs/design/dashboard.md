@@ -108,7 +108,8 @@ The proposed v0.x production model is Kubernetes bearer-token login:
   holds it in memory only and sends it as an `Authorization: Bearer` header
   over the dashboard's HTTPS origin; it must not write the token to
   localStorage, sessionStorage, cookies, or disk. The backend does not create
-  a dashboard-specific identity or session;
+  a dashboard-specific identity or session, and must not persist or log the
+  token, including in HTTP access logs;
 - the backend creates a request-scoped Kubernetes client with that bearer token,
   the in-cluster API server address, and the cluster CA. It never uses the
   dashboard ServiceAccount to read resources on a user's behalf;
@@ -142,7 +143,8 @@ ServiceAccount in each namespace that a dashboard user may inspect. This is the
 identity represented by the login token; it is distinct from the ServiceAccount
 used by the dashboard Deployment itself. The following example grants one
 namespace read-only Run, Runtime, Workflow, and log access; it does not grant
-access to Secrets or any write verb:
+access to Secrets or workload mutation verbs. It grants only the
+`pods/portforward` `create` subresource permission required to read logs:
 
 ```yaml
 apiVersion: v1
