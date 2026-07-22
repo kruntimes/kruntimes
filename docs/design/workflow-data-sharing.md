@@ -136,6 +136,34 @@ PVC-backed `PersistentWorkspace` behavior. The first implementation can still
 ship `RuntimePodLocal` against the existing `emptyDir` behavior, but the design
 should not bake in emptyDir as the only backing store.
 
+### Proposed RuntimePodLocal Binding Lifecycle
+
+The binding controller should use the following v0.x rules:
+
+1. An unbound workspace waits while its referenced Runtime has no ready Runtime
+   Pods. It does not consume or reserve Run capacity while waiting or after it
+   is bound.
+2. When candidates exist, the controller sorts ready Runtime Pods by
+   `metadata.name` and selects the lexicographically first Pod. The choice is
+   deterministic for a stable Pod set; later scheduling work uses
+   `status.boundPod` rather than trying to repeat this selection.
+3. The controller records `status.phase: Bound`, `status.runtime`,
+   `status.boundPod`, and `status.path: /workspace/persistent/<workspace-name>`.
+   It does not create the directory itself: runtimed creates it when a
+   referenced Run starts.
+4. A Bound workspace remains bound while its Pod exists, even if that Pod is
+   temporarily not ready. The status conditions make the availability problem
+   visible, and Runs referring to it stay Pending until later scheduler and
+   runtimed work can use that binding safely.
+5. If the bound Pod is deleted or no longer exists, the workspace becomes
+   `Lost`. The controller must not silently bind it to another Pod: for
+   `RuntimePodLocal`, that would make a caller observe a new empty directory as
+   though it contained the original data. Recovery requires an explicit new
+   workspace or a future reviewed recovery API.
+
+Binding is metadata-only in this slice. TTL cleanup, filesystem deletion,
+`lastUsedTime`, and Run admission/preparation remain separate follow-up work.
+
 ## Run Workspace Reference
 
 Runs should be able to reference a workspace through a small typed object
@@ -292,7 +320,8 @@ workspace capacity or failing because its controller-owned workspace was lost.
 ## Failure and Recovery
 
 - If a Runtime Pod disappears, `RuntimePodLocal` workspaces backed by that Pod's
-  workspace volume become unavailable.
+  workspace volume become `Lost`; they are not automatically rebound to another
+  Pod.
 - Runs that require an unavailable workspace should stay Pending or fail with a
   clear workspace condition, depending on retry policy and controller decision.
 - The Workflow controller should surface workspace-related failures in Workflow
@@ -327,10 +356,12 @@ Required safeguards:
 5. Add Kubernetes-style Run affinity/anti-affinity fields.
 6. Update scheduler placement to respect required/preferred Run affinity while
    keeping no-capacity Runs Pending.
-7. Update runtimed workspace preparation and cleanup for referenced
+7. Bind `RuntimePodLocal` PersistentWorkspaces to ready Runtime Pods and record
+   their lifecycle status without touching runtime filesystems.
+8. Update runtimed workspace preparation and cleanup for referenced
    workspaces.
-8. Add Workflow step artifact input fields and job-scoped artifact status.
-9. Promote child Run artifact refs into Workflow status.
-10. Add E2E coverage for Runtime workspace volume sources, job-local workspace
+9. Add Workflow step artifact input fields and job-scoped artifact status.
+10. Promote child Run artifact refs into Workflow status.
+11. Add E2E coverage for Runtime workspace volume sources, job-local workspace
    sharing, job-to-job artifact
    passing, Runtime Pod loss, cleanup, and permission boundaries.

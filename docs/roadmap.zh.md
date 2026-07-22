@@ -166,6 +166,8 @@ controller wiring 累积不必要的冲突。
   - [x] 为 Run 增加 workspace reference 和 Kubernetes-style Run affinity 字段；
   - 更新 scheduler placement，使其支持 required/preferred Run affinity，同时在无 capacity
     时继续保持 Run Pending；
+  - [ ] review 并定义 `RuntimePodLocal` binding semantics：不预留 capacity 的 deterministic
+    ready-Pod selection、planned path ownership，以及 bound-Pod deletion 后 sticky `Lost` status；
   - 更新 runtimed workspace preparation 和 cleanup，使其支持被引用的 persistent workspace，
     但不感知 Workflow 语义；
   - 将 child Run artifact refs 提升到 Workflow status，并增加显式 step artifact inputs；
