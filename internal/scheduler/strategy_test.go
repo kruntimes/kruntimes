@@ -15,7 +15,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 	tests := []struct {
 		name    string
 		pods    []corev1.Pod
-		tasks   []v1alpha1.Run
+		runs    []v1alpha1.Run
 		run     *v1alpha1.Run
 		wantPod string
 		wantErr bool
@@ -40,7 +40,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
 			},
-			tasks: []v1alpha1.Run{
+			runs: []v1alpha1.Run{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "run-1", Namespace: "default"},
 					Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "pod-a"},
@@ -59,7 +59,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
 			},
-			tasks: []v1alpha1.Run{
+			runs: []v1alpha1.Run{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ready-function", Namespace: "default"},
 					Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunReady, AssignedPod: "pod-a"},
@@ -115,7 +115,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &LeastLoaded{}
 
-			pod, err := s.Select(context.Background(), tt.pods, tt.run, tt.tasks)
+			pod, err := s.Select(context.Background(), tt.pods, tt.run, tt.runs)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")

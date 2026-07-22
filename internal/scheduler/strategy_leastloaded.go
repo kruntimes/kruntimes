@@ -11,7 +11,8 @@ import (
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
-// LeastLoaded selects the pod with the fewest Running tasks.
+// LeastLoaded prefers the highest preferred Run affinity score, then the pod
+// with the most available Run capacity and the fewest assigned active Runs.
 type LeastLoaded struct{}
 
 func (s *LeastLoaded) Name() string { return "least-loaded" }
@@ -19,6 +20,10 @@ func (s *LeastLoaded) Name() string { return "least-loaded" }
 func (s *LeastLoaded) Select(_ context.Context, candidates []corev1.Pod, run *v1alpha1.Run, runs []v1alpha1.Run) (*corev1.Pod, error) {
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no candidate pods")
+	}
+	preferredMatches, preferredAntiMatches, err := preferredRunAffinityMatchSets(run, runs)
+	if err != nil {
+		return nil, err
 	}
 
 	type podLoad struct {
@@ -45,10 +50,7 @@ func (s *LeastLoaded) Select(_ context.Context, candidates []corev1.Pod, run *v1
 			}
 		}
 		capacity := runtimepod.RunsCapacity(pod, v1alpha1.RuntimeDefaultRunsCapacity)
-		score, err := preferredRunAffinityScore(run, pod, runs)
-		if err != nil {
-			return nil, err
-		}
+		score := preferredRunAffinityScoreForMatches(pod, preferredMatches, preferredAntiMatches)
 		pods = append(pods, podLoad{pod: pod, load: count, available: capacity - int32(count), affinity: score})
 	}
 

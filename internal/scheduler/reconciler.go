@@ -141,7 +141,13 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	availableCandidates := len(candidates)
 	candidates, err = filterCandidatesByRequiredRunAffinity(&run, candidates, runs)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("filter candidates by run affinity: %w", err)
+		run.Status.Phase = v1alpha1.RunFailed
+		run.Status.Message = fmt.Sprintf("run affinity evaluation failed: %v", err)
+		if err := r.Status().Update(ctx, &run); err != nil {
+			return ctrl.Result{}, fmt.Errorf("update run status after affinity evaluation: %w", err)
+		}
+		runsScheduled.WithLabelValues(run.Spec.Runtime, "affinity_error").Inc()
+		return ctrl.Result{}, nil
 	}
 
 	if len(candidates) == 0 {
