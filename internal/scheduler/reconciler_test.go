@@ -280,6 +280,61 @@ func TestReconcileSchedulesRunToRequiredAffinityPod(t *testing.T) {
 	}
 }
 
+func TestReconcileFailsRunForInvalidRequiredAffinity(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add kruntimes scheme: %v", err)
+	}
+
+	now := metav1.Now()
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-affinity", Namespace: "default"},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Affinity: &v1alpha1.RunAffinity{RunAffinity: &v1alpha1.RunAffinityRules{
+				RequiredDuringSchedulingIgnoredDuringExecution: []v1alpha1.RunAffinityTerm{{
+					LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"stage": "build"}},
+					TopologyKey:   "invalid.topology",
+				}},
+			}},
+		},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "runtime-a", Namespace: "default", Labels: map[string]string{"runtime": "bash"}},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+				{Type: v1alpha1.RuntimePodRuntimedReadyCondition, Status: corev1.ConditionTrue, LastProbeTime: now},
+			},
+		},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run, pod).
+		Build()
+	reconciler := &RunReconciler{Client: k8sClient, Log: logr.Discard(), Strategy: &LeastLoaded{}}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	var updated v1alpha1.Run
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), &updated); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.RunFailed {
+		t.Fatalf("phase = %s, want Failed", updated.Status.Phase)
+	}
+	if !strings.Contains(updated.Status.Message, "run affinity evaluation failed") {
+		t.Fatalf("message = %q, want affinity failure", updated.Status.Message)
+	}
+}
+
 func TestIsPodSchedulableRequiresReadyRunningPod(t *testing.T) {
 	now := metav1.Now()
 	tests := []struct {
