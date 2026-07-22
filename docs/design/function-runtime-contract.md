@@ -9,8 +9,9 @@ Runtime Pod.
 
 ## Scope
 
-The existing `Runtime` service supports one-shot execution. Function mode adds
-four Pod-local operations called only by runtimed:
+The base `Runtime` service supports one-shot execution. A Runtime Server that
+supports function mode additionally registers the optional `FunctionRuntime`
+service, which provides four Pod-local operations called only by runtimed:
 
 - `RegisterFunction` creates or resumes one callable function registration.
 - `FunctionStatus` reads local readiness, activity, and fatal state.
@@ -22,9 +23,10 @@ route gateway requests, upload artifacts, or schedule capacity. Those concerns
 remain with runtimed, the Runtime gateway, and the control plane. Invocation
 artifacts are out of scope for v0.x.
 
-Adding these RPCs changes the experimental custom Runtime protocol. The exact
-shape and semantics below require review before `runtime.proto`, generated
-stubs, or built-in Runtime implementations change.
+Function support is opt-in for custom Runtimes: a task-only Runtime implements
+and registers `Runtime` only. The exact shape and semantics below require
+review before `runtime.proto`, generated stubs, or built-in Runtime
+implementations change.
 
 ## Registration Identity
 
@@ -66,7 +68,7 @@ example of the proposed protocol, not a public gateway command.
      "handler": "handler.handle",
      "idleTimeoutSeconds": 300,
      "registrationDigest": "sha256:..."
-   }' 127.0.0.1:9090 executor.v1.Runtime/RegisterFunction
+   }' 127.0.0.1:9090 executor.v1.FunctionRuntime/RegisterFunction
    ```
 
    A successful response contains a server-generated registration reference:
@@ -93,7 +95,7 @@ example of the proposed protocol, not a public gateway command.
      "invocationId": "01J...",
      "contentType": "application/json",
      "input": "eyJjb21tYW5kIjoic3RhdHVzIn0="
-   }' 127.0.0.1:9090 executor.v1.Runtime/InvokeFunction
+   }' 127.0.0.1:9090 executor.v1.FunctionRuntime/InvokeFunction
    ```
 
    In protobuf JSON, `bytes` is base64-encoded; the decoded input is
@@ -114,11 +116,12 @@ not make an invocation exactly once.
 
 ## Proposed Protobuf API
 
-The following is the proposed additive extension to `executor.v1.Runtime`:
+The base `executor.v1.Runtime` service remains task-only. The following
+optional service is registered alongside it by a function-capable Runtime
+Server:
 
 ```protobuf
-service Runtime {
-  // Existing task RPCs omitted.
+service FunctionRuntime {
   rpc RegisterFunction(RegisterFunctionRequest) returns (RegisterFunctionResponse);
   rpc FunctionStatus(FunctionStatusRequest) returns (FunctionStatusResponse);
   rpc InvokeFunction(InvokeFunctionRequest) returns (InvokeFunctionResponse);
@@ -216,6 +219,11 @@ bounded diagnostic text, not logs. `NotFound` means no registration has this
 Run UID; `FailedPrecondition` means its registration ID is stale, draining, or
 unready. runtimed polls it at a bounded cadence for health and idle timeout,
 never writing each activity update to Kubernetes.
+
+If the assigned Runtime Pod does not register `FunctionRuntime`, runtimed
+receives `Unimplemented`. This is a permanent configuration failure: the Run
+cannot fall back to task mode and is handled through the normal terminal or
+retry policy for an incompatible Runtime.
 
 ## Invocation Semantics
 

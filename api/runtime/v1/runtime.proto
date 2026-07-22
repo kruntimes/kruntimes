@@ -15,6 +15,11 @@ service Runtime {
     // Running executions must be cancelled before they can be forgotten.
     rpc Forget(ForgetRequest) returns (ForgetResponse);
     rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// FunctionRuntime is an optional Runtime Server extension for function-mode
+// lifecycle operations. Task-only custom runtimes implement Runtime only.
+service FunctionRuntime {
     // Function-mode lifecycle operations are Pod-local and called by runtimed.
     rpc RegisterFunction(RegisterFunctionRequest) returns (RegisterFunctionResponse);
     rpc FunctionStatus(FunctionStatusRequest) returns (FunctionStatusResponse);
