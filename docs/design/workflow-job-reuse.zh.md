@@ -113,39 +113,26 @@ output contract 是 child 创建后保留的唯一 source-template 数据。pare
 
 一个 snapshot 只由自己的 WorkflowRun 拥有和使用。
 
-## 调用 Provenance 与 Cycle Detection
+## Workflow Call Graph Validation
 
-Workflow reuse 不能创建 `A -> B -> A` 这样的无界调用链。controller 必须在创建 child
-WorkflowRun **之前**检测 cycle，不能依赖之后的 cleanup 来停止递归创建。
+Workflow reuse 不能创建 `A -> B -> A` 这样的无界调用链。cycle validation 在解析 reusable
+Workflow definitions 时完成，且必须在为所选模板或 call job 创建任何 WorkflowRun **之前**完成。
 
-`krt wf trigger` 和 WorkflowRun controller 仅在创建 materialized WorkflowRun 时使用保留的
-`kruntimes.io/workflow-source` annotation。该 WorkflowRun 第一次 reconcile 时，controller
-校验 namespace-local Workflow name，并把它冻结到 local snapshot：
+`krt wf trigger A` 递归读取从 `A` 的 job-level `uses` 可达的所有 namespace-local Workflow。
+它在渲染 inputs 和创建 inline root WorkflowRun 前校验 missing references、cycles 和初始最大
+嵌套深度 8。对于 `A -> B -> A`，trigger 以确定性的
+`workflow call cycle: A -> B -> A` error 失败，且不创建 WorkflowRun。
 
-```yaml
-data:
-  spec: { ... }
-  source:
-    workflow: build-and-test
-```
+WorkflowRun controller 对 ready inline job 的 `uses: A` 应用相同的 graph validation。它在
+渲染 inputs 或创建直接 child WorkflowRun 前校验以 `A` 为根的图。确定性的 validation failure
+只将对应 call job 标为 `Failed`；不创建 child，也不重试。之后正常的 failed-dependency
+propagation 会将 dependent jobs 标为 `Skipped`，普通的 WorkflowRun terminal aggregation 决定
+parent phase。
 
-该 annotation 不是 execution input，也不是面向用户的 `WorkflowRun.spec` field。直接创建的
-inline WorkflowRun 没有 source。snapshot 创建后，planning 只读取 snapshot，不读取可变的
-annotation 或当前 Workflow definition。
-
-创建 `uses: <target>` child 前，controller 沿当前 WorkflowRun 的 owner chain 向上读取每个
-ancestor snapshot 中冻结的 `source.workflow`，并将 target 加到有序 ancestry：
-
-- target 已出现时，call job 变为 `Failed`，并使用确定性 message，例如
-  `workflow call cycle: A -> B -> A`；不创建 child；
-- 加入 target 后的 template depth 超过 8 时，call job 变为 `Failed` 并记录 depth-limit
-  message；不创建 child；
-- parent provenance 缺失或无效是确定性的 call-resolution failure，不是可 retry 的
-  controller error。
-
-之后正常的 failed-dependency propagation 会把 dependent jobs 标为 `Skipped`，普通的
-WorkflowRun terminal aggregation 决定 parent phase。整个机制局限在每个 WorkflowRun：不修改
-scheduler 或 runtimed，也不引入 root-wide execution-tree object。
+CLI 和 controller 必须共享同一个 graph-validation implementation 和 error format，以便两个
+路径对相同的 Workflow graph 作出相同决定。shared logic 加载 namespace-local Workflow
+definitions，以当前 name stack 做 depth-first traversal，不保存 provenance annotations、
+owner-chain metadata 或 root-wide execution tree。scheduler 和 runtimed 行为不变。
 
 ## Inputs 与 Outputs
 
@@ -203,7 +190,7 @@ Scheduler 和 runtimed 仍然只处理独立 `Run`，不了解 Workflow reuse、
 - WorkflowRun 自身不能包含 `uses` 或 `with`。
 - 调用 job 包含 `needs`、`uses` 和可选 `with`，不能包含 `runs-on` 或 `steps`。
 - 创建 child 前校验 inputs 和 expression references。
-- 在创建 child 前，根据沿 parent/child owner chain 的冻结 call provenance 检测 Workflow cycle；
+- 在创建 root 或 child WorkflowRun 前，在解析被引用的 Workflow graph 时检测 Workflow cycle；
   初始最大嵌套深度为 8。
 - job 与 step outputs 受 CRD 大小限制；artifacts 不是 outputs。
 
