@@ -322,7 +322,8 @@ class Runtime(object):
 
 class FunctionRuntimeStub(object):
     """FunctionRuntime is an optional Runtime Server extension for function-mode
-    lifecycle operations. Task-only custom runtimes implement Runtime only.
+    lifecycle operations. Custom runtimes that support only one-shot execution
+    implement Runtime only.
     """
 
     def __init__(self, channel):
@@ -355,30 +356,34 @@ class FunctionRuntimeStub(object):
 
 class FunctionRuntimeServicer(object):
     """FunctionRuntime is an optional Runtime Server extension for function-mode
-    lifecycle operations. Task-only custom runtimes implement Runtime only.
+    lifecycle operations. Custom runtimes that support only one-shot execution
+    implement Runtime only.
     """
 
     def RegisterFunction(self, request, context):
-        """Function-mode lifecycle operations are Pod-local and called by runtimed.
+        """RegisterFunction creates or resumes one local function registration.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def FunctionStatus(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """FunctionStatus returns local readiness, activity, and fatal state.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def InvokeFunction(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """InvokeFunction executes one bounded function invocation.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def UnregisterFunction(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """UnregisterFunction drains or cancels work and removes local state.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -416,7 +421,8 @@ def add_FunctionRuntimeServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class FunctionRuntime(object):
     """FunctionRuntime is an optional Runtime Server extension for function-mode
-    lifecycle operations. Task-only custom runtimes implement Runtime only.
+    lifecycle operations. Custom runtimes that support only one-shot execution
+    implement Runtime only.
     """
 
     @staticmethod

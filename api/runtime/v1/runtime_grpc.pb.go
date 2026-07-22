@@ -332,12 +332,16 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // FunctionRuntime is an optional Runtime Server extension for function-mode
-// lifecycle operations. Task-only custom runtimes implement Runtime only.
+// lifecycle operations. Custom runtimes that support only one-shot execution
+// implement Runtime only.
 type FunctionRuntimeClient interface {
-	// Function-mode lifecycle operations are Pod-local and called by runtimed.
+	// RegisterFunction creates or resumes one local function registration.
 	RegisterFunction(ctx context.Context, in *RegisterFunctionRequest, opts ...grpc.CallOption) (*RegisterFunctionResponse, error)
+	// FunctionStatus returns local readiness, activity, and fatal state.
 	FunctionStatus(ctx context.Context, in *FunctionStatusRequest, opts ...grpc.CallOption) (*FunctionStatusResponse, error)
+	// InvokeFunction executes one bounded function invocation.
 	InvokeFunction(ctx context.Context, in *InvokeFunctionRequest, opts ...grpc.CallOption) (*InvokeFunctionResponse, error)
+	// UnregisterFunction drains or cancels work and removes local state.
 	UnregisterFunction(ctx context.Context, in *UnregisterFunctionRequest, opts ...grpc.CallOption) (*UnregisterFunctionResponse, error)
 }
 
@@ -394,12 +398,16 @@ func (c *functionRuntimeClient) UnregisterFunction(ctx context.Context, in *Unre
 // for forward compatibility.
 //
 // FunctionRuntime is an optional Runtime Server extension for function-mode
-// lifecycle operations. Task-only custom runtimes implement Runtime only.
+// lifecycle operations. Custom runtimes that support only one-shot execution
+// implement Runtime only.
 type FunctionRuntimeServer interface {
-	// Function-mode lifecycle operations are Pod-local and called by runtimed.
+	// RegisterFunction creates or resumes one local function registration.
 	RegisterFunction(context.Context, *RegisterFunctionRequest) (*RegisterFunctionResponse, error)
+	// FunctionStatus returns local readiness, activity, and fatal state.
 	FunctionStatus(context.Context, *FunctionStatusRequest) (*FunctionStatusResponse, error)
+	// InvokeFunction executes one bounded function invocation.
 	InvokeFunction(context.Context, *InvokeFunctionRequest) (*InvokeFunctionResponse, error)
+	// UnregisterFunction drains or cancels work and removes local state.
 	UnregisterFunction(context.Context, *UnregisterFunctionRequest) (*UnregisterFunctionResponse, error)
 	mustEmbedUnimplementedFunctionRuntimeServer()
 }

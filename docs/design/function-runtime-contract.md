@@ -23,15 +23,15 @@ route gateway requests, upload artifacts, or schedule capacity. Those concerns
 remain with runtimed, the Runtime gateway, and the control plane. Invocation
 artifacts are out of scope for v0.x.
 
-Function support is opt-in for custom Runtimes: a task-only Runtime implements
-and registers `Runtime` only. The exact shape and semantics below require
-review before `runtime.proto`, generated stubs, or built-in Runtime
-implementations change.
+Function support is opt-in for custom Runtimes: a Runtime that supports only
+one-shot execution implements and registers `Runtime` only. The exact shape
+and semantics below require review before `runtime.proto`, generated stubs, or
+built-in Runtime implementations change.
 
 ## Registration Identity
 
-For a task Run, `Run.status.attempt` counts execution attempts. For a function
-Run, it counts registration lifecycle attempts: the initial registration is
+For a one-shot Run, `Run.status.attempt` counts execution attempts. For a
+function Run, it counts registration lifecycle attempts: the initial registration is
 `1`, and the shared retry engine increments it only after a registration
 failure enters retry or reassignment. Retrying an uncertain Pod-local
 `RegisterFunction` RPC for the same registration attempt is idempotent and
@@ -116,15 +116,19 @@ not make an invocation exactly once.
 
 ## Proposed Protobuf API
 
-The base `executor.v1.Runtime` service remains task-only. The following
-optional service is registered alongside it by a function-capable Runtime
-Server:
+The base `executor.v1.Runtime` service remains for one-shot execution. The
+following optional service is registered alongside it by a function-capable
+Runtime Server:
 
 ```protobuf
 service FunctionRuntime {
+  // Creates or resumes one local function registration.
   rpc RegisterFunction(RegisterFunctionRequest) returns (RegisterFunctionResponse);
+  // Returns local readiness, activity, and fatal state.
   rpc FunctionStatus(FunctionStatusRequest) returns (FunctionStatusResponse);
+  // Executes one bounded function invocation.
   rpc InvokeFunction(InvokeFunctionRequest) returns (InvokeFunctionResponse);
+  // Drains or cancels work and removes local state.
   rpc UnregisterFunction(UnregisterFunctionRequest) returns (UnregisterFunctionResponse);
 }
 
@@ -222,7 +226,7 @@ never writing each activity update to Kubernetes.
 
 If the assigned Runtime Pod does not register `FunctionRuntime`, runtimed
 receives `Unimplemented`. This is a permanent configuration failure: the Run
-cannot fall back to task mode and is handled through the normal terminal or
+cannot fall back to one-shot execution and is handled through the normal terminal or
 retry policy for an incompatible Runtime.
 
 ## Invocation Semantics
@@ -299,7 +303,7 @@ does not interpolate request data into a command string. Both adapters operate
 beneath the registered working directory, honor context cancellation, and
 permit only one active invocation per registration.
 
-Existing task-only Runtime Servers remain valid. Function mode is enabled only
+Existing one-shot Runtime Servers remain valid. Function mode is enabled only
 after a future compatibility/health handshake confirms support for these RPCs;
 there is no fallback that emulates function invocation through `Execute`.
 

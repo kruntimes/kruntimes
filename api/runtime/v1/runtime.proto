@@ -18,12 +18,16 @@ service Runtime {
 }
 
 // FunctionRuntime is an optional Runtime Server extension for function-mode
-// lifecycle operations. Task-only custom runtimes implement Runtime only.
+// lifecycle operations. Custom runtimes that support only one-shot execution
+// implement Runtime only.
 service FunctionRuntime {
-    // Function-mode lifecycle operations are Pod-local and called by runtimed.
+    // RegisterFunction creates or resumes one local function registration.
     rpc RegisterFunction(RegisterFunctionRequest) returns (RegisterFunctionResponse);
+    // FunctionStatus returns local readiness, activity, and fatal state.
     rpc FunctionStatus(FunctionStatusRequest) returns (FunctionStatusResponse);
+    // InvokeFunction executes one bounded function invocation.
     rpc InvokeFunction(InvokeFunctionRequest) returns (InvokeFunctionResponse);
+    // UnregisterFunction drains or cancels work and removes local state.
     rpc UnregisterFunction(UnregisterFunctionRequest) returns (UnregisterFunctionResponse);
 }
 
