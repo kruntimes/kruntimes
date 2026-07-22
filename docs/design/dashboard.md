@@ -104,8 +104,11 @@ The dashboard must be read-only by default.
 
 The proposed v0.x production model is Kubernetes bearer-token login:
 
-- the browser sends a Kubernetes bearer token only over the dashboard's HTTPS
-  origin; the backend does not create a dashboard-specific identity or session;
+- the user enters a Kubernetes bearer token into the dashboard. The browser
+  holds it in memory only and sends it as an `Authorization: Bearer` header
+  over the dashboard's HTTPS origin; it must not write the token to
+  localStorage, sessionStorage, cookies, or disk. The backend does not create
+  a dashboard-specific identity or session;
 - the backend creates a request-scoped Kubernetes client with that bearer token,
   the in-cluster API server address, and the cluster CA. It never uses the
   dashboard ServiceAccount to read resources on a user's behalf;
@@ -134,10 +137,12 @@ kubeconfig credential or token after the local session ends.
 
 ### Creating a Dashboard Login Token
 
-An operator should create a short-lived token for a least-privilege ServiceAccount
-in each namespace that a dashboard user may inspect. The following example
-grants one namespace read-only Run, Runtime, Workflow, and log access; it does
-not grant access to Secrets or any write verb:
+An operator should create a short-lived token for a least-privilege *viewer*
+ServiceAccount in each namespace that a dashboard user may inspect. This is the
+identity represented by the login token; it is distinct from the ServiceAccount
+used by the dashboard Deployment itself. The following example grants one
+namespace read-only Run, Runtime, Workflow, and log access; it does not grant
+access to Secrets or any write verb:
 
 ```yaml
 apiVersion: v1
@@ -181,7 +186,8 @@ roleRef:
 ```
 
 Apply the manifest, then mint a bounded token and paste it into the dashboard
-login page:
+login page. The dashboard keeps the token only for the current in-memory
+browser session:
 
 ```bash
 kubectl apply -f dashboard-viewer.yaml
