@@ -79,6 +79,23 @@ wiring from accumulating avoidable conflicts.
   than a manually observed single Run, and clarify whether benchmarks measure
   end-to-end latency, scheduling latency, watch/update latency, or runtime
   execution time.
+- [ ] Scheduler framework and batch planning: replace independent per-Run
+  placement with a leader-owned, bounded planner per `(namespace, runtime)`
+  queue key. Review the [Scheduler Framework and Batch Planning](design/scheduler-framework.md)
+  architecture before changing scheduler behavior.
+  Initial implementation TODO:
+  - [ ] review queue ownership, bounded batch, snapshot, PreFilter, Filter,
+    Score, Reserve, Bind, status, and retry semantics;
+  - [ ] refactor scheduler internals behind queue/planner interfaces while
+    preserving current observable behavior and metrics;
+  - [ ] add deterministic batch planning, capacity reservation, bind-conflict,
+    and restart-recovery coverage;
+  - [ ] implement same-cycle planned affinity targets and self-affinity
+    bootstrap, with integration and E2E coverage;
+  - [ ] define priority, fairness, and starvation policy in a separate API
+    design before adding `Run.spec.priority` or equivalent API;
+  - [ ] design explicit scheduling groups only when a Workflow or batch demo
+    proves an all-or-nothing placement requirement.
 - [ ] Function-mode Runs for agent sandboxes: define mutually exclusive
   `Run.spec.mode.task` and `Run.spec.mode.function` semantics so a function Run
   can reserve a pre-warmed Runtime Pod, register a callable function with
@@ -187,8 +204,9 @@ wiring from accumulating avoidable conflicts.
   - [x] review the dedicated Run workspace-reference and affinity API shape
     before adding the API skeleton;
   - [x] add Run fields for workspace reference and Kubernetes-style Run affinity;
-  - update scheduler placement to respect required/preferred Run affinity while
-    keeping no-capacity Runs Pending;
+  - [ ] implement required/preferred Run affinity through the reviewed
+    [scheduler framework](design/scheduler-framework.md), while keeping
+    no-capacity Runs Pending;
   - [ ] review and define `RuntimePodLocal` binding semantics: deterministic
     ready-Pod selection without capacity reservation, planned path ownership,
     and sticky `Lost` status after bound-Pod deletion;

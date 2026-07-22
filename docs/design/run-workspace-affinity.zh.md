@@ -120,9 +120,12 @@ kruntimes.io/runtime-pod
 `RuntimePodLocal` PersistentWorkspace 所需要、直接且易理解的约束；scheduler 不需要解释 Node、
 zone 或 Kubernetes Pod affinity。
 
-所有 term 都匹配同 namespace `Run` objects 上的 labels。第一版中，一条 Run 只有在 phase 为
-`Scheduled`、`Running` 或 `Ready` 且已 assigned Runtime Pod 时才是 *active affinity target*。
-Pending 和 terminal Runs 不约束另一条 Run。当前正在调度的 Run 因为尚未 assigned，不会匹配自身。
+所有 term 都匹配同 namespace `Run` objects 上的 labels。API 本身不定义 scheduler 的 bootstrap 或
+reservation behavior。当前 single-Run implementation 使用已 assignment 的 `Scheduled`、`Running` 和
+`Ready` Runs 作为 active targets，但这不足以处理第一条 Run 对自身具有 required affinity 的 cohort。
+建议的 [Scheduler Framework 与批量规划](scheduler-framework/) design 定义 actual targets、同一 cycle 的
+planned targets 和 self-affinity bootstrap。在替换当前 placement implementation 前，必须 review 这些
+execution semantics。
 
 示例：要求后续 build step 运行在前一步选定的 Runtime Pod：
 
@@ -173,14 +176,10 @@ surface，需要独立 design review。
 
 ## Scheduler Contract
 
-API skeleton 只声明和 validation fields。placement PR 需要遵守：
-
-1. 使用已有 Runtime 与 capacity filtering 获取 candidate ready Runtime Pods。
-2. 加载同 namespace 的 active affinity target Runs。
-3. 移除违反 required Run affinity 或 anti-affinity 的 candidates。
-4. 根据 preferred terms 对剩余 candidates 打分，再使用已有 least-loaded strategy 作为确定性
-   tie breaker。
-5. 若没有 candidate，保持 Run `Pending`，不能标记为 `Failed`。
+API skeleton 只声明和 validation fields。调度执行语义由建议的
+[Scheduler Framework 与批量规划](scheduler-framework/) 文档定义。特别是，implementation 必须使用有界
+planner，并将 PreFilter、Filter、Score、Reserve 和 Bind 作为独立阶段，而不是让每个 Run reconcile
+独立决定 placement。
 
 scheduler 仍保持 Workflow-agnostic。它不创建 workspace，也不理解 job 或 step labels；它只评估
 通用 Run labels 与声明的 affinity terms。

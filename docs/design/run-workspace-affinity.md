@@ -132,11 +132,14 @@ name. It is the direct, understandable constraint required by a
 `RuntimePodLocal` PersistentWorkspace. The scheduler need not interpret a
 node, zone, or a Kubernetes Pod's affinity to evaluate it.
 
-Every term matches labels on namespace-local `Run` objects. In the first
-version, a Run is an *active affinity target* only while its phase is
-`Scheduled`, `Running`, or `Ready` and it has an assigned Runtime Pod. Pending
-and terminal Runs do not constrain another Run. The Run being scheduled never
-matches itself because it has no assignment yet.
+Every term matches labels on namespace-local `Run` objects. The API itself does
+not define the scheduler's bootstrap or reservation behavior. The current
+single-Run implementation uses assigned `Scheduled`, `Running`, and `Ready`
+Runs as active targets, but that is insufficient for a cohort whose first Run
+has required affinity to itself. The proposed [Scheduler Framework and Batch
+Planning](scheduler-framework/) design defines actual targets, same-cycle
+planned targets, and self-affinity bootstrap. Those execution semantics require
+review before replacing the current placement implementation.
 
 Example: require a later build step to run on the Runtime Pod selected for a
 previous step.
@@ -194,16 +197,12 @@ RBAC surface and needs its own design review.
 
 ## Scheduler Contract
 
-The API skeleton only declares and validates fields. The placement PR follows
-these rules:
-
-1. Load candidate ready Runtime Pods using the existing Runtime and capacity
-   filtering.
-2. Load active affinity target Runs from the same namespace.
-3. Remove candidates that violate required Run affinity or anti-affinity.
-4. Score remaining candidates by preferred terms, then use the existing
-   least-loaded strategy as the deterministic tie breaker.
-5. If no candidate remains, leave the Run `Pending`; do not mark it `Failed`.
+The API skeleton only declares and validates fields. Scheduling execution
+semantics are defined by the proposed [Scheduler Framework and Batch
+Planning](scheduler-framework/) document. In particular, the implementation
+must use a bounded planner with separate PreFilter, Filter, Score, Reserve, and
+Bind stages rather than independently deciding placement in each Run
+reconcile.
 
 The scheduler remains Workflow-agnostic. It neither creates workspaces nor
 interprets job or step labels. It evaluates generic Run labels and the declared
