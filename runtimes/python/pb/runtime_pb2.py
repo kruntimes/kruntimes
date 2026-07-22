@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rruntime.proto\x12\x0b\x65xecutor.v1\"\xdc\x01\n\x0e\x45xecuteRequest\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04\x61rgs\x18\x02 \x03(\t\x12\x31\n\x03\x65nv\x18\x03 \x03(\x0b\x32$.executor.v1.ExecuteRequest.EnvEntry\x12\x17\n\x0ftimeout_seconds\x18\x04 \x01(\x03\x12\x13\n\x0bworking_dir\x18\x05 \x01(\t\x12\x12\n\nentrypoint\x18\x06 \x01(\t\x12\x0f\n\x07handler\x18\x07 \x01(\t\x1a*\n\x08\x45nvEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\x1d\n\x0f\x45xecuteResponse\x12\n\n\x02id\x18\x01 \x01(\t\"\x1b\n\rStatusRequest\x12\n\n\x02id\x18\x01 \x01(\t\"\x92\x01\n\x0eStatusResponse\x12\n\n\x02id\x18\x01 \x01(\t\x12*\n\x05state\x18\x02 \x01(\x0e\x32\x1b.executor.v1.ExecutionState\x12\x11\n\texit_code\x18\x03 \x01(\x05\x12\x0e\n\x06stdout\x18\x04 \x01(\t\x12\x0e\n\x06stderr\x18\x05 \x01(\t\x12\x15\n\rerror_message\x18\x06 \x01(\t\"\r\n\x0bListRequest\"<\n\x0cListResponse\x12,\n\x07\x65ntries\x18\x01 \x03(\x0b\x32\x1b.executor.v1.StatusResponse\"\x1b\n\rCancelRequest\x12\n\n\x02id\x18\x01 \x01(\t\"\x10\n\x0e\x43\x61ncelResponse\"\x1b\n\rForgetRequest\x12\n\n\x02id\x18\x01 \x01(\t\"\x10\n\x0e\x46orgetResponse\"\x0f\n\rHealthRequest\"2\n\x0eHealthResponse\x12\x0f\n\x07healthy\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t*\xa6\x01\n\x0e\x45xecutionState\x12\x1f\n\x1b\x45XECUTION_STATE_UNSPECIFIED\x10\x00\x12\x1b\n\x17\x45XECUTION_STATE_PENDING\x10\x01\x12\x1b\n\x17\x45XECUTION_STATE_RUNNING\x10\x02\x12\x1d\n\x19\x45XECUTION_STATE_SUCCEEDED\x10\x03\x12\x1a\n\x16\x45XECUTION_STATE_FAILED\x10\x04\x32\x98\x03\n\x07Runtime\x12\x44\n\x07\x45xecute\x12\x1b.executor.v1.ExecuteRequest\x1a\x1c.executor.v1.ExecuteResponse\x12\x41\n\x06Status\x12\x1a.executor.v1.StatusRequest\x1a\x1b.executor.v1.StatusResponse\x12;\n\x04List\x12\x18.executor.v1.ListRequest\x1a\x19.executor.v1.ListResponse\x12\x41\n\x06\x43\x61ncel\x12\x1a.executor.v1.CancelRequest\x1a\x1b.executor.v1.CancelResponse\x12\x41\n\x06\x46orget\x12\x1a.executor.v1.ForgetRequest\x1a\x1b.executor.v1.ForgetResponse\x12\x41\n\x06Health\x12\x1a.executor.v1.HealthRequest\x1a\x1b.executor.v1.HealthResponseB9Z7github.com/kruntimes/kruntimes/api/runtime/v1;runtimev1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rruntime.proto\x12\x0b\x65xecutor.v1\"\xdc\x01\n\x0e\x45xecuteRequest\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04\x61rgs\x18\x02 \x03(\t\x12\x31\n\x03\x65nv\x18\x03 \x03(\x0b\x32$.executor.v1.ExecuteRequest.EnvEntry\x12\x17\n\x0ftimeout_seconds\x18\x04 \x01(\x03\x12\x13\n\x0bworking_dir\x18\x05 \x01(\t\x12\x12\n\nentrypoint\x18\x06 \x01(\t\x12\x0f\n\x07handler\x18\x07 \x01(\t\x1a*\n\x08\x45nvEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\x1d\n\x0f\x45xecuteResponse\x12\n\n\x02id\x18\x01 \x01(\t\"\x1b\n\rStatusRequest\x12\n\n\x02id\x18\x01 \x01(\t\"\x92\x01\n\x0eStatusResponse\x12\n\n\x02id\x18\x01 \x01(\t\x12*\n\x05state\x18\x02 \x01(\x0e\x32\x1b.executor.v1.ExecutionState\x12\x11\n\texit_code\x18\x03 \x01(\x05\x12\x0e\n\x06stdout\x18\x04 \x01(\t\x12\x0e\n\x06stderr\x18\x05 \x01(\t\x12\x15\n\rerror_message\x18\x06 \x01(\t\"\r\n\x0bListRequest\"<\n\x0cListResponse\x12,\n\x07\x65ntries\x18\x01 \x03(\x0b\x32\x1b.executor.v1.StatusResponse\"\x1b\n\rCancelRequest\x12\n\n\x02id\x18\x01 \x01(\t\"\x10\n\x0e\x43\x61ncelResponse\"\x1b\n\rForgetRequest\x12\n\n\x02id\x18\x01 \x01(\t\"\x10\n\x0e\x46orgetResponse\"\x0f\n\rHealthRequest\"2\n\x0eHealthResponse\x12\x0f\n\x07healthy\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"@\n\x14\x46unctionRegistration\x12\x0f\n\x07run_uid\x18\x01 \x01(\t\x12\x17\n\x0fregistration_id\x18\x02 \x01(\t\"\x91\x02\n\x17RegisterFunctionRequest\x12\x0f\n\x07run_uid\x18\x01 \x01(\t\x12\x1c\n\x14registration_attempt\x18\x02 \x01(\x05\x12\x13\n\x0bworking_dir\x18\x03 \x01(\t\x12\x0f\n\x07handler\x18\x04 \x01(\t\x12:\n\x03\x65nv\x18\x05 \x03(\x0b\x32-.executor.v1.RegisterFunctionRequest.EnvEntry\x12\x1c\n\x14idle_timeout_seconds\x18\x06 \x01(\x03\x12\x1b\n\x13registration_digest\x18\x07 \x01(\t\x1a*\n\x08\x45nvEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\x8a\x01\n\x18RegisterFunctionResponse\x12\x37\n\x0cregistration\x18\x01 \x01(\x0b\x32!.executor.v1.FunctionRegistration\x12\x35\n\x05state\x18\x02 \x01(\x0e\x32&.executor.v1.FunctionRegistrationState\"P\n\x15\x46unctionStatusRequest\x12\x37\n\x0cregistration\x18\x01 \x01(\x0b\x32!.executor.v1.FunctionRegistration\"\xd1\x01\n\x16\x46unctionStatusResponse\x12\x37\n\x0cregistration\x18\x01 \x01(\x0b\x32!.executor.v1.FunctionRegistration\x12\x35\n\x05state\x18\x02 \x01(\x0e\x32&.executor.v1.FunctionRegistrationState\x12\x11\n\tin_flight\x18\x03 \x01(\x05\x12\x1f\n\x17last_activity_unix_nano\x18\x04 \x01(\x03\x12\x13\n\x0b\x66\x61tal_error\x18\x05 \x01(\t\"\xa4\x01\n\x15InvokeFunctionRequest\x12\x37\n\x0cregistration\x18\x01 \x01(\x0b\x32!.executor.v1.FunctionRegistration\x12\x15\n\rinvocation_id\x18\x02 \x01(\t\x12\r\n\x05input\x18\x03 \x01(\x0c\x12\x14\n\x0c\x63ontent_type\x18\x04 \x01(\t\x12\x16\n\x0etimeout_millis\x18\x05 \x01(\x03\"\x81\x02\n\x16InvokeFunctionResponse\x12\x37\n\x0cregistration\x18\x01 \x01(\x0b\x32!.executor.v1.FunctionRegistration\x12\x15\n\rinvocation_id\x18\x02 \x01(\t\x12\x0e\n\x06output\x18\x03 \x01(\x0c\x12\x14\n\x0c\x63ontent_type\x18\x04 \x01(\t\x12\x41\n\x07outputs\x18\x05 \x03(\x0b\x32\x30.executor.v1.InvokeFunctionResponse.OutputsEntry\x1a.\n\x0cOutputsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\x8c\x01\n\x19UnregisterFunctionRequest\x12\x37\n\x0cregistration\x18\x01 \x01(\x0b\x32!.executor.v1.FunctionRegistration\x12\x18\n\x10\x63\x61ncel_in_flight\x18\x02 \x01(\x08\x12\x1c\n\x14\x64rain_timeout_millis\x18\x03 \x01(\x03\"U\n\x1aUnregisterFunctionResponse\x12\x37\n\x0cregistration\x18\x01 \x01(\x0b\x32!.executor.v1.FunctionRegistration*\xa6\x01\n\x0e\x45xecutionState\x12\x1f\n\x1b\x45XECUTION_STATE_UNSPECIFIED\x10\x00\x12\x1b\n\x17\x45XECUTION_STATE_PENDING\x10\x01\x12\x1b\n\x17\x45XECUTION_STATE_RUNNING\x10\x02\x12\x1d\n\x19\x45XECUTION_STATE_SUCCEEDED\x10\x03\x12\x1a\n\x16\x45XECUTION_STATE_FAILED\x10\x04*\xee\x01\n\x19\x46unctionRegistrationState\x12+\n\'FUNCTION_REGISTRATION_STATE_UNSPECIFIED\x10\x00\x12+\n\'FUNCTION_REGISTRATION_STATE_REGISTERING\x10\x01\x12%\n!FUNCTION_REGISTRATION_STATE_READY\x10\x02\x12(\n$FUNCTION_REGISTRATION_STATE_DRAINING\x10\x03\x12&\n\"FUNCTION_REGISTRATION_STATE_FAILED\x10\x04\x32\x98\x03\n\x07Runtime\x12\x44\n\x07\x45xecute\x12\x1b.executor.v1.ExecuteRequest\x1a\x1c.executor.v1.ExecuteResponse\x12\x41\n\x06Status\x12\x1a.executor.v1.StatusRequest\x1a\x1b.executor.v1.StatusResponse\x12;\n\x04List\x12\x18.executor.v1.ListRequest\x1a\x19.executor.v1.ListResponse\x12\x41\n\x06\x43\x61ncel\x12\x1a.executor.v1.CancelRequest\x1a\x1b.executor.v1.CancelResponse\x12\x41\n\x06\x46orget\x12\x1a.executor.v1.ForgetRequest\x1a\x1b.executor.v1.ForgetResponse\x12\x41\n\x06Health\x12\x1a.executor.v1.HealthRequest\x1a\x1b.executor.v1.HealthResponse2\x8f\x03\n\x0f\x46unctionRuntime\x12_\n\x10RegisterFunction\x12$.executor.v1.RegisterFunctionRequest\x1a%.executor.v1.RegisterFunctionResponse\x12Y\n\x0e\x46unctionStatus\x12\".executor.v1.FunctionStatusRequest\x1a#.executor.v1.FunctionStatusResponse\x12Y\n\x0eInvokeFunction\x12\".executor.v1.InvokeFunctionRequest\x1a#.executor.v1.InvokeFunctionResponse\x12\x65\n\x12UnregisterFunction\x12&.executor.v1.UnregisterFunctionRequest\x1a\'.executor.v1.UnregisterFunctionResponseB9Z7github.com/kruntimes/kruntimes/api/runtime/v1;runtimev1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,8 +34,14 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._serialized_options = b'Z7github.com/kruntimes/kruntimes/api/runtime/v1;runtimev1'
   _globals['_EXECUTEREQUEST_ENVENTRY']._loaded_options = None
   _globals['_EXECUTEREQUEST_ENVENTRY']._serialized_options = b'8\001'
-  _globals['_EXECUTIONSTATE']._serialized_start=703
-  _globals['_EXECUTIONSTATE']._serialized_end=869
+  _globals['_REGISTERFUNCTIONREQUEST_ENVENTRY']._loaded_options = None
+  _globals['_REGISTERFUNCTIONREQUEST_ENVENTRY']._serialized_options = b'8\001'
+  _globals['_INVOKEFUNCTIONRESPONSE_OUTPUTSENTRY']._loaded_options = None
+  _globals['_INVOKEFUNCTIONRESPONSE_OUTPUTSENTRY']._serialized_options = b'8\001'
+  _globals['_EXECUTIONSTATE']._serialized_start=2137
+  _globals['_EXECUTIONSTATE']._serialized_end=2303
+  _globals['_FUNCTIONREGISTRATIONSTATE']._serialized_start=2306
+  _globals['_FUNCTIONREGISTRATIONSTATE']._serialized_end=2544
   _globals['_EXECUTEREQUEST']._serialized_start=31
   _globals['_EXECUTEREQUEST']._serialized_end=251
   _globals['_EXECUTEREQUEST_ENVENTRY']._serialized_start=209
@@ -62,6 +68,30 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_HEALTHREQUEST']._serialized_end=648
   _globals['_HEALTHRESPONSE']._serialized_start=650
   _globals['_HEALTHRESPONSE']._serialized_end=700
-  _globals['_RUNTIME']._serialized_start=872
-  _globals['_RUNTIME']._serialized_end=1280
+  _globals['_FUNCTIONREGISTRATION']._serialized_start=702
+  _globals['_FUNCTIONREGISTRATION']._serialized_end=766
+  _globals['_REGISTERFUNCTIONREQUEST']._serialized_start=769
+  _globals['_REGISTERFUNCTIONREQUEST']._serialized_end=1042
+  _globals['_REGISTERFUNCTIONREQUEST_ENVENTRY']._serialized_start=209
+  _globals['_REGISTERFUNCTIONREQUEST_ENVENTRY']._serialized_end=251
+  _globals['_REGISTERFUNCTIONRESPONSE']._serialized_start=1045
+  _globals['_REGISTERFUNCTIONRESPONSE']._serialized_end=1183
+  _globals['_FUNCTIONSTATUSREQUEST']._serialized_start=1185
+  _globals['_FUNCTIONSTATUSREQUEST']._serialized_end=1265
+  _globals['_FUNCTIONSTATUSRESPONSE']._serialized_start=1268
+  _globals['_FUNCTIONSTATUSRESPONSE']._serialized_end=1477
+  _globals['_INVOKEFUNCTIONREQUEST']._serialized_start=1480
+  _globals['_INVOKEFUNCTIONREQUEST']._serialized_end=1644
+  _globals['_INVOKEFUNCTIONRESPONSE']._serialized_start=1647
+  _globals['_INVOKEFUNCTIONRESPONSE']._serialized_end=1904
+  _globals['_INVOKEFUNCTIONRESPONSE_OUTPUTSENTRY']._serialized_start=1858
+  _globals['_INVOKEFUNCTIONRESPONSE_OUTPUTSENTRY']._serialized_end=1904
+  _globals['_UNREGISTERFUNCTIONREQUEST']._serialized_start=1907
+  _globals['_UNREGISTERFUNCTIONREQUEST']._serialized_end=2047
+  _globals['_UNREGISTERFUNCTIONRESPONSE']._serialized_start=2049
+  _globals['_UNREGISTERFUNCTIONRESPONSE']._serialized_end=2134
+  _globals['_RUNTIME']._serialized_start=2547
+  _globals['_RUNTIME']._serialized_end=2955
+  _globals['_FUNCTIONRUNTIME']._serialized_start=2958
+  _globals['_FUNCTIONRUNTIME']._serialized_end=3357
 # @@protoc_insertion_point(module_scope)

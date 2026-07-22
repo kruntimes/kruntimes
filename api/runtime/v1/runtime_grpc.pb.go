@@ -319,3 +319,227 @@ var Runtime_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "api/runtime/v1/runtime.proto",
 }
+
+const (
+	FunctionRuntime_RegisterFunction_FullMethodName   = "/executor.v1.FunctionRuntime/RegisterFunction"
+	FunctionRuntime_FunctionStatus_FullMethodName     = "/executor.v1.FunctionRuntime/FunctionStatus"
+	FunctionRuntime_InvokeFunction_FullMethodName     = "/executor.v1.FunctionRuntime/InvokeFunction"
+	FunctionRuntime_UnregisterFunction_FullMethodName = "/executor.v1.FunctionRuntime/UnregisterFunction"
+)
+
+// FunctionRuntimeClient is the client API for FunctionRuntime service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// FunctionRuntime is an optional Runtime Server extension for function-mode
+// lifecycle operations. Task-only custom runtimes implement Runtime only.
+type FunctionRuntimeClient interface {
+	// Function-mode lifecycle operations are Pod-local and called by runtimed.
+	RegisterFunction(ctx context.Context, in *RegisterFunctionRequest, opts ...grpc.CallOption) (*RegisterFunctionResponse, error)
+	FunctionStatus(ctx context.Context, in *FunctionStatusRequest, opts ...grpc.CallOption) (*FunctionStatusResponse, error)
+	InvokeFunction(ctx context.Context, in *InvokeFunctionRequest, opts ...grpc.CallOption) (*InvokeFunctionResponse, error)
+	UnregisterFunction(ctx context.Context, in *UnregisterFunctionRequest, opts ...grpc.CallOption) (*UnregisterFunctionResponse, error)
+}
+
+type functionRuntimeClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewFunctionRuntimeClient(cc grpc.ClientConnInterface) FunctionRuntimeClient {
+	return &functionRuntimeClient{cc}
+}
+
+func (c *functionRuntimeClient) RegisterFunction(ctx context.Context, in *RegisterFunctionRequest, opts ...grpc.CallOption) (*RegisterFunctionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterFunctionResponse)
+	err := c.cc.Invoke(ctx, FunctionRuntime_RegisterFunction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *functionRuntimeClient) FunctionStatus(ctx context.Context, in *FunctionStatusRequest, opts ...grpc.CallOption) (*FunctionStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FunctionStatusResponse)
+	err := c.cc.Invoke(ctx, FunctionRuntime_FunctionStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *functionRuntimeClient) InvokeFunction(ctx context.Context, in *InvokeFunctionRequest, opts ...grpc.CallOption) (*InvokeFunctionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InvokeFunctionResponse)
+	err := c.cc.Invoke(ctx, FunctionRuntime_InvokeFunction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *functionRuntimeClient) UnregisterFunction(ctx context.Context, in *UnregisterFunctionRequest, opts ...grpc.CallOption) (*UnregisterFunctionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UnregisterFunctionResponse)
+	err := c.cc.Invoke(ctx, FunctionRuntime_UnregisterFunction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// FunctionRuntimeServer is the server API for FunctionRuntime service.
+// All implementations must embed UnimplementedFunctionRuntimeServer
+// for forward compatibility.
+//
+// FunctionRuntime is an optional Runtime Server extension for function-mode
+// lifecycle operations. Task-only custom runtimes implement Runtime only.
+type FunctionRuntimeServer interface {
+	// Function-mode lifecycle operations are Pod-local and called by runtimed.
+	RegisterFunction(context.Context, *RegisterFunctionRequest) (*RegisterFunctionResponse, error)
+	FunctionStatus(context.Context, *FunctionStatusRequest) (*FunctionStatusResponse, error)
+	InvokeFunction(context.Context, *InvokeFunctionRequest) (*InvokeFunctionResponse, error)
+	UnregisterFunction(context.Context, *UnregisterFunctionRequest) (*UnregisterFunctionResponse, error)
+	mustEmbedUnimplementedFunctionRuntimeServer()
+}
+
+// UnimplementedFunctionRuntimeServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedFunctionRuntimeServer struct{}
+
+func (UnimplementedFunctionRuntimeServer) RegisterFunction(context.Context, *RegisterFunctionRequest) (*RegisterFunctionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RegisterFunction not implemented")
+}
+func (UnimplementedFunctionRuntimeServer) FunctionStatus(context.Context, *FunctionStatusRequest) (*FunctionStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FunctionStatus not implemented")
+}
+func (UnimplementedFunctionRuntimeServer) InvokeFunction(context.Context, *InvokeFunctionRequest) (*InvokeFunctionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InvokeFunction not implemented")
+}
+func (UnimplementedFunctionRuntimeServer) UnregisterFunction(context.Context, *UnregisterFunctionRequest) (*UnregisterFunctionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnregisterFunction not implemented")
+}
+func (UnimplementedFunctionRuntimeServer) mustEmbedUnimplementedFunctionRuntimeServer() {}
+func (UnimplementedFunctionRuntimeServer) testEmbeddedByValue()                         {}
+
+// UnsafeFunctionRuntimeServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to FunctionRuntimeServer will
+// result in compilation errors.
+type UnsafeFunctionRuntimeServer interface {
+	mustEmbedUnimplementedFunctionRuntimeServer()
+}
+
+func RegisterFunctionRuntimeServer(s grpc.ServiceRegistrar, srv FunctionRuntimeServer) {
+	// If the following call panics, it indicates UnimplementedFunctionRuntimeServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&FunctionRuntime_ServiceDesc, srv)
+}
+
+func _FunctionRuntime_RegisterFunction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterFunctionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FunctionRuntimeServer).RegisterFunction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FunctionRuntime_RegisterFunction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FunctionRuntimeServer).RegisterFunction(ctx, req.(*RegisterFunctionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FunctionRuntime_FunctionStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FunctionStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FunctionRuntimeServer).FunctionStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FunctionRuntime_FunctionStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FunctionRuntimeServer).FunctionStatus(ctx, req.(*FunctionStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FunctionRuntime_InvokeFunction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InvokeFunctionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FunctionRuntimeServer).InvokeFunction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FunctionRuntime_InvokeFunction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FunctionRuntimeServer).InvokeFunction(ctx, req.(*InvokeFunctionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FunctionRuntime_UnregisterFunction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnregisterFunctionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FunctionRuntimeServer).UnregisterFunction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FunctionRuntime_UnregisterFunction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FunctionRuntimeServer).UnregisterFunction(ctx, req.(*UnregisterFunctionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// FunctionRuntime_ServiceDesc is the grpc.ServiceDesc for FunctionRuntime service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var FunctionRuntime_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "executor.v1.FunctionRuntime",
+	HandlerType: (*FunctionRuntimeServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "RegisterFunction",
+			Handler:    _FunctionRuntime_RegisterFunction_Handler,
+		},
+		{
+			MethodName: "FunctionStatus",
+			Handler:    _FunctionRuntime_FunctionStatus_Handler,
+		},
+		{
+			MethodName: "InvokeFunction",
+			Handler:    _FunctionRuntime_InvokeFunction_Handler,
+		},
+		{
+			MethodName: "UnregisterFunction",
+			Handler:    _FunctionRuntime_UnregisterFunction_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "api/runtime/v1/runtime.proto",
+}

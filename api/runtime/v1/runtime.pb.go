@@ -76,6 +76,61 @@ func (ExecutionState) EnumDescriptor() ([]byte, []int) {
 	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{0}
 }
 
+type FunctionRegistrationState int32
+
+const (
+	FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_UNSPECIFIED FunctionRegistrationState = 0
+	FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_REGISTERING FunctionRegistrationState = 1
+	FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_READY       FunctionRegistrationState = 2
+	FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_DRAINING    FunctionRegistrationState = 3
+	FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_FAILED      FunctionRegistrationState = 4
+)
+
+// Enum value maps for FunctionRegistrationState.
+var (
+	FunctionRegistrationState_name = map[int32]string{
+		0: "FUNCTION_REGISTRATION_STATE_UNSPECIFIED",
+		1: "FUNCTION_REGISTRATION_STATE_REGISTERING",
+		2: "FUNCTION_REGISTRATION_STATE_READY",
+		3: "FUNCTION_REGISTRATION_STATE_DRAINING",
+		4: "FUNCTION_REGISTRATION_STATE_FAILED",
+	}
+	FunctionRegistrationState_value = map[string]int32{
+		"FUNCTION_REGISTRATION_STATE_UNSPECIFIED": 0,
+		"FUNCTION_REGISTRATION_STATE_REGISTERING": 1,
+		"FUNCTION_REGISTRATION_STATE_READY":       2,
+		"FUNCTION_REGISTRATION_STATE_DRAINING":    3,
+		"FUNCTION_REGISTRATION_STATE_FAILED":      4,
+	}
+)
+
+func (x FunctionRegistrationState) Enum() *FunctionRegistrationState {
+	p := new(FunctionRegistrationState)
+	*p = x
+	return p
+}
+
+func (x FunctionRegistrationState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FunctionRegistrationState) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_runtime_v1_runtime_proto_enumTypes[1].Descriptor()
+}
+
+func (FunctionRegistrationState) Type() protoreflect.EnumType {
+	return &file_api_runtime_v1_runtime_proto_enumTypes[1]
+}
+
+func (x FunctionRegistrationState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FunctionRegistrationState.Descriptor instead.
+func (FunctionRegistrationState) EnumDescriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{1}
+}
+
 type ExecuteRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -670,6 +725,581 @@ func (x *HealthResponse) GetMessage() string {
 	return ""
 }
 
+// FunctionRegistration identifies one Runtime Server-local registration epoch.
+type FunctionRegistration struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Kubernetes Run UID, not its mutable name.
+	RunUid string `protobuf:"bytes,1,opt,name=run_uid,json=runUid,proto3" json:"run_uid,omitempty"`
+	// Opaque Runtime Server-generated ID for this local registration generation.
+	RegistrationId string `protobuf:"bytes,2,opt,name=registration_id,json=registrationId,proto3" json:"registration_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *FunctionRegistration) Reset() {
+	*x = FunctionRegistration{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FunctionRegistration) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FunctionRegistration) ProtoMessage() {}
+
+func (x *FunctionRegistration) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FunctionRegistration.ProtoReflect.Descriptor instead.
+func (*FunctionRegistration) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *FunctionRegistration) GetRunUid() string {
+	if x != nil {
+		return x.RunUid
+	}
+	return ""
+}
+
+func (x *FunctionRegistration) GetRegistrationId() string {
+	if x != nil {
+		return x.RegistrationId
+	}
+	return ""
+}
+
+type RegisterFunctionRequest struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	RunUid              string                 `protobuf:"bytes,1,opt,name=run_uid,json=runUid,proto3" json:"run_uid,omitempty"`
+	RegistrationAttempt int32                  `protobuf:"varint,2,opt,name=registration_attempt,json=registrationAttempt,proto3" json:"registration_attempt,omitempty"`
+	WorkingDir          string                 `protobuf:"bytes,3,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`
+	Handler             string                 `protobuf:"bytes,4,opt,name=handler,proto3" json:"handler,omitempty"`
+	Env                 map[string]string      `protobuf:"bytes,5,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	IdleTimeoutSeconds  int64                  `protobuf:"varint,6,opt,name=idle_timeout_seconds,json=idleTimeoutSeconds,proto3" json:"idle_timeout_seconds,omitempty"`
+	RegistrationDigest  string                 `protobuf:"bytes,7,opt,name=registration_digest,json=registrationDigest,proto3" json:"registration_digest,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *RegisterFunctionRequest) Reset() {
+	*x = RegisterFunctionRequest{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterFunctionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterFunctionRequest) ProtoMessage() {}
+
+func (x *RegisterFunctionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterFunctionRequest.ProtoReflect.Descriptor instead.
+func (*RegisterFunctionRequest) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *RegisterFunctionRequest) GetRunUid() string {
+	if x != nil {
+		return x.RunUid
+	}
+	return ""
+}
+
+func (x *RegisterFunctionRequest) GetRegistrationAttempt() int32 {
+	if x != nil {
+		return x.RegistrationAttempt
+	}
+	return 0
+}
+
+func (x *RegisterFunctionRequest) GetWorkingDir() string {
+	if x != nil {
+		return x.WorkingDir
+	}
+	return ""
+}
+
+func (x *RegisterFunctionRequest) GetHandler() string {
+	if x != nil {
+		return x.Handler
+	}
+	return ""
+}
+
+func (x *RegisterFunctionRequest) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *RegisterFunctionRequest) GetIdleTimeoutSeconds() int64 {
+	if x != nil {
+		return x.IdleTimeoutSeconds
+	}
+	return 0
+}
+
+func (x *RegisterFunctionRequest) GetRegistrationDigest() string {
+	if x != nil {
+		return x.RegistrationDigest
+	}
+	return ""
+}
+
+type RegisterFunctionResponse struct {
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	Registration  *FunctionRegistration     `protobuf:"bytes,1,opt,name=registration,proto3" json:"registration,omitempty"`
+	State         FunctionRegistrationState `protobuf:"varint,2,opt,name=state,proto3,enum=executor.v1.FunctionRegistrationState" json:"state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterFunctionResponse) Reset() {
+	*x = RegisterFunctionResponse{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterFunctionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterFunctionResponse) ProtoMessage() {}
+
+func (x *RegisterFunctionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterFunctionResponse.ProtoReflect.Descriptor instead.
+func (*RegisterFunctionResponse) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *RegisterFunctionResponse) GetRegistration() *FunctionRegistration {
+	if x != nil {
+		return x.Registration
+	}
+	return nil
+}
+
+func (x *RegisterFunctionResponse) GetState() FunctionRegistrationState {
+	if x != nil {
+		return x.State
+	}
+	return FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_UNSPECIFIED
+}
+
+type FunctionStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Registration  *FunctionRegistration  `protobuf:"bytes,1,opt,name=registration,proto3" json:"registration,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FunctionStatusRequest) Reset() {
+	*x = FunctionStatusRequest{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FunctionStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FunctionStatusRequest) ProtoMessage() {}
+
+func (x *FunctionStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FunctionStatusRequest.ProtoReflect.Descriptor instead.
+func (*FunctionStatusRequest) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *FunctionStatusRequest) GetRegistration() *FunctionRegistration {
+	if x != nil {
+		return x.Registration
+	}
+	return nil
+}
+
+type FunctionStatusResponse struct {
+	state                protoimpl.MessageState    `protogen:"open.v1"`
+	Registration         *FunctionRegistration     `protobuf:"bytes,1,opt,name=registration,proto3" json:"registration,omitempty"`
+	State                FunctionRegistrationState `protobuf:"varint,2,opt,name=state,proto3,enum=executor.v1.FunctionRegistrationState" json:"state,omitempty"`
+	InFlight             int32                     `protobuf:"varint,3,opt,name=in_flight,json=inFlight,proto3" json:"in_flight,omitempty"`
+	LastActivityUnixNano int64                     `protobuf:"varint,4,opt,name=last_activity_unix_nano,json=lastActivityUnixNano,proto3" json:"last_activity_unix_nano,omitempty"`
+	FatalError           string                    `protobuf:"bytes,5,opt,name=fatal_error,json=fatalError,proto3" json:"fatal_error,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *FunctionStatusResponse) Reset() {
+	*x = FunctionStatusResponse{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FunctionStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FunctionStatusResponse) ProtoMessage() {}
+
+func (x *FunctionStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FunctionStatusResponse.ProtoReflect.Descriptor instead.
+func (*FunctionStatusResponse) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *FunctionStatusResponse) GetRegistration() *FunctionRegistration {
+	if x != nil {
+		return x.Registration
+	}
+	return nil
+}
+
+func (x *FunctionStatusResponse) GetState() FunctionRegistrationState {
+	if x != nil {
+		return x.State
+	}
+	return FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_UNSPECIFIED
+}
+
+func (x *FunctionStatusResponse) GetInFlight() int32 {
+	if x != nil {
+		return x.InFlight
+	}
+	return 0
+}
+
+func (x *FunctionStatusResponse) GetLastActivityUnixNano() int64 {
+	if x != nil {
+		return x.LastActivityUnixNano
+	}
+	return 0
+}
+
+func (x *FunctionStatusResponse) GetFatalError() string {
+	if x != nil {
+		return x.FatalError
+	}
+	return ""
+}
+
+type InvokeFunctionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Registration  *FunctionRegistration  `protobuf:"bytes,1,opt,name=registration,proto3" json:"registration,omitempty"`
+	InvocationId  string                 `protobuf:"bytes,2,opt,name=invocation_id,json=invocationId,proto3" json:"invocation_id,omitempty"`
+	Input         []byte                 `protobuf:"bytes,3,opt,name=input,proto3" json:"input,omitempty"`
+	ContentType   string                 `protobuf:"bytes,4,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"`
+	TimeoutMillis int64                  `protobuf:"varint,5,opt,name=timeout_millis,json=timeoutMillis,proto3" json:"timeout_millis,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InvokeFunctionRequest) Reset() {
+	*x = InvokeFunctionRequest{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InvokeFunctionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InvokeFunctionRequest) ProtoMessage() {}
+
+func (x *InvokeFunctionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InvokeFunctionRequest.ProtoReflect.Descriptor instead.
+func (*InvokeFunctionRequest) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *InvokeFunctionRequest) GetRegistration() *FunctionRegistration {
+	if x != nil {
+		return x.Registration
+	}
+	return nil
+}
+
+func (x *InvokeFunctionRequest) GetInvocationId() string {
+	if x != nil {
+		return x.InvocationId
+	}
+	return ""
+}
+
+func (x *InvokeFunctionRequest) GetInput() []byte {
+	if x != nil {
+		return x.Input
+	}
+	return nil
+}
+
+func (x *InvokeFunctionRequest) GetContentType() string {
+	if x != nil {
+		return x.ContentType
+	}
+	return ""
+}
+
+func (x *InvokeFunctionRequest) GetTimeoutMillis() int64 {
+	if x != nil {
+		return x.TimeoutMillis
+	}
+	return 0
+}
+
+type InvokeFunctionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Registration  *FunctionRegistration  `protobuf:"bytes,1,opt,name=registration,proto3" json:"registration,omitempty"`
+	InvocationId  string                 `protobuf:"bytes,2,opt,name=invocation_id,json=invocationId,proto3" json:"invocation_id,omitempty"`
+	Output        []byte                 `protobuf:"bytes,3,opt,name=output,proto3" json:"output,omitempty"`
+	ContentType   string                 `protobuf:"bytes,4,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"`
+	Outputs       map[string]string      `protobuf:"bytes,5,rep,name=outputs,proto3" json:"outputs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InvokeFunctionResponse) Reset() {
+	*x = InvokeFunctionResponse{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InvokeFunctionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InvokeFunctionResponse) ProtoMessage() {}
+
+func (x *InvokeFunctionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InvokeFunctionResponse.ProtoReflect.Descriptor instead.
+func (*InvokeFunctionResponse) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *InvokeFunctionResponse) GetRegistration() *FunctionRegistration {
+	if x != nil {
+		return x.Registration
+	}
+	return nil
+}
+
+func (x *InvokeFunctionResponse) GetInvocationId() string {
+	if x != nil {
+		return x.InvocationId
+	}
+	return ""
+}
+
+func (x *InvokeFunctionResponse) GetOutput() []byte {
+	if x != nil {
+		return x.Output
+	}
+	return nil
+}
+
+func (x *InvokeFunctionResponse) GetContentType() string {
+	if x != nil {
+		return x.ContentType
+	}
+	return ""
+}
+
+func (x *InvokeFunctionResponse) GetOutputs() map[string]string {
+	if x != nil {
+		return x.Outputs
+	}
+	return nil
+}
+
+type UnregisterFunctionRequest struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Registration       *FunctionRegistration  `protobuf:"bytes,1,opt,name=registration,proto3" json:"registration,omitempty"`
+	CancelInFlight     bool                   `protobuf:"varint,2,opt,name=cancel_in_flight,json=cancelInFlight,proto3" json:"cancel_in_flight,omitempty"`
+	DrainTimeoutMillis int64                  `protobuf:"varint,3,opt,name=drain_timeout_millis,json=drainTimeoutMillis,proto3" json:"drain_timeout_millis,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *UnregisterFunctionRequest) Reset() {
+	*x = UnregisterFunctionRequest{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnregisterFunctionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnregisterFunctionRequest) ProtoMessage() {}
+
+func (x *UnregisterFunctionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnregisterFunctionRequest.ProtoReflect.Descriptor instead.
+func (*UnregisterFunctionRequest) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *UnregisterFunctionRequest) GetRegistration() *FunctionRegistration {
+	if x != nil {
+		return x.Registration
+	}
+	return nil
+}
+
+func (x *UnregisterFunctionRequest) GetCancelInFlight() bool {
+	if x != nil {
+		return x.CancelInFlight
+	}
+	return false
+}
+
+func (x *UnregisterFunctionRequest) GetDrainTimeoutMillis() int64 {
+	if x != nil {
+		return x.DrainTimeoutMillis
+	}
+	return 0
+}
+
+type UnregisterFunctionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Registration  *FunctionRegistration  `protobuf:"bytes,1,opt,name=registration,proto3" json:"registration,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnregisterFunctionResponse) Reset() {
+	*x = UnregisterFunctionResponse{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnregisterFunctionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnregisterFunctionResponse) ProtoMessage() {}
+
+func (x *UnregisterFunctionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnregisterFunctionResponse.ProtoReflect.Descriptor instead.
+func (*UnregisterFunctionResponse) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *UnregisterFunctionResponse) GetRegistration() *FunctionRegistration {
+	if x != nil {
+		return x.Registration
+	}
+	return nil
+}
+
 var File_api_runtime_v1_runtime_proto protoreflect.FileDescriptor
 
 const file_api_runtime_v1_runtime_proto_rawDesc = "" +
@@ -712,20 +1342,79 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\rHealthRequest\"D\n" +
 	"\x0eHealthResponse\x12\x18\n" +
 	"\ahealthy\x18\x01 \x01(\bR\ahealthy\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage*\xa6\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"X\n" +
+	"\x14FunctionRegistration\x12\x17\n" +
+	"\arun_uid\x18\x01 \x01(\tR\x06runUid\x12'\n" +
+	"\x0fregistration_id\x18\x02 \x01(\tR\x0eregistrationId\"\xfc\x02\n" +
+	"\x17RegisterFunctionRequest\x12\x17\n" +
+	"\arun_uid\x18\x01 \x01(\tR\x06runUid\x121\n" +
+	"\x14registration_attempt\x18\x02 \x01(\x05R\x13registrationAttempt\x12\x1f\n" +
+	"\vworking_dir\x18\x03 \x01(\tR\n" +
+	"workingDir\x12\x18\n" +
+	"\ahandler\x18\x04 \x01(\tR\ahandler\x12?\n" +
+	"\x03env\x18\x05 \x03(\v2-.executor.v1.RegisterFunctionRequest.EnvEntryR\x03env\x120\n" +
+	"\x14idle_timeout_seconds\x18\x06 \x01(\x03R\x12idleTimeoutSeconds\x12/\n" +
+	"\x13registration_digest\x18\a \x01(\tR\x12registrationDigest\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9f\x01\n" +
+	"\x18RegisterFunctionResponse\x12E\n" +
+	"\fregistration\x18\x01 \x01(\v2!.executor.v1.FunctionRegistrationR\fregistration\x12<\n" +
+	"\x05state\x18\x02 \x01(\x0e2&.executor.v1.FunctionRegistrationStateR\x05state\"^\n" +
+	"\x15FunctionStatusRequest\x12E\n" +
+	"\fregistration\x18\x01 \x01(\v2!.executor.v1.FunctionRegistrationR\fregistration\"\x92\x02\n" +
+	"\x16FunctionStatusResponse\x12E\n" +
+	"\fregistration\x18\x01 \x01(\v2!.executor.v1.FunctionRegistrationR\fregistration\x12<\n" +
+	"\x05state\x18\x02 \x01(\x0e2&.executor.v1.FunctionRegistrationStateR\x05state\x12\x1b\n" +
+	"\tin_flight\x18\x03 \x01(\x05R\binFlight\x125\n" +
+	"\x17last_activity_unix_nano\x18\x04 \x01(\x03R\x14lastActivityUnixNano\x12\x1f\n" +
+	"\vfatal_error\x18\x05 \x01(\tR\n" +
+	"fatalError\"\xe3\x01\n" +
+	"\x15InvokeFunctionRequest\x12E\n" +
+	"\fregistration\x18\x01 \x01(\v2!.executor.v1.FunctionRegistrationR\fregistration\x12#\n" +
+	"\rinvocation_id\x18\x02 \x01(\tR\finvocationId\x12\x14\n" +
+	"\x05input\x18\x03 \x01(\fR\x05input\x12!\n" +
+	"\fcontent_type\x18\x04 \x01(\tR\vcontentType\x12%\n" +
+	"\x0etimeout_millis\x18\x05 \x01(\x03R\rtimeoutMillis\"\xc7\x02\n" +
+	"\x16InvokeFunctionResponse\x12E\n" +
+	"\fregistration\x18\x01 \x01(\v2!.executor.v1.FunctionRegistrationR\fregistration\x12#\n" +
+	"\rinvocation_id\x18\x02 \x01(\tR\finvocationId\x12\x16\n" +
+	"\x06output\x18\x03 \x01(\fR\x06output\x12!\n" +
+	"\fcontent_type\x18\x04 \x01(\tR\vcontentType\x12J\n" +
+	"\aoutputs\x18\x05 \x03(\v20.executor.v1.InvokeFunctionResponse.OutputsEntryR\aoutputs\x1a:\n" +
+	"\fOutputsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbe\x01\n" +
+	"\x19UnregisterFunctionRequest\x12E\n" +
+	"\fregistration\x18\x01 \x01(\v2!.executor.v1.FunctionRegistrationR\fregistration\x12(\n" +
+	"\x10cancel_in_flight\x18\x02 \x01(\bR\x0ecancelInFlight\x120\n" +
+	"\x14drain_timeout_millis\x18\x03 \x01(\x03R\x12drainTimeoutMillis\"c\n" +
+	"\x1aUnregisterFunctionResponse\x12E\n" +
+	"\fregistration\x18\x01 \x01(\v2!.executor.v1.FunctionRegistrationR\fregistration*\xa6\x01\n" +
 	"\x0eExecutionState\x12\x1f\n" +
 	"\x1bEXECUTION_STATE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17EXECUTION_STATE_PENDING\x10\x01\x12\x1b\n" +
 	"\x17EXECUTION_STATE_RUNNING\x10\x02\x12\x1d\n" +
 	"\x19EXECUTION_STATE_SUCCEEDED\x10\x03\x12\x1a\n" +
-	"\x16EXECUTION_STATE_FAILED\x10\x042\x98\x03\n" +
+	"\x16EXECUTION_STATE_FAILED\x10\x04*\xee\x01\n" +
+	"\x19FunctionRegistrationState\x12+\n" +
+	"'FUNCTION_REGISTRATION_STATE_UNSPECIFIED\x10\x00\x12+\n" +
+	"'FUNCTION_REGISTRATION_STATE_REGISTERING\x10\x01\x12%\n" +
+	"!FUNCTION_REGISTRATION_STATE_READY\x10\x02\x12(\n" +
+	"$FUNCTION_REGISTRATION_STATE_DRAINING\x10\x03\x12&\n" +
+	"\"FUNCTION_REGISTRATION_STATE_FAILED\x10\x042\x98\x03\n" +
 	"\aRuntime\x12D\n" +
 	"\aExecute\x12\x1b.executor.v1.ExecuteRequest\x1a\x1c.executor.v1.ExecuteResponse\x12A\n" +
 	"\x06Status\x12\x1a.executor.v1.StatusRequest\x1a\x1b.executor.v1.StatusResponse\x12;\n" +
 	"\x04List\x12\x18.executor.v1.ListRequest\x1a\x19.executor.v1.ListResponse\x12A\n" +
 	"\x06Cancel\x12\x1a.executor.v1.CancelRequest\x1a\x1b.executor.v1.CancelResponse\x12A\n" +
 	"\x06Forget\x12\x1a.executor.v1.ForgetRequest\x1a\x1b.executor.v1.ForgetResponse\x12A\n" +
-	"\x06Health\x12\x1a.executor.v1.HealthRequest\x1a\x1b.executor.v1.HealthResponseB9Z7github.com/kruntimes/kruntimes/api/runtime/v1;runtimev1b\x06proto3"
+	"\x06Health\x12\x1a.executor.v1.HealthRequest\x1a\x1b.executor.v1.HealthResponse2\x8f\x03\n" +
+	"\x0fFunctionRuntime\x12_\n" +
+	"\x10RegisterFunction\x12$.executor.v1.RegisterFunctionRequest\x1a%.executor.v1.RegisterFunctionResponse\x12Y\n" +
+	"\x0eFunctionStatus\x12\".executor.v1.FunctionStatusRequest\x1a#.executor.v1.FunctionStatusResponse\x12Y\n" +
+	"\x0eInvokeFunction\x12\".executor.v1.InvokeFunctionRequest\x1a#.executor.v1.InvokeFunctionResponse\x12e\n" +
+	"\x12UnregisterFunction\x12&.executor.v1.UnregisterFunctionRequest\x1a'.executor.v1.UnregisterFunctionResponseB9Z7github.com/kruntimes/kruntimes/api/runtime/v1;runtimev1b\x06proto3"
 
 var (
 	file_api_runtime_v1_runtime_proto_rawDescOnce sync.Once
@@ -739,45 +1428,76 @@ func file_api_runtime_v1_runtime_proto_rawDescGZIP() []byte {
 	return file_api_runtime_v1_runtime_proto_rawDescData
 }
 
-var file_api_runtime_v1_runtime_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_api_runtime_v1_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_api_runtime_v1_runtime_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_api_runtime_v1_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_api_runtime_v1_runtime_proto_goTypes = []any{
-	(ExecutionState)(0),     // 0: executor.v1.ExecutionState
-	(*ExecuteRequest)(nil),  // 1: executor.v1.ExecuteRequest
-	(*ExecuteResponse)(nil), // 2: executor.v1.ExecuteResponse
-	(*StatusRequest)(nil),   // 3: executor.v1.StatusRequest
-	(*StatusResponse)(nil),  // 4: executor.v1.StatusResponse
-	(*ListRequest)(nil),     // 5: executor.v1.ListRequest
-	(*ListResponse)(nil),    // 6: executor.v1.ListResponse
-	(*CancelRequest)(nil),   // 7: executor.v1.CancelRequest
-	(*CancelResponse)(nil),  // 8: executor.v1.CancelResponse
-	(*ForgetRequest)(nil),   // 9: executor.v1.ForgetRequest
-	(*ForgetResponse)(nil),  // 10: executor.v1.ForgetResponse
-	(*HealthRequest)(nil),   // 11: executor.v1.HealthRequest
-	(*HealthResponse)(nil),  // 12: executor.v1.HealthResponse
-	nil,                     // 13: executor.v1.ExecuteRequest.EnvEntry
+	(ExecutionState)(0),                // 0: executor.v1.ExecutionState
+	(FunctionRegistrationState)(0),     // 1: executor.v1.FunctionRegistrationState
+	(*ExecuteRequest)(nil),             // 2: executor.v1.ExecuteRequest
+	(*ExecuteResponse)(nil),            // 3: executor.v1.ExecuteResponse
+	(*StatusRequest)(nil),              // 4: executor.v1.StatusRequest
+	(*StatusResponse)(nil),             // 5: executor.v1.StatusResponse
+	(*ListRequest)(nil),                // 6: executor.v1.ListRequest
+	(*ListResponse)(nil),               // 7: executor.v1.ListResponse
+	(*CancelRequest)(nil),              // 8: executor.v1.CancelRequest
+	(*CancelResponse)(nil),             // 9: executor.v1.CancelResponse
+	(*ForgetRequest)(nil),              // 10: executor.v1.ForgetRequest
+	(*ForgetResponse)(nil),             // 11: executor.v1.ForgetResponse
+	(*HealthRequest)(nil),              // 12: executor.v1.HealthRequest
+	(*HealthResponse)(nil),             // 13: executor.v1.HealthResponse
+	(*FunctionRegistration)(nil),       // 14: executor.v1.FunctionRegistration
+	(*RegisterFunctionRequest)(nil),    // 15: executor.v1.RegisterFunctionRequest
+	(*RegisterFunctionResponse)(nil),   // 16: executor.v1.RegisterFunctionResponse
+	(*FunctionStatusRequest)(nil),      // 17: executor.v1.FunctionStatusRequest
+	(*FunctionStatusResponse)(nil),     // 18: executor.v1.FunctionStatusResponse
+	(*InvokeFunctionRequest)(nil),      // 19: executor.v1.InvokeFunctionRequest
+	(*InvokeFunctionResponse)(nil),     // 20: executor.v1.InvokeFunctionResponse
+	(*UnregisterFunctionRequest)(nil),  // 21: executor.v1.UnregisterFunctionRequest
+	(*UnregisterFunctionResponse)(nil), // 22: executor.v1.UnregisterFunctionResponse
+	nil,                                // 23: executor.v1.ExecuteRequest.EnvEntry
+	nil,                                // 24: executor.v1.RegisterFunctionRequest.EnvEntry
+	nil,                                // 25: executor.v1.InvokeFunctionResponse.OutputsEntry
 }
 var file_api_runtime_v1_runtime_proto_depIdxs = []int32{
-	13, // 0: executor.v1.ExecuteRequest.env:type_name -> executor.v1.ExecuteRequest.EnvEntry
+	23, // 0: executor.v1.ExecuteRequest.env:type_name -> executor.v1.ExecuteRequest.EnvEntry
 	0,  // 1: executor.v1.StatusResponse.state:type_name -> executor.v1.ExecutionState
-	4,  // 2: executor.v1.ListResponse.entries:type_name -> executor.v1.StatusResponse
-	1,  // 3: executor.v1.Runtime.Execute:input_type -> executor.v1.ExecuteRequest
-	3,  // 4: executor.v1.Runtime.Status:input_type -> executor.v1.StatusRequest
-	5,  // 5: executor.v1.Runtime.List:input_type -> executor.v1.ListRequest
-	7,  // 6: executor.v1.Runtime.Cancel:input_type -> executor.v1.CancelRequest
-	9,  // 7: executor.v1.Runtime.Forget:input_type -> executor.v1.ForgetRequest
-	11, // 8: executor.v1.Runtime.Health:input_type -> executor.v1.HealthRequest
-	2,  // 9: executor.v1.Runtime.Execute:output_type -> executor.v1.ExecuteResponse
-	4,  // 10: executor.v1.Runtime.Status:output_type -> executor.v1.StatusResponse
-	6,  // 11: executor.v1.Runtime.List:output_type -> executor.v1.ListResponse
-	8,  // 12: executor.v1.Runtime.Cancel:output_type -> executor.v1.CancelResponse
-	10, // 13: executor.v1.Runtime.Forget:output_type -> executor.v1.ForgetResponse
-	12, // 14: executor.v1.Runtime.Health:output_type -> executor.v1.HealthResponse
-	9,  // [9:15] is the sub-list for method output_type
-	3,  // [3:9] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	5,  // 2: executor.v1.ListResponse.entries:type_name -> executor.v1.StatusResponse
+	24, // 3: executor.v1.RegisterFunctionRequest.env:type_name -> executor.v1.RegisterFunctionRequest.EnvEntry
+	14, // 4: executor.v1.RegisterFunctionResponse.registration:type_name -> executor.v1.FunctionRegistration
+	1,  // 5: executor.v1.RegisterFunctionResponse.state:type_name -> executor.v1.FunctionRegistrationState
+	14, // 6: executor.v1.FunctionStatusRequest.registration:type_name -> executor.v1.FunctionRegistration
+	14, // 7: executor.v1.FunctionStatusResponse.registration:type_name -> executor.v1.FunctionRegistration
+	1,  // 8: executor.v1.FunctionStatusResponse.state:type_name -> executor.v1.FunctionRegistrationState
+	14, // 9: executor.v1.InvokeFunctionRequest.registration:type_name -> executor.v1.FunctionRegistration
+	14, // 10: executor.v1.InvokeFunctionResponse.registration:type_name -> executor.v1.FunctionRegistration
+	25, // 11: executor.v1.InvokeFunctionResponse.outputs:type_name -> executor.v1.InvokeFunctionResponse.OutputsEntry
+	14, // 12: executor.v1.UnregisterFunctionRequest.registration:type_name -> executor.v1.FunctionRegistration
+	14, // 13: executor.v1.UnregisterFunctionResponse.registration:type_name -> executor.v1.FunctionRegistration
+	2,  // 14: executor.v1.Runtime.Execute:input_type -> executor.v1.ExecuteRequest
+	4,  // 15: executor.v1.Runtime.Status:input_type -> executor.v1.StatusRequest
+	6,  // 16: executor.v1.Runtime.List:input_type -> executor.v1.ListRequest
+	8,  // 17: executor.v1.Runtime.Cancel:input_type -> executor.v1.CancelRequest
+	10, // 18: executor.v1.Runtime.Forget:input_type -> executor.v1.ForgetRequest
+	12, // 19: executor.v1.Runtime.Health:input_type -> executor.v1.HealthRequest
+	15, // 20: executor.v1.FunctionRuntime.RegisterFunction:input_type -> executor.v1.RegisterFunctionRequest
+	17, // 21: executor.v1.FunctionRuntime.FunctionStatus:input_type -> executor.v1.FunctionStatusRequest
+	19, // 22: executor.v1.FunctionRuntime.InvokeFunction:input_type -> executor.v1.InvokeFunctionRequest
+	21, // 23: executor.v1.FunctionRuntime.UnregisterFunction:input_type -> executor.v1.UnregisterFunctionRequest
+	3,  // 24: executor.v1.Runtime.Execute:output_type -> executor.v1.ExecuteResponse
+	5,  // 25: executor.v1.Runtime.Status:output_type -> executor.v1.StatusResponse
+	7,  // 26: executor.v1.Runtime.List:output_type -> executor.v1.ListResponse
+	9,  // 27: executor.v1.Runtime.Cancel:output_type -> executor.v1.CancelResponse
+	11, // 28: executor.v1.Runtime.Forget:output_type -> executor.v1.ForgetResponse
+	13, // 29: executor.v1.Runtime.Health:output_type -> executor.v1.HealthResponse
+	16, // 30: executor.v1.FunctionRuntime.RegisterFunction:output_type -> executor.v1.RegisterFunctionResponse
+	18, // 31: executor.v1.FunctionRuntime.FunctionStatus:output_type -> executor.v1.FunctionStatusResponse
+	20, // 32: executor.v1.FunctionRuntime.InvokeFunction:output_type -> executor.v1.InvokeFunctionResponse
+	22, // 33: executor.v1.FunctionRuntime.UnregisterFunction:output_type -> executor.v1.UnregisterFunctionResponse
+	24, // [24:34] is the sub-list for method output_type
+	14, // [14:24] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_api_runtime_v1_runtime_proto_init() }
@@ -790,10 +1510,10 @@ func file_api_runtime_v1_runtime_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_runtime_v1_runtime_proto_rawDesc), len(file_api_runtime_v1_runtime_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   13,
+			NumEnums:      2,
+			NumMessages:   24,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_api_runtime_v1_runtime_proto_goTypes,
 		DependencyIndexes: file_api_runtime_v1_runtime_proto_depIdxs,
