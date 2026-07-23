@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
@@ -133,7 +134,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	now := time.Now()
 	var candidates []corev1.Pod
 	for _, pod := range pods.Items {
-		if r.isRuntimePodAvailable(&pod, now, usageByPod[pod.Name]) {
+		if r.isRuntimePodAvailable(&pod, now, runsUsage(usageByPod[pod.Name])) {
 			candidates = append(candidates, pod)
 		}
 	}
@@ -247,23 +248,43 @@ func (r *RunReconciler) isRuntimePodAvailable(pod *corev1.Pod, now time.Time, us
 	return usage < capacity
 }
 
-func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) (map[string]int32, error) {
+func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) (map[string]corev1.ResourceList, error) {
 	var runs v1alpha1.RunList
 	if err := r.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
 		return nil, err
 	}
 
-	usage := make(map[string]int32)
+	usage := make(map[string]corev1.ResourceList)
 	for _, run := range runs.Items {
 		if run.Status.AssignedPod == "" {
 			continue
 		}
 		switch run.Status.Phase {
 		case v1alpha1.RunScheduled, v1alpha1.RunRunning, v1alpha1.RunReady:
-			usage[run.Status.AssignedPod]++
+			resources := usage[run.Status.AssignedPod]
+			if resources == nil {
+				resources = corev1.ResourceList{}
+				usage[run.Status.AssignedPod] = resources
+			}
+			resourceName := corev1.ResourceName(v1alpha1.RuntimeResourceRuns)
+			quantity := resources[resourceName]
+			quantity.Add(*resource.NewQuantity(1, resource.DecimalSI))
+			resources[resourceName] = quantity
 		}
 	}
 	return usage, nil
+}
+
+func runsUsage(resources corev1.ResourceList) int32 {
+	quantity := resources[corev1.ResourceName(v1alpha1.RuntimeResourceRuns)]
+	value := quantity.Value()
+	if value <= 0 {
+		return 0
+	}
+	if value > int64(^uint32(0)>>1) {
+		return int32(^uint32(0) >> 1)
+	}
+	return int32(value)
 }
 
 func pendingRetryDelay(run *v1alpha1.Run) time.Duration {

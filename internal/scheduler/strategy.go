@@ -13,5 +13,5 @@ type Strategy interface {
 
 	// Select returns the most suitable pod for the run.
 	// Returns nil and an error if no pod can be selected.
-	Select(candidates []corev1.Pod, usageByPod map[string]int32, run *v1alpha1.Run) (*corev1.Pod, error)
+	Select(candidates []corev1.Pod, usageByPod map[string]corev1.ResourceList, run *v1alpha1.Run) (*corev1.Pod, error)
 }

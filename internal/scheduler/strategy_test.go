@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
@@ -14,7 +15,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 	tests := []struct {
 		name    string
 		pods    []corev1.Pod
-		usage   map[string]int32
+		usage   map[string]corev1.ResourceList
 		run     *v1alpha1.Run
 		wantPod string
 		wantErr bool
@@ -39,7 +40,9 @@ func TestLeastLoaded_Select(t *testing.T) {
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
 			},
-			usage:   map[string]int32{"pod-a": 2},
+			usage: map[string]corev1.ResourceList{
+				"pod-a": {corev1.ResourceName(v1alpha1.RuntimeResourceRuns): *resource.NewQuantity(2, resource.DecimalSI)},
+			},
 			run:     &v1alpha1.Run{},
 			wantPod: "pod-b",
 		},
@@ -49,7 +52,24 @@ func TestLeastLoaded_Select(t *testing.T) {
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
 			},
-			usage:   map[string]int32{"pod-a": 1},
+			usage: map[string]corev1.ResourceList{
+				"pod-a": {corev1.ResourceName(v1alpha1.RuntimeResourceRuns): *resource.NewQuantity(1, resource.DecimalSI)},
+			},
+			run:     &v1alpha1.Run{},
+			wantPod: "pod-b",
+		},
+		{
+			name: "selects by runs while preserving other resource usage",
+			pods: []corev1.Pod{
+				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
+			},
+			usage: map[string]corev1.ResourceList{
+				"pod-a": {
+					corev1.ResourceName(v1alpha1.RuntimeResourceRuns): *resource.NewQuantity(1, resource.DecimalSI),
+					corev1.ResourceName("example.com/accelerator"):    *resource.NewQuantity(8, resource.DecimalSI),
+				},
+			},
 			run:     &v1alpha1.Run{},
 			wantPod: "pod-b",
 		},

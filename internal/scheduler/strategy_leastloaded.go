@@ -15,7 +15,7 @@ type LeastLoaded struct{}
 
 func (s *LeastLoaded) Name() string { return "least-loaded" }
 
-func (s *LeastLoaded) Select(candidates []corev1.Pod, usageByPod map[string]int32, run *v1alpha1.Run) (*corev1.Pod, error) {
+func (s *LeastLoaded) Select(candidates []corev1.Pod, usageByPod map[string]corev1.ResourceList, run *v1alpha1.Run) (*corev1.Pod, error) {
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no candidate pods")
 	}
@@ -33,7 +33,7 @@ func (s *LeastLoaded) Select(candidates []corev1.Pod, usageByPod map[string]int3
 			continue
 		}
 
-		count := usageByPod[pod.Name]
+		count := runsUsage(usageByPod[pod.Name])
 		capacity := runtimepod.RunsCapacity(pod, v1alpha1.RuntimeDefaultRunsCapacity)
 		pods = append(pods, podLoad{pod: pod, load: int(count), available: capacity - count})
 	}
