@@ -9,9 +9,6 @@ a scheduler queue and a single-Run scheduling cycle. Each cycle evaluates one
 Run against a coherent snapshot of Runtime Pods, active assignments, and
 scheduler-local assumed assignments.
 
-It does not add a public API in this design slice. Any `Run.spec.priority`
-requires a separate reviewed API design.
-
 ## Problem
 
 The current scheduler processes one Pending Run at a time. It lists Runtime
@@ -23,14 +20,11 @@ That model has two limits:
 - filters, scoring rules, retry behavior, and capacity accounting are growing
   inside one reconciler, making future features such as priority difficult to
   add or reason about;
+- between candidate selection and the `Scheduled` status patch, there is no
+  scheduler-local representation of the tentative assignment;
 - required Run affinity currently sees only assigned active Runs. A set of
   Pending Runs that need to co-locate cannot use each other's intended
   placement, so an affinity cohort cannot reliably bootstrap.
-
-Scheduling all Pending Runs cluster-wide is not the answer. It creates
-unbounded planning work, head-of-line blocking, and poor latency for newly
-submitted Runs. The target is a repeatable single-Run scheduling cycle, like
-Kubernetes' scheduler.
 
 ## Goals
 
@@ -59,11 +53,16 @@ A deterministic base ordering uses creation timestamp and UID; a future
 reviewed priority policy can replace that queue ordering while retaining aging
 or fairness rules.
 
-Changes are inputs to this queue, not placement decisions. Creating `run-a`
-enqueues only `run-a`. Runtime Pod readiness/capacity changes and active Run
-releases reactivate the affected Pending Runs through a Runtime index; they do
-not choose a Pod themselves. Each reactivated Run is still scheduled in its own
-cycle.
+Queue entries are created or reactivated by these events:
+
+- a Run becomes eligible to schedule;
+- a Runtime Pod becomes ready, unavailable, or changes capacity; or
+- an assigned Run leaves the active set and releases capacity.
+
+For Runtime Pod and capacity events, the scheduler finds Pending Runs for that
+Runtime through an index and adds their Run keys to the queue. The event handler
+does not select a Runtime Pod or patch a Run; that happens only after the queue
+worker dequeues an individual Run key.
 
 ## Planning Cycle
 

@@ -10,8 +10,6 @@ title: "Scheduler Framework"
 queue 与单 Run scheduling cycle。每个 cycle 针对一个 Run，读取 Runtime Pods、active assignments 和
 scheduler-local assumed assignments 的一致快照。
 
-本文档不增加 public API。任何 `Run.spec.priority` 都需要单独的、经过 review 的 API design。
-
 ## 问题
 
 当前 scheduler 每次只处理一条 Pending Run：列出 Runtime Pods 和 Runs，过滤 candidate，选择一个 Pod，
@@ -21,11 +19,10 @@ scheduler-local assumed assignments 的一致快照。
 
 - filter、scoring、retry 和 capacity accounting 不断堆积在同一个 reconciler 中，未来很难加入或推理
   priority 等 feature；
+- candidate selection 与 `Scheduled` status patch 之间，没有 scheduler-local 的 tentative assignment
+  representation；
 - required Run affinity 目前只看到已 assignment 的 active Runs。需要 co-locate 的一组 Pending Runs
   无法看到彼此的预期 placement，因此 affinity cohort 无法可靠 bootstrap。
-
-每次对整个集群的所有 Pending Runs 做调度不是答案。这会带来无界 planning work、head-of-line blocking，
-并拉高新提交 Run 的延迟。目标是类似 Kubernetes scheduler 的、可重复的单 Run scheduling cycle。
 
 ## 目标
 
@@ -49,9 +46,15 @@ scheduler queue 为每条 eligible Pending Run 保存一个 `(namespace, name)` 
 该 Run 执行一次 scheduling cycle。确定性的基础排序使用 creation timestamp 和 UID；未来经过 review 的
 priority policy 可以替换 queue ordering，但必须保留 aging 或 fairness rules。
 
-变化只是 queue 的输入，而不是 placement decision。创建 `run-a` 只会 enqueue `run-a`。Runtime Pod 的
-readiness/capacity 变化和 active Run 释放 capacity 时，通过 Runtime index 重新激活受影响的 Pending Runs；
-它们不会自行选择 Pod。每条被重新激活的 Run 仍在自己的 cycle 中调度。
+以下 events 会创建或重新激活 queue entries：
+
+- 一条 Run 变为 eligible to schedule；
+- 一条 Runtime Pod 变为 ready、unavailable，或其 capacity 发生变化；或
+- 一条 assigned Run 离开 active set 并释放 capacity。
+
+对于 Runtime Pod 和 capacity events，scheduler 通过 index 找到引用该 Runtime 的 Pending Runs，并将它们的
+Run keys 加入 queue。event handler 不会选择 Runtime Pod 或 patch Run；只有 queue worker dequeue 单条 Run key
+后才会执行这些操作。
 
 ## Planning Cycle
 
