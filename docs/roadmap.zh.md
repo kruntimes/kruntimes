@@ -72,16 +72,16 @@ controller wiring 累积不必要的冲突。
 - [x] Benchmark correctness：诊断为什么 `latency.complete` 明显高于手动创建单个
   Run 的体感耗时，并明确 benchmark 测的是端到端 latency、调度 latency、
   watch/update latency，还是 runtime execution time。
-- [ ] Scheduler framework：将独立的 per-Run placement 替换为按
-  `(namespace, runtime)` queue key 工作的 leader-owned、有界 planner。在改变 scheduler behavior 前，
-  review [Scheduler Framework](design/scheduler-framework.md) architecture。
+- [ ] Scheduler framework：将独立的 per-Run placement 替换为 scheduler queue 和 Kubernetes-style 的
+  单 Run scheduling cycles。在改变 scheduler behavior 前，review
+  [Scheduler Framework](design/scheduler-framework.md) architecture。
   初始实现 TODO：
-  - [ ] review queue ownership、有界 planning cycle、snapshot、PreFilter、Filter、Score、Reserve、Bind、
-    status 和 retry semantics；
+  - [ ] review Run queue ownership、snapshot、PreFilter、Filter、Score、Reserve/Assume、Bind、status 和
+    retry semantics；
   - [ ] 在 queue/planner interfaces 后重构 scheduler internals，同时保留当前 observable behavior 和
     metrics；
-  - [ ] 增加 deterministic planning、capacity reservation、bind-conflict 和 restart-recovery coverage；
-  - [ ] 实现 same-cycle planned affinity targets 和 Run 间亲和性 bootstrap，并增加 integration 和 E2E
+  - [ ] 增加 deterministic selection、assumed-capacity、bind-conflict 和 restart-recovery coverage；
+  - [ ] 实现 assumed affinity targets 和 Run 间亲和性 bootstrap，并增加 integration 和 E2E
     coverage；
   - [ ] 在增加 `Run.spec.priority` 或等价 API 前，通过独立 API design 定义 priority、fairness 和
     starvation policy；

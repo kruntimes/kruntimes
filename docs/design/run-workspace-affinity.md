@@ -136,10 +136,10 @@ Every term matches labels on namespace-local `Run` objects. The API itself does
 not define the scheduler's bootstrap or reservation behavior. The current
 single-Run implementation uses assigned `Scheduled`, `Running`, and `Ready`
 Runs as active targets, but that is insufficient for a cohort whose first Run
-has required affinity to other Runs. The proposed [Scheduler Framework and
-Scheduler Framework](scheduler-framework/) design defines actual targets,
-same-cycle planned targets, and Inter-Run Affinity bootstrap. Those execution
-semantics require review before replacing the current placement implementation.
+has required affinity to other Runs. The proposed [Scheduler Framework](scheduler-framework/)
+design defines actual and assumed targets, and Inter-Run Affinity bootstrap.
+Those execution semantics require review before replacing the current placement
+implementation.
 
 Example: require a later build step to run on the Runtime Pod selected for a
 previous step.
@@ -199,10 +199,9 @@ RBAC surface and needs its own design review.
 
 The API skeleton only declares and validates fields. Scheduling execution
 semantics are defined by the proposed [Scheduler Framework](scheduler-framework/)
-document. In particular, the implementation
-must use a bounded planner with separate PreFilter, Filter, Score, Reserve, and
-Bind stages rather than independently deciding placement in each Run
-reconcile.
+document. In particular, the implementation must use a single-Run scheduler
+queue with separate PreFilter, Filter, Score, Reserve/Assume, and Bind stages
+rather than independently deciding placement in each Run reconcile.
 
 The scheduler remains Workflow-agnostic. It neither creates workspaces nor
 interprets job or step labels. It evaluates generic Run labels and the declared

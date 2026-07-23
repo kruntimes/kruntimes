@@ -4,9 +4,10 @@ Status: **Proposal; review required before implementation or affinity API
 semantics change**
 
 This document defines the target scheduling architecture for kruntimes. It
-replaces the current model of independently reconciling each Pending Run with a
-leader-owned scheduler that plans a bounded set of Runs against one coherent
-snapshot of Runtime Pods, capacity, and existing assignments.
+replaces the current model of independently reconciling each Pending Run with
+a scheduler queue and a single-Run scheduling cycle. Each cycle evaluates one
+Run against a coherent snapshot of Runtime Pods, active assignments, and
+scheduler-local assumed assignments.
 
 It does not add a public API in this design slice. Any `Run.spec.priority`
 requires a separate reviewed API design.
@@ -28,16 +29,17 @@ That model has two limits:
 
 Scheduling all Pending Runs cluster-wide is not the answer. It creates
 unbounded planning work, head-of-line blocking, and poor latency for newly
-submitted Runs. The target is a bounded, repeatable planning cycle scoped to
-one Runtime queue key.
+submitted Runs. The target is a repeatable single-Run scheduling cycle, like
+Kubernetes' scheduler.
 
 ## Goals
 
 - Keep no-capacity and temporarily unsatisfied Runs in `Pending`.
 - Make filters, scoring, reservations, binding, and retry/wakeup behavior
   independently testable.
-- Let assignments made earlier in a planning cycle influence later assignments
-  without exposing temporary state in the Kubernetes API.
+- Make a selected assignment visible to later scheduling cycles before its
+  status patch completes, without exposing temporary state in the Kubernetes
+  API.
 - Preserve the scheduler/runtimed boundary: scheduling decides a Runtime Pod;
   runtimed owns execution and local preparation.
 - Provide an extension point for priority and fairness.
@@ -51,32 +53,24 @@ one Runtime queue key.
 
 ## Scheduling Scope and Queue
 
-The scheduler owns a logical queue for each `(namespace, runtime)` key. A Run
-enters that queue when it is Pending, references that Runtime, and is not
-waiting for retry backoff. Runtime Pod readiness/capacity changes and active
-Run releases enqueue the affected key again.
-
-The scheduler processes a bounded set of eligible Runs from one key in each
-planning cycle. The set size and planning time budget are implementation
-configuration, not Run API fields.
-When a budget is reached, remaining eligible Runs stay queued for the next
-cycle. A deterministic base ordering uses creation timestamp and UID; a future
+The scheduler queue holds one `(namespace, name)` Run key per Pending Run that
+is eligible to schedule. A dequeue performs one scheduling cycle for that Run.
+A deterministic base ordering uses creation timestamp and UID; a future
 reviewed priority policy can replace that queue ordering while retaining aging
 or fairness rules.
 
-Changes are inputs to a keyed work queue, not placement decisions. For example,
-if `run-a` and `run-b` are Pending for the same Runtime, both events enqueue
-the same `(namespace, runtime)` key; neither event independently assigns its
-Run. When the scheduler dequeues that key, it takes one snapshot of both Runs
-and the Runtime Pods, then plans their independent assignments against the same
-reservation state.
+Changes are inputs to this queue, not placement decisions. Creating `run-a`
+enqueues only `run-a`. Runtime Pod readiness/capacity changes and active Run
+releases reactivate the affected Pending Runs through a Runtime index; they do
+not choose a Pod themselves. Each reactivated Run is still scheduled in its own
+cycle.
 
 ## Planning Cycle
 
-For one queue key, the scheduler performs:
+For one dequeued Run, the scheduler performs:
 
-1. **Snapshot**: list the eligible Pending Runs, ready Runtime Pods, and active
-   assignments for the namespace/runtime key.
+1. **Snapshot**: read the Run, ready Runtime Pods, active assignments, and
+   assumed assignments for that Run's namespace/runtime key.
 2. **PreFilter**: validate scheduler-visible Run inputs and compile selector or
    resource state once per Run. Invalid data is a permanent configuration
    failure; defensive handling records a terminal `Failed` status with an
@@ -86,19 +80,19 @@ For one queue key, the scheduler performs:
    required affinity/anti-affinity term.
 4. **Score**: score eligible Pods using preferred affinity, available capacity,
    and least loaded placement. Tie breaking is stable by Pod name.
-5. **Reserve**: record the chosen Pod and consume capacity in the in-memory
-   planning state. Subsequent Runs in the same planning cycle observe this tentative
+5. **Reserve and Assume**: record the chosen Pod and consume capacity in the
+   scheduler-local assumed cache. Subsequent Run cycles observe this tentative
    assignment.
-6. **Bind**: patch each reserved Run to `Scheduled` with its Pod name and UID.
-   A resource-version conflict or stale Pod observation discards that Run's
+6. **Bind**: patch the Run to `Scheduled` with its Pod name and UID. A
+   resource-version conflict or stale Pod observation discards that Run's
    reservation and requeues the key; it is not a terminal failure.
 
-Each reservation is independent: the scheduler attempts to bind every reserved
-Run separately, and a failure for one Run does not roll back other successfully
-bound Runs. As in Kubernetes, the reservation is an assumed in-memory
-placement: it lets later scheduling decisions observe capacity consumption
-before the status patch completes. Reservations are never persisted as
-annotations, capacity counters, or user-visible status fields.
+Each reservation belongs to one Run. As in Kubernetes, the assumed placement
+lets later scheduling cycles observe capacity consumption and an affinity target
+before the status patch completes. Bind failure releases that reservation and
+removes the assumed assignment; a successful patch is later observed as an
+actual assignment. Reservations are never persisted as annotations, capacity
+counters, or user-visible status fields.
 After a restart, the next snapshot reconstructs capacity from assigned active
 Runs, so no separate reservation recovery protocol is required.
 
@@ -107,33 +101,35 @@ Runs, so no separate reservation recovery protocol is required.
 High availability is separate from queue and affinity semantics. The initial
 implementation requires one active scheduler planner for the cluster. The Helm
 deployment already enables controller-manager leader election, so standby
-replicas do not consume queue keys or write Run assignments.
+replicas do not consume Run keys or write Run assignments.
 
-On leader failover, the new active planner starts with empty in-memory queues
-and reservations. It rebuilds the relevant queue from Pending Runs and rebuilds
-capacity from assigned active Runs in its first snapshot. A reservation whose
-status patch did not complete therefore disappears; a successfully patched Run
-is observed as an actual assignment. Future scheduler sharding needs a separate
-ownership design; it is not implied by this proposal.
+On leader failover, the new active planner starts with an empty assumed cache.
+It rebuilds its queue from Pending Runs and reconstructs capacity from assigned
+active Runs. An assumed assignment whose status patch did not complete therefore
+disappears; a successfully patched Run is observed as an actual assignment.
+Future scheduler sharding needs a separate ownership design; it is not implied
+by this proposal.
 
 ## Affinity Semantics
 
 Required and preferred affinity terms continue to use the existing
-namespace-local Run labels and `kruntimes.io/runtime-pod` topology. During one
-planning cycle, a term may match either:
+namespace-local Run labels and `kruntimes.io/runtime-pod` topology. During each
+scheduling cycle, a term may match either:
 
 - an **actual target**, an active Run already assigned to a Runtime Pod; or
-- a **planned target**, an earlier Run reservation in the same planning cycle.
+- an **assumed target**, a Run with a scheduler-local reservation whose status
+  patch has not completed.
 
-This lets later members of a cohort co-locate with an earlier tentative
-assignment while still respecting capacity.
+This lets a later Run cycle co-locate with an earlier tentative assignment while
+still respecting capacity.
 
 ### Inter-Run Affinity
 
-For a required `runAffinity` term with no actual or planned matching target,
+For a required `runAffinity` term with no actual or assumed matching target,
 the current Run may seed the cohort only when its own labels match that term's
 selector. The scheduler then chooses any Pod that satisfies its other hard
-constraints and reserves it. Later matching Runs can use that planned target.
+constraints and records an assumed assignment. Later matching Runs can use that
+assumed target.
 
 This follows Kubernetes' bootstrap exception for a first matching workload.
 In kruntimes it is named **Inter-Run Affinity**: the first member may be
@@ -144,7 +140,7 @@ the meaning of a required constraint.
 This rule does **not** make unrelated label dependencies satisfiable. If Run A
 requires labels only Run B has and Run B requires labels only Run A has, neither
 Run can seed the placement. They remain `Pending` with an affinity waiting
-reason until a matching active or planned target exists.
+reason until a matching actual or assumed target exists.
 
 ## Status and Retry Semantics
 
@@ -153,7 +149,7 @@ reason until a matching active or planned target exists.
 | No ready Pod, capacity, or currently satisfiable required affinity | `Pending` | Record a bounded waiting reason and reactivate on relevant changes or backoff expiry. |
 | Invalid scheduler-visible constraint | `Failed` | Record an actionable terminal reason; do not hot-loop. |
 | Preferred affinity cannot be met | `Scheduled` when another feasible Pod exists | Continue with normal scoring; preference is not a hard constraint. |
-| Bind conflict or stale snapshot | `Pending` | Discard the reservation and requeue the key. |
+| Bind conflict or stale snapshot | `Pending` | Release the assumed assignment and requeue the Run. |
 | Runtime Pod becomes unhealthy after bind | Existing retry/reassignment flow | Scheduler does not invent a separate retry engine. |
 
 The scheduler must use the shared terminal-status helper for any terminal
@@ -170,15 +166,14 @@ The framework has explicit internal extension points:
   reconciler.
 - **Score**: preferred affinity and least-loaded scoring are independent
   weighted inputs with stable tie breaking.
-- **Reserve/Bind**: a reservation makes a selected Runtime Pod and consumed
-  capacity visible to later decisions in the same planning cycle before each
-  Run is independently bound.
+- **Reserve/Assume/Bind**: an assumed assignment makes a selected Runtime Pod
+  and consumed capacity visible to later Run cycles before the Run is bound.
 
 ## Observability
 
 The implementation should retain scheduling latency and result metrics, then
-add bounded labels/counters for queue activation, planning set size, planning duration,
-filter rejection reason, reservation conflict, and unschedulable wakeup. Run
+add bounded labels/counters for queue activation, scheduling-cycle duration,
+filter rejection reason, assumed-assignment conflict, and unschedulable wakeup. Run
 names, selectors, and Pod names must not be metric labels.
 
 ## Implementation Sequence
@@ -187,9 +182,10 @@ names, selectors, and Pod names must not be metric labels.
    document authoritative for scheduling execution semantics.
 2. Refactor scheduler internals behind a queue/planner interface while
    preserving current one-Run observable behavior and existing metrics.
-3. Implement snapshot, PreFilter, Filter, Score, Reserve, and Bind with unit
-   tests for deterministic planning, capacity accounting, and bind conflicts.
-4. Implement planned-target matching and Inter-Run Affinity bootstrap with
+3. Implement snapshot, PreFilter, Filter, Score, Reserve/Assume, and Bind with
+   unit tests for deterministic selection, assumed capacity accounting, and bind
+   conflicts.
+4. Implement assumed-target matching and Inter-Run Affinity bootstrap with
    integration and E2E coverage.
 5. Add priority only after a separate API and fairness design review.
 
