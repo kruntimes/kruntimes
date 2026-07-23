@@ -154,7 +154,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	selected, err := r.Strategy.Select(ctx, r.Client, candidates, &run)
+	selected, err := r.Strategy.Select(candidates, usageByPod, &run)
 	if err != nil {
 		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
 
