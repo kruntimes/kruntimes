@@ -1,10 +1,7 @@
 package scheduler
 
 import (
-	"context"
-
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -16,5 +13,5 @@ type Strategy interface {
 
 	// Select returns the most suitable pod for the run.
 	// Returns nil and an error if no pod can be selected.
-	Select(ctx context.Context, c client.Client, candidates []corev1.Pod, run *v1alpha1.Run) (*corev1.Pod, error)
+	Select(candidates []corev1.Pod, usageByPod map[string]int32, run *v1alpha1.Run) (*corev1.Pod, error)
 }
