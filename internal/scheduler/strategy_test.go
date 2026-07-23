@@ -6,22 +6,16 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
 func TestLeastLoaded_Select(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
-
 	tests := []struct {
 		name    string
 		pods    []corev1.Pod
-		tasks   []v1alpha1.Run
+		runs    []v1alpha1.Run
 		run     *v1alpha1.Run
 		wantPod string
 		wantErr bool
@@ -46,7 +40,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
 			},
-			tasks: []v1alpha1.Run{
+			runs: []v1alpha1.Run{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "run-1", Namespace: "default"},
 					Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunRunning, AssignedPod: "pod-a"},
@@ -65,7 +59,7 @@ func TestLeastLoaded_Select(t *testing.T) {
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
 				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
 			},
-			tasks: []v1alpha1.Run{
+			runs: []v1alpha1.Run{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "ready-function", Namespace: "default"},
 					Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunReady, AssignedPod: "pod-a"},
@@ -119,18 +113,9 @@ func TestLeastLoaded_Select(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			objs := []runtime.Object{}
-			for i := range tt.pods {
-				objs = append(objs, &tt.pods[i])
-			}
-			for i := range tt.tasks {
-				objs = append(objs, &tt.tasks[i])
-			}
-
-			client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 			s := &LeastLoaded{}
 
-			pod, err := s.Select(context.Background(), client, tt.pods, tt.run)
+			pod, err := s.Select(context.Background(), tt.pods, tt.run, tt.runs)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -148,19 +133,14 @@ func TestLeastLoaded_Select(t *testing.T) {
 }
 
 func TestLeastLoaded_DeterministicTiebreak(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
-
 	pods := []corev1.Pod{
 		{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
 		{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
 	}
 
-	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects().Build()
 	s := &LeastLoaded{}
 
-	pod, err := s.Select(context.Background(), client, pods, &v1alpha1.Run{})
+	pod, err := s.Select(context.Background(), pods, &v1alpha1.Run{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -125,10 +125,11 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, fmt.Errorf("list runtime pods: %w", err)
 	}
 
-	usageByPod, err := r.assignedRunUsage(ctx, req.Namespace)
+	runs, err := r.assignedRuns(ctx, req.Namespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("list assigned runs: %w", err)
 	}
+	usageByPod := assignedRunUsage(runs)
 
 	now := time.Now()
 	var candidates []corev1.Pod
@@ -137,12 +138,26 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			candidates = append(candidates, pod)
 		}
 	}
+	availableCandidates := len(candidates)
+	candidates, err = filterCandidatesByRequiredRunAffinity(&run, candidates, runs)
+	if err != nil {
+		run.Status.Phase = v1alpha1.RunFailed
+		run.Status.Message = fmt.Sprintf("run affinity evaluation failed: %v", err)
+		if err := r.Status().Update(ctx, &run); err != nil {
+			return ctrl.Result{}, fmt.Errorf("update run status after affinity evaluation: %w", err)
+		}
+		runsScheduled.WithLabelValues(run.Spec.Runtime, "affinity_error").Inc()
+		return ctrl.Result{}, nil
+	}
 
 	if len(candidates) == 0 {
 		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
 		log.Info("No available runtime pods", "runtime", run.Spec.Runtime)
 
 		message := fmt.Sprintf("waiting for available runtime pods for runtime %q", run.Spec.Runtime)
+		if availableCandidates > 0 {
+			message = fmt.Sprintf("waiting for runtime pods satisfying affinity constraints for runtime %q", run.Spec.Runtime)
+		}
 		if run.Status.Phase != v1alpha1.RunPending || run.Status.Message != message {
 			run.Status.Phase = v1alpha1.RunPending
 			run.Status.Message = message
@@ -154,7 +169,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	selected, err := r.Strategy.Select(ctx, r.Client, candidates, &run)
+	selected, err := r.Strategy.Select(ctx, candidates, &run, runs)
 	if err != nil {
 		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
 
@@ -247,14 +262,17 @@ func (r *RunReconciler) isRuntimePodAvailable(pod *corev1.Pod, now time.Time, us
 	return usage < capacity
 }
 
-func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) (map[string]int32, error) {
+func (r *RunReconciler) assignedRuns(ctx context.Context, namespace string) ([]v1alpha1.Run, error) {
 	var runs v1alpha1.RunList
 	if err := r.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
 		return nil, err
 	}
+	return runs.Items, nil
+}
 
+func assignedRunUsage(runs []v1alpha1.Run) map[string]int32 {
 	usage := make(map[string]int32)
-	for _, run := range runs.Items {
+	for _, run := range runs {
 		if run.Status.AssignedPod == "" {
 			continue
 		}
@@ -263,7 +281,7 @@ func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) 
 			usage[run.Status.AssignedPod]++
 		}
 	}
-	return usage, nil
+	return usage
 }
 
 func pendingRetryDelay(run *v1alpha1.Run) time.Duration {
