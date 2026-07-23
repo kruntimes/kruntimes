@@ -281,6 +281,299 @@ krt logs custom-runtime-demo -n kruntimes-demo
 你需要的执行语义时，再选择这种方式。协议约定见
 [自定义 Runtime 开发](custom-runtime.md)。
 
+## Demo 4：Workflow 复用和数据共享
+
+这个 demo 记录 v0.x 的目标 workflow 形态以及当前 API skeleton。当前 release 已经包含
+`WorkflowRun`、可复用 `Workflow` 和 `Action` definition CRD，但 workflow 执行、`uses`
+解析、Action 展开、artifact fan-in 和 workspace wiring 仍然是计划中的工作。
+
+创建可复用 definition 和一个 WorkflowRun execution instance：
+
+```bash
+kubectl apply -n kruntimes-demo -f - <<'EOF'
+apiVersion: kruntimes.io/v1alpha1
+kind: Action
+metadata:
+  name: setup-python-tools
+spec:
+  inputs:
+    version:
+      type: string
+      default: "3.12"
+  steps:
+    - name: setup
+      run: |
+        echo "python-version=${{ inputs.version }}" >> "$KRUNTIME_OUTPUTS"
+        echo "installing toolchain"
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: Workflow
+metadata:
+  name: build-and-test
+spec:
+  inputs:
+    image:
+      type: string
+      required: true
+  jobs:
+    build:
+      runs-on: bash
+      steps:
+        - name: package
+          run: |
+            echo "building ${{ inputs.image }}"
+            echo package=ok >> "$KRUNTIME_OUTPUTS"
+    test:
+      runs-on: bash
+      needs:
+        - build
+      steps:
+        - name: verify
+          run: |
+            echo "tests passed"
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  name: release-demo
+spec:
+  uses: build-and-test
+  with:
+    image: agent:v0.1.0
+EOF
+```
+
+查看已经创建的 skeleton resources：
+
+```bash
+kubectl get actions,workflows,workflowruns -n kruntimes-demo
+kubectl get workflow build-and-test -n kruntimes-demo -o yaml
+kubectl get workflowrun release-demo -n kruntimes-demo -o yaml
+```
+
+在当前阶段，应该把 WorkflowRun 看作 API object，而不是一个已经可执行的 workflow。controller
+还不会创建 child Runs，也不会把 reusable definitions 解析成执行图。
+
+预期的 workflow data-sharing 模型应该是：
+
+- job 之间通过 ArtifactStore-backed artifacts 传递持久数据。
+- 同一个 job 内的 Runs 共享由 workflow controller 创建的 job-local `PersistentWorkspace`。
+- 常见场景下，Workflow API 不向用户暴露 workspace plumbing。
+- scheduler 和 runtimed 保持 workflow-agnostic，只实现通用的 Run affinity 和 workspace
+  primitives。
+
+未来 v0.x work 的目标 data-sharing 草图：
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: task-with-persistent-workspace
+spec:
+  runtime: bash
+  workspace:
+    name: ci-build-workspace
+    kind: PersistentWorkspace
+    apiGroup: kruntimes.io/v1alpha1
+  source:
+    inline: |
+      mkdir -p src
+      echo 'print("hello")' > src/app.py
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  name: ci-data-sharing-demo
+spec:
+  jobs:
+    build:
+      runs-on: bash
+      steps:
+        - name: checkout
+          run: |
+            mkdir -p src
+            echo 'print("hello")' > src/app.py
+        - name: test
+          run: |
+            test -f src/app.py
+            echo "tests=passed" >> "$KRUNTIME_OUTPUTS"
+        - name: package
+          run: |
+            mkdir -p "$KRUNTIME_ARTIFACTS_DIR"
+            tar -czf "$KRUNTIME_ARTIFACTS_DIR/dist.tgz" src
+    deploy:
+      runs-on: bash
+      needs:
+        - build
+      steps:
+        - name: verify-artifact
+          artifacts:
+            - from: jobs.build.artifacts.dist.tgz
+              path: ./dist.tgz
+          run: |
+            tar -tzf dist.tgz
+            echo "artifact verified"
+```
+
+在这个模型里，`checkout`、`test` 和 `package` 可以共享同一个 job-local workspace，不需要
+反复上传和下载中间文件。`deploy` job 只接收来自 `build` 的显式 `dist.tgz` artifact，因此
+跨 job 边界的数据仍然是持久、可审计的，并且不依赖 Runtime Pod placement。
+
+Reusable Workflow 和 Action expansion 的目标形态应该是：
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Action
+metadata:
+  name: setup-python-tools
+spec:
+  inputs:
+    version:
+      type: string
+      default: "3.12"
+  steps:
+    - name: setup
+      run: |
+        echo "python-version=${{ inputs.version }}" >> "$KRUNTIME_OUTPUTS"
+        echo "installing toolchain"
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: Workflow
+metadata:
+  name: build-and-test
+spec:
+  inputs:
+    image:
+      type: string
+      required: true
+  jobs:
+    build:
+      runs-on: bash
+      steps:
+        - name: setup
+          uses: setup-python-tools
+          with:
+            version: "3.13"
+        - name: package
+          run: |
+            echo "building ${{ inputs.image }}"
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  name: release-demo
+spec:
+  jobs:
+    release:
+      uses: build-and-test
+      with:
+        image: agent:v0.1.0
+```
+
+`WorkflowRun.spec.uses`、`Workflow.spec.jobs.<job>.uses` 和 `Action` CRD 已经属于 skeleton
+API。缺口是 namespace-local lookup、input binding、output propagation、step-level Action
+expansion 和 execution status。
+
+## Demo 5：LLM Agent Tool Execution
+
+这个 demo 是 v0.x 的目标场景，当前 release 尚不支持。在
+[Function Mode 和 Agent Sandboxes](design/function-mode.md) 中列出的产品 gap 完成之前，
+它应该保持 draft 状态。
+
+Agent 负责 LLM reasoning、model routing、prompts、memory 和 planning。kruntimes 负责
+低延迟 sandbox execution path。SDK 应向 agent 开发者暴露 sandbox 语义，而底层 Kubernetes
+生命周期对象仍然是 function-mode Run。
+
+目标 agent-side SDK flow：
+
+```python
+from kruntimes import SandboxClient
+from openai import OpenAI
+
+client = OpenAI()
+sandboxes = SandboxClient(namespace="kruntimes-demo")
+
+with sandboxes.create_sandbox(
+    name="kube-diagnose-agent",
+    runtime="python-agent-sandbox",
+    source_file="agent_tools.py",
+    idle_timeout_seconds=600,
+) as sandbox:
+    plan = client.responses.create(
+        model="gpt-4.1",
+        input="Diagnose pending Kubernetes pods and produce next actions.",
+    )
+
+    sandbox.files.write("cluster-snapshot.json", b'{"namespace":"default","pods":[]}')
+
+    result = sandbox.commands.run({
+        "tool": "diagnose-kubernetes",
+        "plan": plan.output_text,
+        "inputPath": "cluster-snapshot.json",
+    })
+
+    report = sandbox.files.read("report.md")
+    print(result.outputs["summary"])
+```
+
+SDK 向调用方呈现一个 sandbox handle，包含 `commands`、`files`、`logs`、`artifacts`、
+`info`、`disconnect`、`reattach` 和 `terminate` 等操作。调用方不需要知道哪个 Runtime
+Pod 拥有这个 sandbox，也不需要关心 gateway connection 如何建立。
+
+底层目标 Run 形态是：
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Runtime
+metadata:
+  name: python-agent-sandbox
+spec:
+  capacity:
+    resources:
+      runs: "1"
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: kube-diagnose-agent
+spec:
+  runtime: python-agent-sandbox
+  source:
+    inline: |
+      def invoke(request):
+          return {
+              "outputs": {
+                  "summary": "diagnosis complete"
+              },
+              "artifactRefs": [
+                  {
+                      "name": "report.md",
+                      "uri": "s3://kruntimes-artifacts/runs/kube-diagnose-agent/report.md"
+                  }
+              ],
+          }
+  mode:
+    function:
+      handler: agent_tools.invoke
+      idleTimeoutSeconds: 600
+```
+
+Function-mode Runs 仍然遵守 Runtime capacity。当 capacity 允许时，多个 function-mode
+Runs 可以共享同一个 Runtime Pod。对于 AgentSandbox-style 使用，推荐的部署形态是每个
+Runtime Pod 只承载一个 Run，因此当 `runs` 大于 `1` 时，SDK 应该 warning，或帮助创建
+dedicated Runtime。
+
+支持这个 demo 前必须补齐的 gap：
+
+- `Run.spec.mode.function.handler` 的 function-mode registration 和 readiness handling。
+- 为每个 Runtime 创建 Runtime gateway Service。
+- runtimed ownership cache 和 invoke routing。
+- Runtime Server register、invoke、unregister 和 status APIs。
+- Python 和 Go sandbox-facing SDKs。
+- 不需要为每个操作走 Kubernetes reconciliation 的 workspace/file/log/artifact APIs。
+- E2E 覆盖 ready、local/proxied invoke、repeated invocation、disconnect、reattach、
+  terminate、idle timeout、cleanup 和 Runtime Pod restart recovery。
+
 ## 清理
 
 ```bash
