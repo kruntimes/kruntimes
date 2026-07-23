@@ -1,4 +1,4 @@
-# Scheduler Framework and Inter-Run Affinity
+# Scheduler Framework
 
 Status: **Proposal; review required before implementation or affinity API
 semantics change**
@@ -56,17 +56,20 @@ enters that queue when it is Pending, references that Runtime, and is not
 waiting for retry backoff. Runtime Pod readiness/capacity changes and active
 Run releases enqueue the affected key again.
 
-The scheduler leader processes a bounded set of eligible Runs from one key in
-each planning cycle. The set size and planning time budget are implementation
+The scheduler processes a bounded set of eligible Runs from one key in each
+planning cycle. The set size and planning time budget are implementation
 configuration, not Run API fields.
 When a budget is reached, remaining eligible Runs stay queued for the next
 cycle. A deterministic base ordering uses creation timestamp and UID; a future
 reviewed priority policy can replace that queue ordering while retaining aging
 or fairness rules.
 
-Controller watches only add or reactivate queue keys. They do not independently
-make placement decisions for each Run. The existing Deployment leader election
-ensures only one active planner mutates scheduling state at a time.
+Changes are inputs to a keyed work queue, not placement decisions. For example,
+if `run-a` and `run-b` are Pending for the same Runtime, both events enqueue
+the same `(namespace, runtime)` key; neither event independently assigns its
+Run. When the scheduler dequeues that key, it takes one snapshot of both Runs
+and the Runtime Pods, then plans their independent assignments against the same
+reservation state.
 
 ## Planning Cycle
 
@@ -99,6 +102,20 @@ annotations, capacity counters, or user-visible status fields.
 After a restart, the next snapshot reconstructs capacity from assigned active
 Runs, so no separate reservation recovery protocol is required.
 
+## High Availability
+
+High availability is separate from queue and affinity semantics. The initial
+implementation requires one active scheduler planner for the cluster. The Helm
+deployment already enables controller-manager leader election, so standby
+replicas do not consume queue keys or write Run assignments.
+
+On leader failover, the new active planner starts with empty in-memory queues
+and reservations. It rebuilds the relevant queue from Pending Runs and rebuilds
+capacity from assigned active Runs in its first snapshot. A reservation whose
+status patch did not complete therefore disappears; a successfully patched Run
+is observed as an actual assignment. Future scheduler sharding needs a separate
+ownership design; it is not implied by this proposal.
+
 ## Affinity Semantics
 
 Required and preferred affinity terms continue to use the existing
@@ -111,7 +128,7 @@ planning cycle, a term may match either:
 This lets later members of a cohort co-locate with an earlier tentative
 assignment while still respecting capacity.
 
-### Inter-Run Affinity Bootstrap
+### Inter-Run Affinity
 
 For a required `runAffinity` term with no actual or planned matching target,
 the current Run may seed the cohort only when its own labels match that term's

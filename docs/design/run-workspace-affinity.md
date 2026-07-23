@@ -137,7 +137,7 @@ not define the scheduler's bootstrap or reservation behavior. The current
 single-Run implementation uses assigned `Scheduled`, `Running`, and `Ready`
 Runs as active targets, but that is insufficient for a cohort whose first Run
 has required affinity to other Runs. The proposed [Scheduler Framework and
-Inter-Run Affinity](scheduler-framework/) design defines actual targets,
+Scheduler Framework](scheduler-framework/) design defines actual targets,
 same-cycle planned targets, and Inter-Run Affinity bootstrap. Those execution
 semantics require review before replacing the current placement implementation.
 
@@ -198,8 +198,8 @@ RBAC surface and needs its own design review.
 ## Scheduler Contract
 
 The API skeleton only declares and validates fields. Scheduling execution
-semantics are defined by the proposed [Scheduler Framework and Inter-Run
-Affinity](scheduler-framework/) document. In particular, the implementation
+semantics are defined by the proposed [Scheduler Framework](scheduler-framework/)
+document. In particular, the implementation
 must use a bounded planner with separate PreFilter, Filter, Score, Reserve, and
 Bind stages rather than independently deciding placement in each Run
 reconcile.

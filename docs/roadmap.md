@@ -79,9 +79,9 @@ wiring from accumulating avoidable conflicts.
   than a manually observed single Run, and clarify whether benchmarks measure
   end-to-end latency, scheduling latency, watch/update latency, or runtime
   execution time.
-- [ ] Scheduler framework and Inter-Run Affinity: replace independent per-Run
+- [ ] Scheduler framework: replace independent per-Run
   placement with a leader-owned, bounded planner per `(namespace, runtime)`
-  queue key. Review the [Scheduler Framework and Inter-Run Affinity](design/scheduler-framework.md)
+  queue key. Review the [Scheduler Framework](design/scheduler-framework.md)
   architecture before changing scheduler behavior.
   Initial implementation TODO:
   - [ ] review queue ownership, bounded planning cycle, snapshot, PreFilter, Filter,

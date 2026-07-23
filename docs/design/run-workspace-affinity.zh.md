@@ -123,7 +123,7 @@ zone 或 Kubernetes Pod affinity。
 所有 term 都匹配同 namespace `Run` objects 上的 labels。API 本身不定义 scheduler 的 bootstrap 或
 reservation behavior。当前 single-Run implementation 使用已 assignment 的 `Scheduled`、`Running` 和
 `Ready` Runs 作为 active targets，但这不足以处理第一条 Run 需要与其它 Run 产生 required affinity 的 cohort。
-建议的 [Scheduler Framework 与 Run 间亲和性](scheduler-framework/) design 定义 actual targets、同一 cycle 的
+建议的 [Scheduler Framework](scheduler-framework/) design 定义 actual targets、同一 cycle 的
 planned targets 和 Run 间亲和性 bootstrap。在替换当前 placement implementation 前，必须 review 这些
 execution semantics。
 
@@ -177,7 +177,7 @@ surface，需要独立 design review。
 ## Scheduler Contract
 
 API skeleton 只声明和 validation fields。调度执行语义由建议的
-[Scheduler Framework 与 Run 间亲和性](scheduler-framework/) 文档定义。特别是，implementation 必须使用有界
+[Scheduler Framework](scheduler-framework/) 文档定义。特别是，implementation 必须使用有界
 planner，并将 PreFilter、Filter、Score、Reserve 和 Bind 作为独立阶段，而不是让每个 Run reconcile
 独立决定 placement。
 

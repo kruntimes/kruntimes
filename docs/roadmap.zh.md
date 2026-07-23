@@ -72,9 +72,9 @@ controller wiring 累积不必要的冲突。
 - [x] Benchmark correctness：诊断为什么 `latency.complete` 明显高于手动创建单个
   Run 的体感耗时，并明确 benchmark 测的是端到端 latency、调度 latency、
   watch/update latency，还是 runtime execution time。
-- [ ] Scheduler framework 与 Run 间亲和性：将独立的 per-Run placement 替换为按
+- [ ] Scheduler framework：将独立的 per-Run placement 替换为按
   `(namespace, runtime)` queue key 工作的 leader-owned、有界 planner。在改变 scheduler behavior 前，
-  review [Scheduler Framework 与 Run 间亲和性](design/scheduler-framework.md) architecture。
+  review [Scheduler Framework](design/scheduler-framework.md) architecture。
   初始实现 TODO：
   - [ ] review queue ownership、有界 planning cycle、snapshot、PreFilter、Filter、Score、Reserve、Bind、
     status 和 retry semantics；
