@@ -79,6 +79,21 @@ wiring from accumulating avoidable conflicts.
   than a manually observed single Run, and clarify whether benchmarks measure
   end-to-end latency, scheduling latency, watch/update latency, or runtime
   execution time.
+- [ ] Scheduler framework: replace independent per-Run placement with a
+  scheduler queue and Kubernetes-style single-Run scheduling cycles. Review the
+  [Scheduler Framework](design/scheduler-framework.md) architecture before
+  changing scheduler behavior.
+  Initial implementation TODO:
+  - [ ] review Run queue ownership, snapshot, PreFilter, Filter, Score,
+    Reserve/Assume, Bind, status, and retry semantics;
+  - [ ] refactor scheduler internals behind queue/planner interfaces while
+    preserving current observable behavior and metrics;
+  - [ ] add deterministic selection, assumed-capacity, bind-conflict,
+    and restart-recovery coverage;
+  - [ ] implement assumed affinity targets and Inter-Run Affinity
+    bootstrap, with integration and E2E coverage;
+  - [ ] define priority, fairness, and starvation policy in a separate API
+    design before adding `Run.spec.priority` or equivalent API;
 - [ ] Function-mode Runs for agent sandboxes: define mutually exclusive
   `Run.spec.mode.task` and `Run.spec.mode.function` semantics so a function Run
   can reserve a pre-warmed Runtime Pod, register a callable function with
@@ -187,8 +202,9 @@ wiring from accumulating avoidable conflicts.
   - [x] review the dedicated Run workspace-reference and affinity API shape
     before adding the API skeleton;
   - [x] add Run fields for workspace reference and Kubernetes-style Run affinity;
-  - update scheduler placement to respect required/preferred Run affinity while
-    keeping no-capacity Runs Pending;
+  - [ ] implement required/preferred Run affinity through the reviewed
+    [scheduler framework](design/scheduler-framework.md), while keeping
+    no-capacity Runs Pending;
   - [ ] review and define `RuntimePodLocal` binding semantics: deterministic
     ready-Pod selection without capacity reservation, planned path ownership,
     and sticky `Lost` status after bound-Pod deletion;
