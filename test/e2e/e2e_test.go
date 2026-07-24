@@ -627,6 +627,53 @@ func TestWorkflowTriggerMaterializesAndExecutesTemplate(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunExecutesReusableWorkflowAndProjectsOutputs(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-deploy-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{
+			Outputs: map[string]v1alpha1.WorkflowOutputSpec{
+				"endpoint": {Value: "${{ jobs.apply.outputs.endpoint }}"},
+			},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"apply": {
+					RunsOn: "bash",
+					Outputs: map[string]string{
+						"endpoint": "${{ steps.deploy.outputs.endpoint }}",
+					},
+					Steps: []v1alpha1.StepSpec{{
+						Name: "deploy",
+						Run:  `printf 'endpoint=https://e2e.example.com\n' > "$KRUNTIME_OUTPUTS"`,
+					}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), workflow); err != nil {
+		t.Fatalf("create reusable workflow: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflow) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-reuse-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: workflow.Name},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	waitForWorkflowRunPhase(t, workflowRun, 45*time.Second, v1alpha1.WorkflowSucceeded)
+	deploy := workflowRun.Status.Jobs["deploy"]
+	if deploy.WorkflowRunName == "" || deploy.Phase != v1alpha1.JobSucceeded || deploy.Outputs["endpoint"] != "https://e2e.example.com" {
+		t.Fatalf("deploy job status = %#v, want succeeded reusable call with projected endpoint", deploy)
+	}
+}
+
 func TestFilesystemArtifacts(t *testing.T) {
 	runtimeName := "bash-filesystem-artifacts"
 	claimName := "e2e-filesystem-artifacts"

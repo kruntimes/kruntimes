@@ -42,7 +42,7 @@ const (
 	// WorkflowRunAcceptedCondition reports whether the WorkflowRun was accepted by the controller.
 	WorkflowRunAcceptedCondition = "Accepted"
 
-	// WorkflowRunUIDLabel identifies child Runs owned by a WorkflowRun.
+	// WorkflowRunUIDLabel identifies direct child resources owned by a WorkflowRun.
 	WorkflowRunUIDLabel = "kruntimes.io/workflowrun-uid"
 	// WorkflowJobLabel identifies the workflow job that owns a child Run.
 	WorkflowJobLabel = "kruntimes.io/workflow-job"

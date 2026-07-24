@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -39,30 +40,40 @@ const (
 type workflowRunAction string
 
 const (
-	workflowRunActionNone                        workflowRunAction = "None"
-	workflowRunActionInitialize                  workflowRunAction = "Initialize"
-	workflowRunActionStartRunnableTargets        workflowRunAction = "StartRunnableTargets"
-	workflowRunActionRequestChildRunCancellation workflowRunAction = "RequestChildRunCancellation"
+	workflowRunActionNone                     workflowRunAction = "None"
+	workflowRunActionInitialize               workflowRunAction = "Initialize"
+	workflowRunActionStartRunnableTargets     workflowRunAction = "StartRunnableTargets"
+	workflowRunActionRequestChildCancellation workflowRunAction = "RequestChildCancellation"
 )
 
 type workflowRunResources struct {
-	workflowRun *v1alpha1.WorkflowRun
-	childRuns   map[string]*v1alpha1.Run
-	snapshot    *workflowExecutionSnapshot
+	workflowRun    *v1alpha1.WorkflowRun
+	childRuns      map[string]*v1alpha1.Run
+	childWorkflows map[string]*v1alpha1.WorkflowRun
+	childSnapshots map[string]*workflowExecutionSnapshot
+	snapshot       *workflowExecutionSnapshot
 }
 
 type workflowRunPlan struct {
-	state    workflowRunState
-	action   workflowRunAction
-	targets  []workflowRunStepTarget
-	callJobs []string
-	runNames []string
+	state            workflowRunState
+	action           workflowRunAction
+	targets          []workflowRunStepTarget
+	callJobs         []string
+	runNames         []string
+	workflowRunNames []string
 }
 
 type workflowRunStepTarget struct {
 	jobName   string
 	stepIndex int
 }
+
+type workflowCallValidationError struct {
+	err error
+}
+
+func (e *workflowCallValidationError) Error() string { return e.err.Error() }
+func (e *workflowCallValidationError) Unwrap() error { return e.err }
 
 // WorkflowRunReconciler owns WorkflowRun execution-instance status.
 type WorkflowRunReconciler struct {
@@ -151,7 +162,50 @@ func (r *WorkflowRunReconciler) loadWorkflowRunResources(ctx context.Context, ke
 	}
 
 	resources.childRuns = childRuns
+	var workflowRuns v1alpha1.WorkflowRunList
+	childWorkflowLabels := client.MatchingLabels{v1alpha1.WorkflowRunUIDLabel: string(workflowRun.UID)}
+	if err := r.List(ctx, &workflowRuns, client.InNamespace(workflowRun.Namespace), childWorkflowLabels); err != nil {
+		return nil, fmt.Errorf("list child workflowruns for workflowrun %s/%s: %w", workflowRun.Namespace, workflowRun.Name, err)
+	}
+	resources.childWorkflows = make(map[string]*v1alpha1.WorkflowRun)
+	resources.childSnapshots = make(map[string]*workflowExecutionSnapshot)
+	for i := range workflowRuns.Items {
+		child := &workflowRuns.Items[i]
+		if metav1.IsControlledBy(child, workflowRun) {
+			childCopy := child.DeepCopy()
+			resources.childWorkflows[child.Name] = childCopy
+			childSnapshot, err := r.loadExistingWorkflowSnapshot(ctx, childCopy)
+			if err != nil {
+				return nil, err
+			}
+			if childSnapshot != nil {
+				resources.childSnapshots[child.Name] = childSnapshot
+			}
+		}
+	}
 	return resources, nil
+}
+
+func (r *WorkflowRunReconciler) loadExistingWorkflowSnapshot(ctx context.Context, workflowRun *v1alpha1.WorkflowRun) (*workflowExecutionSnapshot, error) {
+	snapshotName := workflowRun.Status.SnapshotName
+	if snapshotName == "" {
+		snapshotName = workflowSnapshotName(workflowRun)
+	}
+	revision := &appsv1.ControllerRevision{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: workflowRun.Namespace, Name: snapshotName}, revision); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get workflow snapshot %s/%s: %w", workflowRun.Namespace, snapshotName, err)
+	}
+	if revision.Labels[v1alpha1.WorkflowRunUIDLabel] != string(workflowRun.UID) {
+		return nil, fmt.Errorf("workflow snapshot %s/%s belongs to another workflowrun", revision.Namespace, revision.Name)
+	}
+	snapshot, err := loadWorkflowSnapshot(revision)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot, nil
 }
 
 func calculateWorkflowRunPlan(resources *workflowRunResources) workflowRunPlan {
@@ -160,14 +214,20 @@ func calculateWorkflowRunPlan(resources *workflowRunResources) workflowRunPlan {
 	state := workflowRunStateFor(workflowRun)
 	plan := workflowRunPlan{state: state, action: workflowRunActionNone}
 	if state == workflowRunStateEmpty {
+		if resources.snapshot == nil && isChildWorkflowRun(workflowRun) {
+			return plan
+		}
 		plan.action = workflowRunActionInitialize
 		return plan
 	}
 	if workflowRun.Spec.CancelRequested {
-		if runNames := childRunsToCancel(resources.childRuns); len(runNames) > 0 {
+		runNames := childRunsToCancel(resources.childRuns)
+		workflowRunNames := childWorkflowRunsToCancel(resources.childWorkflows)
+		if len(runNames) > 0 || len(workflowRunNames) > 0 {
 			plan.state = workflowRunStateCancelling
-			plan.action = workflowRunActionRequestChildRunCancellation
+			plan.action = workflowRunActionRequestChildCancellation
 			plan.runNames = runNames
+			plan.workflowRunNames = workflowRunNames
 			return plan
 		}
 	}
@@ -245,10 +305,19 @@ func (r *WorkflowRunReconciler) applyWorkflowRunAction(ctx context.Context, reso
 		return r.applyInitializeWorkflowRun(ctx, resources)
 	case workflowRunActionStartRunnableTargets:
 		return r.applyStartRunnableTargets(ctx, resources, plan.targets, plan.callJobs)
-	case workflowRunActionRequestChildRunCancellation:
-		return r.applyRequestChildRunCancellation(ctx, resources, plan.runNames)
+	case workflowRunActionRequestChildCancellation:
+		return r.applyRequestChildCancellation(ctx, resources, plan.runNames, plan.workflowRunNames)
 	}
 	return nil
+}
+
+func isChildWorkflowRun(workflowRun *v1alpha1.WorkflowRun) bool {
+	for _, owner := range workflowRun.OwnerReferences {
+		if owner.Controller != nil && *owner.Controller && owner.APIVersion == v1alpha1.GroupVersion.String() && owner.Kind == "WorkflowRun" {
+			return true
+		}
+	}
+	return false
 }
 
 // SetupWithManager registers the WorkflowRun reconciler.
@@ -385,6 +454,11 @@ func (r *WorkflowRunReconciler) applyStartRunnableTargets(ctx context.Context, r
 		job := resources.snapshot.Spec.Jobs[jobName]
 		child, err := r.createWorkflowCall(ctx, workflowRun, jobName, job)
 		if err != nil {
+			var validationErr *workflowCallValidationError
+			if errors.As(err, &validationErr) {
+				recordWorkflowCallFailure(workflowRun, jobName, validationErr.Error())
+				continue
+			}
 			return err
 		}
 		recordWorkflowCall(workflowRun, jobName, child.Name)
@@ -395,6 +469,9 @@ func (r *WorkflowRunReconciler) applyStartRunnableTargets(ctx context.Context, r
 func (r *WorkflowRunReconciler) createWorkflowCall(ctx context.Context, parent *v1alpha1.WorkflowRun, jobName string, job v1alpha1.JobSpec) (*v1alpha1.WorkflowRun, error) {
 	workflow := &v1alpha1.Workflow{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: parent.Namespace, Name: job.Uses}, workflow); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, &workflowCallValidationError{err: fmt.Errorf("reusable workflow %q for job %q does not exist", job.Uses, jobName)}
+		}
 		return nil, fmt.Errorf("get reusable workflow %q for job %q: %w", job.Uses, jobName, err)
 	}
 	if err := workflowtemplate.ValidateCallGraph(ctx, workflow.Name, func(ctx context.Context, name string) (*v1alpha1.Workflow, error) {
@@ -404,20 +481,26 @@ func (r *WorkflowRunReconciler) createWorkflowCall(ctx context.Context, parent *
 		}
 		return candidate, nil
 	}); err != nil {
-		return nil, fmt.Errorf("validate reusable workflow %q for job %q: %w", job.Uses, jobName, err)
+		return nil, &workflowCallValidationError{err: fmt.Errorf("validate reusable workflow %q for job %q: %w", job.Uses, jobName, err)}
 	}
 	inputs, err := resolveWorkflowCallInputs(job.With, workflowRunJobOutputContext(parent.Status.Jobs))
 	if err != nil {
-		return nil, fmt.Errorf("resolve inputs for job %q: %w", jobName, err)
+		return nil, &workflowCallValidationError{err: fmt.Errorf("resolve inputs for job %q: %w", jobName, err)}
 	}
 	jobs, err := workflowtemplate.Materialize(workflow.Spec, inputs)
 	if err != nil {
-		return nil, fmt.Errorf("materialize reusable workflow %q for job %q: %w", workflow.Name, jobName, err)
+		return nil, &workflowCallValidationError{err: fmt.Errorf("materialize reusable workflow %q for job %q: %w", workflow.Name, jobName, err)}
 	}
 
 	child := &v1alpha1.WorkflowRun{
-		ObjectMeta: metav1.ObjectMeta{Name: workflowCallRunName(parent.Name, jobName), Namespace: parent.Namespace},
-		Spec:       v1alpha1.WorkflowRunSpec{Jobs: jobs},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      workflowCallRunName(parent.Name, jobName),
+			Namespace: parent.Namespace,
+			Labels: map[string]string{
+				v1alpha1.WorkflowRunUIDLabel: string(parent.UID),
+			},
+		},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: jobs},
 	}
 	if err := controllerutil.SetControllerReference(parent, child, r.Scheme); err != nil {
 		return nil, fmt.Errorf("set parent workflowrun owner reference on child %s/%s: %w", child.Namespace, child.Name, err)
@@ -442,6 +525,14 @@ func recordWorkflowCall(workflowRun *v1alpha1.WorkflowRun, jobName string, child
 	status.WorkflowRunName = childName
 	workflowRun.Status.Jobs[jobName] = status
 	workflowRun.Status.Phase = v1alpha1.WorkflowRunning
+}
+
+func recordWorkflowCallFailure(workflowRun *v1alpha1.WorkflowRun, jobName string, message string) {
+	status := workflowRun.Status.Jobs[jobName]
+	status.Phase = v1alpha1.JobFailed
+	workflowRun.Status.Jobs[jobName] = status
+	workflowRun.Status.Phase = v1alpha1.WorkflowRunning
+	workflowRun.Status.Message = message
 }
 
 func (r *WorkflowRunReconciler) createOrReuseStepRun(ctx context.Context, resources *workflowRunResources, jobName string, job v1alpha1.JobSpec, stepIndex int) (*v1alpha1.Run, error) {
@@ -581,13 +672,76 @@ func terminalJobPhase(status v1alpha1.JobStatus) (v1alpha1.JobPhase, bool) {
 
 func deriveWorkflowRunStatus(resources *workflowRunResources) {
 	deriveStepStatusesFromChildRuns(resources)
-	deriveJobStatuses(resources.workflowRun)
+	deriveWorkflowCallStatuses(resources)
+	deriveJobStatuses(resources)
 	if resources.workflowRun.Spec.CancelRequested {
 		deriveCancelledWorkflowRunStatus(resources)
 		return
 	}
 	deriveSkippedJobStatuses(resources.workflowRun.Status.Jobs)
 	deriveTerminalWorkflowRunStatus(resources.workflowRun)
+}
+
+func deriveWorkflowCallStatuses(resources *workflowRunResources) {
+	for jobName, status := range resources.workflowRun.Status.Jobs {
+		if status.WorkflowRunName == "" || status.Phase != v1alpha1.JobRunning {
+			continue
+		}
+		child := resources.childWorkflows[status.WorkflowRunName]
+		if child == nil {
+			continue
+		}
+		switch child.Status.Phase {
+		case v1alpha1.WorkflowSucceeded:
+			outputs, err := resolveWorkflowCallOutputs(child, resources.childSnapshots[child.Name])
+			if err != nil {
+				status.Phase = v1alpha1.JobFailed
+				resources.workflowRun.Status.Message = fmt.Sprintf("resolve outputs for job %q: %v", jobName, err)
+			} else {
+				status.Phase = v1alpha1.JobSucceeded
+				status.Outputs = outputs
+			}
+		case v1alpha1.WorkflowFailed, v1alpha1.WorkflowCancelled:
+			status.Phase = v1alpha1.JobFailed
+		default:
+			continue
+		}
+		resources.workflowRun.Status.Jobs[jobName] = status
+	}
+}
+
+func resolveWorkflowCallOutputs(child *v1alpha1.WorkflowRun, snapshot *workflowExecutionSnapshot) (map[string]string, error) {
+	if snapshot == nil {
+		return nil, fmt.Errorf("child workflowrun %s/%s has no execution snapshot", child.Namespace, child.Name)
+	}
+	if len(snapshot.OutputContract) == 0 {
+		return nil, nil
+	}
+	if len(snapshot.OutputContract) != 1 {
+		return nil, fmt.Errorf("child workflowrun %s/%s has %d output contracts, want one", child.Namespace, child.Name, len(snapshot.OutputContract))
+	}
+	var contract workflowOutputContract
+	for _, contract = range snapshot.OutputContract {
+		break
+	}
+	if len(contract.Outputs) == 0 {
+		return nil, nil
+	}
+	outputs := make(map[string]string, len(contract.Outputs))
+	outputNames := make([]string, 0, len(contract.Outputs))
+	for name := range contract.Outputs {
+		outputNames = append(outputNames, name)
+	}
+	sort.Strings(outputNames)
+	ctx := workflowRunJobOutputContext(child.Status.Jobs)
+	for _, name := range outputNames {
+		value, err := resolveExpr(contract.Outputs[name].Value, ctx)
+		if err != nil {
+			return nil, fmt.Errorf("output %q: %w", name, err)
+		}
+		outputs[name] = value
+	}
+	return outputs, nil
 }
 
 func deriveCancelledWorkflowRunStatus(resources *workflowRunResources) {
@@ -597,6 +751,11 @@ func deriveCancelledWorkflowRunStatus(resources *workflowRunResources) {
 	}
 	for _, run := range resources.childRuns {
 		if !isTerminalRunPhase(run.Status.Phase) {
+			return
+		}
+	}
+	for _, child := range resources.childWorkflows {
+		if !isTerminalWorkflowPhase(child.Status.Phase) {
 			return
 		}
 	}
@@ -623,7 +782,18 @@ func childRunsToCancel(childRuns map[string]*v1alpha1.Run) []string {
 	return runNames
 }
 
-func (r *WorkflowRunReconciler) applyRequestChildRunCancellation(ctx context.Context, resources *workflowRunResources, runNames []string) error {
+func childWorkflowRunsToCancel(childWorkflows map[string]*v1alpha1.WorkflowRun) []string {
+	names := make([]string, 0, len(childWorkflows))
+	for _, child := range childWorkflows {
+		if !isTerminalWorkflowPhase(child.Status.Phase) && !child.Spec.CancelRequested {
+			names = append(names, child.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (r *WorkflowRunReconciler) applyRequestChildCancellation(ctx context.Context, resources *workflowRunResources, runNames []string, workflowRunNames []string) error {
 	childRuns := make(map[string]*v1alpha1.Run, len(resources.childRuns))
 	for _, run := range resources.childRuns {
 		childRuns[run.Name] = run
@@ -637,6 +807,17 @@ func (r *WorkflowRunReconciler) applyRequestChildRunCancellation(ctx context.Con
 		run.Spec.CancelRequested = true
 		if err := r.Patch(ctx, run, client.MergeFrom(base)); err != nil {
 			return fmt.Errorf("request cancellation of child run %s/%s: %w", run.Namespace, run.Name, err)
+		}
+	}
+	for _, workflowRunName := range workflowRunNames {
+		child := resources.childWorkflows[workflowRunName]
+		if child == nil || child.Spec.CancelRequested || isTerminalWorkflowPhase(child.Status.Phase) {
+			continue
+		}
+		base := child.DeepCopy()
+		child.Spec.CancelRequested = true
+		if err := r.Patch(ctx, child, client.MergeFrom(base)); err != nil {
+			return fmt.Errorf("request cancellation of child workflowrun %s/%s: %w", child.Namespace, child.Name, err)
 		}
 	}
 	return nil
@@ -660,7 +841,8 @@ func deriveTerminalWorkflowRunStatus(workflowRun *v1alpha1.WorkflowRun) {
 	workflowRun.Status.Phase = phase
 }
 
-func deriveJobStatuses(workflowRun *v1alpha1.WorkflowRun) {
+func deriveJobStatuses(resources *workflowRunResources) {
+	workflowRun := resources.workflowRun
 	for jobName, status := range workflowRun.Status.Jobs {
 		if status.Phase != v1alpha1.JobRunning {
 			continue
@@ -670,8 +852,43 @@ func deriveJobStatuses(workflowRun *v1alpha1.WorkflowRun) {
 			continue
 		}
 		status.Phase = phase
+		if phase == v1alpha1.JobSucceeded {
+			outputs, err := resolveJobOutputs(resources.snapshot.Spec.Jobs[jobName], status)
+			if err != nil {
+				status.Phase = v1alpha1.JobFailed
+				workflowRun.Status.Message = fmt.Sprintf("resolve outputs for job %q: %v", jobName, err)
+			} else {
+				status.Outputs = outputs
+			}
+		}
 		workflowRun.Status.Jobs[jobName] = status
 	}
+}
+
+func resolveJobOutputs(job v1alpha1.JobSpec, status v1alpha1.JobStatus) (map[string]string, error) {
+	if len(job.Outputs) == 0 {
+		return nil, nil
+	}
+	steps := make(map[string]map[string]string, len(status.Steps))
+	for _, step := range status.Steps {
+		if len(step.Outputs) > 0 {
+			steps[step.Name] = step.Outputs
+		}
+	}
+	outputNames := make([]string, 0, len(job.Outputs))
+	for name := range job.Outputs {
+		outputNames = append(outputNames, name)
+	}
+	sort.Strings(outputNames)
+	outputs := make(map[string]string, len(job.Outputs))
+	for _, name := range outputNames {
+		value, err := resolveExpr(job.Outputs[name], &resolveContext{steps: steps})
+		if err != nil {
+			return nil, fmt.Errorf("output %q: %w", name, err)
+		}
+		outputs[name] = value
+	}
+	return outputs, nil
 }
 
 func deriveSkippedJobStatuses(jobs map[string]v1alpha1.JobStatus) {
@@ -754,6 +971,7 @@ func deriveStepStatusesFromChildRuns(resources *workflowRunResources) {
 			}
 			step.RunName = run.Name
 			step.Phase = stepPhase
+			step.Outputs = maps.Clone(run.Status.Outputs)
 			workflowRun.Status.Jobs[jobName] = jobStatus
 			break
 		}
