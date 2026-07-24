@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/workflowtemplate"
 )
 
 type workflowRunState string
@@ -40,7 +41,7 @@ type workflowRunAction string
 const (
 	workflowRunActionNone                        workflowRunAction = "None"
 	workflowRunActionInitialize                  workflowRunAction = "Initialize"
-	workflowRunActionStartRunnableSteps          workflowRunAction = "StartRunnableSteps"
+	workflowRunActionStartRunnableTargets        workflowRunAction = "StartRunnableTargets"
 	workflowRunActionRequestChildRunCancellation workflowRunAction = "RequestChildRunCancellation"
 )
 
@@ -54,6 +55,7 @@ type workflowRunPlan struct {
 	state    workflowRunState
 	action   workflowRunAction
 	targets  []workflowRunStepTarget
+	callJobs []string
 	runNames []string
 }
 
@@ -182,9 +184,10 @@ func calculateWorkflowRunPlan(resources *workflowRunResources) workflowRunPlan {
 	if len(jobs) == 0 || len(workflowRun.Status.Jobs) == 0 {
 		return plan
 	}
-	if targets := runnableStepTargets(workflowRun.Status.Jobs, jobs); len(targets) > 0 {
-		plan.action = workflowRunActionStartRunnableSteps
-		plan.targets = targets
+	plan.targets = runnableStepTargets(workflowRun.Status.Jobs, jobs)
+	plan.callJobs = runnableWorkflowCallJobs(workflowRun.Status.Jobs, jobs)
+	if len(plan.targets) > 0 || len(plan.callJobs) > 0 {
+		plan.action = workflowRunActionStartRunnableTargets
 		return plan
 	}
 	return plan
@@ -240,8 +243,8 @@ func (r *WorkflowRunReconciler) applyWorkflowRunAction(ctx context.Context, reso
 	switch plan.action {
 	case workflowRunActionInitialize:
 		return r.applyInitializeWorkflowRun(ctx, resources)
-	case workflowRunActionStartRunnableSteps:
-		return r.applyStartRunnableSteps(ctx, resources, plan.targets)
+	case workflowRunActionStartRunnableTargets:
+		return r.applyStartRunnableTargets(ctx, resources, plan.targets, plan.callJobs)
 	case workflowRunActionRequestChildRunCancellation:
 		return r.applyRequestChildRunCancellation(ctx, resources, plan.runNames)
 	}
@@ -253,6 +256,7 @@ func (r *WorkflowRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.WorkflowRun{}).
 		Owns(&v1alpha1.Run{}).
+		Owns(&v1alpha1.WorkflowRun{}).
 		Owns(&appsv1.ControllerRevision{}).
 		Complete(r)
 }
@@ -266,7 +270,10 @@ func validateWorkflowRunJobs(jobs map[string]v1alpha1.JobSpec) error {
 	for _, jobName := range jobNames {
 		job := jobs[jobName]
 		if job.Uses != "" {
-			return fmt.Errorf("job %q uses reusable workflow %q, but job-level uses is not implemented yet", jobName, job.Uses)
+			if job.RunsOn != "" || len(job.Steps) != 0 {
+				return fmt.Errorf("job %q uses reusable workflow %q and may not set runs-on or steps", jobName, job.Uses)
+			}
+			continue
 		}
 		if job.RunsOn == "" {
 			return fmt.Errorf("job %q must set runs-on before creating child Runs", jobName)
@@ -364,7 +371,7 @@ func resolvedJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.J
 	return statuses
 }
 
-func (r *WorkflowRunReconciler) applyStartRunnableSteps(ctx context.Context, resources *workflowRunResources, targets []workflowRunStepTarget) error {
+func (r *WorkflowRunReconciler) applyStartRunnableTargets(ctx context.Context, resources *workflowRunResources, targets []workflowRunStepTarget, callJobs []string) error {
 	workflowRun := resources.workflowRun
 	for _, target := range targets {
 		job := resources.snapshot.Spec.Jobs[target.jobName]
@@ -374,7 +381,67 @@ func (r *WorkflowRunReconciler) applyStartRunnableSteps(ctx context.Context, res
 		}
 		recordStepRun(workflowRun, target.jobName, target.stepIndex, run.Name)
 	}
+	for _, jobName := range callJobs {
+		job := resources.snapshot.Spec.Jobs[jobName]
+		child, err := r.createWorkflowCall(ctx, workflowRun, jobName, job)
+		if err != nil {
+			return err
+		}
+		recordWorkflowCall(workflowRun, jobName, child.Name)
+	}
 	return nil
+}
+
+func (r *WorkflowRunReconciler) createWorkflowCall(ctx context.Context, parent *v1alpha1.WorkflowRun, jobName string, job v1alpha1.JobSpec) (*v1alpha1.WorkflowRun, error) {
+	workflow := &v1alpha1.Workflow{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: parent.Namespace, Name: job.Uses}, workflow); err != nil {
+		return nil, fmt.Errorf("get reusable workflow %q for job %q: %w", job.Uses, jobName, err)
+	}
+	if err := workflowtemplate.ValidateCallGraph(ctx, workflow.Name, func(ctx context.Context, name string) (*v1alpha1.Workflow, error) {
+		candidate := &v1alpha1.Workflow{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: parent.Namespace, Name: name}, candidate); err != nil {
+			return nil, err
+		}
+		return candidate, nil
+	}); err != nil {
+		return nil, fmt.Errorf("validate reusable workflow %q for job %q: %w", job.Uses, jobName, err)
+	}
+	inputs, err := resolveWorkflowCallInputs(job.With, workflowRunJobOutputContext(parent.Status.Jobs))
+	if err != nil {
+		return nil, fmt.Errorf("resolve inputs for job %q: %w", jobName, err)
+	}
+	jobs, err := workflowtemplate.Materialize(workflow.Spec, inputs)
+	if err != nil {
+		return nil, fmt.Errorf("materialize reusable workflow %q for job %q: %w", workflow.Name, jobName, err)
+	}
+
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: workflowCallRunName(parent.Name, jobName), Namespace: parent.Namespace},
+		Spec:       v1alpha1.WorkflowRunSpec{Jobs: jobs},
+	}
+	if err := controllerutil.SetControllerReference(parent, child, r.Scheme); err != nil {
+		return nil, fmt.Errorf("set parent workflowrun owner reference on child %s/%s: %w", child.Namespace, child.Name, err)
+	}
+	if err := r.Create(ctx, child); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("create child workflowrun %s/%s: %w", child.Namespace, child.Name, err)
+		}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(child), child); err != nil {
+			return nil, fmt.Errorf("get existing child workflowrun %s/%s: %w", child.Namespace, child.Name, err)
+		}
+	}
+	if _, _, err := r.ensureWorkflowSnapshot(ctx, child, workflowSnapshotForMaterializedWorkflow(child, workflow)); err != nil {
+		return nil, fmt.Errorf("create child workflowrun snapshot %s/%s: %w", child.Namespace, child.Name, err)
+	}
+	return child, nil
+}
+
+func recordWorkflowCall(workflowRun *v1alpha1.WorkflowRun, jobName string, childName string) {
+	status := workflowRun.Status.Jobs[jobName]
+	status.Phase = v1alpha1.JobRunning
+	status.WorkflowRunName = childName
+	workflowRun.Status.Jobs[jobName] = status
+	workflowRun.Status.Phase = v1alpha1.WorkflowRunning
 }
 
 func (r *WorkflowRunReconciler) createOrReuseStepRun(ctx context.Context, resources *workflowRunResources, jobName string, job v1alpha1.JobSpec, stepIndex int) (*v1alpha1.Run, error) {
@@ -422,7 +489,7 @@ func runnableStepTargets(statuses map[string]v1alpha1.JobStatus, jobs map[string
 	for _, jobName := range jobNames {
 		job := jobs[jobName]
 		status, ok := statuses[jobName]
-		if !ok || len(status.Steps) != len(job.Steps) {
+		if !ok || job.Uses != "" || len(status.Steps) != len(job.Steps) || len(job.Steps) == 0 {
 			continue
 		}
 		if jobReadyToStart(status, statuses) && status.Steps[0].RunName == "" {
@@ -434,6 +501,49 @@ func runnableStepTargets(statuses map[string]v1alpha1.JobStatus, jobs map[string
 		}
 	}
 	return targets
+}
+
+func runnableWorkflowCallJobs(statuses map[string]v1alpha1.JobStatus, jobs map[string]v1alpha1.JobSpec) []string {
+	names := make([]string, 0, len(jobs))
+	for name := range jobs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	ready := make([]string, 0, len(names))
+	for _, name := range names {
+		job := jobs[name]
+		status, ok := statuses[name]
+		if !ok || job.Uses == "" || status.WorkflowRunName != "" || !jobReadyToStart(status, statuses) {
+			continue
+		}
+		ready = append(ready, name)
+	}
+	return ready
+}
+
+func workflowRunJobOutputContext(statuses map[string]v1alpha1.JobStatus) *resolveContext {
+	jobs := make(map[string]map[string]string, len(statuses))
+	for name, status := range statuses {
+		if len(status.Outputs) > 0 {
+			jobs[name] = status.Outputs
+		}
+	}
+	return &resolveContext{jobs: jobs}
+}
+
+func resolveWorkflowCallInputs(values map[string]string, ctx *resolveContext) (map[string]string, error) {
+	if values == nil {
+		return nil, nil
+	}
+	resolved := make(map[string]string, len(values))
+	for name, value := range values {
+		result, err := resolveExpr(value, ctx)
+		if err != nil {
+			return nil, fmt.Errorf("input %q: %w", name, err)
+		}
+		resolved[name] = result
+	}
+	return resolved, nil
 }
 
 func nextStepToStart(status v1alpha1.JobStatus) (int, bool) {
@@ -710,6 +820,21 @@ func workflowStepRunName(workflowRunName string, jobName string, stepName string
 	if len(prefix) > maxPrefixLength {
 		prefix = prefix[:maxPrefixLength]
 		prefix = strings.TrimRight(prefix, "-.")
+	}
+	if prefix == "" {
+		return suffix
+	}
+	return prefix + "-" + suffix
+}
+
+func workflowCallRunName(parentName string, jobName string) string {
+	sum := sha256.Sum256([]byte(jobName))
+	suffix := hex.EncodeToString(sum[:])[:10]
+	const maxNameLength = 253
+	maxPrefixLength := maxNameLength - len(suffix) - 1
+	prefix := parentName
+	if len(prefix) > maxPrefixLength {
+		prefix = strings.TrimRight(prefix[:maxPrefixLength], "-.")
 	}
 	if prefix == "" {
 		return suffix
