@@ -674,6 +674,119 @@ func TestWorkflowRunExecutesReusableWorkflowAndProjectsOutputs(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunExecutesNestedReusableWorkflows(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	leaf := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-leaf-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{
+			Outputs: map[string]v1alpha1.WorkflowOutputSpec{
+				"result": {Value: "${{ jobs.test.outputs.result }}"},
+			},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"test": {
+					RunsOn: "bash",
+					Outputs: map[string]string{
+						"result": "${{ steps.emit.outputs.result }}",
+					},
+					Steps: []v1alpha1.StepSpec{{
+						Name: "emit",
+						Run:  `printf 'result=nested-ok\n' > "$KRUNTIME_OUTPUTS"`,
+					}},
+				},
+			},
+		},
+	}
+	middle := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-middle-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{
+			Outputs: map[string]v1alpha1.WorkflowOutputSpec{
+				"result": {Value: "${{ jobs.call-leaf.outputs.result }}"},
+			},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"call-leaf": {Uses: leaf.Name},
+			},
+		},
+	}
+	for _, workflow := range []*v1alpha1.Workflow{leaf, middle} {
+		if err := k8sClient.Create(context.Background(), workflow); err != nil {
+			t.Fatalf("create reusable workflow %s: %v", workflow.Name, err)
+		}
+		t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflow) })
+	}
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-nested-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"call-middle": {Uses: middle.Name},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	waitForWorkflowRunPhase(t, workflowRun, 45*time.Second, v1alpha1.WorkflowSucceeded)
+	call := workflowRun.Status.Jobs["call-middle"]
+	if call.WorkflowRunName == "" || call.Phase != v1alpha1.JobSucceeded || call.Outputs["result"] != "nested-ok" {
+		t.Fatalf("call-middle job status = %#v, want succeeded nested reusable call with projected result", call)
+	}
+}
+
+func TestWorkflowRunCancellationPropagatesToReusableWorkflow(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-cancel-reuse-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"apply": {
+				RunsOn: "bash",
+				Steps:  []v1alpha1.StepSpec{{Name: "wait", Run: "sleep 300"}},
+			},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflow); err != nil {
+		t.Fatalf("create reusable workflow: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflow) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-cancel-reuse-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: workflow.Name},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+			t.Fatalf("get workflowrun: %v", err)
+		}
+		if workflowRun.Status.Jobs["deploy"].WorkflowRunName != "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for reusable call to start: %#v", workflowRun.Status)
+		default:
+		}
+	}
+	workflowRun.Spec.CancelRequested = true
+	if err := k8sClient.Update(context.Background(), workflowRun); err != nil {
+		t.Fatalf("request workflowrun cancellation: %v", err)
+	}
+
+	waitForWorkflowRunPhase(t, workflowRun, 30*time.Second, v1alpha1.WorkflowCancelled)
+}
+
 func TestFilesystemArtifacts(t *testing.T) {
 	runtimeName := "bash-filesystem-artifacts"
 	claimName := "e2e-filesystem-artifacts"
