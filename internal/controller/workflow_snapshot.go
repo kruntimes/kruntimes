@@ -20,10 +20,8 @@ import (
 
 const maxWorkflowSnapshotBytes = 1 << 20
 
-// workflowExecutionSnapshot is controller-private storage for one
-// WorkflowRun. It contains only that WorkflowRun's accepted inline spec. A
-// materialized reusable Workflow child will additionally store its source
-// output contract in a later implementation step.
+// workflowExecutionSnapshot is controller-private storage for one WorkflowRun.
+// It contains that WorkflowRun's accepted inline spec.
 type workflowExecutionSnapshot struct {
 	Spec v1alpha1.WorkflowRunSpec `json:"spec"`
 }

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -178,7 +180,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		},
 	}
 	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: pending, snapshot: snapshotForWorkflowRun(pending)})
-	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableSteps || len(plan.targets) != 1 || plan.targets[0] != (workflowRunStepTarget{jobName: "build", stepIndex: 0}) {
+	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableTargets || len(plan.targets) != 1 || plan.targets[0] != (workflowRunTarget{kind: workflowRunTargetStep, jobName: "build", stepIndex: 0}) {
 		t.Fatalf("pending plan = %#v, want Pending + StartRunnableSteps(build[0])", plan)
 	}
 
@@ -197,7 +199,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
 		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
-	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildRunCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !slices.Equal(plan.targets, []workflowRunTarget{{kind: workflowRunTargetCancelRun, name: "build-run"}}) {
 		t.Fatalf("cancelling plan = %#v, want Cancelling + RequestChildRunCancellation(build-run)", plan)
 	}
 
@@ -209,7 +211,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
 		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
-	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildRunCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !slices.Equal(plan.targets, []workflowRunTarget{{kind: workflowRunTargetCancelRun, name: "build-run"}}) {
 		t.Fatalf("late child plan = %#v, want cancellation repair", plan)
 	}
 }
@@ -239,8 +241,8 @@ func TestCalculateWorkflowRunPlanProjectsStatusBeforeStartingReadyJobs(t *testin
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): buildRun},
 		snapshot:    snapshotForWorkflowRun(workflowRun),
 	})
-	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
+	want := []workflowRunTarget{{kind: workflowRunTargetStep, jobName: "lint", stepIndex: 0}}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
 	if workflowRun.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded {
@@ -264,8 +266,8 @@ func TestPlanWorkflowRunStartsAllRunnableSteps(t *testing.T) {
 	}
 
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
-	want := []workflowRunStepTarget{{jobName: "build", stepIndex: 1}, {jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
+	want := []workflowRunTarget{{kind: workflowRunTargetStep, jobName: "build", stepIndex: 1}, {kind: workflowRunTargetStep, jobName: "lint", stepIndex: 0}}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
 }
@@ -286,8 +288,8 @@ func TestCalculateWorkflowRunPlanFinalizesJobsBeforeStartingReadyJobs(t *testing
 	}
 
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
-	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
+	want := []workflowRunTarget{{kind: workflowRunTargetStep, jobName: "lint", stepIndex: 0}}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
 	if workflowRun.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded {
@@ -362,7 +364,7 @@ func TestWorkflowRunReconcilerSkipsBlockedJobsAndStartsIndependentJobs(t *testin
 	}
 }
 
-func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization(t *testing.T) {
+func TestWorkflowRunReconcilerCreatesMaterializedWorkflowCall(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
@@ -377,9 +379,10 @@ func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization
 	}
 	workflow := &v1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "build-and-test", Namespace: workflowRun.Namespace},
-		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
-			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
-		}},
+		Spec: v1alpha1.WorkflowSpec{
+			Outputs: map[string]v1alpha1.WorkflowOutputSpec{"artifact": {Value: "${{ jobs.build.outputs.artifact }}"}},
+			Jobs:    map[string]v1alpha1.JobSpec{"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}}},
+		},
 	}
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -398,18 +401,139 @@ func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
 		t.Fatalf("get workflowrun: %v", err)
 	}
-	if updated.Status.Phase != v1alpha1.WorkflowFailed {
-		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowFailed)
+	if updated.Status.Phase != v1alpha1.WorkflowRunning {
+		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowRunning)
 	}
-	if !strings.Contains(updated.Status.Message, "job-level uses is not implemented yet") {
-		t.Fatalf("message = %q, want job-level uses not implemented", updated.Status.Message)
-	}
-	if updated.Status.Jobs != nil {
-		t.Fatalf("jobs = %#v, want nil for rejected workflowrun", updated.Status.Jobs)
+	job := updated.Status.Jobs["release"]
+	childName := workflowCallRunName(workflowRun.Name, "release")
+	if job.Phase != v1alpha1.JobRunning || job.WorkflowRunName != childName {
+		t.Fatalf("call status = %#v, want running child %q", job, childName)
 	}
 	cond := apimeta.FindStatusCondition(updated.Status.Conditions, v1alpha1.WorkflowRunAcceptedCondition)
-	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "WorkflowValidationFailed" {
-		t.Fatalf("condition = %#v, want validation rejection", cond)
+	if cond == nil || cond.Status != metav1.ConditionTrue {
+		t.Fatalf("condition = %#v, want accepted workflowrun", cond)
+	}
+	child := &v1alpha1.WorkflowRun{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: workflowRun.Namespace, Name: childName}, child); err != nil {
+		t.Fatalf("get child workflowrun: %v", err)
+	}
+	if child.Spec.Jobs["build"].Steps[0].Run != "make build" {
+		t.Fatalf("child spec = %#v, want materialized build job", child.Spec)
+	}
+	if child.Labels[v1alpha1.WorkflowRunUIDLabel] != string(workflowRun.UID) {
+		t.Fatalf("child labels = %#v, want parent workflowrun UID", child.Labels)
+	}
+	if child.Annotations[v1alpha1.WorkflowOutputAnnotationPrefix+"artifact"] != "${{ jobs.build.outputs.artifact }}" {
+		t.Fatalf("child annotations = %#v, want frozen output contract", child.Annotations)
+	}
+	revision := &appsv1.ControllerRevision{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: child.Namespace, Name: workflowSnapshotName(child)}, revision); !apierrors.IsNotFound(err) {
+		t.Fatalf("child snapshot after parent reconcile error = %v, want not found", err)
+	}
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(child)}, 1)
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: child.Namespace, Name: workflowSnapshotName(child)}, revision); err != nil {
+		t.Fatalf("get child-owned snapshot after child reconcile: %v", err)
+	}
+}
+
+func TestWorkflowRunReconcilerFailsOnlyInvalidReusableCall(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: "missing-workflow"},
+			"lint":   {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "check", Run: "make lint"}}},
+		}},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+
+	reconcileWorkflowRun(t, reconciler, req, 2)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	if updated.Status.Jobs["deploy"].Phase != v1alpha1.JobFailed {
+		t.Fatalf("deploy status = %#v, want failed missing reusable workflow", updated.Status.Jobs["deploy"])
+	}
+	if updated.Status.Jobs["lint"].Phase != v1alpha1.JobRunning {
+		t.Fatalf("lint status = %#v, want independent job running", updated.Status.Jobs["lint"])
+	}
+	if !strings.Contains(updated.Status.Message, `reusable workflow "missing-workflow"`) {
+		t.Fatalf("message = %q, want missing reusable workflow", updated.Status.Message)
+	}
+	var children v1alpha1.WorkflowRunList
+	if err := c.List(context.Background(), &children, client.InNamespace(workflowRun.Namespace)); err != nil {
+		t.Fatalf("list child workflowruns: %v", err)
+	}
+	if len(children.Items) != 1 {
+		t.Fatalf("workflowruns = %#v, want only parent", children.Items)
+	}
+}
+
+func TestWorkflowRunReconcilerRecoversMaterializedCallBeforeStatusPatch(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	parent := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "parent-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: "deploy-workflow"},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowPending,
+			Jobs:  resolvedJobStatuses(map[string]v1alpha1.JobSpec{"deploy": {Uses: "deploy-workflow"}}),
+		},
+	}
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "deploy-workflow", Namespace: parent.Namespace},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"apply": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "deploy", Run: "deploy"}}},
+		}},
+	}
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      workflowCallRunName(parent.Name, "deploy"),
+			Namespace: parent.Namespace,
+			UID:       "child-uid",
+			Labels:    map[string]string{v1alpha1.WorkflowRunUIDLabel: string(parent.UID)},
+		},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: workflow.Spec.Jobs},
+	}
+	if err := controllerutil.SetControllerReference(parent, child, scheme); err != nil {
+		t.Fatalf("set child owner: %v", err)
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(parent, workflow, child).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	if _, _, err := reconciler.ensureWorkflowSnapshot(context.Background(), parent, workflowSnapshotForRun(parent)); err != nil {
+		t.Fatalf("persist parent snapshot: %v", err)
+	}
+	// Simulate a controller crash after the child was created,
+	// but before the parent status recorded workflowRunName.
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}, 1)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(parent), &updated); err != nil {
+		t.Fatalf("get parent workflowrun: %v", err)
+	}
+	status := updated.Status.Jobs["deploy"]
+	if status.Phase != v1alpha1.JobRunning || status.WorkflowRunName != child.Name {
+		t.Fatalf("deploy status = %#v, want recovered existing child %q", status, child.Name)
+	}
+	var children v1alpha1.WorkflowRunList
+	if err := c.List(context.Background(), &children, client.InNamespace(parent.Namespace), client.MatchingLabels{v1alpha1.WorkflowRunUIDLabel: string(parent.UID)}); err != nil {
+		t.Fatalf("list child workflowruns: %v", err)
+	}
+	if len(children.Items) != 1 || children.Items[0].Name != child.Name {
+		t.Fatalf("child workflowruns = %#v, want exactly existing child", children.Items)
 	}
 }
 
@@ -1025,6 +1149,95 @@ func TestWorkflowRunReconcilerRequestsCancellationWithoutStartingNewJobs(t *test
 	}
 }
 
+func TestWorkflowRunReconcilerRequestsDirectChildWorkflowCancellation(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	parent := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "parent-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{
+			CancelRequested: true,
+			Jobs: map[string]v1alpha1.JobSpec{
+				"deploy": {Uses: "deploy-workflow"},
+			},
+		},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"deploy": {Phase: v1alpha1.JobRunning, WorkflowRunName: "release-deploy"},
+			},
+		},
+	}
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "release-deploy",
+			Namespace: parent.Namespace,
+			UID:       "child-uid",
+			Labels:    map[string]string{v1alpha1.WorkflowRunUIDLabel: string(parent.UID)},
+		},
+		Spec:   v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{"apply": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "deploy", Run: "deploy"}}}}},
+		Status: v1alpha1.WorkflowRunStatus{Phase: v1alpha1.WorkflowRunning},
+	}
+	if err := controllerutil.SetControllerReference(parent, child, scheme); err != nil {
+		t.Fatalf("set child owner: %v", err)
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(parent, child).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	if _, _, err := reconciler.ensureWorkflowSnapshot(context.Background(), parent, workflowSnapshotForRun(parent)); err != nil {
+		t.Fatalf("persist parent snapshot: %v", err)
+	}
+
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}, 1)
+
+	var updatedChild v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(child), &updatedChild); err != nil {
+		t.Fatalf("get child workflowrun: %v", err)
+	}
+	if !updatedChild.Spec.CancelRequested {
+		t.Fatal("child workflowrun cancelRequested = false, want true")
+	}
+}
+
+func TestWorkflowRunReconcilerInitializesChildWithoutParentSnapshot(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	parent := &v1alpha1.WorkflowRun{ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "parent-uid"}}
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "release-deploy",
+			Namespace: parent.Namespace,
+			UID:       "child-uid",
+			Labels:    map[string]string{v1alpha1.WorkflowRunUIDLabel: string(parent.UID)},
+		},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{"apply": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "deploy", Run: "deploy"}}}}},
+	}
+	if err := controllerutil.SetControllerReference(parent, child, scheme); err != nil {
+		t.Fatalf("set child owner: %v", err)
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(parent, child).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(child)}, 1)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(child), &updated); err != nil {
+		t.Fatalf("get child workflowrun: %v", err)
+	}
+	if updated.Status.Jobs == nil || updated.Status.SnapshotName == "" {
+		t.Fatalf("child status = %#v, want initialized child", updated.Status)
+	}
+	revision := &appsv1.ControllerRevision{}
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: child.Namespace, Name: workflowSnapshotName(child)}, revision)
+	if err != nil {
+		t.Fatalf("get child-owned snapshot: %v", err)
+	}
+}
+
 func TestWorkflowRunReconcilerFinalizesCancellationAfterChildRunsSettle(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 	workflowRun := &v1alpha1.WorkflowRun{
@@ -1204,6 +1417,155 @@ func TestWorkflowRunReconcilerSnapshotsInlineJobs(t *testing.T) {
 	}
 	if resources.snapshot == nil || resources.snapshot.Spec.Jobs["compile"].Steps[0].Run != "echo snapshot" {
 		t.Fatalf("loaded snapshot = %#v, want immutable inline execution definition", resources.snapshot)
+	}
+}
+
+func TestWorkflowRunReconcilerInitializesMaterializedWorkflowSnapshot(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "release-deploy",
+			Namespace: "default",
+			UID:       "child-uid",
+			Annotations: map[string]string{
+				v1alpha1.WorkflowOutputAnnotationPrefix + "endpoint": "${{ jobs.apply.outputs.endpoint }}",
+			},
+		},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"apply": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "deploy", Run: "deploy --environment=staging"}}},
+		}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(child).WithStatusSubresource(&v1alpha1.WorkflowRun{}).Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(child)}, 1)
+
+	revision := &appsv1.ControllerRevision{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: child.Namespace, Name: workflowSnapshotName(child)}, revision); err != nil {
+		t.Fatalf("get snapshot: %v", err)
+	}
+	snapshot, err := loadWorkflowSnapshot(revision)
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if got := snapshot.Spec.Jobs["apply"].Steps[0].Run; got != "deploy --environment=staging" {
+		t.Fatalf("snapshot job = %q, want materialized job", got)
+	}
+	if child.Annotations[v1alpha1.WorkflowOutputAnnotationPrefix+"endpoint"] != "${{ jobs.apply.outputs.endpoint }}" {
+		t.Fatalf("child annotations = %#v, want frozen source workflow output", child.Annotations)
+	}
+}
+
+func TestDeriveWorkflowCallStatusesProjectsFrozenChildOutputs(t *testing.T) {
+	parent := &v1alpha1.WorkflowRun{
+		Status: v1alpha1.WorkflowRunStatus{Jobs: map[string]v1alpha1.JobStatus{
+			"deploy": {Phase: v1alpha1.JobRunning, WorkflowRunName: "deploy-child"},
+		}},
+	}
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "deploy-child",
+			Namespace: "default",
+			Annotations: map[string]string{
+				v1alpha1.WorkflowOutputAnnotationPrefix + "endpoint": "${{ jobs.apply.outputs.endpoint }}",
+			},
+		},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowSucceeded,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"apply": {Phase: v1alpha1.JobSucceeded, Outputs: map[string]string{"endpoint": "https://staging.example.com"}},
+			},
+		},
+	}
+	resources := &workflowRunResources{
+		workflowRun: parent,
+		childWorkflows: map[string]*v1alpha1.WorkflowRun{
+			child.Name: child,
+		},
+	}
+
+	deriveWorkflowCallStatuses(resources)
+	status := parent.Status.Jobs["deploy"]
+	if status.Phase != v1alpha1.JobSucceeded || status.Outputs["endpoint"] != "https://staging.example.com" {
+		t.Fatalf("call status = %#v, want succeeded projected output", status)
+	}
+}
+
+func TestDeriveWorkflowCallStatusesFailsInvalidOutputContract(t *testing.T) {
+	parent := &v1alpha1.WorkflowRun{
+		Status: v1alpha1.WorkflowRunStatus{Jobs: map[string]v1alpha1.JobStatus{
+			"deploy": {Phase: v1alpha1.JobRunning, WorkflowRunName: "deploy-child"},
+		}},
+	}
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "deploy-child",
+			Namespace: "default",
+			Annotations: map[string]string{
+				v1alpha1.WorkflowOutputAnnotationPrefix + "endpoint": "${{ jobs.apply.outputs.endpoint }}",
+			},
+		},
+		Status: v1alpha1.WorkflowRunStatus{Phase: v1alpha1.WorkflowSucceeded},
+	}
+	resources := &workflowRunResources{
+		workflowRun: parent,
+		childWorkflows: map[string]*v1alpha1.WorkflowRun{
+			child.Name: child,
+		},
+	}
+
+	deriveWorkflowCallStatuses(resources)
+	status := parent.Status.Jobs["deploy"]
+	if status.Phase != v1alpha1.JobFailed || !strings.Contains(parent.Status.Message, "resolve outputs for job \"deploy\"") {
+		t.Fatalf("parent status = %#v, want failed call with output error", parent.Status)
+	}
+}
+
+func TestWorkflowOutputContractAnnotations(t *testing.T) {
+	annotations, err := workflowOutputContractAnnotations(map[string]v1alpha1.WorkflowOutputSpec{
+		"endpoint": {Value: "${{ jobs.apply.outputs.endpoint }}"},
+	})
+	if err != nil {
+		t.Fatalf("create output annotations: %v", err)
+	}
+	contract, err := workflowOutputContractFromAnnotations(annotations)
+	if err != nil {
+		t.Fatalf("read output annotations: %v", err)
+	}
+	if got := contract["endpoint"].Value; got != "${{ jobs.apply.outputs.endpoint }}" {
+		t.Fatalf("output contract = %#v", contract)
+	}
+	if _, err := workflowOutputContractAnnotations(map[string]v1alpha1.WorkflowOutputSpec{
+		"invalid/key": {Value: "${{ jobs.apply.outputs.endpoint }}"},
+	}); err == nil {
+		t.Fatal("invalid output name error = nil, want annotation validation error")
+	}
+	outputs := make(map[string]v1alpha1.WorkflowOutputSpec)
+	for i := range 64 {
+		outputs[fmt.Sprintf("output-%d", i)] = v1alpha1.WorkflowOutputSpec{Value: strings.Repeat("x", 8192)}
+	}
+	if _, err := workflowOutputContractAnnotations(outputs); err == nil {
+		t.Fatal("oversized output contract error = nil, want annotation size error")
+	}
+}
+
+func TestDeriveJobStatusesProjectsStepOutputs(t *testing.T) {
+	workflowRun := &v1alpha1.WorkflowRun{
+		Status: v1alpha1.WorkflowRunStatus{Jobs: map[string]v1alpha1.JobStatus{
+			"build": {Phase: v1alpha1.JobRunning, Steps: []v1alpha1.StepStatus{{Name: "package", Phase: v1alpha1.StepSucceeded, Outputs: map[string]string{"artifact": "dist.tgz"}}}},
+		}},
+	}
+	resources := &workflowRunResources{
+		workflowRun: workflowRun,
+		snapshot: &workflowExecutionSnapshot{Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {Outputs: map[string]string{"artifact": "${{ steps.package.outputs.artifact }}"}},
+		}}},
+	}
+
+	deriveJobStatuses(resources)
+	status := workflowRun.Status.Jobs["build"]
+	if status.Phase != v1alpha1.JobSucceeded || status.Outputs["artifact"] != "dist.tgz" {
+		t.Fatalf("job status = %#v, want succeeded projected output", status)
 	}
 }
 

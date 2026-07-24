@@ -627,6 +627,334 @@ func TestWorkflowTriggerMaterializesAndExecutesTemplate(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunExecutesReusableWorkflowAndProjectsOutputs(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-deploy-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{
+			Outputs: map[string]v1alpha1.WorkflowOutputSpec{
+				"endpoint": {Value: "${{ jobs.apply.outputs.endpoint }}"},
+			},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"apply": {
+					RunsOn: "bash",
+					Outputs: map[string]string{
+						"endpoint": "${{ steps.deploy.outputs.endpoint }}",
+					},
+					Steps: []v1alpha1.StepSpec{{
+						Name: "deploy",
+						Run:  `printf 'endpoint=https://e2e.example.com\n' > "$KRUNTIME_OUTPUTS"`,
+					}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), workflow); err != nil {
+		t.Fatalf("create reusable workflow: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflow) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-reuse-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: workflow.Name},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	waitForWorkflowRunPhase(t, workflowRun, 45*time.Second, v1alpha1.WorkflowSucceeded)
+	deploy := workflowRun.Status.Jobs["deploy"]
+	if deploy.WorkflowRunName == "" || deploy.Phase != v1alpha1.JobSucceeded || deploy.Outputs["endpoint"] != "https://e2e.example.com" {
+		t.Fatalf("deploy job status = %#v, want succeeded reusable call with projected endpoint", deploy)
+	}
+}
+
+func TestWorkflowRunExecutesNestedReusableWorkflows(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	leaf := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-leaf-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{
+			Outputs: map[string]v1alpha1.WorkflowOutputSpec{
+				"result": {Value: "${{ jobs.test.outputs.result }}"},
+			},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"test": {
+					RunsOn: "bash",
+					Outputs: map[string]string{
+						"result": "${{ steps.emit.outputs.result }}",
+					},
+					Steps: []v1alpha1.StepSpec{{
+						Name: "emit",
+						Run:  `printf 'result=nested-ok\n' > "$KRUNTIME_OUTPUTS"`,
+					}},
+				},
+			},
+		},
+	}
+	middle := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-middle-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{
+			Outputs: map[string]v1alpha1.WorkflowOutputSpec{
+				"result": {Value: "${{ jobs.call-leaf.outputs.result }}"},
+			},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"call-leaf": {Uses: leaf.Name},
+			},
+		},
+	}
+	for _, workflow := range []*v1alpha1.Workflow{leaf, middle} {
+		if err := k8sClient.Create(context.Background(), workflow); err != nil {
+			t.Fatalf("create reusable workflow %s: %v", workflow.Name, err)
+		}
+		t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflow) })
+	}
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-nested-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"call-middle": {Uses: middle.Name},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	waitForWorkflowRunPhase(t, workflowRun, 45*time.Second, v1alpha1.WorkflowSucceeded)
+	call := workflowRun.Status.Jobs["call-middle"]
+	if call.WorkflowRunName == "" || call.Phase != v1alpha1.JobSucceeded || call.Outputs["result"] != "nested-ok" {
+		t.Fatalf("call-middle job status = %#v, want succeeded nested reusable call with projected result", call)
+	}
+}
+
+func TestWorkflowRunCancellationPropagatesToReusableWorkflow(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-cancel-reuse-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"apply": {
+				RunsOn: "bash",
+				Steps:  []v1alpha1.StepSpec{{Name: "wait", Run: "sleep 300"}},
+			},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflow); err != nil {
+		t.Fatalf("create reusable workflow: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflow) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-cancel-reuse-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: workflow.Name},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+			t.Fatalf("get workflowrun: %v", err)
+		}
+		if workflowRun.Status.Jobs["deploy"].WorkflowRunName != "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for reusable call to start: %#v", workflowRun.Status)
+		default:
+		}
+	}
+	workflowRun.Spec.CancelRequested = true
+	if err := k8sClient.Update(context.Background(), workflowRun); err != nil {
+		t.Fatalf("request workflowrun cancellation: %v", err)
+	}
+
+	waitForWorkflowRunPhase(t, workflowRun, 30*time.Second, v1alpha1.WorkflowCancelled)
+}
+
+func TestWorkflowRunRejectsReusableWorkflowCycle(t *testing.T) {
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	workflowA := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-cycle-a-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"call-b": {Uses: "e2e-cycle-b-" + nameSuffix},
+		}},
+	}
+	workflowB := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-cycle-b-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"call-a": {Uses: workflowA.Name},
+		}},
+	}
+	for _, workflow := range []*v1alpha1.Workflow{workflowA, workflowB} {
+		if err := k8sClient.Create(context.Background(), workflow); err != nil {
+			t.Fatalf("create reusable workflow %s: %v", workflow.Name, err)
+		}
+		t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflow) })
+	}
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-cycle-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"call-a": {Uses: workflowA.Name},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	waitForWorkflowRunPhase(t, workflowRun, 20*time.Second, v1alpha1.WorkflowFailed)
+	status := workflowRun.Status.Jobs["call-a"]
+	if status.Phase != v1alpha1.JobFailed || status.WorkflowRunName != "" {
+		t.Fatalf("call-a status = %#v, want failed call without child workflowrun", status)
+	}
+	if !strings.Contains(workflowRun.Status.Message, "workflow call cycle:") {
+		t.Fatalf("message = %q, want reusable workflow cycle", workflowRun.Status.Message)
+	}
+}
+
+func TestWorkflowRunFreezesReusableTemplateAfterChildCreation(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-freeze-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{
+			Outputs: map[string]v1alpha1.WorkflowOutputSpec{
+				"result": {Value: "${{ jobs.apply.outputs.result }}"},
+			},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"apply": {
+					RunsOn: "bash",
+					Outputs: map[string]string{
+						"result": "${{ steps.emit.outputs.result }}",
+					},
+					Steps: []v1alpha1.StepSpec{{
+						Name: "emit",
+						Run:  `sleep 2; printf 'result=original\n' > "$KRUNTIME_OUTPUTS"`,
+					}},
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), workflow); err != nil {
+		t.Fatalf("create reusable workflow: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflow) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-freeze-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"call": {Uses: workflow.Name},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+			t.Fatalf("get workflowrun: %v", err)
+		}
+		if workflowRun.Status.Jobs["call"].WorkflowRunName != "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for reusable child creation: %#v", workflowRun.Status)
+		default:
+		}
+	}
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflow), workflow); err != nil {
+		t.Fatalf("get reusable workflow: %v", err)
+	}
+	workflow.Spec.Outputs["result"] = v1alpha1.WorkflowOutputSpec{Value: "changed"}
+	if err := k8sClient.Update(context.Background(), workflow); err != nil {
+		t.Fatalf("update reusable workflow after child creation: %v", err)
+	}
+
+	waitForWorkflowRunPhase(t, workflowRun, 30*time.Second, v1alpha1.WorkflowSucceeded)
+	if got := workflowRun.Status.Jobs["call"].Outputs["result"]; got != "original" {
+		t.Fatalf("call output = %q, want original frozen output contract", got)
+	}
+}
+
+func TestWorkflowRunBindsReusableTemplateWhenCallBecomesReady(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-late-bind-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowSpec{
+			Outputs: map[string]v1alpha1.WorkflowOutputSpec{
+				"result": {Value: "${{ jobs.apply.outputs.result }}"},
+			},
+			Jobs: map[string]v1alpha1.JobSpec{
+				"apply": reusableOutputJob(`printf 'result=original\n' > "$KRUNTIME_OUTPUTS"`),
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), workflow); err != nil {
+		t.Fatalf("create reusable workflow: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflow) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-late-bind-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"gate": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "wait", Run: "sleep 2"}}},
+			"call": {Needs: []string{"gate"}, Uses: workflow.Name},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflow), workflow); err != nil {
+		t.Fatalf("get reusable workflow: %v", err)
+	}
+	workflow.Spec.Jobs["apply"] = reusableOutputJob(`printf 'result=updated\n' > "$KRUNTIME_OUTPUTS"`)
+	if err := k8sClient.Update(context.Background(), workflow); err != nil {
+		t.Fatalf("update reusable workflow before call becomes ready: %v", err)
+	}
+
+	waitForWorkflowRunPhase(t, workflowRun, 30*time.Second, v1alpha1.WorkflowSucceeded)
+	if got := workflowRun.Status.Jobs["call"].Outputs["result"]; got != "updated" {
+		t.Fatalf("call output = %q, want updated late-bound template output", got)
+	}
+}
+
+func reusableOutputJob(run string) v1alpha1.JobSpec {
+	return v1alpha1.JobSpec{
+		RunsOn: "bash",
+		Outputs: map[string]string{
+			"result": "${{ steps.emit.outputs.result }}",
+		},
+		Steps: []v1alpha1.StepSpec{{Name: "emit", Run: run}},
+	}
+}
+
 func TestFilesystemArtifacts(t *testing.T) {
 	runtimeName := "bash-filesystem-artifacts"
 	claimName := "e2e-filesystem-artifacts"

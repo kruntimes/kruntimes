@@ -42,12 +42,16 @@ const (
 	// WorkflowRunAcceptedCondition reports whether the WorkflowRun was accepted by the controller.
 	WorkflowRunAcceptedCondition = "Accepted"
 
-	// WorkflowRunUIDLabel identifies child Runs owned by a WorkflowRun.
+	// WorkflowRunUIDLabel identifies direct child resources owned by a WorkflowRun.
 	WorkflowRunUIDLabel = "kruntimes.io/workflowrun-uid"
 	// WorkflowJobLabel identifies the workflow job that owns a child Run.
 	WorkflowJobLabel = "kruntimes.io/workflow-job"
 	// WorkflowStepLabel identifies the workflow step that owns a child Run.
 	WorkflowStepLabel = "kruntimes.io/workflow-step"
+	// WorkflowOutputAnnotationPrefix identifies frozen reusable Workflow output
+	// expressions on a materialized child WorkflowRun. The suffix is the output
+	// name from the source Workflow.
+	WorkflowOutputAnnotationPrefix = "kruntimes.io/workflow-output."
 )
 
 // +kubebuilder:object:generate=true
