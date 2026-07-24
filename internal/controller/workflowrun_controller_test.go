@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -179,7 +180,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		},
 	}
 	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: pending, snapshot: snapshotForWorkflowRun(pending)})
-	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableTargets || len(plan.targets) != 1 || plan.targets[0] != (workflowRunStepTarget{jobName: "build", stepIndex: 0}) {
+	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableTargets || len(plan.targets) != 1 || plan.targets[0] != (workflowRunTarget{kind: workflowRunTargetStep, jobName: "build", stepIndex: 0}) {
 		t.Fatalf("pending plan = %#v, want Pending + StartRunnableSteps(build[0])", plan)
 	}
 
@@ -198,7 +199,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
 		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
-	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !slices.Equal(plan.targets, []workflowRunTarget{{kind: workflowRunTargetCancelRun, name: "build-run"}}) {
 		t.Fatalf("cancelling plan = %#v, want Cancelling + RequestChildRunCancellation(build-run)", plan)
 	}
 
@@ -210,7 +211,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
 		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
-	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !slices.Equal(plan.runNames, []string{"build-run"}) {
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !slices.Equal(plan.targets, []workflowRunTarget{{kind: workflowRunTargetCancelRun, name: "build-run"}}) {
 		t.Fatalf("late child plan = %#v, want cancellation repair", plan)
 	}
 }
@@ -240,7 +241,7 @@ func TestCalculateWorkflowRunPlanProjectsStatusBeforeStartingReadyJobs(t *testin
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): buildRun},
 		snapshot:    snapshotForWorkflowRun(workflowRun),
 	})
-	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
+	want := []workflowRunTarget{{kind: workflowRunTargetStep, jobName: "lint", stepIndex: 0}}
 	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
@@ -265,7 +266,7 @@ func TestPlanWorkflowRunStartsAllRunnableSteps(t *testing.T) {
 	}
 
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
-	want := []workflowRunStepTarget{{jobName: "build", stepIndex: 1}, {jobName: "lint", stepIndex: 0}}
+	want := []workflowRunTarget{{kind: workflowRunTargetStep, jobName: "build", stepIndex: 1}, {kind: workflowRunTargetStep, jobName: "lint", stepIndex: 0}}
 	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
@@ -287,7 +288,7 @@ func TestCalculateWorkflowRunPlanFinalizesJobsBeforeStartingReadyJobs(t *testing
 	}
 
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
-	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
+	want := []workflowRunTarget{{kind: workflowRunTargetStep, jobName: "lint", stepIndex: 0}}
 	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
@@ -422,16 +423,16 @@ func TestWorkflowRunReconcilerCreatesMaterializedWorkflowCall(t *testing.T) {
 	if child.Labels[v1alpha1.WorkflowRunUIDLabel] != string(workflowRun.UID) {
 		t.Fatalf("child labels = %#v, want parent workflowrun UID", child.Labels)
 	}
+	if child.Annotations[v1alpha1.WorkflowOutputAnnotationPrefix+"artifact"] != "${{ jobs.build.outputs.artifact }}" {
+		t.Fatalf("child annotations = %#v, want frozen output contract", child.Annotations)
+	}
 	revision := &appsv1.ControllerRevision{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: child.Namespace, Name: workflowSnapshotName(child)}, revision); !apierrors.IsNotFound(err) {
+		t.Fatalf("child snapshot after parent reconcile error = %v, want not found", err)
+	}
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(child)}, 1)
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: child.Namespace, Name: workflowSnapshotName(child)}, revision); err != nil {
-		t.Fatalf("get child snapshot: %v", err)
-	}
-	snapshot, err := loadWorkflowSnapshot(revision)
-	if err != nil {
-		t.Fatalf("load child snapshot: %v", err)
-	}
-	if snapshot.OutputContract[workflow.Name].Outputs["artifact"].Value != "${{ jobs.build.outputs.artifact }}" {
-		t.Fatalf("child snapshot output contract = %#v", snapshot.OutputContract)
+		t.Fatalf("get child-owned snapshot after child reconcile: %v", err)
 	}
 }
 
@@ -515,11 +516,7 @@ func TestWorkflowRunReconcilerRecoversMaterializedCallBeforeStatusPatch(t *testi
 	if _, _, err := reconciler.ensureWorkflowSnapshot(context.Background(), parent, workflowSnapshotForRun(parent)); err != nil {
 		t.Fatalf("persist parent snapshot: %v", err)
 	}
-	if _, _, err := reconciler.ensureWorkflowSnapshot(context.Background(), child, workflowSnapshotForMaterializedWorkflow(child, workflow)); err != nil {
-		t.Fatalf("persist child snapshot: %v", err)
-	}
-
-	// Simulate a controller crash after the child and its snapshot were created,
+	// Simulate a controller crash after the child was created,
 	// but before the parent status recorded workflowRunName.
 	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}, 1)
 
@@ -1203,7 +1200,7 @@ func TestWorkflowRunReconcilerRequestsDirectChildWorkflowCancellation(t *testing
 	}
 }
 
-func TestWorkflowRunReconcilerDefersChildInitializationUntilParentSnapshotExists(t *testing.T) {
+func TestWorkflowRunReconcilerInitializesChildWithoutParentSnapshot(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 	parent := &v1alpha1.WorkflowRun{ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "parent-uid"}}
 	child := &v1alpha1.WorkflowRun{
@@ -1231,13 +1228,13 @@ func TestWorkflowRunReconcilerDefersChildInitializationUntilParentSnapshotExists
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(child), &updated); err != nil {
 		t.Fatalf("get child workflowrun: %v", err)
 	}
-	if updated.Status.Jobs != nil || updated.Status.SnapshotName != "" {
-		t.Fatalf("child status = %#v, want deferred initialization", updated.Status)
+	if updated.Status.Jobs == nil || updated.Status.SnapshotName == "" {
+		t.Fatalf("child status = %#v, want initialized child", updated.Status)
 	}
 	revision := &appsv1.ControllerRevision{}
 	err := c.Get(context.Background(), client.ObjectKey{Namespace: child.Namespace, Name: workflowSnapshotName(child)}, revision)
-	if !apierrors.IsNotFound(err) {
-		t.Fatalf("get child snapshot error = %v, want not found", err)
+	if err != nil {
+		t.Fatalf("get child-owned snapshot: %v", err)
 	}
 }
 
@@ -1423,27 +1420,25 @@ func TestWorkflowRunReconcilerSnapshotsInlineJobs(t *testing.T) {
 	}
 }
 
-func TestWorkflowRunReconcilerSnapshotsMaterializedWorkflowOutputContract(t *testing.T) {
+func TestWorkflowRunReconcilerInitializesMaterializedWorkflowSnapshot(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 	child := &v1alpha1.WorkflowRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "release-deploy", Namespace: "default", UID: "child-uid"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "release-deploy",
+			Namespace: "default",
+			UID:       "child-uid",
+			Annotations: map[string]string{
+				v1alpha1.WorkflowOutputAnnotationPrefix + "endpoint": "${{ jobs.apply.outputs.endpoint }}",
+			},
+		},
 		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
 			"apply": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "deploy", Run: "deploy --environment=staging"}}},
 		}},
 	}
-	workflow := &v1alpha1.Workflow{
-		ObjectMeta: metav1.ObjectMeta{Name: "deploy-workflow", Namespace: child.Namespace},
-		Spec: v1alpha1.WorkflowSpec{Outputs: map[string]v1alpha1.WorkflowOutputSpec{
-			"endpoint": {Value: "${{ jobs.apply.outputs.endpoint }}"},
-		}},
-	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(child).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(child).WithStatusSubresource(&v1alpha1.WorkflowRun{}).Build()
 	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
 
-	if _, _, err := reconciler.ensureWorkflowSnapshot(context.Background(), child, workflowSnapshotForMaterializedWorkflow(child, workflow)); err != nil {
-		t.Fatalf("persist materialized workflow snapshot: %v", err)
-	}
-	workflow.Spec.Outputs["endpoint"] = v1alpha1.WorkflowOutputSpec{Value: "${{ jobs.apply.outputs.changed }}"}
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(child)}, 1)
 
 	revision := &appsv1.ControllerRevision{}
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: child.Namespace, Name: workflowSnapshotName(child)}, revision); err != nil {
@@ -1456,9 +1451,8 @@ func TestWorkflowRunReconcilerSnapshotsMaterializedWorkflowOutputContract(t *tes
 	if got := snapshot.Spec.Jobs["apply"].Steps[0].Run; got != "deploy --environment=staging" {
 		t.Fatalf("snapshot job = %q, want materialized job", got)
 	}
-	contract, ok := snapshot.OutputContract["deploy-workflow"]
-	if !ok || contract.Outputs["endpoint"].Value != "${{ jobs.apply.outputs.endpoint }}" {
-		t.Fatalf("output contract = %#v, want frozen source workflow output", snapshot.OutputContract)
+	if child.Annotations[v1alpha1.WorkflowOutputAnnotationPrefix+"endpoint"] != "${{ jobs.apply.outputs.endpoint }}" {
+		t.Fatalf("child annotations = %#v, want frozen source workflow output", child.Annotations)
 	}
 }
 
@@ -1469,7 +1463,13 @@ func TestDeriveWorkflowCallStatusesProjectsFrozenChildOutputs(t *testing.T) {
 		}},
 	}
 	child := &v1alpha1.WorkflowRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "deploy-child", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "deploy-child",
+			Namespace: "default",
+			Annotations: map[string]string{
+				v1alpha1.WorkflowOutputAnnotationPrefix + "endpoint": "${{ jobs.apply.outputs.endpoint }}",
+			},
+		},
 		Status: v1alpha1.WorkflowRunStatus{
 			Phase: v1alpha1.WorkflowSucceeded,
 			Jobs: map[string]v1alpha1.JobStatus{
@@ -1481,15 +1481,6 @@ func TestDeriveWorkflowCallStatusesProjectsFrozenChildOutputs(t *testing.T) {
 		workflowRun: parent,
 		childWorkflows: map[string]*v1alpha1.WorkflowRun{
 			child.Name: child,
-		},
-		childSnapshots: map[string]*workflowExecutionSnapshot{
-			child.Name: {
-				OutputContract: map[string]workflowOutputContract{
-					"deploy-workflow": {Outputs: map[string]v1alpha1.WorkflowOutputSpec{
-						"endpoint": {Value: "${{ jobs.apply.outputs.endpoint }}"},
-					}},
-				},
-			},
 		},
 	}
 
@@ -1507,22 +1498,19 @@ func TestDeriveWorkflowCallStatusesFailsInvalidOutputContract(t *testing.T) {
 		}},
 	}
 	child := &v1alpha1.WorkflowRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "deploy-child", Namespace: "default"},
-		Status:     v1alpha1.WorkflowRunStatus{Phase: v1alpha1.WorkflowSucceeded},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "deploy-child",
+			Namespace: "default",
+			Annotations: map[string]string{
+				v1alpha1.WorkflowOutputAnnotationPrefix + "endpoint": "${{ jobs.apply.outputs.endpoint }}",
+			},
+		},
+		Status: v1alpha1.WorkflowRunStatus{Phase: v1alpha1.WorkflowSucceeded},
 	}
 	resources := &workflowRunResources{
 		workflowRun: parent,
 		childWorkflows: map[string]*v1alpha1.WorkflowRun{
 			child.Name: child,
-		},
-		childSnapshots: map[string]*workflowExecutionSnapshot{
-			child.Name: {
-				OutputContract: map[string]workflowOutputContract{
-					"deploy-workflow": {Outputs: map[string]v1alpha1.WorkflowOutputSpec{
-						"endpoint": {Value: "${{ jobs.apply.outputs.endpoint }}"},
-					}},
-				},
-			},
 		},
 	}
 
@@ -1530,6 +1518,34 @@ func TestDeriveWorkflowCallStatusesFailsInvalidOutputContract(t *testing.T) {
 	status := parent.Status.Jobs["deploy"]
 	if status.Phase != v1alpha1.JobFailed || !strings.Contains(parent.Status.Message, "resolve outputs for job \"deploy\"") {
 		t.Fatalf("parent status = %#v, want failed call with output error", parent.Status)
+	}
+}
+
+func TestWorkflowOutputContractAnnotations(t *testing.T) {
+	annotations, err := workflowOutputContractAnnotations(map[string]v1alpha1.WorkflowOutputSpec{
+		"endpoint": {Value: "${{ jobs.apply.outputs.endpoint }}"},
+	})
+	if err != nil {
+		t.Fatalf("create output annotations: %v", err)
+	}
+	contract, err := workflowOutputContractFromAnnotations(annotations)
+	if err != nil {
+		t.Fatalf("read output annotations: %v", err)
+	}
+	if got := contract["endpoint"].Value; got != "${{ jobs.apply.outputs.endpoint }}" {
+		t.Fatalf("output contract = %#v", contract)
+	}
+	if _, err := workflowOutputContractAnnotations(map[string]v1alpha1.WorkflowOutputSpec{
+		"invalid/key": {Value: "${{ jobs.apply.outputs.endpoint }}"},
+	}); err == nil {
+		t.Fatal("invalid output name error = nil, want annotation validation error")
+	}
+	outputs := make(map[string]v1alpha1.WorkflowOutputSpec)
+	for i := range 64 {
+		outputs[fmt.Sprintf("output-%d", i)] = v1alpha1.WorkflowOutputSpec{Value: strings.Repeat("x", 8192)}
+	}
+	if _, err := workflowOutputContractAnnotations(outputs); err == nil {
+		t.Fatal("oversized output contract error = nil, want annotation size error")
 	}
 }
 

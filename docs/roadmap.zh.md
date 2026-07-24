@@ -235,7 +235,7 @@ controller wiring 累积不必要的冲突。
   - [x] 实现 WorkflowRun cancellation propagation；
   - [x] 验证 in-progress inline WorkflowRuns 的 controller restart recovery，包括
     child Run 已创建但 status 尚未持久化的故障窗口；
-  - [ ] 按照完成 review 的
+  - [x] 按照完成 review 的
     [execution-boundary design](design/workflow-job-reuse.md) 实现 job-level reusable
     Workflow calls：
     - [x] review 并批准 direct child WorkflowRun 和 local snapshot model；
@@ -243,12 +243,13 @@ controller wiring 累积不必要的冲突。
       WorkflowRun 的创建；
     - [x] 为每个 WorkflowRun 增加包含 local execution spec 和有界 `JobStatus.outputs` 的
       immutable snapshot；
-    - [ ] 在每个 materialized child snapshot 中保存 frozen source output contract；
-    - [ ] 为 ready job-level calls 创建并观察 child WorkflowRuns，包括 input rendering 和
+    - [x] 在每个 materialized child WorkflowRun annotation 中保存 frozen source output
+      contract；
+    - [x] 为 ready job-level calls 创建并观察 child WorkflowRuns，包括 input rendering 和
       output-contract capture；
-    - [ ] 将 inline 和 child Workflow outputs 投影到有界的
+    - [x] 将 inline 和 child Workflow outputs 投影到有界的
       `WorkflowRun.status.jobs.<job>.outputs`；
-    - [ ] 验证 child 创建前的 late-binding、child 创建后的 deterministic behavior、restart
+    - [x] 验证 child 创建前的 late-binding、child 创建后的 deterministic behavior、restart
       recovery、nested calls、cancellation 和 invalid graphs，包括创建 child 前拒绝
       `A -> B -> A` cycle；
   - 实现 step-level Action expansion；
