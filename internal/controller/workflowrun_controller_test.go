@@ -476,6 +476,70 @@ func TestWorkflowRunReconcilerFailsOnlyInvalidReusableCall(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunReconcilerRecoversMaterializedCallBeforeStatusPatch(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	parent := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "parent-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: "deploy-workflow"},
+		}},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowPending,
+			Jobs:  resolvedJobStatuses(map[string]v1alpha1.JobSpec{"deploy": {Uses: "deploy-workflow"}}),
+		},
+	}
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "deploy-workflow", Namespace: parent.Namespace},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"apply": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "deploy", Run: "deploy"}}},
+		}},
+	}
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      workflowCallRunName(parent.Name, "deploy"),
+			Namespace: parent.Namespace,
+			UID:       "child-uid",
+			Labels:    map[string]string{v1alpha1.WorkflowRunUIDLabel: string(parent.UID)},
+		},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: workflow.Spec.Jobs},
+	}
+	if err := controllerutil.SetControllerReference(parent, child, scheme); err != nil {
+		t.Fatalf("set child owner: %v", err)
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(parent, workflow, child).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	if _, _, err := reconciler.ensureWorkflowSnapshot(context.Background(), parent, workflowSnapshotForRun(parent)); err != nil {
+		t.Fatalf("persist parent snapshot: %v", err)
+	}
+	if _, _, err := reconciler.ensureWorkflowSnapshot(context.Background(), child, workflowSnapshotForMaterializedWorkflow(child, workflow)); err != nil {
+		t.Fatalf("persist child snapshot: %v", err)
+	}
+
+	// Simulate a controller crash after the child and its snapshot were created,
+	// but before the parent status recorded workflowRunName.
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}, 1)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(parent), &updated); err != nil {
+		t.Fatalf("get parent workflowrun: %v", err)
+	}
+	status := updated.Status.Jobs["deploy"]
+	if status.Phase != v1alpha1.JobRunning || status.WorkflowRunName != child.Name {
+		t.Fatalf("deploy status = %#v, want recovered existing child %q", status, child.Name)
+	}
+	var children v1alpha1.WorkflowRunList
+	if err := c.List(context.Background(), &children, client.InNamespace(parent.Namespace), client.MatchingLabels{v1alpha1.WorkflowRunUIDLabel: string(parent.UID)}); err != nil {
+		t.Fatalf("list child workflowruns: %v", err)
+	}
+	if len(children.Items) != 1 || children.Items[0].Name != child.Name {
+		t.Fatalf("child workflowruns = %#v, want exactly existing child", children.Items)
+	}
+}
+
 func TestWorkflowRunReconcilerRejectsOversizedSnapshot(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 	workflowRun := &v1alpha1.WorkflowRun{
