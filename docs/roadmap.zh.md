@@ -78,6 +78,8 @@ controller wiring 累积不必要的冲突。
   初始实现 TODO：
   - [ ] review Run queue ownership、snapshot、PreFilter、Filter、Score、Reserve/Assume、Bind、status 和
     retry semantics；
+  - [ ] 在将 scheduler capacity check 扩展到内建 `runs` resource 以外前，review
+    [Run resource accounting](design/run-resource-accounting.md) API；
   - [ ] 在 queue/planner interfaces 后重构 scheduler internals，同时保留当前 observable behavior 和
     metrics；
   - [ ] 增加 deterministic selection、assumed-capacity、bind-conflict 和 restart-recovery coverage；
