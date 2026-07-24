@@ -178,7 +178,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		},
 	}
 	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: pending, snapshot: snapshotForWorkflowRun(pending)})
-	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableSteps || len(plan.targets) != 1 || plan.targets[0] != (workflowRunStepTarget{jobName: "build", stepIndex: 0}) {
+	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableTargets || len(plan.targets) != 1 || plan.targets[0] != (workflowRunStepTarget{jobName: "build", stepIndex: 0}) {
 		t.Fatalf("pending plan = %#v, want Pending + StartRunnableSteps(build[0])", plan)
 	}
 
@@ -240,7 +240,7 @@ func TestCalculateWorkflowRunPlanProjectsStatusBeforeStartingReadyJobs(t *testin
 		snapshot:    snapshotForWorkflowRun(workflowRun),
 	})
 	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
 	if workflowRun.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded {
@@ -265,7 +265,7 @@ func TestPlanWorkflowRunStartsAllRunnableSteps(t *testing.T) {
 
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
 	want := []workflowRunStepTarget{{jobName: "build", stepIndex: 1}, {jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
 }
@@ -287,7 +287,7 @@ func TestCalculateWorkflowRunPlanFinalizesJobsBeforeStartingReadyJobs(t *testing
 
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
 	want := []workflowRunStepTarget{{jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableSteps || !slices.Equal(plan.targets, want) {
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
 	if workflowRun.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded {
@@ -362,7 +362,7 @@ func TestWorkflowRunReconcilerSkipsBlockedJobsAndStartsIndependentJobs(t *testin
 	}
 }
 
-func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization(t *testing.T) {
+func TestWorkflowRunReconcilerCreatesMaterializedWorkflowCall(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 
 	workflowRun := &v1alpha1.WorkflowRun{
@@ -377,9 +377,10 @@ func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization
 	}
 	workflow := &v1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "build-and-test", Namespace: workflowRun.Namespace},
-		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
-			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}},
-		}},
+		Spec: v1alpha1.WorkflowSpec{
+			Outputs: map[string]v1alpha1.WorkflowOutputSpec{"artifact": {Value: "${{ jobs.build.outputs.artifact }}"}},
+			Jobs:    map[string]v1alpha1.JobSpec{"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "compile", Run: "make build"}}}},
+		},
 	}
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -398,18 +399,35 @@ func TestWorkflowRunReconcilerRejectsUnsupportedJobLevelUsesDuringInitialization
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
 		t.Fatalf("get workflowrun: %v", err)
 	}
-	if updated.Status.Phase != v1alpha1.WorkflowFailed {
-		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowFailed)
+	if updated.Status.Phase != v1alpha1.WorkflowRunning {
+		t.Fatalf("phase = %q, want %q", updated.Status.Phase, v1alpha1.WorkflowRunning)
 	}
-	if !strings.Contains(updated.Status.Message, "job-level uses is not implemented yet") {
-		t.Fatalf("message = %q, want job-level uses not implemented", updated.Status.Message)
-	}
-	if updated.Status.Jobs != nil {
-		t.Fatalf("jobs = %#v, want nil for rejected workflowrun", updated.Status.Jobs)
+	job := updated.Status.Jobs["release"]
+	childName := workflowCallRunName(workflowRun.Name, "release")
+	if job.Phase != v1alpha1.JobRunning || job.WorkflowRunName != childName {
+		t.Fatalf("call status = %#v, want running child %q", job, childName)
 	}
 	cond := apimeta.FindStatusCondition(updated.Status.Conditions, v1alpha1.WorkflowRunAcceptedCondition)
-	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "WorkflowValidationFailed" {
-		t.Fatalf("condition = %#v, want validation rejection", cond)
+	if cond == nil || cond.Status != metav1.ConditionTrue {
+		t.Fatalf("condition = %#v, want accepted workflowrun", cond)
+	}
+	child := &v1alpha1.WorkflowRun{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: workflowRun.Namespace, Name: childName}, child); err != nil {
+		t.Fatalf("get child workflowrun: %v", err)
+	}
+	if child.Spec.Jobs["build"].Steps[0].Run != "make build" {
+		t.Fatalf("child spec = %#v, want materialized build job", child.Spec)
+	}
+	revision := &appsv1.ControllerRevision{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: child.Namespace, Name: workflowSnapshotName(child)}, revision); err != nil {
+		t.Fatalf("get child snapshot: %v", err)
+	}
+	snapshot, err := loadWorkflowSnapshot(revision)
+	if err != nil {
+		t.Fatalf("load child snapshot: %v", err)
+	}
+	if snapshot.OutputContract[workflow.Name].Outputs["artifact"].Value != "${{ jobs.build.outputs.artifact }}" {
+		t.Fatalf("child snapshot output contract = %#v", snapshot.OutputContract)
 	}
 }
 
