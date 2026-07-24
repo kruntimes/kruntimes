@@ -435,6 +435,47 @@ func TestWorkflowRunReconcilerCreatesMaterializedWorkflowCall(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunReconcilerFailsOnlyInvalidReusableCall(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "workflowrun-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"deploy": {Uses: "missing-workflow"},
+			"lint":   {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "check", Run: "make lint"}}},
+		}},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+
+	reconcileWorkflowRun(t, reconciler, req, 2)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	if updated.Status.Jobs["deploy"].Phase != v1alpha1.JobFailed {
+		t.Fatalf("deploy status = %#v, want failed missing reusable workflow", updated.Status.Jobs["deploy"])
+	}
+	if updated.Status.Jobs["lint"].Phase != v1alpha1.JobRunning {
+		t.Fatalf("lint status = %#v, want independent job running", updated.Status.Jobs["lint"])
+	}
+	if !strings.Contains(updated.Status.Message, `reusable workflow "missing-workflow"`) {
+		t.Fatalf("message = %q, want missing reusable workflow", updated.Status.Message)
+	}
+	var children v1alpha1.WorkflowRunList
+	if err := c.List(context.Background(), &children, client.InNamespace(workflowRun.Namespace)); err != nil {
+		t.Fatalf("list child workflowruns: %v", err)
+	}
+	if len(children.Items) != 1 {
+		t.Fatalf("workflowruns = %#v, want only parent", children.Items)
+	}
+}
+
 func TestWorkflowRunReconcilerRejectsOversizedSnapshot(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 	workflowRun := &v1alpha1.WorkflowRun{
