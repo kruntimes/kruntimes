@@ -73,7 +73,8 @@ krt workflow trigger deploy-workflow --input environment=staging
 1. 从同一 namespace 读取 `deploy-workflow`。
 2. 使用 caller context 渲染 `with`，并校验 callee inputs。
 3. 将 `inputs.*` 渲染到 callee jobs。
-4. 用这些 inline jobs 创建直接 child WorkflowRun。
+4. 用这些 inline jobs 创建直接 child WorkflowRun，并为 source Workflow 的每个冻结
+   output expression 写入一个 `kruntimes.io/workflow-output.<name>` annotation。
 5. 设置 owner reference，并将 child 名称写入 `parent.status.jobs.deploy.workflowRunName`。
 
 child 正常执行，也可以为其 `uses` jobs 创建自己的直接 child WorkflowRuns。parent 不拥有也不检查 grandchildren。
@@ -84,8 +85,7 @@ child 正常执行，也可以为其 `uses` jobs 创建自己的直接 child Wor
 
 每个 WorkflowRun 自己拥有一个 `ControllerRevision`，名称由自身 UID 确定，并记录在 `status.snapshotName`。它只包含：
 
-- `spec`：接受的 inline `WorkflowRun.spec`，包括本地 jobs topology；
-- `outputContract`：仅当该 WorkflowRun 从可复用 Workflow materialize 出来时，保存一个以 source Workflow 名称为 key 的单项 map；其 value 是该 Workflow 声明的 `spec.outputs`。
+- `spec`：接受的 inline `WorkflowRun.spec`，包括本地 jobs topology。
 
 ```yaml
 apiVersion: apps/v1
@@ -102,14 +102,21 @@ data:
       apply:
         runs-on: bash
         steps: [{ name: deploy, run: deploy --environment=staging }]
-  outputContract:
-    deploy-workflow:
-      outputs:
-        endpoint:
-          value: ${{ jobs.apply.outputs.endpoint }}
 ```
 
-output contract 是 child 创建后保留的唯一 source-template 数据。parent 必须使用与实际执行 jobs 配套的 output 定义；如果 child 完成后读取可变的当前 Workflow，模板变更会让同一执行产生不同的 parent output。
+对于由 reusable Workflow materialize 的 child，controller 会在 child 创建时将冻结的
+source output contract 写入 child：
+
+```yaml
+metadata:
+  annotations:
+    kruntimes.io/workflow-output.endpoint: ${{ jobs.apply.outputs.endpoint }}
+```
+
+child 在自己的 reconciliation 中初始化自己的 snapshot。output annotations 与它的
+inline jobs 一起构成 contract，因此 parent 可以使用 `child.status.jobs` 计算 outputs，
+而无需加载或拥有 child 的 ControllerRevision。如果 child 完成后读取可变的当前 Workflow，
+模板变更会让同一 execution 产生不同的 parent output。
 
 一个 snapshot 只由自己的 WorkflowRun 拥有和使用。
 
@@ -148,7 +155,7 @@ status:
         endpoint: https://staging.example.com
 ```
 
-inline job 的所有 steps 成功后，controller 使用 `JobSpec.outputs` 和 Run status 中的 step outputs 计算 job output。可复用调用的 child WorkflowRun 成功后，parent 读取 child 的局部 snapshot，用冻结的 `outputContract` 对 `child.status.jobs` 求值，并将结果写到 caller job 的 `JobStatus.outputs`。
+inline job 的所有 steps 成功后，controller 使用 `JobSpec.outputs` 和 Run status 中的 step outputs 计算 job output。可复用调用的 child WorkflowRun 成功后，parent 读取 child 冻结的 `kruntimes.io/workflow-output.<name>` annotations，使用 `child.status.jobs` 求值，并将结果写到 caller job 的 `JobStatus.outputs`。parent 不读取 child 的 private snapshot。
 
 下游渲染统一使用：
 
@@ -190,6 +197,8 @@ Scheduler 和 runtimed 仍然只处理独立 `Run`，不了解 Workflow reuse、
 - WorkflowRun 自身不能包含 `uses` 或 `with`。
 - 调用 job 包含 `needs`、`uses` 和可选 `with`，不能包含 `runs-on` 或 `steps`。
 - 创建 child 前校验 inputs 和 expression references。
+- reusable Workflow output name 必须是有效 annotation suffix，并且其冻结 output
+  contract 必须满足 Kubernetes annotation budget。
 - 在创建 root 或 child WorkflowRun 前，在解析被引用的 Workflow graph 时检测 Workflow cycle；
   初始最大嵌套深度为 8。
 - job 与 step outputs 受 CRD 大小限制；artifacts 不是 outputs。

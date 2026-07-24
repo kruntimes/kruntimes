@@ -280,7 +280,7 @@ wiring from accumulating avoidable conflicts.
     - [x] add a per-WorkflowRun immutable snapshot with the local execution
       spec and bounded `JobStatus.outputs`;
     - [x] capture the frozen source output contract in each materialized child
-      snapshot;
+      WorkflowRun annotation;
     - [x] create and observe child WorkflowRuns for ready job-level calls,
       including input rendering and output-contract capture;
     - [x] project inline and child Workflow outputs into bounded
