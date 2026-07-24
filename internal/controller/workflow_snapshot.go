@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -20,12 +21,16 @@ import (
 
 const maxWorkflowSnapshotBytes = 1 << 20
 
-// workflowExecutionSnapshot is controller-private storage for one
-// WorkflowRun. It contains only that WorkflowRun's accepted inline spec. A
-// materialized reusable Workflow child will additionally store its source
-// output contract in a later implementation step.
+// workflowExecutionSnapshot is controller-private storage for one WorkflowRun.
+// It contains that WorkflowRun's accepted inline spec and, for a materialized
+// reusable Workflow child, the output contract that accompanied those jobs.
 type workflowExecutionSnapshot struct {
-	Spec v1alpha1.WorkflowRunSpec `json:"spec"`
+	Spec           v1alpha1.WorkflowRunSpec          `json:"spec"`
+	OutputContract map[string]workflowOutputContract `json:"outputContract,omitempty"`
+}
+
+type workflowOutputContract struct {
+	Outputs map[string]v1alpha1.WorkflowOutputSpec `json:"outputs,omitempty"`
 }
 
 type workflowSnapshotError struct {
@@ -37,6 +42,21 @@ func (e *workflowSnapshotError) Unwrap() error { return e.err }
 
 func workflowSnapshotForRun(workflowRun *v1alpha1.WorkflowRun) *workflowExecutionSnapshot {
 	return &workflowExecutionSnapshot{Spec: *workflowRun.Spec.DeepCopy()}
+}
+
+// workflowSnapshotForMaterializedWorkflow records the template output contract
+// alongside the child WorkflowRun's already-rendered local job graph. The
+// parent creates this revision after Kubernetes assigns the child UID and
+// before the child controller initializes it.
+func workflowSnapshotForMaterializedWorkflow(workflowRun *v1alpha1.WorkflowRun, workflow *v1alpha1.Workflow) *workflowExecutionSnapshot {
+	snapshot := workflowSnapshotForRun(workflowRun)
+	if len(workflow.Spec.Outputs) == 0 {
+		return snapshot
+	}
+	snapshot.OutputContract = map[string]workflowOutputContract{
+		workflow.Name: {Outputs: maps.Clone(workflow.Spec.Outputs)},
+	}
+	return snapshot
 }
 
 func (r *WorkflowRunReconciler) ensureWorkflowSnapshot(ctx context.Context, workflowRun *v1alpha1.WorkflowRun, snapshot *workflowExecutionSnapshot) (string, *workflowExecutionSnapshot, error) {

@@ -1207,6 +1207,45 @@ func TestWorkflowRunReconcilerSnapshotsInlineJobs(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunReconcilerSnapshotsMaterializedWorkflowOutputContract(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	child := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release-deploy", Namespace: "default", UID: "child-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"apply": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "deploy", Run: "deploy --environment=staging"}}},
+		}},
+	}
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "deploy-workflow", Namespace: child.Namespace},
+		Spec: v1alpha1.WorkflowSpec{Outputs: map[string]v1alpha1.WorkflowOutputSpec{
+			"endpoint": {Value: "${{ jobs.apply.outputs.endpoint }}"},
+		}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(child).Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+
+	if _, _, err := reconciler.ensureWorkflowSnapshot(context.Background(), child, workflowSnapshotForMaterializedWorkflow(child, workflow)); err != nil {
+		t.Fatalf("persist materialized workflow snapshot: %v", err)
+	}
+	workflow.Spec.Outputs["endpoint"] = v1alpha1.WorkflowOutputSpec{Value: "${{ jobs.apply.outputs.changed }}"}
+
+	revision := &appsv1.ControllerRevision{}
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: child.Namespace, Name: workflowSnapshotName(child)}, revision); err != nil {
+		t.Fatalf("get snapshot: %v", err)
+	}
+	snapshot, err := loadWorkflowSnapshot(revision)
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if got := snapshot.Spec.Jobs["apply"].Steps[0].Run; got != "deploy --environment=staging" {
+		t.Fatalf("snapshot job = %q, want materialized job", got)
+	}
+	contract, ok := snapshot.OutputContract["deploy-workflow"]
+	if !ok || contract.Outputs["endpoint"].Value != "${{ jobs.apply.outputs.endpoint }}" {
+		t.Fatalf("output contract = %#v, want frozen source workflow output", snapshot.OutputContract)
+	}
+}
+
 func TestWorkflowRunReconcilerRecoversSnapshotBeforeStatusPatch(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 	workflowRun := &v1alpha1.WorkflowRun{
