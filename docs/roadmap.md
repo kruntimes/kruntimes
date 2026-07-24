@@ -84,8 +84,11 @@ wiring from accumulating avoidable conflicts.
   [Scheduler Framework](design/scheduler-framework.md) architecture before
   changing scheduler behavior.
   Initial implementation TODO:
-  - [ ] review Run queue ownership, snapshot, PreFilter, Filter, Score,
+    - [ ] review Run queue ownership, snapshot, PreFilter, Filter, Score,
     Reserve/Assume, Bind, status, and retry semantics;
+  - [ ] review the [Run resource accounting](design/run-resource-accounting.md)
+    API before extending scheduler capacity checks beyond the built-in `runs`
+    resource;
   - [ ] refactor scheduler internals behind queue/planner interfaces while
     preserving current observable behavior and metrics;
   - [ ] add deterministic selection, assumed-capacity, bind-conflict,

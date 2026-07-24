@@ -13,6 +13,7 @@ implemented.
 - [Workflow Data Sharing](workflow-data-sharing/)
 - [Run Workspace References and Affinity](run-workspace-affinity/)
 - [Scheduler Framework and Batch Planning](scheduler-framework/)
+- [Run Resource Accounting](run-resource-accounting/)
 - [Workflow Reuse](workflow-reuse/)
 - [Job-Level Reusable Workflow Execution](workflow-job-reuse/)
 - [Dashboard](dashboard/)
