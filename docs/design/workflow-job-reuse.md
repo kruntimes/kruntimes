@@ -1,6 +1,6 @@
 # Job-Level Reusable Workflow Execution
 
-Status: **Proposed for review**
+Status: **Accepted**
 
 This document defines the v0.x execution boundary for job-level reusable
 Workflows.
@@ -260,17 +260,17 @@ useful rule for that future work: reuse expands at the direct execution
 boundary. An Action will be resolved into its caller step/Run, rather than
 being added to a root-wide Workflow snapshot or controller traversal tree.
 
-## Implementation Plan
+## Implementation Status
 
-1. Add the local WorkflowRun snapshot envelope and `JobStatus.outputs`.
-2. Implement `krt workflow
+1. [x] Add the local WorkflowRun snapshot envelope and `JobStatus.outputs`.
+2. [x] Implement `krt workflow
    trigger` as template input validation, rendering, and inline WorkflowRun
    creation.
-3. Implement direct child WorkflowRun creation with input rendering and frozen
+3. [x] Implement direct child WorkflowRun creation with input rendering and frozen
    output contracts.
-4. Implement local job-output evaluation, child-output projection, restart
+4. [x] Implement local job-output evaluation, child-output projection, restart
    recovery, and template-mutation semantics tests.
-5. Add E2E coverage for nested calls, including self-references and
-   `A -> B -> A` cycle rejection, output propagation, cancellation, and
-   template updates before versus after child creation.
-6. Design Action expansion separately, using the same direct-boundary rule.
+5. [x] Add E2E coverage for nested calls, `A -> B -> A` cycle rejection,
+   output propagation, cancellation, and template updates before versus after
+   child creation; add unit coverage for self-reference rejection.
+6. [ ] Design Action expansion separately, using the same direct-boundary rule.
