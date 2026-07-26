@@ -68,8 +68,6 @@ type workflowRunPlan struct {
 type workflowRunTarget struct {
 	step         *jobStepRunTarget
 	workflowCall *jobWorkflowCallTarget
-	run          *childRunTarget
-	workflowRun  *childWorkflowRunTarget
 }
 
 type jobStepRunTarget struct {
@@ -79,14 +77,6 @@ type jobStepRunTarget struct {
 
 type jobWorkflowCallTarget struct {
 	jobName string
-}
-
-type childRunTarget struct {
-	name string
-}
-
-type childWorkflowRunTarget struct {
-	name string
 }
 
 type workflowCallValidationError struct {
@@ -208,8 +198,7 @@ func calculateWorkflowRunPlan(resources *workflowRunResources) workflowRunPlan {
 		return plan
 	}
 	if workflowRun.Spec.CancelRequested {
-		plan.targets = append(childRunCancellationTargets(resources.childRuns), childWorkflowRunCancellationTargets(resources.childWorkflows)...)
-		if len(plan.targets) > 0 {
+		if hasActiveChildRuns(resources.childRuns) || hasActiveChildWorkflowRuns(resources.childWorkflows) {
 			plan.state = workflowRunStateCancelling
 			plan.action = workflowRunActionRequestChildCancellation
 			return plan
@@ -289,7 +278,7 @@ func (r *WorkflowRunReconciler) applyWorkflowRunAction(ctx context.Context, reso
 	case workflowRunActionStartRunnableTargets:
 		return r.applyStartRunnableTargets(ctx, resources, plan.targets)
 	case workflowRunActionRequestChildCancellation:
-		return r.applyRequestChildCancellation(ctx, resources, plan.targets)
+		return r.applyRequestChildCancellation(ctx, resources)
 	}
 	return nil
 }
@@ -787,57 +776,43 @@ func isTerminalWorkflowPhase(phase v1alpha1.WorkflowPhase) bool {
 	}
 }
 
-func childRunCancellationTargets(childRuns map[string]*v1alpha1.Run) []workflowRunTarget {
-	targets := make([]workflowRunTarget, 0, len(childRuns))
+func hasActiveChildRuns(childRuns map[string]*v1alpha1.Run) bool {
 	for _, run := range childRuns {
 		if !isTerminalRunPhase(run.Status.Phase) && !run.Spec.CancelRequested {
-			targets = append(targets, workflowRunTarget{run: &childRunTarget{name: run.Name}})
+			return true
 		}
 	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].run.name < targets[j].run.name })
-	return targets
+	return false
 }
 
-func childWorkflowRunCancellationTargets(childWorkflows map[string]*v1alpha1.WorkflowRun) []workflowRunTarget {
-	targets := make([]workflowRunTarget, 0, len(childWorkflows))
+func hasActiveChildWorkflowRuns(childWorkflows map[string]*v1alpha1.WorkflowRun) bool {
 	for _, child := range childWorkflows {
 		if !isTerminalWorkflowPhase(child.Status.Phase) && !child.Spec.CancelRequested {
-			targets = append(targets, workflowRunTarget{workflowRun: &childWorkflowRunTarget{name: child.Name}})
+			return true
 		}
 	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].workflowRun.name < targets[j].workflowRun.name })
-	return targets
+	return false
 }
 
-func (r *WorkflowRunReconciler) applyRequestChildCancellation(ctx context.Context, resources *workflowRunResources, targets []workflowRunTarget) error {
-	childRuns := make(map[string]*v1alpha1.Run, len(resources.childRuns))
+func (r *WorkflowRunReconciler) applyRequestChildCancellation(ctx context.Context, resources *workflowRunResources) error {
 	for _, run := range resources.childRuns {
-		childRuns[run.Name] = run
+		if run.Spec.CancelRequested || isTerminalRunPhase(run.Status.Phase) {
+			continue
+		}
+		base := run.DeepCopy()
+		run.Spec.CancelRequested = true
+		if err := r.Patch(ctx, run, client.MergeFrom(base)); err != nil {
+			return fmt.Errorf("request cancellation of child run %s/%s: %w", run.Namespace, run.Name, err)
+		}
 	}
-	for _, target := range targets {
-		switch {
-		case target.run != nil:
-			run := childRuns[target.run.name]
-			if run == nil || run.Spec.CancelRequested || isTerminalRunPhase(run.Status.Phase) {
-				continue
-			}
-			base := run.DeepCopy()
-			run.Spec.CancelRequested = true
-			if err := r.Patch(ctx, run, client.MergeFrom(base)); err != nil {
-				return fmt.Errorf("request cancellation of child run %s/%s: %w", run.Namespace, run.Name, err)
-			}
-		case target.workflowRun != nil:
-			child := resources.childWorkflows[target.workflowRun.name]
-			if child == nil || child.Spec.CancelRequested || isTerminalWorkflowPhase(child.Status.Phase) {
-				continue
-			}
-			base := child.DeepCopy()
-			child.Spec.CancelRequested = true
-			if err := r.Patch(ctx, child, client.MergeFrom(base)); err != nil {
-				return fmt.Errorf("request cancellation of child workflowrun %s/%s: %w", child.Namespace, child.Name, err)
-			}
-		default:
-			return fmt.Errorf("cancel workflowrun target is not a child Run or WorkflowRun")
+	for _, child := range resources.childWorkflows {
+		if child.Spec.CancelRequested || isTerminalWorkflowPhase(child.Status.Phase) {
+			continue
+		}
+		base := child.DeepCopy()
+		child.Spec.CancelRequested = true
+		if err := r.Patch(ctx, child, client.MergeFrom(base)); err != nil {
+			return fmt.Errorf("request cancellation of child workflowrun %s/%s: %w", child.Namespace, child.Name, err)
 		}
 	}
 	return nil

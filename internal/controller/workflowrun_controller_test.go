@@ -39,10 +39,6 @@ func stepRunTarget(jobName string, stepIndex int) workflowRunTarget {
 	return workflowRunTarget{step: &jobStepRunTarget{jobName: jobName, stepIndex: stepIndex}}
 }
 
-func cancelRunTarget(name string) workflowRunTarget {
-	return workflowRunTarget{run: &childRunTarget{name: name}}
-}
-
 func equalWorkflowRunTargets(got, want []workflowRunTarget) bool {
 	return reflect.DeepEqual(got, want)
 }
@@ -234,7 +230,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
 		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
-	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !equalWorkflowRunTargets(plan.targets, []workflowRunTarget{cancelRunTarget("build-run")}) {
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || len(plan.targets) != 0 {
 		t.Fatalf("cancelling plan = %#v, want Cancelling + RequestChildRunCancellation(build-run)", plan)
 	}
 
@@ -246,7 +242,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
 		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
-	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !equalWorkflowRunTargets(plan.targets, []workflowRunTarget{cancelRunTarget("build-run")}) {
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || len(plan.targets) != 0 {
 		t.Fatalf("late child plan = %#v, want cancellation repair", plan)
 	}
 }
