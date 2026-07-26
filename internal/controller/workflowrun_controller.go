@@ -23,6 +23,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/workflowtemplate"
@@ -62,21 +64,29 @@ type workflowRunPlan struct {
 	targets []workflowRunTarget
 }
 
-type workflowRunTargetKind string
-
-const (
-	workflowRunTargetStep              workflowRunTargetKind = "Step"
-	workflowRunTargetWorkflowCall      workflowRunTargetKind = "WorkflowCall"
-	workflowRunTargetCancelRun         workflowRunTargetKind = "CancelRun"
-	workflowRunTargetCancelWorkflowRun workflowRunTargetKind = "CancelWorkflowRun"
-)
-
 // workflowRunTarget identifies one child resource operation within a plan.
 type workflowRunTarget struct {
-	kind      workflowRunTargetKind
+	step         *jobStepRunTarget
+	workflowCall *jobWorkflowCallTarget
+	run          *childRunTarget
+	workflowRun  *childWorkflowRunTarget
+}
+
+type jobStepRunTarget struct {
 	jobName   string
 	stepIndex int
-	name      string
+}
+
+type jobWorkflowCallTarget struct {
+	jobName string
+}
+
+type childRunTarget struct {
+	name string
+}
+
+type childWorkflowRunTarget struct {
+	name string
 }
 
 type workflowCallValidationError struct {
@@ -289,9 +299,19 @@ func (r *WorkflowRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.WorkflowRun{}).
 		Owns(&v1alpha1.Run{}).
-		Owns(&v1alpha1.WorkflowRun{}).
+		Watches(&v1alpha1.WorkflowRun{}, handler.EnqueueRequestsFromMapFunc(r.parentWorkflowRunRequest)).
 		Owns(&appsv1.ControllerRevision{}).
 		Complete(r)
+}
+
+// parentWorkflowRunRequest maps a child WorkflowRun event to its controller
+// owner. The primary For watch continues to reconcile WorkflowRuns themselves.
+func (r *WorkflowRunReconciler) parentWorkflowRunRequest(_ context.Context, object client.Object) []reconcile.Request {
+	owner := metav1.GetControllerOf(object)
+	if owner == nil || owner.APIVersion != v1alpha1.GroupVersion.String() || owner.Kind != "WorkflowRun" || owner.Name == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: object.GetNamespace(), Name: owner.Name}}}
 }
 
 func validateWorkflowRunJobs(jobs map[string]v1alpha1.JobSpec) error {
@@ -407,28 +427,28 @@ func resolvedJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.J
 func (r *WorkflowRunReconciler) applyStartRunnableTargets(ctx context.Context, resources *workflowRunResources, targets []workflowRunTarget) error {
 	workflowRun := resources.workflowRun
 	for _, target := range targets {
-		switch target.kind {
-		case workflowRunTargetStep:
-			job := resources.snapshot.Spec.Jobs[target.jobName]
-			run, err := r.createOrReuseStepRun(ctx, resources, target.jobName, job, target.stepIndex)
+		switch {
+		case target.step != nil:
+			job := resources.snapshot.Spec.Jobs[target.step.jobName]
+			run, err := r.createOrReuseStepRun(ctx, resources, target.step.jobName, job, target.step.stepIndex)
 			if err != nil {
 				return err
 			}
-			recordStepRun(workflowRun, target.jobName, target.stepIndex, run.Name)
-		case workflowRunTargetWorkflowCall:
-			job := resources.snapshot.Spec.Jobs[target.jobName]
-			child, err := r.createWorkflowCall(ctx, workflowRun, target.jobName, job)
+			recordStepRun(workflowRun, target.step.jobName, target.step.stepIndex, run.Name)
+		case target.workflowCall != nil:
+			job := resources.snapshot.Spec.Jobs[target.workflowCall.jobName]
+			child, err := r.createWorkflowCall(ctx, workflowRun, target.workflowCall.jobName, job)
 			if err != nil {
 				var validationErr *workflowCallValidationError
 				if errors.As(err, &validationErr) {
-					recordWorkflowCallFailure(workflowRun, target.jobName, validationErr.Error())
+					recordWorkflowCallFailure(workflowRun, target.workflowCall.jobName, validationErr.Error())
 					continue
 				}
 				return err
 			}
-			recordWorkflowCall(workflowRun, target.jobName, child.Name)
+			recordWorkflowCall(workflowRun, target.workflowCall.jobName, child.Name)
 		default:
-			return fmt.Errorf("start workflowrun target has unsupported kind %q", target.kind)
+			return fmt.Errorf("start workflowrun target is not a step or workflow call")
 		}
 	}
 	return nil
@@ -554,11 +574,11 @@ func runnableStepTargets(statuses map[string]v1alpha1.JobStatus, jobs map[string
 			continue
 		}
 		if jobReadyToStart(status, statuses) && status.Steps[0].RunName == "" {
-			targets = append(targets, workflowRunTarget{kind: workflowRunTargetStep, jobName: jobName, stepIndex: 0})
+			targets = append(targets, workflowRunTarget{step: &jobStepRunTarget{jobName: jobName, stepIndex: 0}})
 			continue
 		}
 		if stepIndex, ok := nextStepToStart(status); ok {
-			targets = append(targets, workflowRunTarget{kind: workflowRunTargetStep, jobName: jobName, stepIndex: stepIndex})
+			targets = append(targets, workflowRunTarget{step: &jobStepRunTarget{jobName: jobName, stepIndex: stepIndex}})
 		}
 	}
 	return targets
@@ -577,7 +597,7 @@ func runnableWorkflowCallTargets(statuses map[string]v1alpha1.JobStatus, jobs ma
 		if !ok || job.Uses == "" || status.WorkflowRunName != "" || !jobReadyToStart(status, statuses) {
 			continue
 		}
-		targets = append(targets, workflowRunTarget{kind: workflowRunTargetWorkflowCall, jobName: name})
+		targets = append(targets, workflowRunTarget{workflowCall: &jobWorkflowCallTarget{jobName: name}})
 	}
 	return targets
 }
@@ -771,10 +791,10 @@ func childRunCancellationTargets(childRuns map[string]*v1alpha1.Run) []workflowR
 	targets := make([]workflowRunTarget, 0, len(childRuns))
 	for _, run := range childRuns {
 		if !isTerminalRunPhase(run.Status.Phase) && !run.Spec.CancelRequested {
-			targets = append(targets, workflowRunTarget{kind: workflowRunTargetCancelRun, name: run.Name})
+			targets = append(targets, workflowRunTarget{run: &childRunTarget{name: run.Name}})
 		}
 	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].name < targets[j].name })
+	sort.Slice(targets, func(i, j int) bool { return targets[i].run.name < targets[j].run.name })
 	return targets
 }
 
@@ -782,10 +802,10 @@ func childWorkflowRunCancellationTargets(childWorkflows map[string]*v1alpha1.Wor
 	targets := make([]workflowRunTarget, 0, len(childWorkflows))
 	for _, child := range childWorkflows {
 		if !isTerminalWorkflowPhase(child.Status.Phase) && !child.Spec.CancelRequested {
-			targets = append(targets, workflowRunTarget{kind: workflowRunTargetCancelWorkflowRun, name: child.Name})
+			targets = append(targets, workflowRunTarget{workflowRun: &childWorkflowRunTarget{name: child.Name}})
 		}
 	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].name < targets[j].name })
+	sort.Slice(targets, func(i, j int) bool { return targets[i].workflowRun.name < targets[j].workflowRun.name })
 	return targets
 }
 
@@ -795,9 +815,9 @@ func (r *WorkflowRunReconciler) applyRequestChildCancellation(ctx context.Contex
 		childRuns[run.Name] = run
 	}
 	for _, target := range targets {
-		switch target.kind {
-		case workflowRunTargetCancelRun:
-			run := childRuns[target.name]
+		switch {
+		case target.run != nil:
+			run := childRuns[target.run.name]
 			if run == nil || run.Spec.CancelRequested || isTerminalRunPhase(run.Status.Phase) {
 				continue
 			}
@@ -806,8 +826,8 @@ func (r *WorkflowRunReconciler) applyRequestChildCancellation(ctx context.Contex
 			if err := r.Patch(ctx, run, client.MergeFrom(base)); err != nil {
 				return fmt.Errorf("request cancellation of child run %s/%s: %w", run.Namespace, run.Name, err)
 			}
-		case workflowRunTargetCancelWorkflowRun:
-			child := resources.childWorkflows[target.name]
+		case target.workflowRun != nil:
+			child := resources.childWorkflows[target.workflowRun.name]
 			if child == nil || child.Spec.CancelRequested || isTerminalWorkflowPhase(child.Status.Phase) {
 				continue
 			}
@@ -817,7 +837,7 @@ func (r *WorkflowRunReconciler) applyRequestChildCancellation(ctx context.Contex
 				return fmt.Errorf("request cancellation of child workflowrun %s/%s: %w", child.Namespace, child.Name, err)
 			}
 		default:
-			return fmt.Errorf("cancel workflowrun target has unsupported kind %q", target.kind)
+			return fmt.Errorf("cancel workflowrun target is not a child Run or WorkflowRun")
 		}
 	}
 	return nil

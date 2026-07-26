@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -33,6 +33,41 @@ func workflowRunTestScheme(t *testing.T) *runtime.Scheme {
 		t.Fatalf("add apps scheme: %v", err)
 	}
 	return scheme
+}
+
+func stepRunTarget(jobName string, stepIndex int) workflowRunTarget {
+	return workflowRunTarget{step: &jobStepRunTarget{jobName: jobName, stepIndex: stepIndex}}
+}
+
+func cancelRunTarget(name string) workflowRunTarget {
+	return workflowRunTarget{run: &childRunTarget{name: name}}
+}
+
+func equalWorkflowRunTargets(got, want []workflowRunTarget) bool {
+	return reflect.DeepEqual(got, want)
+}
+
+func TestParentWorkflowRunRequest(t *testing.T) {
+	reconciler := &WorkflowRunReconciler{}
+	child := &v1alpha1.WorkflowRun{ObjectMeta: metav1.ObjectMeta{
+		Name:      "child",
+		Namespace: "default",
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "WorkflowRun",
+			Name:       "parent",
+			Controller: ptr(true),
+		}},
+	}}
+	requests := reconciler.parentWorkflowRunRequest(context.Background(), child)
+	if len(requests) != 1 || requests[0].Namespace != "default" || requests[0].Name != "parent" {
+		t.Fatalf("requests = %#v, want parent workflowrun request", requests)
+	}
+
+	primary := &v1alpha1.WorkflowRun{ObjectMeta: metav1.ObjectMeta{Name: "parent", Namespace: "default"}}
+	if requests := reconciler.parentWorkflowRunRequest(context.Background(), primary); len(requests) != 0 {
+		t.Fatalf("primary workflowrun mapped to %#v, want no owner request", requests)
+	}
 }
 
 func TestWorkflowRunReconcilerAcceptsWorkflowRun(t *testing.T) {
@@ -180,7 +215,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		},
 	}
 	plan = calculateWorkflowRunPlan(&workflowRunResources{workflowRun: pending, snapshot: snapshotForWorkflowRun(pending)})
-	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableTargets || len(plan.targets) != 1 || plan.targets[0] != (workflowRunTarget{kind: workflowRunTargetStep, jobName: "build", stepIndex: 0}) {
+	if plan.state != workflowRunStatePending || plan.action != workflowRunActionStartRunnableTargets || !equalWorkflowRunTargets(plan.targets, []workflowRunTarget{stepRunTarget("build", 0)}) {
 		t.Fatalf("pending plan = %#v, want Pending + StartRunnableSteps(build[0])", plan)
 	}
 
@@ -199,7 +234,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
 		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
-	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !slices.Equal(plan.targets, []workflowRunTarget{{kind: workflowRunTargetCancelRun, name: "build-run"}}) {
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !equalWorkflowRunTargets(plan.targets, []workflowRunTarget{cancelRunTarget("build-run")}) {
 		t.Fatalf("cancelling plan = %#v, want Cancelling + RequestChildRunCancellation(build-run)", plan)
 	}
 
@@ -211,7 +246,7 @@ func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): activeRun},
 		snapshot:    snapshotForWorkflowRun(cancelling),
 	})
-	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !slices.Equal(plan.targets, []workflowRunTarget{{kind: workflowRunTargetCancelRun, name: "build-run"}}) {
+	if plan.state != workflowRunStateCancelling || plan.action != workflowRunActionRequestChildCancellation || !equalWorkflowRunTargets(plan.targets, []workflowRunTarget{cancelRunTarget("build-run")}) {
 		t.Fatalf("late child plan = %#v, want cancellation repair", plan)
 	}
 }
@@ -241,8 +276,8 @@ func TestCalculateWorkflowRunPlanProjectsStatusBeforeStartingReadyJobs(t *testin
 		childRuns:   map[string]*v1alpha1.Run{workflowStepKey("build", "compile"): buildRun},
 		snapshot:    snapshotForWorkflowRun(workflowRun),
 	})
-	want := []workflowRunTarget{{kind: workflowRunTargetStep, jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
+	want := []workflowRunTarget{stepRunTarget("lint", 0)}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !equalWorkflowRunTargets(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
 	if workflowRun.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded {
@@ -266,8 +301,8 @@ func TestPlanWorkflowRunStartsAllRunnableSteps(t *testing.T) {
 	}
 
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
-	want := []workflowRunTarget{{kind: workflowRunTargetStep, jobName: "build", stepIndex: 1}, {kind: workflowRunTargetStep, jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
+	want := []workflowRunTarget{stepRunTarget("build", 1), stepRunTarget("lint", 0)}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !equalWorkflowRunTargets(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
 }
@@ -288,8 +323,8 @@ func TestCalculateWorkflowRunPlanFinalizesJobsBeforeStartingReadyJobs(t *testing
 	}
 
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: workflowRun, snapshot: snapshotForWorkflowRun(workflowRun)})
-	want := []workflowRunTarget{{kind: workflowRunTargetStep, jobName: "lint", stepIndex: 0}}
-	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !slices.Equal(plan.targets, want) {
+	want := []workflowRunTarget{stepRunTarget("lint", 0)}
+	if plan.state != workflowRunStateRunning || plan.action != workflowRunActionStartRunnableTargets || !equalWorkflowRunTargets(plan.targets, want) {
 		t.Fatalf("plan = %#v, want Running + StartRunnableSteps(%#v)", plan, want)
 	}
 	if workflowRun.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded {
