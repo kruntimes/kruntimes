@@ -9,6 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -676,6 +677,9 @@ func TestCRDValidationRunExecutionInputsAreImmutable(t *testing.T) {
 				RetryPolicy: &v1alpha1.RetryPolicy{
 					MaxAttempts: 2,
 				},
+				Resources: &v1alpha1.RunResourceRequirements{Requests: corev1.ResourceList{
+					corev1.ResourceName("example.com/gpu"): resource.MustParse("1"),
+				}},
 				TTLSecondsAfterFinished: &ttl,
 			},
 		}
@@ -735,6 +739,12 @@ func TestCRDValidationRunExecutionInputsAreImmutable(t *testing.T) {
 			name: "retry-policy",
 			mutate: func(run *v1alpha1.Run) {
 				run.Spec.RetryPolicy.MaxAttempts = 3
+			},
+		},
+		{
+			name: "resources",
+			mutate: func(run *v1alpha1.Run) {
+				run.Spec.Resources.Requests[corev1.ResourceName("example.com/gpu")] = resource.MustParse("2")
 			},
 		},
 	}

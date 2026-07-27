@@ -4,7 +4,7 @@ title: "Run 资源记账"
 
 # Run 资源记账
 
-状态：**Proposal；实现前需要 API review**
+状态：**Accepted；Scheduler 实现中**
 
 Runtime capacity 不应只限制并发 Run 数量。`Runtime.spec.capacity.resources`
 已经声明每个 Runtime Pod 的命名 capacity，Runtime controller 会将其投影为 Pod annotation；但 scheduler
@@ -62,7 +62,8 @@ multi-resource scoring 属于单独的 policy design。
 
 如果 Run request 的 resource 没有被 candidate Pod 声明，该 Pod 不可行。没有 ready Pod 满足全部 request 时，Run
 保持 `Pending`，并记录有界 insufficient-capacity reason；Runtime Pod capacity 变化或 active/assumed usage
-释放时会重新激活。malformed request 属于 invalid Run configuration，应在调度前 validation 失败。
+释放时会重新激活。malformed request 属于 invalid Run configuration，应在 Scheduler
+prefilter validation 阶段、placement 之前失败。
 
 ## Runtime Admission
 
