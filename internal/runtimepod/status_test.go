@@ -60,10 +60,17 @@ func TestCapacityAndFits(t *testing.T) {
 		CapacityAnnotation(v1alpha1.RuntimeResourceRuns): "4",
 		CapacityAnnotation("example.com/gpu"):            "2",
 	}}}
-	capacity := Capacity(pod, 1)
+	capacity := Capacity(pod, corev1.ResourceList{
+		corev1.ResourceName(v1alpha1.RuntimeResourceRuns): resource.MustParse("1"),
+		corev1.ResourceName("example.com/fallback"):       resource.MustParse("3"),
+	})
 	gpuCapacity := capacity[corev1.ResourceName("example.com/gpu")]
 	if got := gpuCapacity.Value(); got != 2 {
 		t.Fatalf("gpu capacity = %d, want 2", got)
+	}
+	fallbackCapacity := capacity[corev1.ResourceName("example.com/fallback")]
+	if got := fallbackCapacity.Value(); got != 3 {
+		t.Fatalf("fallback capacity = %d, want 3", got)
 	}
 
 	requests := corev1.ResourceList{

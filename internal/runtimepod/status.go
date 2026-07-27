@@ -48,16 +48,23 @@ func RunsCapacityFromRuntime(rt *v1alpha1.Runtime, fallback int32) int32 {
 }
 
 func RunsCapacity(pod *corev1.Pod, fallback int32) int32 {
-	quantity := Capacity(pod, fallback)[corev1.ResourceName(v1alpha1.RuntimeResourceRuns)]
+	runs := corev1.ResourceName(v1alpha1.RuntimeResourceRuns)
+	quantity := Capacity(pod, corev1.ResourceList{
+		runs: *resource.NewQuantity(int64(fallback), resource.DecimalSI),
+	})[runs]
 	return quantityToPositiveInt32(quantity, fallback)
 }
 
 // Capacity returns the complete logical capacity advertised by a Runtime Pod.
-// The built-in runs capacity preserves its legacy fallback for Pods created by
-// an older Runtime controller; every other resource must be explicitly
-// advertised by a capacity annotation.
-func Capacity(pod *corev1.Pod, fallbackRuns int32) corev1.ResourceList {
-	capacity := corev1.ResourceList{}
+// Fallback capacity is used for resources not advertised by the Pod, which
+// preserves compatibility with Pods created by an older Runtime controller.
+// Callers should only include resources that are safe to assume without a Pod
+// capacity annotation.
+func Capacity(pod *corev1.Pod, fallback corev1.ResourceList) corev1.ResourceList {
+	capacity := fallback.DeepCopy()
+	if capacity == nil {
+		capacity = corev1.ResourceList{}
+	}
 	if pod != nil {
 		for key, raw := range pod.Annotations {
 			if !strings.HasPrefix(key, v1alpha1.RuntimePodCapacityAnnotationPrefix) {
@@ -73,10 +80,6 @@ func Capacity(pod *corev1.Pod, fallbackRuns int32) corev1.ResourceList {
 			}
 			capacity[corev1.ResourceName(name)] = quantity
 		}
-	}
-	runs := corev1.ResourceName(v1alpha1.RuntimeResourceRuns)
-	if _, ok := capacity[runs]; !ok {
-		capacity[runs] = *resource.NewQuantity(int64(fallbackRuns), resource.DecimalSI)
 	}
 	return capacity
 }

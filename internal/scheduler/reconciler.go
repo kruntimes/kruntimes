@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
@@ -259,10 +260,16 @@ func (r *RunReconciler) isRuntimePodAvailable(pod *corev1.Pod, now time.Time, us
 		return false
 	}
 	return runtimepod.Fits(
-		runtimepod.Capacity(pod, v1alpha1.RuntimeDefaultRunsCapacity),
+		runtimepod.Capacity(pod, defaultRuntimePodCapacity()),
 		usage,
 		request,
 	)
+}
+
+func defaultRuntimePodCapacity() corev1.ResourceList {
+	return corev1.ResourceList{
+		corev1.ResourceName(v1alpha1.RuntimeResourceRuns): *resource.NewQuantity(int64(v1alpha1.RuntimeDefaultRunsCapacity), resource.DecimalSI),
+	}
 }
 
 func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) (map[string]corev1.ResourceList, error) {
