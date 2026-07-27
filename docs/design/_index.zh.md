@@ -11,6 +11,7 @@
 - [Workflow Data Sharing](workflow-data-sharing/)
 - [Run Workspace 引用与 Affinity](run-workspace-affinity/)
 - [Scheduler Framework 与批量规划](scheduler-framework/)
+- [Run 资源记账](run-resource-accounting/)
 - [Workflow Reuse](workflow-reuse/)
 - [Job-Level Reusable Workflow Execution](workflow-job-reuse/)
 - [Dashboard](dashboard/)
