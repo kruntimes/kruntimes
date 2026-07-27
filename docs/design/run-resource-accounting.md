@@ -14,9 +14,10 @@ request model needed to enforce every declared capacity consistently.
 
 ## API
 
-Add an immutable `Run.spec.resources` field of type `corev1.ResourceList`.
-It declares logical Runtime resources consumed for the Run's full active
-lifetime, from `Scheduled` through terminal completion or function release.
+Add an immutable `Run.spec.resources.requests` field of type
+`corev1.ResourceList`. It declares logical Runtime resources consumed for the
+Run's full active lifetime, from `Scheduled` through terminal completion or
+function release.
 
 ```yaml
 apiVersion: kruntimes.io/v1alpha1
@@ -24,22 +25,28 @@ kind: Run
 spec:
   runtime: python
   resources:
-    runs: "1"
-    example.com/gpu: "1"
+    requests:
+      runs: "1"
+      example.com/gpu: "1"
   mode:
     task:
       args: ["python", "train.py"]
 ```
 
-`runs` is the built-in logical resource. When omitted, it defaults to a
-request of `1` so existing Runs retain their current capacity behavior. Other
-resources are optional and must be explicitly requested. These are scheduler
-resources, not container CPU or memory requests; users continue to configure
-the Runtime Pod template's Kubernetes container resources independently.
+`runs` is the built-in logical resource. When `resources` or
+`resources.requests.runs` is omitted, it defaults to a request of `1` so
+existing Runs retain their current capacity behavior. Other resources are
+optional and must be explicitly requested. These are logical Runtime resources,
+not container CPU or memory requests; users continue to configure the Runtime
+Pod template's Kubernetes container resources independently.
 
 Resource quantities must be non-negative integers. A request of zero is
-ignored. The initial API does not define limits, overcommit, sharing ratios,
-or runtime-specific resource classes.
+ignored. The initial API intentionally does not define `limits`: logical
+capacity is reserved at the requested amount by both scheduler and runtimed.
+Adding limits would require a separately reviewed model for overcommit,
+runtime-side enforcement, sharing ratios, and runtime-specific resource
+classes. A future `limits` field can be added to the same resource object only
+with those semantics defined.
 
 ## Capacity Contract
 
@@ -60,15 +67,32 @@ usage[pod][resource] + request[run][resource] <= capacity[pod][resource]
 ```
 
 Active assigned Runs and scheduler-local assumed assignments both contribute
-their full resource request to `usage`. Reserve/Assume and Bind therefore use
-the same accounting model. The least-loaded strategy may continue to score on
-`runs` initially; adding multi-resource scoring is a separate policy design.
+their full resource request to scheduler `usage`. Reserve/Assume and Bind
+therefore use the same accounting model. The least-loaded strategy may continue
+to score on `runs` initially; adding multi-resource scoring is a separate
+policy design.
 
 If a Run requests a resource that a candidate Pod does not advertise, that Pod
 is infeasible. If no ready Pod satisfies all requests, the Run remains
 `Pending` with a bounded insufficient-capacity reason. It is reactivated when
 Runtime Pod capacity changes or active/assumed usage is released. A malformed
 request is an invalid Run configuration and fails validation before scheduling.
+
+## Runtime Admission
+
+Scheduler accounting is not an execution authorization. runtimed must maintain
+a local, watch-backed resource usage cache for the Runtime Pod it owns. Before
+claiming a `Scheduled` Run, it atomically checks the Run's complete request
+against that cache and reserves the request only when every resource fits the
+Pod's annotated capacity.
+
+When a request does not fit, runtimed leaves the Run `Scheduled`; it does not
+start the Runtime Server call, mark the Run failed, or release the assignment.
+It rechecks the queued Run when a locally active Run reaches a terminal state
+or capacity changes. This makes runtimed the execution-time guard against a
+stale scheduler cache, concurrent transitions, or an assignment created by an
+older scheduler version. A Run whose request is larger than every eligible Pod
+should normally remain `Pending` because the scheduler never assigns it.
 
 ## Compatibility And Boundaries
 
@@ -77,8 +101,8 @@ request is an invalid Run configuration and fails validation before scheduling.
   `runs` capacity. No implicit capacity exists for any other resource.
 - Scheduler accounting is namespace-local because Run assignments are
   namespace-local. Runtime Pods are also selected in the Run namespace.
-- runtimed enforces execution and does not make placement decisions. It need
-  not understand logical resource names in this phase.
+- runtimed enforces local execution admission from a Pod-local resource cache;
+  it does not choose among Pods or make placement decisions.
 - This does not change Kubernetes scheduling of Runtime Pods, the Runtime Pod
   template's container requests/limits, or function invocation concurrency.
 
@@ -90,5 +114,9 @@ request is an invalid Run configuration and fails validation before scheduling.
 3. Add Runtime Pod helpers that parse complete capacity annotations.
 4. Accumulate complete active and assumed Run resource usage in the scheduler,
    then filter candidates using the capacity contract above.
-5. Add unit, integration, and E2E coverage for defaults, multi-resource
-   placement, release/reactivation, and missing capacity.
+5. Add runtimed's atomic local admission/reservation cache. A capacity-blocked
+   assigned Run remains `Scheduled` until locally reserved resources are
+   released.
+6. Add unit, integration, and E2E coverage for defaults, multi-resource
+   placement, release/reactivation, missing capacity, and runtimed admission
+   after stale or competing assignments.
