@@ -144,11 +144,14 @@ wiring from accumulating avoidable conflicts.
   artifact references, and log access without writing high-frequency invocation
   history into Run status.
   Initial implementation TODO:
-  - [ ] review and approve the
+  - [x] review and approve the
     [Function Runtime Server Contract](design/function-runtime-contract.md);
-  - [ ] add idempotent register/status/invoke/unregister protobuf operations
+  - [x] add idempotent register/status/invoke/unregister protobuf operations
     keyed by Run UID;
-  - [ ] implement built-in Bash and Python function adapters;
+  - [ ] implement built-in function adapters:
+    - [x] Bash FunctionRuntime adapter with handler validation, registration
+      fencing, one in-flight invocation, bounded output, and unregister drain;
+    - [ ] Python FunctionRuntime adapter;
   - [ ] add bounded invocation outputs/artifact references and structured logs
     keyed by Run UID and invocation ID;
 - [ ] Function-mode reliability and isolation: cover function registration,

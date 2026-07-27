@@ -52,6 +52,222 @@ func startTestServerWithOutputLimit(t *testing.T, outputLimit int) (pb.RuntimeCl
 	}
 }
 
+func startFunctionTestServer(t *testing.T, outputLimit int) (pb.FunctionRuntimeClient, string, func()) {
+	t.Helper()
+
+	workDir := t.TempDir()
+	srv := grpc.NewServer()
+	runtimeServer := NewServerWithOutputLimit(workDir, outputLimit)
+	pb.RegisterRuntimeServer(srv, runtimeServer)
+	pb.RegisterFunctionRuntimeServer(srv, runtimeServer)
+
+	lis, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = srv.Serve(lis) }()
+
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	return pb.NewFunctionRuntimeClient(conn), workDir, func() {
+		conn.Close()
+		srv.Stop()
+	}
+}
+
+func writeFunctionHandler(t *testing.T, workDir, name, script string) string {
+	t.Helper()
+	functionDir := filepath.Join(workDir, name)
+	if err := os.MkdirAll(functionDir, 0o755); err != nil {
+		t.Fatalf("mkdir function directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(functionDir, "handler.sh"), []byte(script), 0o644); err != nil {
+		t.Fatalf("write handler: %v", err)
+	}
+	return functionDir
+}
+
+func registerFunction(t *testing.T, client pb.FunctionRuntimeClient, workDir, runUID string, attempt int32, digest string) *pb.FunctionRegistration {
+	t.Helper()
+	resp, err := client.RegisterFunction(context.Background(), &pb.RegisterFunctionRequest{
+		RunUid:              runUID,
+		RegistrationAttempt: attempt,
+		WorkingDir:          workDir,
+		Handler:             "handler.handle",
+		RegistrationDigest:  digest,
+	})
+	if err != nil {
+		t.Fatalf("RegisterFunction: %v", err)
+	}
+	if resp.State != pb.FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_READY {
+		t.Fatalf("registration state = %v, want ready", resp.State)
+	}
+	return resp.Registration
+}
+
+func TestFunctionRuntimeRegisterInvokeAndUnregister(t *testing.T) {
+	client, workDir, cleanup := startFunctionTestServer(t, defaultOutputLimitBytes)
+	defer cleanup()
+	functionDir := writeFunctionHandler(t, workDir, "one", "handle() { printf '%s' \"$1\"; }\n")
+	registration := registerFunction(t, client, functionDir, "run-uid-1", 1, "sha256:first")
+
+	resp, err := client.InvokeFunction(context.Background(), &pb.InvokeFunctionRequest{
+		Registration: registration,
+		InvocationId: "invoke-1",
+		Input:        []byte(`{"message":"hello"}`),
+		ContentType:  "application/json",
+	})
+	if err != nil {
+		t.Fatalf("InvokeFunction: %v", err)
+	}
+	if got, want := string(resp.Output), `{"message":"hello"}`; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+
+	statusResp, err := client.FunctionStatus(context.Background(), &pb.FunctionStatusRequest{Registration: registration})
+	if err != nil {
+		t.Fatalf("FunctionStatus: %v", err)
+	}
+	if statusResp.State != pb.FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_READY || statusResp.InFlight != 0 || statusResp.LastActivityUnixNano == 0 {
+		t.Fatalf("status = %#v", statusResp)
+	}
+
+	if _, err := client.UnregisterFunction(context.Background(), &pb.UnregisterFunctionRequest{Registration: registration}); err != nil {
+		t.Fatalf("UnregisterFunction: %v", err)
+	}
+	if _, err := client.FunctionStatus(context.Background(), &pb.FunctionStatusRequest{Registration: registration}); status.Code(err) != codes.NotFound {
+		t.Fatalf("FunctionStatus after unregister = %v, want NotFound", err)
+	}
+}
+
+func TestFunctionRuntimeRegistrationFencing(t *testing.T) {
+	client, workDir, cleanup := startFunctionTestServer(t, defaultOutputLimitBytes)
+	defer cleanup()
+	functionDir := writeFunctionHandler(t, workDir, "fence", "handle() { printf '{}'; }\n")
+	first := registerFunction(t, client, functionDir, "run-uid-2", 1, "sha256:first")
+
+	idempotent := registerFunction(t, client, functionDir, "run-uid-2", 1, "sha256:first")
+	if idempotent.RegistrationId != first.RegistrationId {
+		t.Fatalf("idempotent registration ID = %q, want %q", idempotent.RegistrationId, first.RegistrationId)
+	}
+	if _, err := client.RegisterFunction(context.Background(), &pb.RegisterFunctionRequest{
+		RunUid: "run-uid-2", RegistrationAttempt: 1, WorkingDir: functionDir, Handler: "handler.handle", RegistrationDigest: "sha256:changed",
+	}); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("same attempt with changed digest = %v, want AlreadyExists", err)
+	}
+
+	second := registerFunction(t, client, functionDir, "run-uid-2", 2, "sha256:second")
+	if second.RegistrationId == first.RegistrationId {
+		t.Fatal("new registration attempt reused its registration ID")
+	}
+	if _, err := client.InvokeFunction(context.Background(), &pb.InvokeFunctionRequest{
+		Registration: first, InvocationId: "stale", Input: []byte(`{}`), ContentType: "application/json",
+	}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("InvokeFunction with stale registration = %v, want FailedPrecondition", err)
+	}
+}
+
+func TestFunctionRuntimeDoesNotInterpretInputAsShell(t *testing.T) {
+	client, workDir, cleanup := startFunctionTestServer(t, defaultOutputLimitBytes)
+	defer cleanup()
+	functionDir := writeFunctionHandler(t, workDir, "safe", "handle() { printf '%s' \"$1\"; }\n")
+	registration := registerFunction(t, client, functionDir, "run-uid-3", 1, "sha256:safe")
+	marker := filepath.Join(workDir, "must-not-exist")
+	input := fmt.Sprintf(`{"value":"$(touch %s)"}`, marker)
+
+	resp, err := client.InvokeFunction(context.Background(), &pb.InvokeFunctionRequest{
+		Registration: registration, InvocationId: "safe-input", Input: []byte(input), ContentType: "application/json",
+	})
+	if err != nil {
+		t.Fatalf("InvokeFunction: %v", err)
+	}
+	if got := string(resp.Output); got != input {
+		t.Fatalf("output = %q, want original input", got)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("input was interpreted as shell source; marker stat error = %v", err)
+	}
+}
+
+func TestFunctionRuntimeRejectsInvalidInputAndBoundsOutput(t *testing.T) {
+	client, workDir, cleanup := startFunctionTestServer(t, 16)
+	defer cleanup()
+	functionDir := writeFunctionHandler(t, workDir, "limits", "handle() { printf '%s' '0123456789abcdefx'; }\n")
+	registration := registerFunction(t, client, functionDir, "run-uid-4", 1, "sha256:limits")
+
+	if _, err := client.InvokeFunction(context.Background(), &pb.InvokeFunctionRequest{
+		Registration: registration, InvocationId: "bad-type", Input: []byte(`{}`), ContentType: "text/plain",
+	}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("InvokeFunction unsupported content type = %v, want InvalidArgument", err)
+	}
+	if _, err := client.InvokeFunction(context.Background(), &pb.InvokeFunctionRequest{
+		Registration: registration, InvocationId: "too-large", Input: []byte(`{}`), ContentType: "application/json",
+	}); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("InvokeFunction oversized response = %v, want ResourceExhausted", err)
+	}
+}
+
+func TestFunctionRuntimeRejectsMissingHandlerAndEscapingWorkspace(t *testing.T) {
+	client, workDir, cleanup := startFunctionTestServer(t, defaultOutputLimitBytes)
+	defer cleanup()
+	functionDir := writeFunctionHandler(t, workDir, "validation", "other() { printf '{}'; }\n")
+	if _, err := client.RegisterFunction(context.Background(), &pb.RegisterFunctionRequest{
+		RunUid: "run-uid-missing-handler", RegistrationAttempt: 1, WorkingDir: functionDir, Handler: "handler.handle", RegistrationDigest: "sha256:missing",
+	}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("RegisterFunction missing handler = %v, want InvalidArgument", err)
+	}
+
+	externalDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(externalDir, "handler.sh"), []byte("handle() { printf '{}'; }\n"), 0o644); err != nil {
+		t.Fatalf("write external handler: %v", err)
+	}
+	escapingLink := filepath.Join(workDir, "escaping")
+	if err := os.Symlink(externalDir, escapingLink); err != nil {
+		t.Fatalf("create workspace symlink: %v", err)
+	}
+	if _, err := client.RegisterFunction(context.Background(), &pb.RegisterFunctionRequest{
+		RunUid: "run-uid-escaping-workspace", RegistrationAttempt: 1, WorkingDir: escapingLink, Handler: "handler.handle", RegistrationDigest: "sha256:escaping",
+	}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("RegisterFunction escaping workspace = %v, want InvalidArgument", err)
+	}
+}
+
+func TestFunctionRuntimeUnregisterCancelsInFlightInvocation(t *testing.T) {
+	client, workDir, cleanup := startFunctionTestServer(t, defaultOutputLimitBytes)
+	defer cleanup()
+	functionDir := writeFunctionHandler(t, workDir, "cancel", "handle() { sleep 30; printf '{}'; }\n")
+	registration := registerFunction(t, client, functionDir, "run-uid-cancel", 1, "sha256:cancel")
+
+	invokeResult := make(chan error, 1)
+	go func() {
+		_, err := client.InvokeFunction(context.Background(), &pb.InvokeFunctionRequest{
+			Registration: registration, InvocationId: "invoke-cancel", Input: []byte(`{}`), ContentType: "application/json",
+		})
+		invokeResult <- err
+	}()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		functionStatus, err := client.FunctionStatus(context.Background(), &pb.FunctionStatusRequest{Registration: registration})
+		if err != nil {
+			t.Fatalf("FunctionStatus: %v", err)
+		}
+		if functionStatus.InFlight == 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if _, err := client.UnregisterFunction(context.Background(), &pb.UnregisterFunctionRequest{
+		Registration: registration, CancelInFlight: true, DrainTimeoutMillis: 5_000,
+	}); err != nil {
+		t.Fatalf("UnregisterFunction: %v", err)
+	}
+	if err := <-invokeResult; status.Code(err) != codes.Canceled {
+		t.Fatalf("InvokeFunction after cancellation = %v, want Canceled", err)
+	}
+}
+
 func TestCreateAndGetTask_Success(t *testing.T) {
 	client, cleanup := startTestServer(t)
 	defer cleanup()

@@ -128,10 +128,13 @@ controller wiring 累积不必要的冲突。
   unregister APIs；定义有界 invoke request inputs、response outputs、artifact
   references 和 log access，同时避免把高频 invocation history 写入 Run status。
   初始实现 TODO：
-  - [ ] review 并确认
+  - [x] review 并确认
     [Function Runtime Server 协议](design/function-runtime-contract.md)；
-  - [ ] 增加以 Run UID 为 key 的幂等 register/status/invoke/unregister protobuf operations；
-  - [ ] 实现内置 Bash 和 Python function adapters；
+  - [x] 增加以 Run UID 为 key 的幂等 register/status/invoke/unregister protobuf operations；
+  - [ ] 实现内置 function adapters：
+    - [x] Bash FunctionRuntime adapter：handler validation、registration fencing、单个
+      in-flight invocation、有界输出和 unregister drain；
+    - [ ] Python FunctionRuntime adapter；
   - [ ] 增加有界 invocation outputs/artifact references，以及以 Run UID 和 invocation ID
     为 key 的 structured logs；
 - [ ] Function-mode reliability and isolation：覆盖 function registration、ready
