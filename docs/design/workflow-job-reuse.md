@@ -1,6 +1,6 @@
 # Job-Level Reusable Workflow Execution
 
-Status: **Proposed for review**
+Status: **Accepted**
 
 This document defines the v0.x execution boundary for job-level reusable
 Workflows.
@@ -87,7 +87,9 @@ When `deploy` is runnable, the parent controller:
 2. Renders its `with` values from the caller context and validates the callee
    inputs.
 3. Renders `inputs.*` into the callee jobs.
-4. Creates a direct child WorkflowRun with those inline jobs.
+4. Creates a direct child WorkflowRun with those inline jobs and one
+   `kruntimes.io/workflow-output.<name>` annotation for each frozen source
+   Workflow output expression.
 5. Sets an owner reference and records the child name in
    `parent.status.jobs.deploy.workflowRunName`.
 
@@ -107,9 +109,6 @@ its own UID and recorded in `status.snapshotName`. Its data contains exactly:
 
 - `spec`: the accepted inline `WorkflowRun.spec`, including its local job
   topology;
-- `outputContract`: only for a child materialized from a reusable Workflow, a
-  single-entry map keyed by the source Workflow name. Its value is that
-  Workflow's declared `spec.outputs`.
 
 ```yaml
 apiVersion: apps/v1
@@ -126,18 +125,23 @@ data:
       apply:
         runs-on: bash
         steps: [{ name: deploy, run: deploy --environment=staging }]
-  outputContract:
-    deploy-workflow:
-      outputs:
-        endpoint:
-          value: ${{ jobs.apply.outputs.endpoint }}
 ```
 
-The output contract is the only source-template data retained after child
-creation. It is necessary because the parent must evaluate the exact output
-definition that accompanied the jobs which ran. Reading a mutable current
-Workflow after a child completes would make the same execution produce
-different parent output values after a template edit.
+For a child materialized from a reusable Workflow, the controller writes the
+frozen source output contract to the child at creation time:
+
+```yaml
+metadata:
+  annotations:
+    kruntimes.io/workflow-output.endpoint: ${{ jobs.apply.outputs.endpoint }}
+```
+
+The child initializes its own snapshot during its own reconciliation. The
+output annotations remain the contract accompanying its inline jobs, so the
+parent can evaluate them against `child.status.jobs` without loading or owning
+the child's ControllerRevision. Reading a mutable current Workflow after a
+child completes would make the same execution produce different parent output
+values after a template edit.
 
 A snapshot is owned and used only by its own WorkflowRun.
 
@@ -186,9 +190,10 @@ status:
 
 For an inline job, the controller evaluates `JobSpec.outputs` after its steps
 succeed, using the step outputs in Run status. For a reusable call, after the
-child WorkflowRun succeeds, the parent loads the child's local snapshot,
-evaluates its frozen `outputContract` against `child.status.jobs`, and writes
-the resulting values to the caller job's `JobStatus.outputs`.
+child WorkflowRun succeeds, the parent reads the child's frozen
+`kruntimes.io/workflow-output.<name>` annotations, evaluates them against
+`child.status.jobs`, and writes the resulting values to the caller job's
+`JobStatus.outputs`. It never reads the child's private snapshot.
 
 Downstream rendering is uniform:
 
@@ -248,6 +253,8 @@ They have no Workflow reuse, snapshot, or output-contract behavior.
 - A call job has `needs`, `uses`, and optional `with`; it cannot contain
   `runs-on` or `steps`.
 - Inputs and expression references are validated before creating a child.
+- Reusable Workflow output names must be valid annotation suffixes, and their
+  frozen output contract must fit within the Kubernetes annotation budget.
 - Workflow cycles are detected while resolving the referenced Workflow graph
   before a root or child WorkflowRun is created. The initial maximum nesting
   depth is 8.
@@ -260,17 +267,17 @@ useful rule for that future work: reuse expands at the direct execution
 boundary. An Action will be resolved into its caller step/Run, rather than
 being added to a root-wide Workflow snapshot or controller traversal tree.
 
-## Implementation Plan
+## Implementation Status
 
-1. Add the local WorkflowRun snapshot envelope and `JobStatus.outputs`.
-2. Implement `krt workflow
+1. [x] Add the local WorkflowRun snapshot envelope and `JobStatus.outputs`.
+2. [x] Implement `krt workflow
    trigger` as template input validation, rendering, and inline WorkflowRun
    creation.
-3. Implement direct child WorkflowRun creation with input rendering and frozen
+3. [x] Implement direct child WorkflowRun creation with input rendering and frozen
    output contracts.
-4. Implement local job-output evaluation, child-output projection, restart
+4. [x] Implement local job-output evaluation, child-output projection, restart
    recovery, and template-mutation semantics tests.
-5. Add E2E coverage for nested calls, including self-references and
-   `A -> B -> A` cycle rejection, output propagation, cancellation, and
-   template updates before versus after child creation.
-6. Design Action expansion separately, using the same direct-boundary rule.
+5. [x] Add E2E coverage for nested calls, `A -> B -> A` cycle rejection,
+   output propagation, cancellation, and template updates before versus after
+   child creation; add unit coverage for self-reference rejection.
+6. [ ] Design Action expansion separately, using the same direct-boundary rule.
