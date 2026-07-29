@@ -10,6 +10,7 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -78,6 +79,38 @@ func TestReconcileKeepsRunPendingWhenNoRuntimePodAvailable(t *testing.T) {
 	}
 	if !strings.Contains(updated.Status.Message, "waiting for available runtime pods") {
 		t.Fatalf("message = %q, want waiting message", updated.Status.Message)
+	}
+}
+
+func TestReconcileFailsInvalidResourceRequests(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add kruntimes scheme: %v", err)
+	}
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-resources", Namespace: "default"},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Resources: &v1alpha1.RunResourceRequirements{Requests: corev1.ResourceList{
+				corev1.ResourceName("example.com/gpu"): resource.MustParse("500m"),
+			}},
+		},
+	}
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run).
+		Build()
+	reconciler := &RunReconciler{Client: client, Log: logr.Discard(), Strategy: &LeastLoaded{}}
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: run.Name, Namespace: run.Namespace}}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	var updated v1alpha1.Run
+	if err := client.Get(context.Background(), types.NamespacedName{Name: run.Name, Namespace: run.Namespace}, &updated); err != nil {
+		t.Fatalf("get updated run: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.RunFailed || !strings.Contains(updated.Status.Message, "non-negative integer") {
+		t.Fatalf("status = %#v, want invalid resource failure", updated.Status)
 	}
 }
 
@@ -474,22 +507,34 @@ func TestIsRuntimePodAvailableRequiresRuntimedReadyAndCapacity(t *testing.T) {
 		},
 	}
 
-	if !reconciler.isRuntimePodAvailable(basePod.DeepCopy(), now.Time, 1) {
+	runs := corev1.ResourceName(v1alpha1.RuntimeResourceRuns)
+	gpu := corev1.ResourceName("example.com/gpu")
+	request := corev1.ResourceList{runs: resource.MustParse("1"), gpu: resource.MustParse("1")}
+	usage := corev1.ResourceList{runs: resource.MustParse("1")}
+	basePod.Annotations[runtimepod.CapacityAnnotation(string(gpu))] = "1"
+
+	if !reconciler.isRuntimePodAvailable(basePod.DeepCopy(), now.Time, usage, request) {
 		t.Fatal("expected runtime pod with fresh heartbeat and capacity to be available")
 	}
-	if reconciler.isRuntimePodAvailable(basePod.DeepCopy(), now.Time, 2) {
+	usage[runs] = resource.MustParse("2")
+	if reconciler.isRuntimePodAvailable(basePod.DeepCopy(), now.Time, usage, request) {
 		t.Fatal("expected runtime pod at capacity to be unavailable")
+	}
+	usage[runs] = resource.MustParse("1")
+	usage[gpu] = resource.MustParse("1")
+	if reconciler.isRuntimePodAvailable(basePod.DeepCopy(), now.Time, usage, request) {
+		t.Fatal("expected runtime pod with exhausted custom resource to be unavailable")
 	}
 
 	missingHeartbeat := basePod.DeepCopy()
 	missingHeartbeat.Status.Conditions = missingHeartbeat.Status.Conditions[:1]
-	if reconciler.isRuntimePodAvailable(missingHeartbeat, now.Time, 0) {
+	if reconciler.isRuntimePodAvailable(missingHeartbeat, now.Time, nil, request) {
 		t.Fatal("expected runtime pod without runtimed heartbeat to be unavailable")
 	}
 
 	staleHeartbeat := basePod.DeepCopy()
 	staleHeartbeat.Status.Conditions[1].LastProbeTime = metav1.NewTime(now.Add(-2 * time.Minute))
-	if reconciler.isRuntimePodAvailable(staleHeartbeat, now.Time, 0) {
+	if reconciler.isRuntimePodAvailable(staleHeartbeat, now.Time, nil, request) {
 		t.Fatal("expected runtime pod with stale runtimed heartbeat to be unavailable")
 	}
 }

@@ -55,6 +55,44 @@ func TestRunsCapacity(t *testing.T) {
 	}
 }
 
+func TestCapacityAndFits(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+		CapacityAnnotation(v1alpha1.RuntimeResourceRuns): "4",
+		CapacityAnnotation("example.com/gpu"):            "2",
+	}}}
+	capacity := Capacity(pod, corev1.ResourceList{
+		corev1.ResourceName(v1alpha1.RuntimeResourceRuns): resource.MustParse("1"),
+		corev1.ResourceName("example.com/fallback"):       resource.MustParse("3"),
+	})
+	gpuCapacity := capacity[corev1.ResourceName("example.com/gpu")]
+	if got := gpuCapacity.Value(); got != 2 {
+		t.Fatalf("gpu capacity = %d, want 2", got)
+	}
+	fallbackCapacity := capacity[corev1.ResourceName("example.com/fallback")]
+	if got := fallbackCapacity.Value(); got != 3 {
+		t.Fatalf("fallback capacity = %d, want 3", got)
+	}
+
+	requests := corev1.ResourceList{
+		corev1.ResourceName(v1alpha1.RuntimeResourceRuns): *resource.NewQuantity(1, resource.DecimalSI),
+		corev1.ResourceName("example.com/gpu"):            *resource.NewQuantity(1, resource.DecimalSI),
+	}
+	if !Fits(capacity, corev1.ResourceList{
+		corev1.ResourceName(v1alpha1.RuntimeResourceRuns): *resource.NewQuantity(3, resource.DecimalSI),
+		corev1.ResourceName("example.com/gpu"):            *resource.NewQuantity(1, resource.DecimalSI),
+	}, requests) {
+		t.Fatal("expected complete resource request to fit")
+	}
+	if Fits(capacity, corev1.ResourceList{
+		corev1.ResourceName("example.com/gpu"): *resource.NewQuantity(2, resource.DecimalSI),
+	}, requests) {
+		t.Fatal("expected exhausted custom resource not to fit")
+	}
+	if Fits(capacity, nil, corev1.ResourceList{corev1.ResourceName("example.com/fpga"): *resource.NewQuantity(1, resource.DecimalSI)}) {
+		t.Fatal("expected request without capacity annotation not to fit")
+	}
+}
+
 func TestRuntimedReadyCondition(t *testing.T) {
 	now := metav1.Now()
 	pod := &corev1.Pod{}

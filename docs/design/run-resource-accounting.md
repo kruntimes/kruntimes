@@ -4,7 +4,7 @@ title: "Run Resource Accounting"
 
 # Run Resource Accounting
 
-Status: **Proposal; API review required before implementation**
+Status: **Accepted; Scheduler implementation in progress**
 
 Runtime capacity is not limited to concurrent Run count. `Runtime.spec.capacity.resources`
 already declares named per-Runtime-Pod capacities and the Runtime controller
@@ -68,15 +68,17 @@ usage[pod][resource] + request[run][resource] <= capacity[pod][resource]
 
 Active assigned Runs and scheduler-local assumed assignments both contribute
 their full resource request to scheduler `usage`. Reserve/Assume and Bind
-therefore use the same accounting model. The least-loaded strategy may continue
-to score on `runs` initially; adding multi-resource scoring is a separate
-policy design.
+therefore use the same accounting model. The least-loaded strategy scores the
+projected allocation across every advertised resource: it first minimizes the
+highest utilization ratio, then the sum of utilization ratios, with Pod name as
+a stable final tie break.
 
 If a Run requests a resource that a candidate Pod does not advertise, that Pod
 is infeasible. If no ready Pod satisfies all requests, the Run remains
 `Pending` with a bounded insufficient-capacity reason. It is reactivated when
 Runtime Pod capacity changes or active/assumed usage is released. A malformed
-request is an invalid Run configuration and fails validation before scheduling.
+request is an invalid Run configuration and fails Scheduler prefilter validation
+before placement.
 
 ## Runtime Admission
 

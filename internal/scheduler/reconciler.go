@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
@@ -100,6 +101,10 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if run.Spec.CancelRequested {
 		return r.applyCancelled(ctx, &run)
 	}
+	request, err := run.Spec.ResourceRequests()
+	if err != nil {
+		return r.applyInvalidResources(ctx, &run, err)
+	}
 
 	log.Info("Scheduling run", "runtime", run.Spec.Runtime)
 	start := time.Now()
@@ -133,7 +138,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	now := time.Now()
 	var candidates []corev1.Pod
 	for _, pod := range pods.Items {
-		if r.isRuntimePodAvailable(&pod, now, usageByPod[pod.Name]) {
+		if r.isRuntimePodAvailable(&pod, now, usageByPod[pod.Name], request) {
 			candidates = append(candidates, pod)
 		}
 	}
@@ -154,7 +159,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	selected, err := r.Strategy.Select(ctx, r.Client, candidates, &run)
+	selected, err := r.Strategy.Select(candidates, usageByPod, &run)
 	if err != nil {
 		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
 
@@ -220,6 +225,17 @@ func (r *RunReconciler) applyCancelled(ctx context.Context, run *v1alpha1.Run) (
 	return ctrl.Result{}, nil
 }
 
+func (r *RunReconciler) applyInvalidResources(ctx context.Context, run *v1alpha1.Run, validationErr error) (ctrl.Result, error) {
+	runstatus.SetTerminal(run, v1alpha1.RunFailed, "InvalidResources", validationErr.Error(), metav1.Now())
+	if err := r.Status().Update(ctx, run); err != nil {
+		if apierrors.IsConflict(err) {
+			return ctrl.Result{Requeue: true}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("update invalid resource status: %w", err)
+	}
+	return ctrl.Result{}, nil
+}
+
 func isPodSchedulable(pod *corev1.Pod) bool {
 	if pod.Status.Phase != corev1.PodRunning || !pod.DeletionTimestamp.IsZero() {
 		return false
@@ -232,7 +248,7 @@ func isPodSchedulable(pod *corev1.Pod) bool {
 	return false
 }
 
-func (r *RunReconciler) isRuntimePodAvailable(pod *corev1.Pod, now time.Time, usage int32) bool {
+func (r *RunReconciler) isRuntimePodAvailable(pod *corev1.Pod, now time.Time, usage, request corev1.ResourceList) bool {
 	if !isPodSchedulable(pod) {
 		return false
 	}
@@ -243,24 +259,46 @@ func (r *RunReconciler) isRuntimePodAvailable(pod *corev1.Pod, now time.Time, us
 	if !runtimepod.FreshRuntimedReady(pod, now, staleAfter) {
 		return false
 	}
-	capacity := runtimepod.RunsCapacity(pod, v1alpha1.RuntimeDefaultRunsCapacity)
-	return usage < capacity
+	return runtimepod.Fits(
+		runtimepod.Capacity(pod, defaultRuntimePodCapacity()),
+		usage,
+		request,
+	)
 }
 
-func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) (map[string]int32, error) {
+func defaultRuntimePodCapacity() corev1.ResourceList {
+	return corev1.ResourceList{
+		corev1.ResourceName(v1alpha1.RuntimeResourceRuns): *resource.NewQuantity(int64(v1alpha1.RuntimeDefaultRunsCapacity), resource.DecimalSI),
+	}
+}
+
+func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) (map[string]corev1.ResourceList, error) {
 	var runs v1alpha1.RunList
 	if err := r.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
 		return nil, err
 	}
 
-	usage := make(map[string]int32)
+	usage := make(map[string]corev1.ResourceList)
 	for _, run := range runs.Items {
 		if run.Status.AssignedPod == "" {
 			continue
 		}
 		switch run.Status.Phase {
 		case v1alpha1.RunScheduled, v1alpha1.RunRunning, v1alpha1.RunReady:
-			usage[run.Status.AssignedPod]++
+			resources := usage[run.Status.AssignedPod]
+			if resources == nil {
+				resources = corev1.ResourceList{}
+				usage[run.Status.AssignedPod] = resources
+			}
+			requests, err := run.Spec.ResourceRequests()
+			if err != nil {
+				continue
+			}
+			for resourceName, request := range requests {
+				quantity := resources[resourceName].DeepCopy()
+				quantity.Add(request)
+				resources[resourceName] = quantity
+			}
 		}
 	}
 	return usage, nil

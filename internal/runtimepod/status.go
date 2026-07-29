@@ -48,18 +48,61 @@ func RunsCapacityFromRuntime(rt *v1alpha1.Runtime, fallback int32) int32 {
 }
 
 func RunsCapacity(pod *corev1.Pod, fallback int32) int32 {
-	if pod.Annotations == nil {
-		return fallback
+	runs := corev1.ResourceName(v1alpha1.RuntimeResourceRuns)
+	quantity := Capacity(pod, corev1.ResourceList{
+		runs: *resource.NewQuantity(int64(fallback), resource.DecimalSI),
+	})[runs]
+	return quantityToPositiveInt32(quantity, fallback)
+}
+
+// Capacity returns the complete logical capacity advertised by a Runtime Pod.
+// Fallback capacity is used for resources not advertised by the Pod, which
+// preserves compatibility with Pods created by an older Runtime controller.
+// Callers should only include resources that are safe to assume without a Pod
+// capacity annotation.
+func Capacity(pod *corev1.Pod, fallback corev1.ResourceList) corev1.ResourceList {
+	capacity := fallback.DeepCopy()
+	if capacity == nil {
+		capacity = corev1.ResourceList{}
 	}
-	raw := pod.Annotations[CapacityAnnotation(v1alpha1.RuntimeResourceRuns)]
-	if raw == "" {
-		return fallback
+	if pod != nil {
+		for key, raw := range pod.Annotations {
+			if !strings.HasPrefix(key, v1alpha1.RuntimePodCapacityAnnotationPrefix) {
+				continue
+			}
+			name := strings.TrimPrefix(key, v1alpha1.RuntimePodCapacityAnnotationPrefix)
+			if name == "" {
+				continue
+			}
+			quantity, err := resource.ParseQuantity(raw)
+			if err != nil || quantity.Sign() <= 0 {
+				continue
+			}
+			capacity[corev1.ResourceName(name)] = quantity
+		}
 	}
-	qty, err := resource.ParseQuantity(raw)
-	if err != nil {
-		return fallback
+	return capacity
+}
+
+// Fits reports whether the complete request can be added to current usage
+// without exceeding the complete capacity vector. A requested resource without
+// a Pod capacity annotation is infeasible.
+func Fits(capacity, usage, request corev1.ResourceList) bool {
+	for name, requested := range request {
+		if requested.Sign() <= 0 {
+			continue
+		}
+		available, ok := capacity[name]
+		if !ok {
+			return false
+		}
+		used := usage[name].DeepCopy()
+		used.Add(requested)
+		if used.Cmp(available) > 0 {
+			return false
+		}
 	}
-	return quantityToPositiveInt32(qty, fallback)
+	return true
 }
 
 func IsRuntimedReady(pod *corev1.Pod) bool {

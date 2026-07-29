@@ -592,6 +592,25 @@ spec:
                 x-kubernetes-validations:
                 - message: exactly one of task or function must be set
                   rule: has(self.task) != has(self.function)
+              resources:
+                description: |-
+                  Resources declares logical Runtime capacity reserved by this Run.
+                  When omitted, the Run requests one unit of the built-in "runs" resource.
+                properties:
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests declares logical Runtime resources held from assignment until the
+                      Run reaches a terminal state or a function registration is released.
+                      These are independent from the Kubernetes container resources on a Runtime
+                      Pod template.
+                    type: object
+                type: object
               retryPolicy:
                 description: RetryPolicy is the retry strategy for the Run. If nil,
                   no retries are attempted.
@@ -708,15 +727,16 @@ spec:
                 && has(self.source.inline)) || (!self.mode.task.entrypoint.startsWith(''/'')
                 && !self.mode.task.entrypoint.split(''/'').exists(segment, segment
                 == ''..''))'
-            - message: runtime, source, mode, env, timeout, and retryPolicy are immutable
-                after Run creation
+            - message: runtime, source, mode, env, timeout, retryPolicy, and resources
+                are immutable after Run creation
               rule: self.runtime == oldSelf.runtime && has(self.source) == has(oldSelf.source)
                 && (!has(self.source) || self.source == oldSelf.source) && self.mode
                 == oldSelf.mode && has(self.env) == has(oldSelf.env) && (!has(self.env)
                 || self.env == oldSelf.env) && has(self.timeout) == has(oldSelf.timeout)
                 && (!has(self.timeout) || self.timeout == oldSelf.timeout) && has(self.retryPolicy)
                 == has(oldSelf.retryPolicy) && (!has(self.retryPolicy) || self.retryPolicy
-                == oldSelf.retryPolicy)
+                == oldSelf.retryPolicy) && has(self.resources) == has(oldSelf.resources)
+                && (!has(self.resources) || self.resources == oldSelf.resources)
             - message: workspace and affinity are immutable after Run creation
               rule: has(self.workspace) == has(oldSelf.workspace) && (!has(self.workspace)
                 || self.workspace == oldSelf.workspace) && has(self.affinity) == has(oldSelf.affinity)
