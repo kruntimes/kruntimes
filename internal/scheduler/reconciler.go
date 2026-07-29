@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -12,8 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/selection"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -105,7 +104,6 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if err != nil {
 		return r.applyInvalidResources(ctx, &run, err)
 	}
-
 	log.Info("Scheduling run", "runtime", run.Spec.Runtime)
 	start := time.Now()
 	defer func() {
@@ -116,34 +114,26 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{RequeueAfter: retryDelay}, nil
 	}
 
-	reqLabel, err := labels.NewRequirement("runtime", selection.Equals, []string{run.Spec.Runtime})
+	snapshot, err := r.loadSchedulingSnapshot(ctx, &run, request)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("build label requirement: %w", err)
+		return ctrl.Result{}, err
 	}
-	sel := labels.NewSelector().Add(*reqLabel)
-
-	var pods corev1.PodList
-	if err := r.List(ctx, &pods, &client.ListOptions{
-		Namespace:     req.Namespace,
-		LabelSelector: sel,
-	}); err != nil {
-		return ctrl.Result{}, fmt.Errorf("list runtime pods: %w", err)
-	}
-
-	usageByPod, err := r.assignedRunUsage(ctx, req.Namespace)
+	plan, err := r.planSchedulingCycle(snapshot)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("list assigned runs: %w", err)
-	}
-
-	now := time.Now()
-	var candidates []corev1.Pod
-	for _, pod := range pods.Items {
-		if r.isRuntimePodAvailable(&pod, now, usageByPod[pod.Name], request) {
-			candidates = append(candidates, pod)
+		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
+		run.Status.Phase = v1alpha1.RunFailed
+		run.Status.Message = fmt.Sprintf("pod selection failed: %v", err)
+		if err := r.Status().Update(ctx, &run); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{Requeue: true}, nil
+			}
+			return ctrl.Result{}, fmt.Errorf("update selection failure status: %w", err)
 		}
+		runsScheduled.WithLabelValues(run.Spec.Runtime, "selection_error").Inc()
+		return ctrl.Result{}, nil
 	}
 
-	if len(candidates) == 0 {
+	if plan.action == schedulingPlanWait {
 		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
 		log.Info("No available runtime pods", "runtime", run.Spec.Runtime)
 
@@ -158,29 +148,19 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		runsScheduled.WithLabelValues(run.Spec.Runtime, "no_pods").Inc()
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
-
-	selected, err := r.Strategy.Select(candidates, usageByPod, &run)
-	if err != nil {
-		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
-
-		run.Status.Phase = v1alpha1.RunFailed
-		run.Status.Message = fmt.Sprintf("pod selection failed: %v", err)
-		if err := r.Status().Update(ctx, &run); err != nil {
-			return ctrl.Result{}, fmt.Errorf("update run status: %w", err)
-		}
-		runsScheduled.WithLabelValues(run.Spec.Runtime, "selection_error").Inc()
-		return ctrl.Result{}, nil
+	if plan.action != schedulingPlanBind || plan.selected == nil {
+		return ctrl.Result{}, fmt.Errorf("apply scheduling plan: unsupported action %q", plan.action)
 	}
 
-	run.Status.AssignedPod = selected.Name
-	run.Status.AssignedPodUID = string(selected.UID)
+	run.Status.AssignedPod = plan.selected.Name
+	run.Status.AssignedPodUID = string(plan.selected.UID)
 	run.Status.Phase = v1alpha1.RunScheduled
 	scheduledAt := metav1.Now()
 	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
 		Type:               runstatus.ConditionScheduled,
 		Status:             metav1.ConditionTrue,
 		Reason:             "Assigned",
-		Message:            fmt.Sprintf("assigned to runtime pod %s", selected.Name),
+		Message:            fmt.Sprintf("assigned to runtime pod %s", plan.selected.Name),
 		LastTransitionTime: scheduledAt,
 	})
 	if err := r.Status().Update(ctx, &run); err != nil {
@@ -190,7 +170,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, fmt.Errorf("update run status: %w", err)
 	}
 
-	log.Info("Run scheduled", "pod", selected.Name)
+	log.Info("Run scheduled", "pod", plan.selected.Name)
 	runsScheduled.WithLabelValues(run.Spec.Runtime, "scheduled").Inc()
 	observeRunQueueDuration(&run, scheduledAt.Time)
 	return ctrl.Result{}, nil
@@ -326,6 +306,11 @@ func (r *RunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.pendingRunsForReleasedCapacity),
 			builder.WithPredicates(runCapacityReleasedPredicate()),
 		).
+		Watches(
+			&corev1.Pod{},
+			handler.EnqueueRequestsFromMapFunc(r.pendingRunsForRuntimePod),
+			builder.WithPredicates(runtimePodSchedulingPredicate()),
+		).
 		Complete(r)
 }
 
@@ -334,17 +319,32 @@ func (r *RunReconciler) pendingRunsForReleasedCapacity(ctx context.Context, obje
 	if !ok || run.Spec.Runtime == "" {
 		return nil
 	}
+	return r.pendingRunsForRuntime(ctx, run.Namespace, run.Spec.Runtime, "released runtime capacity")
+}
 
+func (r *RunReconciler) pendingRunsForRuntimePod(ctx context.Context, object client.Object) []reconcile.Request {
+	pod, ok := object.(*corev1.Pod)
+	if !ok {
+		return nil
+	}
+	runtimeName := pod.Labels["runtime"]
+	if runtimeName == "" {
+		return nil
+	}
+	return r.pendingRunsForRuntime(ctx, pod.Namespace, runtimeName, "runtime pod scheduling change")
+}
+
+func (r *RunReconciler) pendingRunsForRuntime(ctx context.Context, namespace, runtimeName, source string) []reconcile.Request {
 	var runs v1alpha1.RunList
-	if err := r.List(ctx, &runs, client.InNamespace(run.Namespace)); err != nil {
-		r.Log.Error(err, "unable to list pending runs for released runtime capacity", "run", client.ObjectKeyFromObject(run))
+	if err := r.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
+		r.Log.Error(err, "unable to list pending runs", "source", source, "namespace", namespace, "runtime", runtimeName)
 		return nil
 	}
 
 	requests := make([]reconcile.Request, 0, len(runs.Items))
 	for i := range runs.Items {
 		pending := &runs.Items[i]
-		if pending.Spec.Runtime != run.Spec.Runtime {
+		if pending.Spec.Runtime != runtimeName {
 			continue
 		}
 		if pending.Status.Phase != "" && pending.Status.Phase != v1alpha1.RunPending {
@@ -353,6 +353,71 @@ func (r *RunReconciler) pendingRunsForReleasedCapacity(ctx context.Context, obje
 		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pending)})
 	}
 	return requests
+}
+
+func runtimePodSchedulingPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return runtimePodName(e.Object) != ""
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldPod, oldOK := e.ObjectOld.(*corev1.Pod)
+			newPod, newOK := e.ObjectNew.(*corev1.Pod)
+			if !oldOK || !newOK {
+				return false
+			}
+			if runtimePodName(oldPod) == "" && runtimePodName(newPod) == "" {
+				return false
+			}
+			return !reflect.DeepEqual(schedulingStateForRuntimePod(oldPod), schedulingStateForRuntimePod(newPod))
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return runtimePodName(e.Object) != ""
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return false
+		},
+	}
+}
+
+type runtimePodSchedulingState struct {
+	runtimeName   string
+	phase         corev1.PodPhase
+	deleting      bool
+	podReady      corev1.ConditionStatus
+	runtimedReady *corev1.PodCondition
+	capacity      map[string]string
+}
+
+func schedulingStateForRuntimePod(pod *corev1.Pod) runtimePodSchedulingState {
+	state := runtimePodSchedulingState{
+		runtimeName: runtimePodName(pod),
+		phase:       pod.Status.Phase,
+		deleting:    pod.DeletionTimestamp != nil,
+		capacity:    map[string]string{},
+	}
+	for _, condition := range pod.Status.Conditions {
+		switch condition.Type {
+		case corev1.PodReady:
+			state.podReady = condition.Status
+		case v1alpha1.RuntimePodRuntimedReadyCondition:
+			conditionCopy := condition
+			state.runtimedReady = &conditionCopy
+		}
+	}
+	for key, value := range pod.Annotations {
+		if len(key) >= len(v1alpha1.RuntimePodCapacityAnnotationPrefix) && key[:len(v1alpha1.RuntimePodCapacityAnnotationPrefix)] == v1alpha1.RuntimePodCapacityAnnotationPrefix {
+			state.capacity[key] = value
+		}
+	}
+	return state
+}
+
+func runtimePodName(object client.Object) string {
+	if object == nil {
+		return ""
+	}
+	return object.GetLabels()["runtime"]
 }
 
 func pendingRunPredicate() predicate.Predicate {
