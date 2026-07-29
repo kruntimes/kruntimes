@@ -25,6 +25,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
@@ -931,11 +932,14 @@ func TestWorkflowRunBindsReusableTemplateWhenCallBecomesReady(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
 
-	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflow), workflow); err != nil {
-		t.Fatalf("get reusable workflow: %v", err)
-	}
-	workflow.Spec.Jobs["apply"] = reusableOutputJob(`printf 'result=updated\n' > "$KRUNTIME_OUTPUTS"`)
-	if err := k8sClient.Update(context.Background(), workflow); err != nil {
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current v1alpha1.Workflow
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflow), &current); err != nil {
+			return err
+		}
+		current.Spec.Jobs["apply"] = reusableOutputJob(`printf 'result=updated\n' > "$KRUNTIME_OUTPUTS"`)
+		return k8sClient.Update(context.Background(), &current)
+	}); err != nil {
 		t.Fatalf("update reusable workflow before call becomes ready: %v", err)
 	}
 
