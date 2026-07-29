@@ -1,0 +1,65 @@
+package scheduler
+
+import (
+	"testing"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runtimepod"
+)
+
+func TestPlanSchedulingCycle(t *testing.T) {
+	now := time.Now()
+	run := &v1alpha1.Run{Spec: v1alpha1.RunSpec{Runtime: "bash"}}
+	request, err := run.Spec.ResourceRequests()
+	if err != nil {
+		t.Fatalf("resource requests: %v", err)
+	}
+	reconciler := &RunReconciler{
+		Strategy:                    &LeastLoaded{},
+		RuntimedHeartbeatStaleAfter: time.Minute,
+	}
+
+	plan, err := reconciler.planSchedulingCycle(&schedulingSnapshot{
+		run:     run,
+		request: request,
+		now:     now,
+	})
+	if err != nil {
+		t.Fatalf("plan empty snapshot: %v", err)
+	}
+	if plan.action != schedulingPlanWait || plan.selected != nil {
+		t.Fatalf("empty plan = %#v, want Wait without a selected Pod", plan)
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "runtime-a",
+			Annotations: map[string]string{
+				runtimepod.CapacityAnnotation(v1alpha1.RuntimeResourceRuns): "2",
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+				{Type: v1alpha1.RuntimePodRuntimedReadyCondition, Status: corev1.ConditionTrue, LastProbeTime: metav1.NewTime(now)},
+			},
+		},
+	}
+	plan, err = reconciler.planSchedulingCycle(&schedulingSnapshot{
+		run:     run,
+		request: request,
+		pods:    []corev1.Pod{pod},
+		now:     now,
+	})
+	if err != nil {
+		t.Fatalf("plan schedulable snapshot: %v", err)
+	}
+	if plan.action != schedulingPlanBind || plan.selected == nil || plan.selected.Name != pod.Name {
+		t.Fatalf("schedulable plan = %#v, want Bind for %q", plan, pod.Name)
+	}
+}

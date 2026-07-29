@@ -434,6 +434,103 @@ func TestPendingRunsForReleasedCapacity(t *testing.T) {
 	}
 }
 
+func TestPendingRunsForRuntimePod(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add kruntimes scheme: %v", err)
+	}
+
+	pendingSameRuntime := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-same-runtime", Namespace: "default"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunPending},
+	}
+	pendingOtherRuntime := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-other-runtime", Namespace: "default"},
+		Spec:       v1alpha1.RunSpec{Runtime: "python"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunPending},
+	}
+	scheduledSameRuntime := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "scheduled-same-runtime", Namespace: "default"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunScheduled},
+	}
+	pendingOtherNamespace := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-other-namespace", Namespace: "other"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunPending},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pendingSameRuntime, pendingOtherRuntime, scheduledSameRuntime, pendingOtherNamespace).
+		Build()
+	reconciler := &RunReconciler{Client: k8sClient, Log: logr.Discard()}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name:      "runtime-bash",
+		Namespace: "default",
+		Labels:    map[string]string{"runtime": "bash"},
+	}}
+
+	requests := reconciler.pendingRunsForRuntimePod(context.Background(), pod)
+	if len(requests) != 1 || requests[0].NamespacedName.String() != "default/pending-same-runtime" {
+		t.Fatalf("requests = %v, want [default/pending-same-runtime]", requests)
+	}
+	if requests := reconciler.pendingRunsForRuntimePod(context.Background(), &corev1.Pod{}); len(requests) != 0 {
+		t.Fatalf("requests without runtime label = %v, want none", requests)
+	}
+}
+
+func TestRuntimePodSchedulingPredicate(t *testing.T) {
+	predicate := runtimePodSchedulingPredicate()
+	now := metav1.Now()
+	base := func() *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"runtime": "bash"},
+				Annotations: map[string]string{
+					runtimepod.CapacityAnnotation(v1alpha1.RuntimeResourceRuns): "2",
+				},
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				Conditions: []corev1.PodCondition{
+					{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+					{Type: v1alpha1.RuntimePodRuntimedReadyCondition, Status: corev1.ConditionTrue, LastProbeTime: now},
+				},
+			},
+		}
+	}
+
+	if !predicate.Create(event.CreateEvent{Object: base()}) {
+		t.Fatal("Create() = false, want true for Runtime Pod")
+	}
+	if predicate.Create(event.CreateEvent{Object: &corev1.Pod{}}) {
+		t.Fatal("Create() = true, want false for unrelated Pod")
+	}
+	if predicate.Update(event.UpdateEvent{ObjectOld: base(), ObjectNew: base()}) {
+		t.Fatal("Update() = true, want false for unchanged Runtime Pod")
+	}
+
+	readyChanged := base()
+	readyChanged.Status.Conditions[0].Status = corev1.ConditionFalse
+	if !predicate.Update(event.UpdateEvent{ObjectOld: base(), ObjectNew: readyChanged}) {
+		t.Fatal("Update() = false, want true when Pod readiness changes")
+	}
+
+	capacityChanged := base()
+	capacityChanged.Annotations[runtimepod.CapacityAnnotation(v1alpha1.RuntimeResourceRuns)] = "3"
+	if !predicate.Update(event.UpdateEvent{ObjectOld: base(), ObjectNew: capacityChanged}) {
+		t.Fatal("Update() = false, want true when Runtime Pod capacity changes")
+	}
+
+	if !predicate.Delete(event.DeleteEvent{Object: base()}) {
+		t.Fatal("Delete() = false, want true for Runtime Pod")
+	}
+}
+
 func TestRunCapacityReleasedPredicate(t *testing.T) {
 	pred := runCapacityReleasedPredicate()
 

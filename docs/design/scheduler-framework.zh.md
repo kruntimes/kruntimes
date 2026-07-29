@@ -4,7 +4,7 @@ title: "Scheduler Framework"
 
 # Scheduler Framework
 
-状态：**Proposal；实现或改变 affinity API 语义前必须 review**
+状态：**Accepted；Scheduler Framework core 实现中**
 
 本文定义 kruntimes 的目标调度架构。它将当前“每个 Pending Run 独立 reconcile”的模型替换为 scheduler
 queue 与单 Run scheduling cycle。每个 cycle 针对一个 Run，读取 Runtime Pods、active assignments 和
@@ -148,8 +148,9 @@ selectors 和 Pod names 不能作为 metric labels。
 ## 实现顺序
 
 1. Review 本架构，并更新 Run affinity design，使本文成为 scheduling execution semantics 的权威来源。
-2. 在 queue/planner interface 后重构 scheduler internals，同时保留当前 one-Run observable behavior 与
-   existing metrics。
+2. 在 controller-runtime queue 和 snapshot/planning interface 后重构 scheduler internals，同时保留当前
+   one-Run observable behavior 与 existing metrics。该 core 步骤正在实现；它不会引入 assumed reservation
+   或 affinity semantics。
 3. 实现 Snapshot、PreFilter、Filter、Score、Reserve/Assume 和 Bind，并增加 deterministic selection、assumed
    capacity accounting 和 bind conflicts 的 unit tests。
 4. 实现 assumed-target matching 和 Run 间亲和性 bootstrap，并增加 integration 与 E2E coverage。

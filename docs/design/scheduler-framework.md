@@ -1,7 +1,6 @@
 # Scheduler Framework
 
-Status: **Proposal; review required before implementation or affinity API
-semantics change**
+Status: **Accepted; Scheduler Framework core implementation in progress**
 
 This document defines the target scheduling architecture for kruntimes. It
 replaces the current model of independently reconciling each Pending Run with
@@ -179,8 +178,10 @@ names, selectors, and Pod names must not be metric labels.
 
 1. Review this architecture and update the Run affinity design to make this
    document authoritative for scheduling execution semantics.
-2. Refactor scheduler internals behind a queue/planner interface while
-   preserving current one-Run observable behavior and existing metrics.
+2. Refactor scheduler internals behind the controller-runtime queue and a
+   snapshot/planning interface while preserving current one-Run observable
+   behavior and existing metrics. This core step is in progress; it does not
+   introduce assumed reservations or affinity semantics.
 3. Implement snapshot, PreFilter, Filter, Score, Reserve/Assume, and Bind with
    unit tests for deterministic selection, assumed capacity accounting, and bind
    conflicts.
