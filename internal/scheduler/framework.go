@@ -17,11 +17,13 @@ import (
 // controller-runtime workqueue owns key activation; a worker builds one
 // snapshot and makes one placement decision for that key at a time.
 type schedulingSnapshot struct {
-	run        *v1alpha1.Run
-	request    corev1.ResourceList
-	pods       []corev1.Pod
-	usageByPod map[string]corev1.ResourceList
-	now        time.Time
+	run              *v1alpha1.Run
+	request          corev1.ResourceList
+	pods             []corev1.Pod
+	actualUsageByPod map[string]corev1.ResourceList
+	usageByPod       map[string]corev1.ResourceList
+	runs             []v1alpha1.Run
+	now              time.Time
 }
 
 type schedulingPlan struct {
@@ -53,23 +55,24 @@ func (r *RunReconciler) loadSchedulingSnapshot(ctx context.Context, run *v1alpha
 		return nil, fmt.Errorf("snapshot runtime pods: %w", err)
 	}
 
-	usageByPod, err := r.assignedRunUsage(ctx, run.Namespace)
+	runs, actualUsageByPod, err := r.assignedRunUsage(ctx, run.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot assigned run usage: %w", err)
 	}
+	usageByPod := r.effectiveUsage(actualUsageByPod, runs)
 
 	return &schedulingSnapshot{
-		run:        run,
-		request:    request,
-		pods:       podList.Items,
-		usageByPod: usageByPod,
-		now:        time.Now(),
+		run:              run,
+		request:          request,
+		pods:             podList.Items,
+		actualUsageByPod: actualUsageByPod,
+		usageByPod:       usageByPod,
+		runs:             runs,
+		now:              time.Now(),
 	}, nil
 }
 
 // planSchedulingCycle applies the Filter and Score phases to one snapshot.
-// Reserve/Assume is intentionally not part of this core refactor; it requires
-// a separate, reviewed local reservation lifecycle.
 func (r *RunReconciler) planSchedulingCycle(snapshot *schedulingSnapshot) (schedulingPlan, error) {
 	candidates := make([]corev1.Pod, 0, len(snapshot.pods))
 	for i := range snapshot.pods {
