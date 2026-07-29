@@ -73,6 +73,8 @@ type RunReconciler struct {
 	Log                         logr.Logger
 	Strategy                    Strategy
 	RuntimedHeartbeatStaleAfter time.Duration
+
+	assumptions assumedReservationCache
 }
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;update;patch
@@ -89,6 +91,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 		return ctrl.Result{}, fmt.Errorf("get run: %w", err)
 	}
+	r.observeRun(&run)
 
 	// Treat empty phase (CRD default not yet applied) as Pending.
 	if run.Status.Phase != "" && run.Status.Phase != v1alpha1.RunPending {
@@ -152,27 +155,20 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, fmt.Errorf("apply scheduling plan: unsupported action %q", plan.action)
 	}
 
-	run.Status.AssignedPod = plan.selected.Name
-	run.Status.AssignedPodUID = string(plan.selected.UID)
-	run.Status.Phase = v1alpha1.RunScheduled
-	scheduledAt := metav1.Now()
-	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
-		Type:               runstatus.ConditionScheduled,
-		Status:             metav1.ConditionTrue,
-		Reason:             "Assigned",
-		Message:            fmt.Sprintf("assigned to runtime pod %s", plan.selected.Name),
-		LastTransitionTime: scheduledAt,
-	})
-	if err := r.Status().Update(ctx, &run); err != nil {
+	reserved := r.reserve(snapshot, plan.selected)
+	if !reserved {
+		return ctrl.Result{Requeue: true}, nil
+	}
+	if err := r.bind(ctx, &run, plan.selected); err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{Requeue: true}, nil
 		}
-		return ctrl.Result{}, fmt.Errorf("update run status: %w", err)
+		return ctrl.Result{}, fmt.Errorf("bind run: %w", err)
 	}
 
 	log.Info("Run scheduled", "pod", plan.selected.Name)
 	runsScheduled.WithLabelValues(run.Spec.Runtime, "scheduled").Inc()
-	observeRunQueueDuration(&run, scheduledAt.Time)
+	observeRunQueueDuration(&run, time.Now())
 	return ctrl.Result{}, nil
 }
 
@@ -252,10 +248,10 @@ func defaultRuntimePodCapacity() corev1.ResourceList {
 	}
 }
 
-func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) (map[string]corev1.ResourceList, error) {
+func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) ([]v1alpha1.Run, map[string]corev1.ResourceList, error) {
 	var runs v1alpha1.RunList
 	if err := r.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	usage := make(map[string]corev1.ResourceList)
@@ -281,7 +277,7 @@ func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) 
 			}
 		}
 	}
-	return usage, nil
+	return runs.Items, usage, nil
 }
 
 func pendingRetryDelay(run *v1alpha1.Run) time.Duration {
