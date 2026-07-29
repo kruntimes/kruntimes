@@ -91,8 +91,41 @@ before the status patch completes. Bind failure releases that reservation and
 removes the assumed assignment; a successful patch is later observed as an
 actual assignment. Reservations are never persisted as annotations, capacity
 counters, or user-visible status fields.
-After a restart, the next snapshot reconstructs capacity from assigned active
-Runs, so no separate reservation recovery protocol is required.
+
+### Reservation Lifecycle
+
+The assumed cache is keyed by immutable `(namespace, Run UID)`. Each entry
+stores the Run name and resource version used for the cycle, selected Pod name
+and UID, and the complete logical resource request. A mutex protects reserve,
+release, and snapshot accounting so concurrent queue workers cannot reserve the
+same capacity twice.
+
+Snapshot accounting is:
+
+```text
+effectiveUsage[pod] = activeAssignedRunUsage[pod] + unconfirmedAssumedUsage[pod]
+```
+
+Before adding assumed usage, the scheduler reconciles the cache against the
+Run list in the snapshot. An assumption is removed when its Run is observed as
+an active assignment to the same Pod, because the active Run usage now owns the
+reservation. It is also removed when the same Run UID is terminal, Pending, or
+assigned to a different Pod. This makes the handoff from assumed to actual
+usage exact and prevents double-counting.
+
+`Reserve` atomically verifies that the selected Pod still has capacity after
+all existing assumptions, then inserts the full request. `Bind` patches the Run
+status with the selected Pod name and UID. A successful patch deliberately does
+not release the assumption: it remains until the informer observes the actual
+Run assignment. Any failed patch, including a resource-version conflict,
+immediately releases the assumption. The Run remains `Pending` and is requeued
+on a conflict; a non-conflict API error is returned for normal controller retry.
+
+If the scheduler process stops between reserve and bind, leader failover starts
+with an empty assumed cache. The new leader reconstructs capacity only from
+persisted active Run assignments. Thus an unpersisted assumption disappears,
+while a successful status patch becomes actual usage when observed; no separate
+reservation recovery object or TTL is needed.
 
 ## High Availability
 
@@ -180,11 +213,11 @@ names, selectors, and Pod names must not be metric labels.
    document authoritative for scheduling execution semantics.
 2. Refactor scheduler internals behind the controller-runtime queue and a
    snapshot/planning interface while preserving current one-Run observable
-   behavior and existing metrics. This core step is in progress; it does not
+   behavior and existing metrics. This core step is complete; it does not
    introduce assumed reservations or affinity semantics.
-3. Implement snapshot, PreFilter, Filter, Score, Reserve/Assume, and Bind with
-   unit tests for deterministic selection, assumed capacity accounting, and bind
-   conflicts.
+3. Implement Reserve/Assume and Bind with unit tests for deterministic
+   selection, assumed capacity accounting, handoff to actual assignments, and
+   bind conflicts.
 4. Implement assumed-target matching and Inter-Run Affinity bootstrap with
    integration and E2E coverage.
 5. Add priority only after a separate API and fairness design review.

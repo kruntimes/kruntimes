@@ -76,8 +76,33 @@ Run keys 加入 queue。event handler 不会选择 Runtime Pod 或 patch Run；�
 每个 reservation 属于一条 Run。与 Kubernetes 一样，assumed placement 让后续 scheduling cycles 在 status
 patch 完成前看到 capacity consumption 和 affinity target。bind 失败会释放 reservation 并移除 assumed
 assignment；成功 patch 后，该 Run 最终会作为 actual assignment 被观察到。reservations 不会以 annotation、
-capacity counter 或 user-visible status 字段持久化。restart 后，下一个 snapshot 根据 assigned active Runs
-重建 capacity，因此不需要独立的 reservation recovery protocol。
+capacity counter 或 user-visible status 字段持久化。
+
+### Reservation 生命周期
+
+assumed cache 按 immutable 的 `(namespace, Run UID)` 建键。每一项保存本 cycle 使用的 Run name 和
+resource version、选中的 Pod name 和 UID，以及完整 logical resource request。mutex 保护 reserve、release 和
+snapshot accounting，使并发 queue workers 不会重复预留同一份 capacity。
+
+snapshot accounting 为：
+
+```text
+effectiveUsage[pod] = activeAssignedRunUsage[pod] + unconfirmedAssumedUsage[pod]
+```
+
+在加入 assumed usage 前，scheduler 将 cache 与 snapshot 中的 Run list 对账。当对应 Run 被观察为同一 Pod 上的
+active assignment 时，删除 assumption，因为此时 active Run usage 接管 reservation。若同一 Run UID 已 terminal、
+变为 Pending，或被分配到其他 Pod，也删除 assumption。这样 assumed usage 到 actual usage 的 handoff 是精确的，
+不会 double-count。
+
+`Reserve` 会原子地确认选中 Pod 在考虑全部现有 assumptions 后仍有 capacity，然后写入完整 request。`Bind`
+将 Run status patch 为选中 Pod 的 name 和 UID。成功 patch 后故意不释放 assumption：它保留到 informer 观察到
+actual Run assignment。包括 resource-version conflict 在内的任何 failed patch 都立即释放 assumption。conflict
+时 Run 保持 `Pending` 并 requeue；non-conflict API error 按普通 controller retry 返回。
+
+如果 scheduler process 在 reserve 与 bind 之间停止，leader failover 从空的 assumed cache 启动。新 leader 仅从
+persisted active Run assignments 重建 capacity。因此未持久化的 assumption 会消失；成功的 status patch 在被观察后
+成为 actual usage；不需要单独的 reservation recovery object 或 TTL。
 
 ## 高可用
 
@@ -149,10 +174,10 @@ selectors 和 Pod names 不能作为 metric labels。
 
 1. Review 本架构，并更新 Run affinity design，使本文成为 scheduling execution semantics 的权威来源。
 2. 在 controller-runtime queue 和 snapshot/planning interface 后重构 scheduler internals，同时保留当前
-   one-Run observable behavior 与 existing metrics。该 core 步骤正在实现；它不会引入 assumed reservation
+   one-Run observable behavior 与 existing metrics。该 core 步骤已完成；它不会引入 assumed reservation
    或 affinity semantics。
-3. 实现 Snapshot、PreFilter、Filter、Score、Reserve/Assume 和 Bind，并增加 deterministic selection、assumed
-   capacity accounting 和 bind conflicts 的 unit tests。
+3. 实现 Reserve/Assume 和 Bind，并增加 deterministic selection、assumed capacity accounting、handoff 到 actual
+   assignments 以及 bind conflicts 的 unit tests。
 4. 实现 assumed-target matching 和 Run 间亲和性 bootstrap，并增加 integration 与 E2E coverage。
 5. 只有经过独立 API 与 fairness design review 后，才加入 priority。
 
