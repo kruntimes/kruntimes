@@ -71,6 +71,10 @@ type resourceScore struct {
 	sum *big.Rat
 }
 
+// resourceCapacityScore scores the allocation that would result after assigning
+// request. For every advertised resource it calculates
+// (usage + request) / capacity. The score minimizes the highest ratio to avoid
+// creating a resource bottleneck, then the sum of ratios to break that tie.
 func resourceCapacityScore(capacity, usage, request corev1.ResourceList) (resourceScore, error) {
 	score := resourceScore{max: new(big.Rat), sum: new(big.Rat)}
 	for name, available := range capacity {
