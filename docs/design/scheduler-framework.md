@@ -1,6 +1,6 @@
 # Scheduler Framework
 
-Status: **Accepted; Scheduler Framework core implementation in progress**
+Status: **Accepted; Reserve/Assume/Bind implementation complete**
 
 This document defines the target scheduling architecture for kruntimes. It
 replaces the current model of independently reconciling each Pending Run with
@@ -95,10 +95,11 @@ counters, or user-visible status fields.
 ### Reservation Lifecycle
 
 The assumed cache is keyed by immutable `(namespace, Run UID)`. Each entry
-stores the Run name and resource version used for the cycle, selected Pod name
-and UID, and the complete logical resource request. A mutex protects reserve,
-release, and snapshot accounting so concurrent queue workers cannot reserve the
-same capacity twice.
+stores the Run name, selected Pod name, and complete logical resource request.
+The Run object passed to Bind retains its observed resource version, so the
+Kubernetes status update itself detects concurrent changes. A mutex protects
+reserve, release, and snapshot accounting so concurrent queue workers cannot
+reserve the same capacity twice.
 
 Snapshot accounting is:
 
@@ -109,8 +110,10 @@ effectiveUsage[pod] = activeAssignedRunUsage[pod] + unconfirmedAssumedUsage[pod]
 Before adding assumed usage, the scheduler reconciles the cache against the
 Run list in the snapshot. An assumption is removed when its Run is observed as
 an active assignment to the same Pod, because the active Run usage now owns the
-reservation. It is also removed when the same Run UID is terminal, Pending, or
-assigned to a different Pod. This makes the handoff from assumed to actual
+reservation. It is also removed when the same Run UID is terminal, absent, or
+assigned to a different Pod. A Pending observation retains an assumption: an
+informer can still be behind a successful Bind, and dropping it during that
+window would permit overcommit. This makes the handoff from assumed to actual
 usage exact and prevents double-counting.
 
 `Reserve` atomically verifies that the selected Pod still has capacity after
@@ -217,7 +220,7 @@ names, selectors, and Pod names must not be metric labels.
    introduce assumed reservations or affinity semantics.
 3. Implement Reserve/Assume and Bind with unit tests for deterministic
    selection, assumed capacity accounting, handoff to actual assignments, and
-   bind conflicts.
+   bind conflicts. This step is complete.
 4. Implement assumed-target matching and Inter-Run Affinity bootstrap with
    integration and E2E coverage.
 5. Add priority only after a separate API and fairness design review.

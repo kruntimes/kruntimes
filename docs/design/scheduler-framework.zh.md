@@ -4,7 +4,7 @@ title: "Scheduler Framework"
 
 # Scheduler Framework
 
-状态：**Accepted；Scheduler Framework core 实现中**
+状态：**Accepted；Reserve/Assume/Bind 实现完成**
 
 本文定义 kruntimes 的目标调度架构。它将当前“每个 Pending Run 独立 reconcile”的模型替换为 scheduler
 queue 与单 Run scheduling cycle。每个 cycle 针对一个 Run，读取 Runtime Pods、active assignments 和
@@ -80,9 +80,9 @@ capacity counter 或 user-visible status 字段持久化。
 
 ### Reservation 生命周期
 
-assumed cache 按 immutable 的 `(namespace, Run UID)` 建键。每一项保存本 cycle 使用的 Run name 和
-resource version、选中的 Pod name 和 UID，以及完整 logical resource request。mutex 保护 reserve、release 和
-snapshot accounting，使并发 queue workers 不会重复预留同一份 capacity。
+assumed cache 按 immutable 的 `(namespace, Run UID)` 建键。每一项保存 Run name、选中的 Pod name 以及完整 logical
+resource request。传入 Bind 的 Run object 保留了观察到的 resource version，因此 Kubernetes 的 status update 自身会
+检测并发变更。mutex 保护 reserve、release 和 snapshot accounting，使并发 queue workers 不会重复预留同一份 capacity。
 
 snapshot accounting 为：
 
@@ -92,8 +92,9 @@ effectiveUsage[pod] = activeAssignedRunUsage[pod] + unconfirmedAssumedUsage[pod]
 
 在加入 assumed usage 前，scheduler 将 cache 与 snapshot 中的 Run list 对账。当对应 Run 被观察为同一 Pod 上的
 active assignment 时，删除 assumption，因为此时 active Run usage 接管 reservation。若同一 Run UID 已 terminal、
-变为 Pending，或被分配到其他 Pod，也删除 assumption。这样 assumed usage 到 actual usage 的 handoff 是精确的，
-不会 double-count。
+不存在，或被分配到其他 Pod，也删除 assumption。观察到 `Pending` 时必须保留 assumption：informer 可能尚未看到
+成功的 Bind，若在此窗口删除会允许 overcommit。这样 assumed usage 到 actual usage 的 handoff 是精确的，不会
+double-count。
 
 `Reserve` 会原子地确认选中 Pod 在考虑全部现有 assumptions 后仍有 capacity，然后写入完整 request。`Bind`
 将 Run status patch 为选中 Pod 的 name 和 UID。成功 patch 后故意不释放 assumption：它保留到 informer 观察到
@@ -177,7 +178,7 @@ selectors 和 Pod names 不能作为 metric labels。
    one-Run observable behavior 与 existing metrics。该 core 步骤已完成；它不会引入 assumed reservation
    或 affinity semantics。
 3. 实现 Reserve/Assume 和 Bind，并增加 deterministic selection、assumed capacity accounting、handoff 到 actual
-   assignments 以及 bind conflicts 的 unit tests。
+   assignments 以及 bind conflicts 的 unit tests。此步骤已完成。
 4. 实现 assumed-target matching 和 Run 间亲和性 bootstrap，并增加 integration 与 E2E coverage。
 5. 只有经过独立 API 与 fairness design review 后，才加入 priority。
 
