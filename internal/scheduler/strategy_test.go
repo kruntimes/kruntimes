@@ -59,10 +59,16 @@ func TestLeastLoaded_Select(t *testing.T) {
 			wantPod: "pod-b",
 		},
 		{
-			name: "selects by runs while preserving other resource usage",
+			name: "selects by complete resource utilization",
 			pods: []corev1.Pod{
-				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}},
-				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default", Annotations: map[string]string{
+					runtimepod.CapacityAnnotation(v1alpha1.RuntimeResourceRuns): "4",
+					runtimepod.CapacityAnnotation("example.com/accelerator"):    "16",
+				}}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default", Annotations: map[string]string{
+					runtimepod.CapacityAnnotation(v1alpha1.RuntimeResourceRuns): "4",
+					runtimepod.CapacityAnnotation("example.com/accelerator"):    "16",
+				}}},
 			},
 			usage: map[string]corev1.ResourceList{
 				"pod-a": {
@@ -70,7 +76,9 @@ func TestLeastLoaded_Select(t *testing.T) {
 					corev1.ResourceName("example.com/accelerator"):    *resource.NewQuantity(8, resource.DecimalSI),
 				},
 			},
-			run:     &v1alpha1.Run{},
+			run: &v1alpha1.Run{Spec: v1alpha1.RunSpec{Resources: &v1alpha1.RunResourceRequirements{Requests: corev1.ResourceList{
+				corev1.ResourceName("example.com/accelerator"): resource.MustParse("1"),
+			}}}},
 			wantPod: "pod-b",
 		},
 		{

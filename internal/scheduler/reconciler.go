@@ -304,18 +304,6 @@ func (r *RunReconciler) assignedRunUsage(ctx context.Context, namespace string) 
 	return usage, nil
 }
 
-func runsUsage(resources corev1.ResourceList) int32 {
-	quantity := resources[corev1.ResourceName(v1alpha1.RuntimeResourceRuns)]
-	value := quantity.Value()
-	if value <= 0 {
-		return 0
-	}
-	if value > int64(^uint32(0)>>1) {
-		return int32(^uint32(0) >> 1)
-	}
-	return int32(value)
-}
-
 func pendingRetryDelay(run *v1alpha1.Run) time.Duration {
 	if run.Status.Phase != v1alpha1.RunPending || run.Status.Attempt <= 1 {
 		return 0

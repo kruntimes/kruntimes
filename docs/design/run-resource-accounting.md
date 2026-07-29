@@ -68,9 +68,10 @@ usage[pod][resource] + request[run][resource] <= capacity[pod][resource]
 
 Active assigned Runs and scheduler-local assumed assignments both contribute
 their full resource request to scheduler `usage`. Reserve/Assume and Bind
-therefore use the same accounting model. The least-loaded strategy may continue
-to score on `runs` initially; adding multi-resource scoring is a separate
-policy design.
+therefore use the same accounting model. The least-loaded strategy scores the
+projected allocation across every advertised resource: it first minimizes the
+highest utilization ratio, then the sum of utilization ratios, with Pod name as
+a stable final tie break.
 
 If a Run requests a resource that a candidate Pod does not advertise, that Pod
 is infeasible. If no ready Pod satisfies all requests, the Run remains

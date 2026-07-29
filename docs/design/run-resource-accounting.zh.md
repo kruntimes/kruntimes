@@ -57,8 +57,9 @@ usage[pod][resource] + request[run][resource] <= capacity[pod][resource]
 ```
 
 active assigned Runs 与 scheduler-local assumed assignments 都以完整 resource request 计入 scheduler `usage`。
-因此 Reserve/Assume 与 Bind 共享同一记账模型。least-loaded strategy 初期可以继续只按 `runs` score；
-multi-resource scoring 属于单独的 policy design。
+因此 Reserve/Assume 与 Bind 共享同一记账模型。least-loaded strategy 会对每个已声明 resource 的 projected
+allocation 评分：首先最小化最高 utilization ratio，然后最小化所有 utilization ratio 的总和，最后使用 Pod name
+作为稳定的 tie break。
 
 如果 Run request 的 resource 没有被 candidate Pod 声明，该 Pod 不可行。没有 ready Pod 满足全部 request 时，Run
 保持 `Pending`，并记录有界 insufficient-capacity reason；Runtime Pod capacity 变化或 active/assumed usage
