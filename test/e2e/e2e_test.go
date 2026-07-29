@@ -1511,6 +1511,51 @@ func TestSchedulerKeepsRunPendingWithoutRuntimePod(t *testing.T) {
 	}
 }
 
+func TestSchedulerReactivatesPendingRunWhenRuntimePodBecomesReady(t *testing.T) {
+	runtimeName := fmt.Sprintf("scheduler-wakeup-%d", time.Now().UnixNano())
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-runtime-wakeup-",
+			Namespace:    testNamespace,
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Mode:    taskMode("echo runtime-ready"),
+		},
+	}
+	if err := k8sClient.Create(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	defer func() { _ = k8sClient.Delete(context.Background(), run) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get pending run: %v", err)
+		}
+		if run.Status.Phase == v1alpha1.RunPending &&
+			strings.Contains(run.Status.Message, "waiting for available runtime pods") {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for pending run observation, phase=%s msg=%s", run.Status.Phase, run.Status.Message)
+		default:
+		}
+	}
+
+	// The Runtime Pod create/ready events must reactivate this Run before the
+	// scheduler's 30-second no-capacity polling fallback.
+	started := time.Now()
+	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
+	waitForRun(t, run, 20*time.Second)
+	if elapsed := time.Since(started); elapsed >= 30*time.Second {
+		t.Fatalf("pending Run completed after %s, want Runtime Pod event wakeup before polling fallback", elapsed)
+	}
+}
+
 func TestSchedulerKeepsRunPendingWhenRuntimeAtCapacity(t *testing.T) {
 	runtimeName := "bash-capacity"
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
