@@ -52,65 +52,26 @@ func TestReservationPreventsOvercommitBeforeBindIsObserved(t *testing.T) {
 	}
 }
 
-func TestEffectiveUsageHandsOffAssumptionToObservedAssignment(t *testing.T) {
-	now := time.Now()
-	run := reservationTestRun("run-a", "run-a-uid")
-	pod := reservationTestPod(now, "runtime-a", 2)
-	reconciler := &RunReconciler{
-		assumed: map[reservationKey]assumedReservation{
-			reservationKeyFor(run): {
-				runName: run.Name,
-				podName: pod.Name,
-				request: defaultRuntimePodCapacity(),
-			},
-		},
-	}
-
-	request, err := run.Spec.ResourceRequests()
-	if err != nil {
-		t.Fatalf("resource requests: %v", err)
-	}
-	run.Status.Phase = v1alpha1.RunScheduled
-	run.Status.AssignedPod = pod.Name
-	actual := map[string]corev1.ResourceList{pod.Name: request}
-	usage := reconciler.effectiveUsage(actual, []v1alpha1.Run{*run})
-
-	want := request[corev1.ResourceName(v1alpha1.RuntimeResourceRuns)]
-	if got := usage[pod.Name][corev1.ResourceName(v1alpha1.RuntimeResourceRuns)]; got.Cmp(want) != 0 {
-		t.Fatalf("effective runs usage = %s, want %s", got.String(), want.String())
-	}
-	if len(reconciler.assumed) != 0 {
-		t.Fatalf("assumed reservations = %#v, want empty after observed assignment", reconciler.assumed)
-	}
-}
-
-func TestReleaseReservation(t *testing.T) {
-	run := reservationTestRun("run-a", "run-a-uid")
-	reconciler := &RunReconciler{
-		assumed: map[reservationKey]assumedReservation{
-			reservationKeyFor(run): {runName: run.Name, podName: "runtime-a"},
-		},
-	}
-	reconciler.releaseReservation(run)
-	if len(reconciler.assumed) != 0 {
-		t.Fatalf("assumed reservations = %#v, want empty", reconciler.assumed)
-	}
-}
-
 func TestBindReleasesReservationOnStatusUpdateFailure(t *testing.T) {
 	run := reservationTestRun("run-a", "run-a-uid")
 	pod := reservationTestPod(time.Now(), "runtime-a", 1)
 	reconciler := &RunReconciler{
 		Client: statusUpdateErrorClient{err: errors.New("status update failed")},
-		assumed: map[reservationKey]assumedReservation{
-			reservationKeyFor(run): {runName: run.Name, podName: pod.Name},
-		},
+	}
+	if reserved := reconciler.reserve(&schedulingSnapshot{
+		run:              run,
+		request:          runResourceRequest(1),
+		actualUsageByPod: map[string]corev1.ResourceList{},
+		runs:             []v1alpha1.Run{*run},
+		now:              time.Now(),
+	}, pod); !reserved {
+		t.Fatal("reserve Run = false, want true")
 	}
 	if err := reconciler.bind(context.Background(), run, pod); err == nil {
 		t.Fatal("bind error = nil, want status update error")
 	}
-	if len(reconciler.assumed) != 0 {
-		t.Fatalf("assumed reservations = %#v, want empty after bind failure", reconciler.assumed)
+	if _, ok := reconciler.assumptions.effectiveUsage(nil, []v1alpha1.Run{*run})[pod.Name]; ok {
+		t.Fatal("assumed reservation remains after bind failure")
 	}
 }
 

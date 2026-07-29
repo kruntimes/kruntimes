@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -75,8 +74,7 @@ type RunReconciler struct {
 	Strategy                    Strategy
 	RuntimedHeartbeatStaleAfter time.Duration
 
-	reservationMu sync.Mutex
-	assumed       map[reservationKey]assumedReservation
+	assumptions assumedReservationCache
 }
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;update;patch
