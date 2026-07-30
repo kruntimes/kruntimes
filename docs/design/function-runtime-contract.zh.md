@@ -34,8 +34,8 @@ registration lifecycle attempts：初始 registration 为 `1`，只有在 regist
 或 reassignment 时，shared retry engine 才递增它。对同一 registration attempt 的不确定 Pod-local
 `RegisterFunction` RPC 进行重试是幂等的，且不改变 Run status。
 
-`registration_attempt` 不是 invocation counter。每一次 function 调用使用独立、由 caller 生成的
-`invocation_id`。
+`registration_attempt` 不是 invocation counter。每一次 function 调用可选地携带独立的
+`invocation_id` 用于关联。
 
 `RegisterFunction` 使用 Run UID 加 `registration_attempt` 建立新的本地 registration generation，
 并返回 opaque `registration_id`。后续所有 Pod-local 操作使用这个 ID，而不再重复传递 attempt。
@@ -215,7 +215,8 @@ runtimed 以有界频率轮询它用于健康检查和 idle timeout，绝不把�
 `InvokeFunction` 要求提供的 registration reference 处于 `READY`。v0.x 每个 function Run 只允许一个
 in-flight invocation，并且不排队。
 
-- `invocation_id` 由调用方生成，用于关联，最大 128 bytes。
+- `invocation_id` 是可选的关联数据，最大 128 bytes。调用方可提供它用于跨系统 trace；为空时
+  Runtime Server 生成 opaque ID，response 始终返回实际使用的 ID。
 - 它不是去重 key。未知结果后的重试可能再次执行；dispatch 后没有组件自动重试。
 - `timeout_millis` 由 runtimed 限制为剩余 Run 生命周期和 gateway deadline 以内。零表示
   有界 gateway 默认值，绝不代表无限运行。

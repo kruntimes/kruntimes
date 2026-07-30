@@ -38,7 +38,7 @@ failure enters retry or reassignment. Retrying an uncertain Pod-local
 does not change Run status.
 
 `registration_attempt` is not an invocation counter. `invocation_id` is
-separate caller-generated correlation data for one function call.
+optional correlation data for one function call.
 
 `RegisterFunction` uses Run UID plus `registration_attempt` to establish a
 new local registration generation. It returns an opaque `registration_id`.
@@ -235,7 +235,9 @@ retry policy for an incompatible Runtime.
 reference. v0.x
 allows one in-flight invocation per function Run and does not queue requests.
 
-- `invocation_id` is caller-generated correlation data, limited to 128 bytes.
+- `invocation_id` is optional correlation data, limited to 128 bytes. The
+  caller may supply one for cross-system tracing. When it is empty, the Runtime
+  Server generates an opaque ID; the response always returns the ID in use.
 - It is not a deduplication key. Retrying after an unknown result can execute
   work again; no component automatically retries after dispatch.
 - `timeout_millis` is bounded by runtimed to the remaining Run lifetime and

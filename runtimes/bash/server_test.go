@@ -125,6 +125,21 @@ func TestFunctionRuntimeRegisterInvokeAndUnregister(t *testing.T) {
 	if got, want := string(resp.Output), `{"message":"hello"}`; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
+	if resp.InvocationId != "invoke-1" {
+		t.Fatalf("invocation ID = %q, want caller-provided ID", resp.InvocationId)
+	}
+
+	generated, err := client.InvokeFunction(context.Background(), &pb.InvokeFunctionRequest{
+		Registration: registration,
+		Input:        []byte(`{"message":"generated"}`),
+		ContentType:  "application/json",
+	})
+	if err != nil {
+		t.Fatalf("InvokeFunction without ID: %v", err)
+	}
+	if !strings.HasPrefix(generated.InvocationId, "inv_") {
+		t.Fatalf("generated invocation ID = %q, want inv_ prefix", generated.InvocationId)
+	}
 
 	statusResp, err := client.FunctionStatus(context.Background(), &pb.FunctionStatusRequest{Registration: registration})
 	if err != nil {

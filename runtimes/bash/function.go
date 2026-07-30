@@ -126,8 +126,16 @@ func (s *Server) FunctionStatus(_ context.Context, req *pb.FunctionStatusRequest
 }
 
 func (s *Server) InvokeFunction(ctx context.Context, req *pb.InvokeFunctionRequest) (*pb.InvokeFunctionResponse, error) {
-	if req.InvocationId == "" || len(req.InvocationId) > 128 {
-		return nil, status.Error(codes.InvalidArgument, "invocation id must be between 1 and 128 bytes")
+	invocationID := req.InvocationId
+	if len(invocationID) > 128 {
+		return nil, status.Error(codes.InvalidArgument, "invocation id must be no larger than 128 bytes")
+	}
+	if invocationID == "" {
+		var err error
+		invocationID, err = newInvocationID()
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "generate invocation id: %v", err)
+		}
 	}
 	if req.ContentType != "application/json" {
 		return nil, status.Error(codes.InvalidArgument, "Bash functions support only application/json input")
@@ -191,7 +199,7 @@ func (s *Server) InvokeFunction(ctx context.Context, req *pb.InvokeFunctionReque
 	}
 	return &pb.InvokeFunctionResponse{
 		Registration: registration,
-		InvocationId: req.InvocationId,
+		InvocationId: invocationID,
 		Output:       output,
 		ContentType:  "application/json",
 	}, nil
@@ -441,11 +449,19 @@ func waitForFunction(ctx context.Context, done <-chan struct{}) error {
 }
 
 func newRegistrationID() (string, error) {
+	return newFunctionID("reg_")
+}
+
+func newInvocationID() (string, error) {
+	return newFunctionID("inv_")
+}
+
+func newFunctionID(prefix string) (string, error) {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}
-	return "reg_" + hex.EncodeToString(bytes), nil
+	return prefix + hex.EncodeToString(bytes), nil
 }
 
 func cloneFunctionRegistration(registration *pb.FunctionRegistration) *pb.FunctionRegistration {
