@@ -32,7 +32,9 @@ func main() {
 	}
 
 	srv := grpc.NewServer()
-	pb.RegisterRuntimeServer(srv, bash.NewServer(workDir))
+	runtimeServer := bash.NewServer(workDir)
+	pb.RegisterRuntimeServer(srv, runtimeServer)
+	pb.RegisterFunctionRuntimeServer(srv, runtimeServer)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

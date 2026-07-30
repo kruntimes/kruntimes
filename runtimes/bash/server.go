@@ -121,10 +121,12 @@ func (e *executionEntry) snapshot(id string) *pb.StatusResponse {
 // Server implements the Runtime gRPC service by executing bash commands.
 type Server struct {
 	pb.UnimplementedRuntimeServer
+	pb.UnimplementedFunctionRuntimeServer
 
-	operationMu sync.Mutex
+	operationMu sync.RWMutex
 	mu          sync.RWMutex
 	executions  map[string]*executionEntry
+	functions   map[string]*functionEntry
 	workDir     string
 	outputLimit int
 }
@@ -139,6 +141,7 @@ func NewServerWithOutputLimit(workDir string, outputLimit int) *Server {
 	}
 	return &Server{
 		executions:  make(map[string]*executionEntry),
+		functions:   make(map[string]*functionEntry),
 		workDir:     workDir,
 		outputLimit: outputLimit,
 	}
