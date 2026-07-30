@@ -123,7 +123,7 @@ type Server struct {
 	pb.UnimplementedRuntimeServer
 	pb.UnimplementedFunctionRuntimeServer
 
-	operationMu sync.Mutex
+	operationMu sync.RWMutex
 	mu          sync.RWMutex
 	executions  map[string]*executionEntry
 	functions   map[string]*functionEntry

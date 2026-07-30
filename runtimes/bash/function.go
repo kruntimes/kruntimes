@@ -122,19 +122,21 @@ func (s *Server) InvokeFunction(ctx context.Context, req *pb.InvokeFunctionReque
 		return nil, status.Error(codes.InvalidArgument, "input must be valid JSON no larger than 1 MiB")
 	}
 
-	// Registration changes and invocation admission share this lock. Once an
-	// invocation is admitted, a newer registration or unregistration fences it
-	// by cancelling and waiting for this invocation to finish.
-	s.operationMu.Lock()
+	// Registration changes and invocation admission share this lifecycle
+	// barrier. Multiple functions may admit invocations concurrently. A
+	// registration replacement or unregistration takes the exclusive side before
+	// it inspects and fences the target function, so no new invocation is
+	// admitted during that transition.
+	s.operationMu.RLock()
 	entry, err := s.matchFunction(req.GetRegistration())
 	if err != nil {
-		s.operationMu.Unlock()
+		s.operationMu.RUnlock()
 		return nil, err
 	}
 	invokeCtx, cancel := functionInvokeContext(ctx, req.TimeoutMillis)
 
 	invocation, err := entry.startInvocation(cancel)
-	s.operationMu.Unlock()
+	s.operationMu.RUnlock()
 	if err != nil {
 		cancel()
 		return nil, err
