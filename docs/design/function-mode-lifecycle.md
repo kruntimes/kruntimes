@@ -1,11 +1,11 @@
 # Function Mode Lifecycle and Invoke Dataplane
 
-Status: **Proposed for review**
+Status: **Accepted; implementation in progress**
 
 This document refines the function-mode target in
 [Function Mode and Agent Sandboxes](../function-mode/). It defines the Run
 lifecycle, status API, gateway boundary, recovery behavior, and invocation
-semantics that must be reviewed before implementation.
+semantics that govern implementation.
 
 ## Problem
 
@@ -130,8 +130,8 @@ different program or execution mode after assignment.
 `ttlSecondsAfterFinished` field may remain mutable because it controls retention
 after execution rather than execution behavior.
 
-These are breaking validation changes to the experimental API and require
-review before the CRD is regenerated.
+These are breaking validation changes to the experimental API and were reviewed
+before the CRD was regenerated.
 
 ## Lifecycle State Machine
 

@@ -117,8 +117,23 @@ wiring from accumulating avoidable conflicts.
     and active/non-terminal phase-classification tests;
   - [x] add immutable execution-input transitions and the function cleanup
     finalizer constant;
-  - [ ] implement registration lifecycle, shared retry integration,
-    reservation/idle timeout, finalization, and restart recovery;
+  - [ ] implement the function control-plane lifecycle in independently
+    reviewable slices:
+    - [ ] add a deterministic FunctionRuntime registration request builder,
+      including immutable-input digest coverage;
+    - [ ] transition assigned function Runs through source preparation,
+      cleanup-finalizer installation, local registration through a runtimed
+      FunctionRuntime client, and `Running -> Ready`;
+    - [ ] observe local `FunctionStatus` for fatal registration loss, total Run
+      timeout, and Runtime Server-owned idle timeout;
+    - [ ] integrate registration failures with the shared retry engine without
+      retrying individual invocation failures;
+    - [ ] implement cancellation and deletion finalization: drain or cancel the
+      local registration, clean only function-local state, and release capacity;
+    - [ ] recover active function registrations after runtimed restart and
+      reconcile stale Runtime Pod assignments with assignment-UID fencing;
+    - [ ] add unit, integration, and E2E coverage for registration, retry,
+      timeout, cancellation, deletion, restart recovery, and stale-pod fencing;
 - [ ] Runtime gateway invoke path: create one gateway Service per Runtime, use
   that Service as the stable Run invoke endpoint, route requests to the
   runtimed that owns the assigned Runtime Pod, and rely on runtimed's in-memory
