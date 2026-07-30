@@ -59,27 +59,17 @@ func (s *Server) RegisterFunction(ctx context.Context, req *pb.RegisterFunctionR
 	defer s.operationMu.Unlock()
 
 	if existing := s.function(req.RunUid); existing != nil {
-		existing.mu.Lock()
-		switch {
-		case req.RegistrationAttempt < existing.attempt:
-			existing.mu.Unlock()
-			return nil, status.Error(codes.FailedPrecondition, "registration attempt is stale")
-		case req.RegistrationAttempt == existing.attempt:
-			if req.RegistrationDigest != existing.digest {
-				existing.mu.Unlock()
-				return nil, status.Error(codes.AlreadyExists, "registration attempt already exists with a different digest")
-			}
-			resp := &pb.RegisterFunctionResponse{Registration: cloneFunctionRegistration(existing.registration), State: existing.state}
-			existing.mu.Unlock()
+		resp, drain, err := existing.registrationAction(req.RegistrationAttempt, req.RegistrationDigest)
+		if err != nil {
+			return nil, err
+		}
+		if resp != nil {
 			return resp, nil
-		default:
-			inFlight, cancel, done := existing.inFlight, existing.cancel, existing.done
-			existing.mu.Unlock()
-			if inFlight {
-				cancel()
-				if err := waitForFunction(ctx, done); err != nil {
-					return nil, err
-				}
+		}
+		if drain.inFlight {
+			drain.cancel()
+			if err := waitForFunction(ctx, drain.done); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -102,7 +92,7 @@ func (s *Server) RegisterFunction(ctx context.Context, req *pb.RegisterFunctionR
 	s.functions[req.RunUid] = entry
 	s.mu.Unlock()
 
-	return &pb.RegisterFunctionResponse{Registration: cloneFunctionRegistration(entry.registration), State: entry.state}, nil
+	return entry.registrationResponse(), nil
 }
 
 func (s *Server) FunctionStatus(_ context.Context, req *pb.FunctionStatusRequest) (*pb.FunctionStatusResponse, error) {
@@ -110,19 +100,7 @@ func (s *Server) FunctionStatus(_ context.Context, req *pb.FunctionStatusRequest
 	if err != nil {
 		return nil, err
 	}
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
-
-	inFlight := int32(0)
-	if entry.inFlight {
-		inFlight = 1
-	}
-	return &pb.FunctionStatusResponse{
-		Registration:         cloneFunctionRegistration(entry.registration),
-		State:                entry.state,
-		InFlight:             inFlight,
-		LastActivityUnixNano: entry.lastActivityUnixNano,
-	}, nil
+	return entry.statusResponse(), nil
 }
 
 func (s *Server) InvokeFunction(ctx context.Context, req *pb.InvokeFunctionRequest) (*pb.InvokeFunctionResponse, error) {
@@ -155,39 +133,19 @@ func (s *Server) InvokeFunction(ctx context.Context, req *pb.InvokeFunctionReque
 	}
 	invokeCtx, cancel := functionInvokeContext(ctx, req.TimeoutMillis)
 
-	entry.mu.Lock()
-	if entry.state != pb.FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_READY {
-		entry.mu.Unlock()
-		s.operationMu.Unlock()
-		cancel()
-		return nil, status.Error(codes.FailedPrecondition, "function registration is not ready")
-	}
-	if entry.inFlight {
-		entry.mu.Unlock()
-		s.operationMu.Unlock()
-		cancel()
-		return nil, status.Error(codes.ResourceExhausted, "function registration already has an in-flight invocation")
-	}
-	entry.inFlight = true
-	entry.lastActivityUnixNano = time.Now().UnixNano()
-	entry.cancel = cancel
-	entry.done = make(chan struct{})
-	workingDir, handlerFile, handlerName, env, registration := entry.workingDir, entry.handlerFile, entry.handlerName, cloneStringMap(entry.env), cloneFunctionRegistration(entry.registration)
-	done := entry.done
-	entry.mu.Unlock()
+	invocation, err := entry.startInvocation(cancel)
 	s.operationMu.Unlock()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 	defer cancel()
 
 	defer func() {
-		entry.mu.Lock()
-		entry.inFlight = false
-		entry.cancel = nil
-		entry.lastActivityUnixNano = time.Now().UnixNano()
-		close(done)
-		entry.mu.Unlock()
+		entry.finishInvocation(invocation.done)
 	}()
 
-	output, err := invokeBashFunction(invokeCtx, workingDir, handlerFile, handlerName, string(req.Input), env, s.outputLimit)
+	output, err := invokeBashFunction(invokeCtx, invocation.workingDir, invocation.handlerFile, invocation.handlerName, string(req.Input), invocation.env, s.outputLimit)
 	if err != nil {
 		if errorsIsContextError(err) {
 			return nil, status.FromContextError(err).Err()
@@ -198,7 +156,7 @@ func (s *Server) InvokeFunction(ctx context.Context, req *pb.InvokeFunctionReque
 		return nil, status.Errorf(codes.Internal, "invoke handler: %v", err)
 	}
 	return &pb.InvokeFunctionResponse{
-		Registration: registration,
+		Registration: invocation.registration,
 		InvocationId: invocationID,
 		Output:       output,
 		ContentType:  "application/json",
@@ -218,21 +176,16 @@ func (s *Server) UnregisterFunction(ctx context.Context, req *pb.UnregisterFunct
 		return &pb.UnregisterFunctionResponse{Registration: cloneFunctionRegistration(registration)}, nil
 	}
 
-	entry.mu.Lock()
-	if entry.registration.RegistrationId != registration.RegistrationId {
-		entry.mu.Unlock()
-		return nil, status.Error(codes.FailedPrecondition, "function registration is stale")
+	drain, err := entry.beginDrain(registration.RegistrationId)
+	if err != nil {
+		return nil, err
 	}
-	entry.state = pb.FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_DRAINING
-	inFlight, cancel, done := entry.inFlight, entry.cancel, entry.done
-	entry.mu.Unlock()
-
-	if inFlight {
+	if drain.inFlight {
 		if req.CancelInFlight {
-			cancel()
+			drain.cancel()
 		}
 		drainCtx, cancel := functionDrainContext(ctx, req.DrainTimeoutMillis)
-		err := waitForFunction(drainCtx, done)
+		err := waitForFunction(drainCtx, drain.done)
 		cancel()
 		if err != nil {
 			return nil, err
@@ -260,9 +213,7 @@ func (s *Server) matchFunction(registration *pb.FunctionRegistration) (*function
 	if entry == nil {
 		return nil, status.Error(codes.NotFound, "function registration not found")
 	}
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
-	if entry.registration.RegistrationId != registration.RegistrationId {
+	if !entry.matchesRegistration(registration.RegistrationId) {
 		return nil, status.Error(codes.FailedPrecondition, "function registration is stale")
 	}
 	return entry, nil
