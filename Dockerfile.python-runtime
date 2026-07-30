@@ -29,7 +29,7 @@ WORKDIR /app
 
 COPY --from=dependencies /app/.venv ./.venv
 COPY runtimes/python/pb ./pb
-COPY runtimes/python/server.py runtimes/python/cmd/main.py ./
+COPY runtimes/python/function.py runtimes/python/server.py runtimes/python/cmd/main.py ./
 
 ENV PATH="/app/.venv/bin:$PATH"
 

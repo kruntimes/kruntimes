@@ -151,7 +151,8 @@ wiring from accumulating avoidable conflicts.
   - [ ] implement built-in function adapters:
     - [x] Bash FunctionRuntime adapter with handler validation, registration
       fencing, one in-flight invocation, bounded output, and unregister drain;
-    - [ ] Python FunctionRuntime adapter;
+    - [x] Python FunctionRuntime adapter with handler validation, registration
+      fencing, one in-flight invocation, bounded output, and unregister drain;
   - [ ] add bounded invocation outputs/artifact references and structured logs
     keyed by Run UID and invocation ID;
 - [ ] Function-mode reliability and isolation: cover function registration,

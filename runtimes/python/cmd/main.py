@@ -16,9 +16,9 @@ def main():
     args = parser.parse_args()
 
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    runtime_pb2_grpc.add_RuntimeServicer_to_server(
-        PythonRuntime(work_dir=args.work_dir), server
-    )
+    runtime = PythonRuntime(work_dir=args.work_dir)
+    runtime_pb2_grpc.add_RuntimeServicer_to_server(runtime, server)
+    runtime_pb2_grpc.add_FunctionRuntimeServicer_to_server(runtime, server)
     if server.add_insecure_port(f"0.0.0.0:{args.port}") == 0:
         raise RuntimeError(f"failed to bind Python runtime to port {args.port}")
     server.start()
