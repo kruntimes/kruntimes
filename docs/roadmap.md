@@ -319,6 +319,10 @@ wiring from accumulating avoidable conflicts.
 ### Toward v1.0
 
 - Stabilize CRD APIs.
+- [ ] Support explicitly configured concurrent invocations for a function-mode
+  Run. Preserve the default single in-flight invocation, define per-function
+  concurrency limits and invocation/workspace isolation semantics, and retain
+  Runtime Pod capacity enforcement.
 - Define compatibility and migration guarantees.
 - Document deprecation policy.
 - Clarify multi-tenant isolation strategy for production environments.
