@@ -48,8 +48,8 @@ func (e *functionEntry) registrationAction(attempt int32, digest string) (*pb.Re
 }
 
 func (e *functionEntry) registrationResponse() *pb.RegisterFunctionResponse {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	return &pb.RegisterFunctionResponse{
 		Registration: cloneFunctionRegistration(e.registration),
 		State:        e.state,
@@ -57,8 +57,8 @@ func (e *functionEntry) registrationResponse() *pb.RegisterFunctionResponse {
 }
 
 func (e *functionEntry) statusResponse() *pb.FunctionStatusResponse {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	inFlight := int32(0)
 	if e.inFlight {
@@ -119,7 +119,7 @@ func (e *functionEntry) beginDrain(registrationID string) (functionDrain, error)
 }
 
 func (e *functionEntry) matchesRegistration(registrationID string) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	return e.registration.RegistrationId == registrationID
 }

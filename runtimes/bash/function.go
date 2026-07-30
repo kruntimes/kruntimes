@@ -34,7 +34,7 @@ const (
 var bashFunctionName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type functionEntry struct {
-	mu                   sync.Mutex
+	mu                   sync.RWMutex
 	registration         *pb.FunctionRegistration
 	attempt              int32
 	digest               string
