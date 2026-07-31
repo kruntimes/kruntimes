@@ -6,6 +6,8 @@ title: "Scheduler Framework"
 
 状态：**Accepted；Reserve/Assume/Bind 实现完成**
 
+Filter-plugin 修订：**Proposed，等待 review**
+
 本文定义 kruntimes 的目标调度架构。它将当前“每个 Pending Run 独立 reconcile”的模型替换为 scheduler
 queue 与单 Run scheduling cycle。每个 cycle 针对一个 Run，读取 Runtime Pods、active assignments 和
 scheduler-local assumed assignments 的一致快照。
@@ -72,6 +74,26 @@ Run keys 加入 queue。event handler 不会选择 Runtime Pod 或 patch Run；�
    cycles 可以看到这个 tentative assignment。
 6. **Bind**：将该 Run patch 为带 Pod name 和 UID 的 `Scheduled`。resource-version conflict 或 stale Pod
    observation 会释放该 Run 的 reservation 并重新 enqueue 它；这不是 terminal failure。
+
+### Filter 插件（Proposed）
+
+scheduler 会对 snapshot 中的每个 Runtime Pod 执行已注册的 Filter 插件。一个插件接收不可变的 scheduling
+snapshot、该 Run 预计算后的 state 和一个 Pod，并返回 feasible 或一个有界的 rejection reason。插件不能 patch
+Kubernetes object、修改 assumed-reservation cache，或自行作出 placement decision。
+
+初始 registry 包含两个独立 filter，并按照确定性的注册顺序执行：
+
+- **RuntimePodAvailability**：校验 Runtime Pod readiness、runtimed heartbeat freshness，以及完整 logical
+  resource request 是否能被 effective capacity 满足。
+- **RunAffinity**：针对 actual 和 assumed targets 计算 required Run affinity 与 anti-affinity，其中包括
+  Run 间亲和性 bootstrap rule。
+
+planner 在 PreFilter 阶段对每个插件的 Run-specific state 只准备一次；随后对每个 Pod 运行 filters，在第一个
+rejection 后停止处理该 Pod。只有被所有 filter 接受的 Pods 才会进入 Score。rejection reasons 只能聚合成有界的
+Pending status message 和 metrics，不能暴露 Pod names、selectors 或 Run names。
+
+preferred affinity 仍是 scoring concern，而不是 Filter plugin。Reserve、Assume 和 Bind 仍是唯一允许修改
+scheduler-local placement state 的操作。
 
 每个 reservation 属于一条 Run。与 Kubernetes 一样，assumed placement 让后续 scheduling cycles 在 status
 patch 完成前看到 capacity consumption 和 affinity target。bind 失败会释放 reservation 并移除 assumed
@@ -159,8 +181,8 @@ framework 有显式的 internal extension points：
 
 - **Queue ordering**：当前是确定性的 FIFO-like ordering；未来 priority design 可以定义 priority classes、
   aging、quotas 和 fairness。
-- **PreFilter/Filter**：Runtime readiness、capacity、workspace placement 和 required affinity 是独立
-  predicates，而不是一个 reconciler 中的 branches。
+- **PreFilter/Filter**：Runtime readiness/capacity 和 required affinity 是独立注册的 Filter plugins，
+  而不是一个 reconciler 中的 branches。未来 hard predicates 也遵循该 contract。
 - **Score**：preferred affinity 和 least-loaded scoring 是独立 weighted inputs，并具有 stable tie breaking。
 - **Reserve/Assume/Bind**：assumed assignment 会让选中的 Runtime Pod 和已消耗的 capacity 在 Run bind 前
   对后续 Run cycles 可见。
@@ -179,7 +201,9 @@ selectors 和 Pod names 不能作为 metric labels。
    或 affinity semantics。
 3. 实现 Reserve/Assume 和 Bind，并增加 deterministic selection、assumed capacity accounting、handoff 到 actual
    assignments 以及 bind conflicts 的 unit tests。此步骤已完成。
-4. 实现 assumed-target matching 和 Run 间亲和性 bootstrap，并增加 integration 与 E2E coverage。
+4. 实现 assumed-target matching 和 Run 间亲和性 bootstrap，并增加 integration 与 E2E coverage。先实现经过
+   review 的 Filter-plugin 修订，避免 RuntimePodAvailability 和 RunAffinity 继续堆积在 planner 的
+   candidate loop 中。
 5. 只有经过独立 API 与 fairness design review 后，才加入 priority。
 
 在第 1 步以及预期 bootstrap/status semantics 被 review 前，affinity implementation PR 不能 merge。

@@ -94,6 +94,8 @@ wiring from accumulating avoidable conflicts.
   - [x] add deterministic selection, assumed-capacity, bind-conflict,
     and restart-recovery coverage;
   - [ ] implement assumed affinity targets and Inter-Run Affinity bootstrap:
+    - [ ] review the Filter-plugin amendment, then implement independent
+      RuntimePodAvailability and RunAffinity filters in the scheduler planner;
     - [ ] project namespace-local actual assignments and unconfirmed assumed
       assignments into an immutable affinity-target snapshot;
     - [ ] add required Run affinity and anti-affinity filtering with bounded
