@@ -95,6 +95,7 @@ metadata:
 spec:
   runtime: python
   source:
+    inlinePath: main.py
     inline: |
       def invoke(request):
           return {

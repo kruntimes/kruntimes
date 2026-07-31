@@ -117,6 +117,9 @@ wiring from accumulating avoidable conflicts.
     and active/non-terminal phase-classification tests;
   - [x] add immutable execution-input transitions and the function cleanup
     finalizer constant;
+  - [ ] review and approve the
+    [Function Inline Source Materialization](design/function-inline-source.md)
+    API before registering inline function Runs;
   - [ ] implement the function control-plane lifecycle in independently
     reviewable slices:
     - [ ] add a deterministic FunctionRuntime registration request builder,

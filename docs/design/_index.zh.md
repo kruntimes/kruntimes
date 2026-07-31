@@ -6,6 +6,7 @@
 ## 文档列表
 
 - [Function Mode 和 Agent Sandboxes](function-mode/)
+- [Function Inline Source 物化](function-inline-source/)
 - [Function Mode 生命周期与 Invoke Dataplane](function-mode-lifecycle/)
 - [Function Runtime Server 协议](function-runtime-contract/)
 - [Workflow Data Sharing](workflow-data-sharing/)

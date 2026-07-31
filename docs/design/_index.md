@@ -8,6 +8,7 @@ implemented.
 ## Documents
 
 - [Function Mode and Agent Sandboxes](function-mode/)
+- [Function Inline Source Materialization](function-inline-source/)
 - [Function Mode Lifecycle and Invoke Dataplane](function-mode-lifecycle/)
 - [Function Runtime Server Contract](function-runtime-contract/)
 - [Workflow Data Sharing](workflow-data-sharing/)
