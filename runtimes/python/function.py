@@ -113,4 +113,6 @@ def terminate_process_group(process, sig):
     try:
         os.killpg(process.pid, sig)
     except ProcessLookupError:
+        # The process may exit naturally between the caller's state check and
+        # signal delivery; termination is already complete in that case.
         pass
