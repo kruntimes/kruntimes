@@ -84,6 +84,8 @@ controller wiring 累积不必要的冲突。
     metrics；
   - [x] 增加 deterministic selection、assumed-capacity、bind-conflict 和 restart-recovery coverage；
   - [ ] 实现 assumed affinity targets 和 Run 间亲和性 bootstrap：
+    - [ ] review Filter-plugin 修订，然后在 scheduler planner 中实现独立的
+      RuntimePodAvailability 和 RunAffinity filters；
     - [ ] 将 namespace-local actual assignment 和尚未确认的 assumed assignment 投影为不可变的
       affinity-target snapshot；
     - [ ] 增加 required Run affinity 和 anti-affinity filter，以及有界的 Pending waiting reason；

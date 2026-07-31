@@ -2,6 +2,8 @@
 
 Status: **Accepted; Reserve/Assume/Bind implementation complete**
 
+Filter-plugin amendment: **Proposed for review**
+
 This document defines the target scheduling architecture for kruntimes. It
 replaces the current model of independently reconciling each Pending Run with
 a scheduler queue and a single-Run scheduling cycle. Each cycle evaluates one
@@ -83,7 +85,34 @@ For one dequeued Run, the scheduler performs:
    assignment.
 6. **Bind**: patch the Run to `Scheduled` with its Pod name and UID. A
    resource-version conflict or stale Pod observation discards that Run's
-   reservation and requeues the key; it is not a terminal failure.
+reservation and requeues the key; it is not a terminal failure.
+
+### Filter Plugins (Proposed)
+
+The scheduler applies registered Filter plugins to every Runtime Pod in the
+snapshot. A plugin receives the immutable scheduling snapshot, the Run's
+precomputed state, and one Pod; it returns either feasible or a bounded
+rejection reason. Plugins must not patch Kubernetes objects, mutate the
+assumed-reservation cache, or make placement decisions.
+
+The initial registry has two independent filters, evaluated in deterministic
+registration order:
+
+- **RuntimePodAvailability** verifies Runtime Pod readiness, runtimed
+  heartbeat freshness, and the complete logical resource request against
+  effective capacity.
+- **RunAffinity** evaluates required Run affinity and anti-affinity against
+  actual and assumed targets, including the Inter-Run Affinity bootstrap rule.
+
+The planner prepares each plugin's Run-specific state once during PreFilter,
+then runs the filters for every Pod and stops evaluating that Pod at its first
+rejection. It passes only Pods accepted by every filter to Score. Rejection
+reasons are aggregated only into bounded Pending status messages and metrics;
+they never expose Pod names, selectors, or Run names.
+
+Preferred affinity remains a scoring concern, not a Filter plugin. Reserve,
+Assume, and Bind remain the only operations allowed to mutate scheduler-local
+placement state.
 
 Each reservation belongs to one Run. As in Kubernetes, the assumed placement
 lets later scheduling cycles observe capacity consumption and an affinity target
@@ -195,9 +224,9 @@ The framework has explicit internal extension points:
 
 - **Queue ordering**: currently deterministic FIFO-like ordering; a future
   priority design can define priority classes, aging, quotas, and fairness.
-- **PreFilter/Filter**: Runtime readiness, capacity, workspace placement, and
-  required affinity are separate predicates rather than branches in one
-  reconciler.
+- **PreFilter/Filter**: Runtime readiness/capacity and required affinity are
+  independently registered Filter plugins rather than branches in one
+  reconciler. Future hard predicates follow the same contract.
 - **Score**: preferred affinity and least-loaded scoring are independent
   weighted inputs with stable tie breaking.
 - **Reserve/Assume/Bind**: an assumed assignment makes a selected Runtime Pod
@@ -222,7 +251,9 @@ names, selectors, and Pod names must not be metric labels.
    selection, assumed capacity accounting, handoff to actual assignments, and
    bind conflicts. This step is complete.
 4. Implement assumed-target matching and Inter-Run Affinity bootstrap with
-   integration and E2E coverage.
+   integration and E2E coverage. First implement the reviewed Filter-plugin
+   amendment so RuntimePodAvailability and RunAffinity do not accumulate in
+   the planner's candidate loop.
 5. Add priority only after a separate API and fairness design review.
 
 The affinity implementation PR must not merge until steps 1 and the intended
