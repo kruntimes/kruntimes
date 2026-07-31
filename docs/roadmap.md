@@ -122,7 +122,7 @@ wiring from accumulating avoidable conflicts.
     API before registering inline function Runs;
   - [ ] implement the function control-plane lifecycle in independently
     reviewable slices:
-    - [ ] add a deterministic FunctionRuntime registration request builder,
+    - [x] add a deterministic FunctionRuntime registration request builder,
       including immutable-input digest coverage;
     - [ ] transition assigned function Runs through source preparation,
       cleanup-finalizer installation, local registration through a runtimed

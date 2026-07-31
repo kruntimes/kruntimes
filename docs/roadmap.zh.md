@@ -107,8 +107,22 @@ controller wiring 累积不必要的冲突。
     constant；
   - [ ] 在注册 inline function Run 前 review 并批准
     [Function Inline Source 物化](design/function-inline-source.md) API；
-  - [ ] 实现 registration lifecycle、shared retry integration、reservation/idle timeout、
-    finalization 和 restart recovery；
+  - [ ] 以可独立 review 的分片实现 function control-plane lifecycle：
+    - [x] 增加 deterministic FunctionRuntime registration request builder，
+      包含 immutable-input digest coverage；
+    - [ ] 让已 assigned 的 function Run 完成 source preparation、安装 cleanup finalizer，
+      通过 runtimed FunctionRuntime client 进行 local registration，并完成
+      `Running -> Ready` transition；
+    - [ ] 观察 local `FunctionStatus`，处理 fatal registration loss、total Run timeout 和
+      Runtime Server-owned idle timeout；
+    - [ ] 将 registration failure 接入 shared retry engine，同时不 retry 单次 invocation
+      failure；
+    - [ ] 实现 cancellation 和 deletion finalization：drain 或 cancel local registration，
+      只清理 function-local state，并释放 capacity；
+    - [ ] 在 runtimed restart 后恢复 active function registration，并使用 assignment-UID
+      fencing reconcile stale Runtime Pod assignment；
+    - [ ] 增加 registration、retry、timeout、cancellation、deletion、restart recovery 和
+      stale-pod fencing 的 unit、integration 和 E2E coverage；
 - [ ] Runtime gateway invoke path：为每个 Runtime 创建一个 gateway Service，把这个
   Service 作为稳定的 Run invoke endpoint，将请求路由到拥有 assigned Runtime Pod 的
   runtimed，并在 invoke path 上依赖 runtimed 的内存 ownership/readiness cache，而不是
@@ -136,7 +150,8 @@ controller wiring 累积不必要的冲突。
   - [ ] 实现内置 function adapters：
     - [x] Bash FunctionRuntime adapter：handler validation、registration fencing、单个
       in-flight invocation、有界输出和 unregister drain；
-    - [ ] Python FunctionRuntime adapter；
+    - [x] Python FunctionRuntime adapter：handler validation、registration fencing、单个
+      in-flight invocation、有界输出和 unregister drain；
   - [ ] 增加有界 invocation outputs/artifact references，以及以 Run UID 和 invocation ID
     为 key 的 structured logs；
 - [ ] Function-mode reliability and isolation：覆盖 function registration、ready
