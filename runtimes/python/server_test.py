@@ -1,6 +1,7 @@
 import tempfile
 import time
 import unittest
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -157,6 +158,7 @@ def handler(event):
     def test_function_runtime_register_invoke_and_unregister(self):
         wd = self._prepare_inline("""
 def handler(event):
+    print("handler log")
     return {"status": "ok", "value": event["value"]}
 """, filename="app.py")
         registration = self._register_function(wd)
@@ -190,6 +192,53 @@ def handler(event):
                 runtime_pb2.FunctionStatusRequest(registration=registration)
             )
         self.assertEqual(ctx.exception.code(), grpc.StatusCode.NOT_FOUND)
+
+    def test_function_runtime_preserves_json_response_for_logs_and_none(self):
+        wd = self._prepare_inline("""
+def handler(event):
+    print("handler log")
+    return event.get("result")
+""", filename="app.py")
+        registration = self._register_function(wd)
+
+        response = self.function_stub.InvokeFunction(
+            runtime_pb2.InvokeFunctionRequest(
+                registration=registration,
+                content_type="application/json",
+                input=b'{"result":{"status":"ok"}}',
+            )
+        )
+        self.assertEqual(response.output, b'{"status": "ok"}\n')
+
+        null_response = self.function_stub.InvokeFunction(
+            runtime_pb2.InvokeFunctionRequest(
+                registration=registration,
+                content_type="application/json",
+                input=b'{"result":null}',
+            )
+        )
+        self.assertEqual(null_response.output, b"null\n")
+
+    def test_function_runtime_accepts_one_mebibyte_input(self):
+        wd = self._prepare_inline("""
+def handler(event):
+    return {"size": len(event["payload"])}
+""", filename="app.py")
+        registration = self._register_function(wd)
+        payload = json.dumps({"payload": "x" * (1024 * 1024 - 64)}).encode()
+        self.assertLessEqual(len(payload), 1024 * 1024)
+
+        response = self.function_stub.InvokeFunction(
+            runtime_pb2.InvokeFunctionRequest(
+                registration=registration,
+                content_type="application/json",
+                input=payload,
+            )
+        )
+        self.assertEqual(
+            response.output,
+            f'{{"size": {1024 * 1024 - 64}}}\n'.encode(),
+        )
 
     def test_function_runtime_registration_fencing(self):
         wd = self._prepare_inline("""

@@ -24,15 +24,17 @@ MAX_FUNCTION_DRAIN_TIMEOUT_SECONDS = 5 * 60
 HANDLER_COMPONENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 FUNCTION_HANDLER_SCRIPT = """
+import contextlib
 import importlib
 import json
 import sys
 
 module_name, func_name = sys.argv[1].rsplit(".", 1)
-event = json.loads(sys.argv[2])
-result = getattr(importlib.import_module(module_name), func_name)(event)
-if result is not None:
-    print(json.dumps(result))
+event = json.loads(sys.stdin.read())
+with contextlib.redirect_stdout(sys.stderr):
+    result = getattr(importlib.import_module(module_name), func_name)(event)
+json.dump(result, sys.stdout)
+sys.stdout.write("\\n")
 """
 
 FUNCTION_VALIDATION_SCRIPT = """
@@ -523,10 +525,10 @@ class PythonRuntime(
                     "-c",
                     FUNCTION_HANDLER_SCRIPT,
                     entry.handler,
-                    input_payload,
                 ],
                 cwd=str(entry.working_dir),
                 env=env,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
@@ -535,6 +537,14 @@ class PythonRuntime(
             context.abort(grpc.StatusCode.INTERNAL, f"invoke handler: {error}")
 
         invocation.set_process(process)
+        try:
+            process.stdin.write(input_payload.encode("utf-8"))
+            process.stdin.close()
+        except BrokenPipeError:
+            # A cancelled invocation may terminate the process before its
+            # request body is fully written. The normal cancellation path
+            # below returns the client-visible status.
+            pass
         stdout = BoundedBuffer(self.output_limit)
         stderr = BoundedBuffer(self.output_limit)
         stdout_reader = threading.Thread(
