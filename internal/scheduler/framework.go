@@ -23,6 +23,7 @@ type schedulingSnapshot struct {
 	actualUsageByPod map[string]corev1.ResourceList
 	usageByPod       map[string]corev1.ResourceList
 	runs             []v1alpha1.Run
+	affinityTargets  []affinityTarget
 	now              time.Time
 }
 
@@ -59,7 +60,7 @@ func (r *RunReconciler) loadSchedulingSnapshot(ctx context.Context, run *v1alpha
 	if err != nil {
 		return nil, fmt.Errorf("snapshot assigned run usage: %w", err)
 	}
-	usageByPod := r.effectiveUsage(actualUsageByPod, runs)
+	usageByPod, affinityTargets := r.assumptions.snapshot(actualUsageByPod, runs)
 
 	return &schedulingSnapshot{
 		run:              run,
@@ -68,23 +69,31 @@ func (r *RunReconciler) loadSchedulingSnapshot(ctx context.Context, run *v1alpha
 		actualUsageByPod: actualUsageByPod,
 		usageByPod:       usageByPod,
 		runs:             runs,
+		affinityTargets:  affinityTargets,
 		now:              time.Now(),
 	}, nil
 }
 
 // planSchedulingCycle applies the Filter and Score phases to one snapshot.
 func (r *RunReconciler) planSchedulingCycle(snapshot *schedulingSnapshot) (schedulingPlan, error) {
+	affinity, err := newRunAffinity(snapshot.run, snapshot.affinityTargets)
+	if err != nil {
+		return schedulingPlan{}, fmt.Errorf("pre-filter run affinity: %w", err)
+	}
 	candidates := make([]corev1.Pod, 0, len(snapshot.pods))
 	for i := range snapshot.pods {
 		pod := &snapshot.pods[i]
 		if r.isRuntimePodAvailable(pod, snapshot.now, snapshot.usageByPod[pod.Name], snapshot.request) {
-			candidates = append(candidates, *pod)
+			if affinity.matchesRequired(pod.Name) {
+				candidates = append(candidates, *pod)
+			}
 		}
 	}
 	if len(candidates) == 0 {
 		return schedulingPlan{action: schedulingPlanWait}, nil
 	}
 
+	candidates = affinity.preferredCandidates(candidates)
 	selected, err := r.Strategy.Select(candidates, snapshot.usageByPod, snapshot.run)
 	if err != nil {
 		return schedulingPlan{}, fmt.Errorf("score runtime pods: %w", err)
