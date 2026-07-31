@@ -105,6 +105,8 @@ controller wiring 累积不必要的冲突。
     active/non-terminal phase-classification tests；
   - [x] 增加 immutable execution-input transitions 和 function cleanup finalizer
     constant；
+  - [ ] 在注册 inline function Run 前 review 并批准
+    [Function Inline Source 物化](design/function-inline-source.md) API；
   - [ ] 实现 registration lifecycle、shared retry integration、reservation/idle timeout、
     finalization 和 restart recovery；
 - [ ] Runtime gateway invoke path：为每个 Runtime 创建一个 gateway Service，把这个
