@@ -327,6 +327,10 @@ wiring from accumulating avoidable conflicts.
   Run. Preserve the default single in-flight invocation, define per-function
   concurrency limits and invocation/workspace isolation semantics, and retain
   Runtime Pod capacity enforcement.
+- [ ] Design persistent per-registration Function worker processes to reduce
+  Python invocation startup overhead. Review worker lifecycle, module state,
+  cancellation, concurrency, output limits, and isolation before replacing the
+  current per-invocation subprocess model.
 - Define compatibility and migration guarantees.
 - Document deprecation policy.
 - Clarify multi-tenant isolation strategy for production environments.
