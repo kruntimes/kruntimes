@@ -1,6 +1,7 @@
 import tempfile
 import time
 import unittest
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -17,10 +18,15 @@ class TestPythonRuntime(unittest.TestCase):
         self.server = grpc.server(ThreadPoolExecutor(max_workers=4))
         self.servicer = PythonRuntime(str(self.work_dir))
         runtime_pb2_grpc.add_RuntimeServicer_to_server(self.servicer, self.server)
+        runtime_pb2_grpc.add_FunctionRuntimeServicer_to_server(
+            self.servicer,
+            self.server,
+        )
         port = self.server.add_insecure_port("localhost:0")
         self.server.start()
         self.channel = grpc.insecure_channel(f"localhost:{port}")
         self.stub = runtime_pb2_grpc.RuntimeStub(self.channel)
+        self.function_stub = runtime_pb2_grpc.FunctionRuntimeStub(self.channel)
 
     def tearDown(self):
         self.server.stop(0)
@@ -43,6 +49,34 @@ class TestPythonRuntime(unittest.TestCase):
         td = Path(tempfile.mkdtemp(dir=str(self.work_dir)))
         (td / filename).write_text(code)
         return str(td)
+
+    def _register_function(self, working_dir, run_uid="function-run", attempt=1,
+                           digest="sha256:initial"):
+        response = self.function_stub.RegisterFunction(
+            runtime_pb2.RegisterFunctionRequest(
+                run_uid=run_uid,
+                registration_attempt=attempt,
+                working_dir=working_dir,
+                handler="app.handler",
+                registration_digest=digest,
+            )
+        )
+        self.assertEqual(
+            response.state,
+            runtime_pb2.FUNCTION_REGISTRATION_STATE_READY,
+        )
+        return response.registration
+
+    def _wait_for_function_in_flight(self, registration, timeout=5):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            status = self.function_stub.FunctionStatus(
+                runtime_pb2.FunctionStatusRequest(registration=registration)
+            )
+            if status.in_flight:
+                return
+            time.sleep(0.05)
+        self.fail("timed out waiting for function invocation")
 
     def _prepare_process_tree(self, child_pid_file):
         child_code = f"""
@@ -120,6 +154,182 @@ def handler(event):
         status = self._wait("test3")
         self.assertEqual(status.state, runtime_pb2.EXECUTION_STATE_SUCCEEDED)
         self.assertIn("ok", status.stdout)
+
+    def test_function_runtime_register_invoke_and_unregister(self):
+        wd = self._prepare_inline("""
+def handler(event):
+    print("handler log")
+    return {"status": "ok", "value": event["value"]}
+""", filename="app.py")
+        registration = self._register_function(wd)
+
+        response = self.function_stub.InvokeFunction(
+            runtime_pb2.InvokeFunctionRequest(
+                registration=registration,
+                invocation_id="invoke-1",
+                content_type="application/json",
+                input=b'{"value":"hello"}',
+            )
+        )
+        self.assertEqual(response.invocation_id, "invoke-1")
+        self.assertEqual(response.content_type, "application/json")
+        self.assertEqual(response.output, b'{"status": "ok", "value": "hello"}\n')
+
+        generated = self.function_stub.InvokeFunction(
+            runtime_pb2.InvokeFunctionRequest(
+                registration=registration,
+                content_type="application/json",
+                input=b'{"value":"generated"}',
+            )
+        )
+        self.assertTrue(generated.invocation_id.startswith("inv_"))
+
+        self.function_stub.UnregisterFunction(
+            runtime_pb2.UnregisterFunctionRequest(registration=registration)
+        )
+        with self.assertRaises(grpc.RpcError) as ctx:
+            self.function_stub.FunctionStatus(
+                runtime_pb2.FunctionStatusRequest(registration=registration)
+            )
+        self.assertEqual(ctx.exception.code(), grpc.StatusCode.NOT_FOUND)
+
+    def test_function_runtime_preserves_json_response_for_logs_and_none(self):
+        wd = self._prepare_inline("""
+def handler(event):
+    print("handler log")
+    return event.get("result")
+""", filename="app.py")
+        registration = self._register_function(wd)
+
+        response = self.function_stub.InvokeFunction(
+            runtime_pb2.InvokeFunctionRequest(
+                registration=registration,
+                content_type="application/json",
+                input=b'{"result":{"status":"ok"}}',
+            )
+        )
+        self.assertEqual(response.output, b'{"status": "ok"}\n')
+
+        null_response = self.function_stub.InvokeFunction(
+            runtime_pb2.InvokeFunctionRequest(
+                registration=registration,
+                content_type="application/json",
+                input=b'{"result":null}',
+            )
+        )
+        self.assertEqual(null_response.output, b"null\n")
+
+    def test_function_runtime_accepts_one_mebibyte_input(self):
+        wd = self._prepare_inline("""
+def handler(event):
+    return {"size": len(event["payload"])}
+""", filename="app.py")
+        registration = self._register_function(wd)
+        payload = json.dumps({"payload": "x" * (1024 * 1024 - 64)}).encode()
+        self.assertLessEqual(len(payload), 1024 * 1024)
+
+        response = self.function_stub.InvokeFunction(
+            runtime_pb2.InvokeFunctionRequest(
+                registration=registration,
+                content_type="application/json",
+                input=payload,
+            )
+        )
+        self.assertEqual(
+            response.output,
+            f'{{"size": {1024 * 1024 - 64}}}\n'.encode(),
+        )
+
+    def test_function_runtime_registration_fencing(self):
+        wd = self._prepare_inline("""
+def handler(event):
+    return event
+""", filename="app.py")
+        first = self._register_function(wd, digest="sha256:first")
+        second = self._register_function(
+            wd,
+            attempt=2,
+            digest="sha256:second",
+        )
+        self.assertNotEqual(first.registration_id, second.registration_id)
+
+        with self.assertRaises(grpc.RpcError) as ctx:
+            self.function_stub.InvokeFunction(
+                runtime_pb2.InvokeFunctionRequest(
+                    registration=first,
+                    content_type="application/json",
+                    input=b'{}',
+                )
+            )
+        self.assertEqual(ctx.exception.code(), grpc.StatusCode.FAILED_PRECONDITION)
+
+    def test_function_runtime_rejects_invalid_input_and_bounds_output(self):
+        self.servicer.output_limit = 128
+        wd = self._prepare_inline("""
+def handler(event):
+    return "x" * 4096
+""", filename="app.py")
+        registration = self._register_function(wd)
+
+        with self.assertRaises(grpc.RpcError) as ctx:
+            self.function_stub.InvokeFunction(
+                runtime_pb2.InvokeFunctionRequest(
+                    registration=registration,
+                    content_type="text/plain",
+                    input=b'{}',
+                )
+            )
+        self.assertEqual(ctx.exception.code(), grpc.StatusCode.INVALID_ARGUMENT)
+
+        with self.assertRaises(grpc.RpcError) as ctx:
+            self.function_stub.InvokeFunction(
+                runtime_pb2.InvokeFunctionRequest(
+                    registration=registration,
+                    content_type="application/json",
+                    input=b"\xff",
+                )
+            )
+        self.assertEqual(ctx.exception.code(), grpc.StatusCode.INVALID_ARGUMENT)
+
+        with self.assertRaises(grpc.RpcError) as ctx:
+            self.function_stub.InvokeFunction(
+                runtime_pb2.InvokeFunctionRequest(
+                    registration=registration,
+                    content_type="application/json",
+                    input=b'{}',
+                )
+            )
+        self.assertEqual(ctx.exception.code(), grpc.StatusCode.RESOURCE_EXHAUSTED)
+
+    def test_function_runtime_unregister_cancels_in_flight_invocation(self):
+        wd = self._prepare_inline("""
+import time
+
+def handler(event):
+    time.sleep(30)
+    return {"status": "late"}
+""", filename="app.py")
+        registration = self._register_function(wd)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                self.function_stub.InvokeFunction,
+                runtime_pb2.InvokeFunctionRequest(
+                    registration=registration,
+                    content_type="application/json",
+                    input=b'{}',
+                ),
+            )
+            self._wait_for_function_in_flight(registration)
+            self.function_stub.UnregisterFunction(
+                runtime_pb2.UnregisterFunctionRequest(
+                    registration=registration,
+                    cancel_in_flight=True,
+                )
+            )
+            with self.assertRaises(grpc.RpcError) as ctx:
+                future.result(timeout=10)
+        self.assertEqual(ctx.exception.code(), grpc.StatusCode.CANCELLED)
 
     def test_list_and_cancel(self):
         wd = self._prepare_inline("import time; time.sleep(30)")
