@@ -76,15 +76,22 @@ controller wiring 累积不必要的冲突。
   单 Run scheduling cycles。在改变 scheduler behavior 前，review
   [Scheduler Framework](design/scheduler-framework.md) architecture。
   初始实现 TODO：
-  - [ ] review Run queue ownership、snapshot、PreFilter、Filter、Score、Reserve/Assume、Bind、status 和
+  - [x] review Run queue ownership、snapshot、PreFilter、Filter、Score、Reserve/Assume、Bind、status 和
     retry semantics；
-  - [ ] 在将 scheduler capacity check 扩展到内建 `runs` resource 以外前，review
+  - [x] 在将 scheduler capacity check 扩展到内建 `runs` resource 以外前，review
     [Run resource accounting](design/run-resource-accounting.md) API；
-  - [ ] 在 queue/planner interfaces 后重构 scheduler internals，同时保留当前 observable behavior 和
+  - [x] 在 queue/planner interfaces 后重构 scheduler internals，同时保留当前 observable behavior 和
     metrics；
-  - [ ] 增加 deterministic selection、assumed-capacity、bind-conflict 和 restart-recovery coverage；
-  - [ ] 实现 assumed affinity targets 和 Run 间亲和性 bootstrap，并增加 integration 和 E2E
-    coverage；
+  - [x] 增加 deterministic selection、assumed-capacity、bind-conflict 和 restart-recovery coverage；
+  - [ ] 实现 assumed affinity targets 和 Run 间亲和性 bootstrap：
+    - [ ] 将 namespace-local actual assignment 和尚未确认的 assumed assignment 投影为不可变的
+      affinity-target snapshot；
+    - [ ] 增加 required Run affinity 和 anti-affinity filter，以及有界的 Pending waiting reason；
+    - [ ] 在 deterministic capacity placement 前，对 preferred affinity 和 anti-affinity 评分；
+    - [ ] 允许 label-matching 的 eligible Run seed 一个空的 Run 间亲和性 cohort，同时让不能满足的
+      dependency 保持 Pending；
+    - [ ] 增加 actual target、assumed target、bootstrap、anti-affinity、capacity 和 recovery 的
+      unit、integration 与 E2E coverage；
   - [ ] 在增加 `Run.spec.priority` 或等价 API 前，通过独立 API design 定义 priority、fairness 和
     starvation policy；
 - [ ] Agent sandbox 所需的 Function-mode Runs：定义 mutually exclusive 的

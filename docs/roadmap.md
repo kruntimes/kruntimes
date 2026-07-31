@@ -84,17 +84,26 @@ wiring from accumulating avoidable conflicts.
   [Scheduler Framework](design/scheduler-framework.md) architecture before
   changing scheduler behavior.
   Initial implementation TODO:
-    - [ ] review Run queue ownership, snapshot, PreFilter, Filter, Score,
+  - [x] review Run queue ownership, snapshot, PreFilter, Filter, Score,
     Reserve/Assume, Bind, status, and retry semantics;
-  - [ ] review the [Run resource accounting](design/run-resource-accounting.md)
+  - [x] review the [Run resource accounting](design/run-resource-accounting.md)
     API before extending scheduler capacity checks beyond the built-in `runs`
     resource;
-  - [ ] refactor scheduler internals behind queue/planner interfaces while
+  - [x] refactor scheduler internals behind queue/planner interfaces while
     preserving current observable behavior and metrics;
-  - [ ] add deterministic selection, assumed-capacity, bind-conflict,
+  - [x] add deterministic selection, assumed-capacity, bind-conflict,
     and restart-recovery coverage;
-  - [ ] implement assumed affinity targets and Inter-Run Affinity
-    bootstrap, with integration and E2E coverage;
+  - [ ] implement assumed affinity targets and Inter-Run Affinity bootstrap:
+    - [ ] project namespace-local actual assignments and unconfirmed assumed
+      assignments into an immutable affinity-target snapshot;
+    - [ ] add required Run affinity and anti-affinity filtering with bounded
+      Pending waiting reasons;
+    - [ ] score preferred affinity and anti-affinity ahead of deterministic
+      capacity placement;
+    - [ ] allow an eligible label-matching Run to seed an empty Inter-Run
+      Affinity cohort, while keeping unsatisfiable dependencies Pending;
+    - [ ] add unit, integration, and E2E coverage for actual targets, assumed
+      targets, bootstrap, anti-affinity, capacity, and recovery;
   - [ ] define priority, fairness, and starvation policy in a separate API
     design before adding `Run.spec.priority` or equivalent API;
 - [ ] Function-mode Runs for agent sandboxes: define mutually exclusive
