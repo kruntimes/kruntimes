@@ -194,14 +194,25 @@ type RunResourceRequirements struct {
 // CodeSource specifies where the code to run comes from.
 // +kubebuilder:validation:XValidation:rule="!(has(self.inline) && has(self.repoURL))",message="inline and repoURL are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="!has(self.commitSHA) || has(self.repoURL)",message="commitSHA requires repoURL"
+// +kubebuilder:validation:XValidation:rule="!has(self.inlinePath) || (!self.inlinePath.startsWith('/') && !self.inlinePath.split('/').exists(segment, size(segment) == 0 || segment == '.' || segment == '..'))",message="inlinePath must be a relative file path without empty, '.' or '..' segments"
 type CodeSource struct {
-	// Inline is a standalone script. When set, runtimed writes it to the default
-	// script file and does not pass Entrypoint or Args to the Runtime Server.
+	// Inline is a standalone script. In task mode, runtimed writes it to the
+	// default script file and does not pass Entrypoint or Args to the Runtime
+	// Server. In function mode, InlinePath identifies the file to materialize.
 	// Mutually exclusive with RepoURL.
 	// +optional
 	// 256 KiB keeps simple scripts well below the Kubernetes object size limit.
 	// +kubebuilder:validation:MaxLength=262144
 	Inline *string `json:"inline,omitempty"`
+
+	// InlinePath is the relative file path below the prepared working directory
+	// where runtimed materializes inline function source. It is only valid when
+	// inline source is used by function mode.
+	// +optional
+	// Linux PATH_MAX is 4096 bytes.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=4096
+	InlinePath string `json:"inlinePath,omitempty"`
 
 	// RepoURL is the Git repository URL to clone before execution.
 	// +optional
@@ -352,6 +363,8 @@ type RunAffinityTerm struct {
 // +kubebuilder:object:generate=true
 // RunSpec defines the desired state of Run.
 // +kubebuilder:validation:XValidation:rule="!has(self.mode.task) || !has(self.mode.task.entrypoint) || (has(self.source) && has(self.source.inline)) || (!self.mode.task.entrypoint.startsWith('/') && !self.mode.task.entrypoint.split('/').exists(segment, segment == '..'))",message="mode.task.entrypoint must be a relative path that does not contain '..'"
+// +kubebuilder:validation:XValidation:rule="!has(self.source) || !has(self.source.inlinePath) || (has(self.mode.function) && has(self.source.inline))",message="source.inlinePath is only valid for function mode with inline source"
+// +kubebuilder:validation:XValidation:rule="!has(self.mode.function) || !has(self.source) || !has(self.source.inline) || has(self.source.inlinePath)",message="function mode inline source requires source.inlinePath"
 // +kubebuilder:validation:XValidation:rule="self.runtime == oldSelf.runtime && has(self.source) == has(oldSelf.source) && (!has(self.source) || self.source == oldSelf.source) && self.mode == oldSelf.mode && has(self.env) == has(oldSelf.env) && (!has(self.env) || self.env == oldSelf.env) && has(self.timeout) == has(oldSelf.timeout) && (!has(self.timeout) || self.timeout == oldSelf.timeout) && has(self.retryPolicy) == has(oldSelf.retryPolicy) && (!has(self.retryPolicy) || self.retryPolicy == oldSelf.retryPolicy) && has(self.resources) == has(oldSelf.resources) && (!has(self.resources) || self.resources == oldSelf.resources)",message="runtime, source, mode, env, timeout, retryPolicy, and resources are immutable after Run creation"
 // +kubebuilder:validation:XValidation:rule="has(self.workspace) == has(oldSelf.workspace) && (!has(self.workspace) || self.workspace == oldSelf.workspace) && has(self.affinity) == has(oldSelf.affinity) && (!has(self.affinity) || self.affinity == oldSelf.affinity)",message="workspace and affinity are immutable after Run creation"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.cancelRequested) || !oldSelf.cancelRequested || (has(self.cancelRequested) && self.cancelRequested)",message="cancelRequested may not transition from true to false"

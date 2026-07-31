@@ -659,11 +659,21 @@ spec:
                     type: string
                   inline:
                     description: |-
-                      Inline is a standalone script. When set, runtimed writes it to the default
-                      script file and does not pass Entrypoint or Args to the Runtime Server.
+                      Inline is a standalone script. In task mode, runtimed writes it to the
+                      default script file and does not pass Entrypoint or Args to the Runtime
+                      Server. In function mode, InlinePath identifies the file to materialize.
                       Mutually exclusive with RepoURL.
                       256 KiB keeps simple scripts well below the Kubernetes object size limit.
                     maxLength: 262144
+                    type: string
+                  inlinePath:
+                    description: |-
+                      InlinePath is the relative file path below the prepared working directory
+                      where runtimed materializes inline function source. It is only valid when
+                      inline source is used by function mode.
+                      Linux PATH_MAX is 4096 bytes.
+                    maxLength: 4096
+                    minLength: 1
                     type: string
                   repoURL:
                     description: |-
@@ -677,6 +687,11 @@ spec:
                   rule: '!(has(self.inline) && has(self.repoURL))'
                 - message: commitSHA requires repoURL
                   rule: '!has(self.commitSHA) || has(self.repoURL)'
+                - message: inlinePath must be a relative file path without empty,
+                    '.' or '..' segments
+                  rule: '!has(self.inlinePath) || (!self.inlinePath.startsWith(''/'')
+                    && !self.inlinePath.split(''/'').exists(segment, size(segment)
+                    == 0 || segment == ''.'' || segment == ''..''))'
               timeout:
                 description: |-
                   Timeout is the maximum duration the run is allowed to run.
@@ -727,6 +742,13 @@ spec:
                 && has(self.source.inline)) || (!self.mode.task.entrypoint.startsWith(''/'')
                 && !self.mode.task.entrypoint.split(''/'').exists(segment, segment
                 == ''..''))'
+            - message: source.inlinePath is only valid for function mode with inline
+                source
+              rule: '!has(self.source) || !has(self.source.inlinePath) || (has(self.mode.function)
+                && has(self.source.inline))'
+            - message: function mode inline source requires source.inlinePath
+              rule: '!has(self.mode.function) || !has(self.source) || !has(self.source.inline)
+                || has(self.source.inlinePath)'
             - message: runtime, source, mode, env, timeout, retryPolicy, and resources
                 are immutable after Run creation
               rule: self.runtime == oldSelf.runtime && has(self.source) == has(oldSelf.source)
