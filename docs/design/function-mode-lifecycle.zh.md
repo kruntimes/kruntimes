@@ -1,6 +1,6 @@
 # Function Mode 生命周期与 Invoke Dataplane
 
-状态：**提案，等待 review**
+状态：**已接受；正在实现**
 
 本文细化 [Function Mode 和 Agent Sandboxes](../function-mode/) 中的 function-mode 目标，
 定义实现前必须 review 的 Run lifecycle、status API、gateway boundary、recovery behavior 和
