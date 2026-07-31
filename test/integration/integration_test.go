@@ -503,6 +503,79 @@ func TestCRDValidationAllowsIgnoredInlineRunModeTaskEntrypointTraversal(t *testi
 	}
 }
 
+func TestCRDValidationFunctionInlinePath(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-function-inline-path-")
+	inline := "def invoke(request): return request"
+
+	tests := []struct {
+		name      string
+		mode      v1alpha1.RunMode
+		source    *v1alpha1.CodeSource
+		wantValid bool
+	}{
+		{
+			name:      "allows function inline source path",
+			mode:      v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "app.invoke"}},
+			source:    &v1alpha1.CodeSource{Inline: &inline, InlinePath: "functions/app.py"},
+			wantValid: true,
+		},
+		{
+			name:   "rejects function inline source without path",
+			mode:   v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "app.invoke"}},
+			source: &v1alpha1.CodeSource{Inline: &inline},
+		},
+		{
+			name:   "rejects task inline source path",
+			mode:   v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+			source: &v1alpha1.CodeSource{Inline: &inline, InlinePath: "script.py"},
+		},
+		{
+			name:   "rejects path without inline source",
+			mode:   v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "app.invoke"}},
+			source: &v1alpha1.CodeSource{InlinePath: "app.py"},
+		},
+		{
+			name:   "rejects traversal path",
+			mode:   v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "app.invoke"}},
+			source: &v1alpha1.CodeSource{Inline: &inline, InlinePath: "../app.py"},
+		},
+		{
+			name:   "rejects absolute path",
+			mode:   v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "app.invoke"}},
+			source: &v1alpha1.CodeSource{Inline: &inline, InlinePath: "/app.py"},
+		},
+		{
+			name:   "rejects current directory path",
+			mode:   v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "app.invoke"}},
+			source: &v1alpha1.CodeSource{Inline: &inline, InlinePath: "./app.py"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			run := &v1alpha1.Run{
+				ObjectMeta: metav1.ObjectMeta{GenerateName: "function-inline-path-", Namespace: ns.Name},
+				Spec: v1alpha1.RunSpec{
+					Runtime: "python",
+					Mode:    tt.mode,
+					Source:  tt.source,
+				},
+			}
+			err := k8sClient.Create(ctx, run)
+			if tt.wantValid {
+				if err != nil {
+					t.Fatalf("create valid Run: %v", err)
+				}
+				return
+			}
+			if !apierrors.IsInvalid(err) {
+				t.Fatalf("create invalid Run error = %v, want Invalid", err)
+			}
+		})
+	}
+}
+
 func TestCRDValidationAllowsRunWorkspaceAndAffinity(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-run-workspace-affinity-")
