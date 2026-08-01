@@ -1,24 +1,25 @@
 # Function Inline Source 物化
 
-状态：**提案，等待 review**
+状态：**已接受；API 与通用 source preparation 已完成**
 
 function-mode Run 可以使用 repository source 或 inline source。repository source 会保留原有
 文件布局；当前 inline source 不会：runtimed 会将其写到固定的 `script` 文件。对于由 runtime
 定义、并通过文件或 module 标识的 handler，这并不足够，例如 Python `app.invoke` 或 Bash
 `handler.handle`。
 
-本文提出一个最小 API，使单个 inline function source 能以可预测的文件路径物化，同时不让
+本文定义一个最小 API，使单个 inline function source 能以可预测的文件路径物化，同时不让
 runtimed 理解具体 runtime 的语言。
 
-## 提议的 API
+## API
 
 在 `Run.spec.source` 增加 `inlinePath`：
 
 ```go
 type CodeSource struct {
-    Inline     string `json:"inline,omitempty"`
+    Inline     *string `json:"inline,omitempty"`
     InlinePath string `json:"inlinePath,omitempty"`
-    Git        *GitSource `json:"git,omitempty"`
+    RepoURL    string `json:"repoURL,omitempty"`
+    CommitSHA  string `json:"commitSHA,omitempty"`
 }
 ```
 
@@ -87,9 +88,7 @@ process-start 语义经过单独 API review 前，它不会改变 task 的行为
 
 ## 后续实现
 
-该 API 获得批准后：
+API field、CEL validation、generated deepcopy code、CRD manifests 和通用 source preparation 已完成。剩余实现为：
 
-1. 增加 API field、CEL validation、generated deepcopy code 和 CRD manifests；
-2. 更新通用 source preparation，使其物化已验证的路径；
-3. 更新 function 示例和 Python、Bash、repository、invalid-path 的 validation tests；
-4. 实现从 `Scheduled` 到 `Ready` 的 function registration lifecycle。
+1. 更新 function 示例和 Python、Bash、repository、invalid-path 的 validation tests；
+2. 实现从 `Scheduled` 到 `Ready` 的 function registration lifecycle。

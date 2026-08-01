@@ -126,13 +126,15 @@ wiring from accumulating avoidable conflicts.
     and active/non-terminal phase-classification tests;
   - [x] add immutable execution-input transitions and the function cleanup
     finalizer constant;
-  - [ ] review and approve the
+  - [x] review and approve the
     [Function Inline Source Materialization](design/function-inline-source.md)
     API before registering inline function Runs;
   - [ ] implement the function control-plane lifecycle in independently
     reviewable slices:
     - [x] add a deterministic FunctionRuntime registration request builder,
       including immutable-input digest coverage;
+    - [x] materialize inline function source at the validated
+      `source.inlinePath` below the Run working directory;
     - [ ] transition assigned function Runs through source preparation,
       cleanup-finalizer installation, local registration through a runtimed
       FunctionRuntime client, and `Running -> Ready`;

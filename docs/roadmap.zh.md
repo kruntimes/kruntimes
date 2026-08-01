@@ -112,11 +112,12 @@ controller wiring 累积不必要的冲突。
     active/non-terminal phase-classification tests；
   - [x] 增加 immutable execution-input transitions 和 function cleanup finalizer
     constant；
-  - [ ] 在注册 inline function Run 前 review 并批准
+  - [x] 在注册 inline function Run 前 review 并批准
     [Function Inline Source 物化](design/function-inline-source.md) API；
   - [ ] 以可独立 review 的分片实现 function control-plane lifecycle：
     - [x] 增加 deterministic FunctionRuntime registration request builder，
       包含 immutable-input digest coverage；
+    - [x] 在 Run working directory 下经过验证的 `source.inlinePath` 物化 inline function source；
     - [ ] 让已 assigned 的 function Run 完成 source preparation、安装 cleanup finalizer，
       通过 runtimed FunctionRuntime client 进行 local registration，并完成
       `Running -> Ready` transition；
