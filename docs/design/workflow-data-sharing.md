@@ -2,6 +2,8 @@
 
 This document describes a target v0.x design. It is not implemented yet.
 
+RuntimePodLocal binding fencing amendment: **Proposed for review**
+
 The goal is to define how Workflow jobs and Runs share data without making
 scheduler or runtimed understand Workflow-specific semantics. The design is
 driven by the v0.x workflow demo target: job-to-job data should move through
@@ -91,6 +93,7 @@ status:
   phase: Bound
   runtime: bash
   boundPod: runtime-bash-7f587b4668-njcks
+  boundPodUID: 2c24c1f0-9f8f-4f80-82d5-3dd16a12d1e6
   path: /workspace/persistent/ci-build-workspace
   lastUsedTime: "2026-07-06T12:00:00Z"
 ```
@@ -146,20 +149,22 @@ The binding controller should use the following v0.x rules:
 2. When candidates exist, the controller sorts ready Runtime Pods by
    `metadata.name` and selects the lexicographically first Pod. The choice is
    deterministic for a stable Pod set; later scheduling work uses
-   `status.boundPod` rather than trying to repeat this selection.
+   `status.boundPod` and `status.boundPodUID` rather than trying to repeat this
+   selection.
 3. The controller records `status.phase: Bound`, `status.runtime`,
-   `status.boundPod`, and `status.path: /workspace/persistent/<workspace-name>`.
-   It does not create the directory itself: runtimed creates it when a
-   referenced Run starts.
+   `status.boundPod`, immutable `status.boundPodUID`, and
+   `status.path: /workspace/persistent/<workspace-name>`. It does not create
+   the directory itself: runtimed creates it when a referenced Run starts.
 4. A Bound workspace remains bound while its Pod exists, even if that Pod is
    temporarily not ready. The status conditions make the availability problem
    visible, and Runs referring to it stay Pending until later scheduler and
    runtimed work can use that binding safely.
-5. If the bound Pod is deleted or no longer exists, the workspace becomes
-   `Lost`. The controller must not silently bind it to another Pod: for
-   `RuntimePodLocal`, that would make a caller observe a new empty directory as
-   though it contained the original data. Recovery requires an explicit new
-   workspace or a future reviewed recovery API.
+5. If the bound Pod is deleted, no longer exists, or a same-name Pod has a
+   different UID, the workspace becomes `Lost`. The controller must not
+   silently bind it to another Pod: for `RuntimePodLocal`, that would make a
+   caller observe a new empty directory as though it contained the original
+   data. Recovery requires an explicit new workspace or a future reviewed
+   recovery API.
 
 Binding is metadata-only in this slice. TTL cleanup, filesystem deletion,
 `lastUsedTime`, and Run admission/preparation remain separate follow-up work.
@@ -356,8 +361,10 @@ Required safeguards:
 5. Add Kubernetes-style Run affinity/anti-affinity fields.
 6. Update scheduler placement to respect required/preferred Run affinity while
    keeping no-capacity Runs Pending.
-7. Bind `RuntimePodLocal` PersistentWorkspaces to ready Runtime Pods and record
-   their lifecycle status without touching runtime filesystems.
+7. After reviewing the bound-Pod UID fencing amendment, add
+   `status.boundPodUID`, then bind `RuntimePodLocal` PersistentWorkspaces to
+   ready Runtime Pods and record their lifecycle status without touching runtime
+   filesystems.
 8. Update runtimed workspace preparation and cleanup for referenced
    workspaces.
 9. Add Workflow step artifact input fields and job-scoped artifact status.

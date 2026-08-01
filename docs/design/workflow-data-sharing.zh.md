@@ -2,6 +2,8 @@
 
 本文描述 v0.x 的目标设计，当前尚未实现。
 
+RuntimePodLocal binding fencing 修订：**Proposed，等待 review**
+
 目标是定义 Workflow jobs 和 Runs 如何共享数据，同时不让 scheduler 或 runtimed 理解
 Workflow-specific 语义。这个设计由 v0.x workflow demo 目标驱动：job-to-job 数据应通过
 artifacts 传递，而同一个 job 内的 Runs 应在 Workflow controller 请求 co-location 时可以
@@ -86,6 +88,7 @@ status:
   phase: Bound
   runtime: bash
   boundPod: runtime-bash-7f587b4668-njcks
+  boundPodUID: 2c24c1f0-9f8f-4f80-82d5-3dd16a12d1e6
   path: /workspace/persistent/ci-build-workspace
   lastUsedTime: "2026-07-06T12:00:00Z"
 ```
@@ -132,17 +135,18 @@ binding controller 在 v0.x 中应遵循以下规则：
 1. 未绑定 workspace 在其引用的 Runtime 没有 ready Runtime Pods 时保持等待。无论等待或已经绑定，
    它都不会消耗或预留 Run capacity。
 2. 有候选 Pod 时，controller 先按 `metadata.name` 对 ready Runtime Pod 排序，再选择名称字典序最小的
-   Pod。在稳定 Pod 集合下该选择是 deterministic 的；后续调度工作使用 `status.boundPod`，而不是试图
-   重复这个选择。
+   Pod。在稳定 Pod 集合下该选择是 deterministic 的；后续调度工作使用 `status.boundPod` 和
+   `status.boundPodUID`，而不是试图重复这个选择。
 3. controller 记录 `status.phase: Bound`、`status.runtime`、`status.boundPod`，以及计划使用的本地
+   immutable 的 `status.boundPodUID`，以及计划使用的本地
    `status.path: /workspace/persistent/<workspace-name>`。controller 不会自行创建目录；runtimed 在引用
    它的 Run 启动时创建。
 4. Bound workspace 在 Pod 仍存在时保持绑定，即使该 Pod 暂时不 ready。status conditions 会让
    availability 问题可见；引用它的 Runs 将保持 Pending，直到后续 scheduler 和 runtimed 工作能够
    安全地使用这个 binding。
-5. bound Pod 被删除或不再存在时，workspace 变为 `Lost`。controller 不得静默地把它绑定到另一个
-   Pod：对于 `RuntimePodLocal`，那会让调用者把新的空目录误认为原有数据。恢复需要显式创建新的
-   workspace，或等待未来经过 review 的 recovery API。
+5. bound Pod 被删除、不再存在，或同名 Pod 的 UID 不同时，workspace 变为 `Lost`。controller 不得静默地
+   把它绑定到另一个 Pod：对于 `RuntimePodLocal`，那会让调用者把新的空目录误认为原有数据。恢复需要显式
+   创建新的 workspace，或等待未来经过 review 的 recovery API。
 
 这个 binding slice 仅写入 metadata。TTL cleanup、filesystem deletion、`lastUsedTime` 和 Run
 admission/preparation 都是独立的后续工作。
@@ -329,8 +333,8 @@ job 正在等待本地 workspace capacity，或者因为 controller-owned worksp
 5. 增加 Kubernetes-style Run affinity/anti-affinity fields。
 6. 更新 scheduler placement，使其支持 required/preferred Run affinity，同时保持无 capacity
    Runs Pending。
-7. 将 `RuntimePodLocal` PersistentWorkspaces 绑定到 ready Runtime Pods，并记录 lifecycle
-   status，不修改 runtime filesystems。
+7. review bound-Pod UID fencing 修订后，增加 `status.boundPodUID`，再将 `RuntimePodLocal`
+   PersistentWorkspaces 绑定到 ready Runtime Pods，并记录 lifecycle status，不修改 runtime filesystems。
 8. 更新 runtimed workspace preparation 和 cleanup，使其支持 referenced workspaces。
 9. 增加 Workflow step artifact input fields 和 job-scoped artifact status。
 10. 将 child Run artifact refs 提升到 Workflow status。
