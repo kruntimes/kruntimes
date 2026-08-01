@@ -19,12 +19,19 @@ The current experimental Workflow API supports:
 - child Runs per step;
 - bounded step outputs from `KRUNTIME_OUTPUTS`;
 - cross-step and cross-job expression references for small string outputs.
+- `Runtime.spec.workspace` with an inline Kubernetes `VolumeSource` and an
+  `emptyDir` default;
+- `PersistentWorkspace` API types, CRD validation, status, and controller
+  skeleton;
+- generic Run workspace references and Kubernetes-style Run affinity fields.
 
 It does not yet provide:
 
 - first-class artifact inputs between jobs;
-- a workspace object or lifecycle;
-- Run affinity/anti-affinity for co-locating child Runs;
+- `RuntimePodLocal` workspace binding, UID fencing, or workspace lifecycle
+  operations;
+- scheduler enforcement of Run affinity/anti-affinity;
+- runtimed preparation and cleanup of referenced workspaces;
 - explicit promotion of child Run artifact references into Workflow status;
 - cleanup and permission boundaries for shared job-local workspaces.
 

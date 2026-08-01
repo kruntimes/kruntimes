@@ -18,12 +18,16 @@ artifacts 传递，而同一个 job 内的 Runs 应在 Workflow controller 请�
 - 每个 step 创建 child Run；
 - 来自 `KRUNTIME_OUTPUTS` 的有界 step outputs；
 - 用于小字符串 outputs 的 cross-step 和 cross-job expression references。
+- 使用 inline Kubernetes `VolumeSource` 和 `emptyDir` 默认值的 `Runtime.spec.workspace`；
+- `PersistentWorkspace` API types、CRD validation、status 和 controller skeleton；
+- 通用 Run workspace references 和 Kubernetes-style Run affinity fields。
 
 当前尚不支持：
 
 - job 之间的 first-class artifact inputs；
-- workspace object 或 lifecycle；
-- 用于 co-locate child Runs 的 Run affinity/anti-affinity；
+- `RuntimePodLocal` workspace binding、UID fencing 或 workspace lifecycle operations；
+- scheduler 对 Run affinity/anti-affinity 的 enforcement；
+- runtimed 对 referenced workspaces 的 preparation 和 cleanup；
 - 将 child Run artifact references 显式提升到 Workflow status；
 - shared job-local workspace 的 cleanup 和权限边界。
 
