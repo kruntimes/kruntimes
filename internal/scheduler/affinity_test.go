@@ -27,7 +27,7 @@ func TestRunAffinityFiltersActualTargetsAndScoresPreferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !affinity.matchesRequired("pod-a") || affinity.matchesRequired("pod-b") || affinity.matchesRequired("pod-c") {
+	if !affinity.filter("pod-a").feasible || affinity.filter("pod-b").feasible || affinity.filter("pod-c").feasible {
 		t.Fatalf("required filter results are incorrect")
 	}
 	candidates := affinity.preferredCandidates([]corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "pod-a"}}, {ObjectMeta: metav1.ObjectMeta{Name: "pod-c"}}})
@@ -43,7 +43,7 @@ func TestRunAffinityBootstrapRequiresMatchingRunLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !affinity.matchesRequired("pod-a") {
+	if !affinity.filter("pod-a").feasible {
 		t.Fatal("matching first cohort member should seed required affinity")
 	}
 
@@ -52,7 +52,7 @@ func TestRunAffinityBootstrapRequiresMatchingRunLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if affinity.matchesRequired("pod-a") {
+	if affinity.filter("pod-a").feasible {
 		t.Fatal("non-matching Run must not seed required affinity")
 	}
 }

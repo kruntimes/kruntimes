@@ -29,6 +29,22 @@ type runAffinity struct {
 	preferredAnti []affinityRule
 }
 
+type runAffinityFilter struct {
+	affinity runAffinity
+}
+
+func newRunAffinityFilter(_ *RunReconciler, _ *schedulingSnapshot, preFilter *schedulingPreFilterState) (filterPlugin, error) {
+	return &runAffinityFilter{affinity: preFilter.affinity}, nil
+}
+
+func (f *runAffinityFilter) Name() string {
+	return "RunAffinity"
+}
+
+func (f *runAffinityFilter) Filter(_ *schedulingSnapshot, pod *corev1.Pod) filterResult {
+	return f.affinity.filter(pod.Name)
+}
+
 func newRunAffinity(run *v1alpha1.Run, targets []affinityTarget) (runAffinity, error) {
 	if run == nil || run.Spec.Affinity == nil {
 		return runAffinity{}, nil
@@ -90,18 +106,18 @@ func newRunAffinity(run *v1alpha1.Run, targets []affinityTarget) (runAffinity, e
 	return result, nil
 }
 
-func (a runAffinity) matchesRequired(podName string) bool {
+func (a runAffinity) filter(podName string) filterResult {
 	for _, rule := range a.required {
 		if !rule.pods[podName] && !rule.seedable {
-			return false
+			return filterResult{reason: filterReasonRunAffinity}
 		}
 	}
 	for _, rule := range a.requiredAnti {
 		if rule.pods[podName] {
-			return false
+			return filterResult{reason: filterReasonRunAntiAffinity}
 		}
 	}
-	return true
+	return filterResult{feasible: true}
 }
 
 func (a runAffinity) preferredCandidates(candidates []corev1.Pod) []corev1.Pod {
