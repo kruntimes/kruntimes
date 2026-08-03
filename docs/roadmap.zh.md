@@ -301,7 +301,7 @@ controller wiring 累积不必要的冲突。
       `A -> B -> A` cycle；
   - 按照已 review 的 [Action Execution](design/workflow-action-execution.md)
     模型实现 step-level Action expansion：
-    - [ ] 增加 Action call 的 status、immutable snapshot 和 CRD validation shape；
+    - [x] 增加 Action call 的 status、immutable snapshot 和 CRD validation shape；
     - [ ] 在定义的 execution boundaries 计算 `inputs`、`steps` 和 `jobs` expressions；
     - [ ] 将 Action calls materialize 为普通 child Runs，聚合其 terminal states 和
       declared outputs，并在 controller restart 后恢复；

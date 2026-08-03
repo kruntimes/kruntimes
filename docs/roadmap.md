@@ -351,7 +351,7 @@ wiring from accumulating avoidable conflicts.
       rejection before child creation;
   - implement step-level Action expansion through the reviewed
     [Action Execution](design/workflow-action-execution.md) model:
-    - [ ] add the Action-call status, immutable snapshot, and CRD validation
+    - [x] add the Action-call status, immutable snapshot, and CRD validation
       shape;
     - [ ] evaluate `inputs`, `steps`, and `jobs` expressions at the defined
       execution boundaries;
