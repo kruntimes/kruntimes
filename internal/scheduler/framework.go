@@ -28,9 +28,9 @@ type schedulingSnapshot struct {
 }
 
 type schedulingPlan struct {
-	action     schedulingPlanAction
-	selected   *corev1.Pod
-	rejections map[filterReason]int
+	action         schedulingPlanAction
+	selected       *corev1.Pod
+	pendingMessage string
 }
 
 type schedulingPlanAction string
@@ -40,12 +40,12 @@ const (
 	schedulingPlanBind schedulingPlanAction = "Bind"
 )
 
-func (p schedulingPlan) waitingMessage(runtime string) string {
+func waitingMessageForFilterRejections(runtime string, rejections map[filterReason]int) string {
 	message := fmt.Sprintf("waiting for available runtime pods for runtime %q", runtime)
-	if p.rejections[filterReasonRunAffinity] > 0 {
+	if rejections[filterReasonRunAffinity] > 0 {
 		return fmt.Sprintf("waiting for available runtime pods satisfying required Run affinity for runtime %q", runtime)
 	}
-	if p.rejections[filterReasonRunAntiAffinity] > 0 {
+	if rejections[filterReasonRunAntiAffinity] > 0 {
 		return fmt.Sprintf("waiting for available runtime pods satisfying required Run anti-affinity for runtime %q", runtime)
 	}
 	return message
@@ -153,7 +153,10 @@ func (r *RunReconciler) planSchedulingCycle(snapshot *schedulingSnapshot) (sched
 		}
 	}
 	if len(candidates) == 0 {
-		return schedulingPlan{action: schedulingPlanWait, rejections: rejections}, nil
+		return schedulingPlan{
+			action:         schedulingPlanWait,
+			pendingMessage: waitingMessageForFilterRejections(snapshot.run.Spec.Runtime, rejections),
+		}, nil
 	}
 
 	candidates = preFilter.affinity.preferredCandidates(candidates)
