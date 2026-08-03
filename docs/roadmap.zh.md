@@ -212,7 +212,10 @@ controller wiring 累积不必要的冲突。
   - [ ] 通过经过 review 的 [scheduler framework](design/scheduler-framework.md) 实现
     required/preferred Run affinity，同时在无 capacity 时继续保持 Run Pending；
   - [ ] review 并定义 `RuntimePodLocal` binding semantics：不预留 capacity 的 deterministic
-    ready-Pod selection、planned path ownership，以及 bound-Pod deletion 后 sticky `Lost` status；
+    ready-Pod selection、planned path ownership，以及 bound-Pod deletion 后 sticky `Lost` status：
+    - [ ] review `status.boundPodUID` fencing 修订，避免同名 Pod 重建时静默替换
+      RuntimePodLocal workspace；
+    - [ ] 增加该 status field、重新生成 CRD，然后实现 metadata-only binding 与 Lost-state handling；
   - 更新 runtimed workspace preparation 和 cleanup，使其支持被引用的 persistent workspace，
     但不感知 Workflow 语义；
   - 将 child Run artifact refs 提升到 Workflow status，并增加显式 step artifact inputs；

@@ -245,7 +245,11 @@ wiring from accumulating avoidable conflicts.
     no-capacity Runs Pending;
   - [ ] review and define `RuntimePodLocal` binding semantics: deterministic
     ready-Pod selection without capacity reservation, planned path ownership,
-    and sticky `Lost` status after bound-Pod deletion;
+    and sticky `Lost` status after bound-Pod deletion:
+    - [ ] review the `status.boundPodUID` fencing amendment so same-name Pod
+      recreation cannot silently replace a RuntimePodLocal workspace;
+    - [ ] add the status field, regenerate CRDs, then implement metadata-only
+      binding and Lost-state handling;
   - update runtimed workspace preparation and cleanup to support referenced
     persistent workspaces without knowing Workflow semantics;
   - promote child Run artifact refs into Workflow status and add explicit step
