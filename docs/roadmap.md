@@ -353,7 +353,7 @@ wiring from accumulating avoidable conflicts.
     [Action Execution](design/workflow-action-execution.md) model:
     - [x] add the Action-call status, immutable snapshot, and CRD validation
       shape;
-    - [ ] evaluate `inputs`, `steps`, and `jobs` expressions at the defined
+    - [x] evaluate `inputs`, `steps`, and `jobs` expressions at the defined
       execution boundaries;
     - [ ] materialize Action calls into ordinary child Runs, aggregate their
       terminal states and declared outputs, and recover after a controller
