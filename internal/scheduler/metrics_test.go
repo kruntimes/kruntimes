@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -9,6 +11,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -85,5 +89,77 @@ kruntimes_scheduler_filter_rejections_total{plugin="` + tt.plugin + `",reason="`
 				t.Fatalf("filter rejection metric: %v", err)
 			}
 		})
+	}
+}
+
+func TestReservationConflictMetrics(t *testing.T) {
+	t.Run("reserve", func(t *testing.T) {
+		now := time.Now()
+		registry := prometheus.NewPedanticRegistry()
+		reconciler := &RunReconciler{
+			RuntimedHeartbeatStaleAfter: time.Minute,
+			metrics:                     newSchedulerMetrics(registry),
+		}
+		pod := reservationTestPod(now, "runtime-a", 1)
+		first := reservationTestRun("first", "first-uid")
+		second := reservationTestRun("second", "second-uid")
+		request, err := first.Spec.ResourceRequests()
+		if err != nil {
+			t.Fatalf("resource requests: %v", err)
+		}
+		firstSnapshot := &schedulingSnapshot{
+			run:              first,
+			request:          request,
+			actualUsageByPod: map[string]corev1.ResourceList{},
+			runs:             []v1alpha1.Run{*first, *second},
+			now:              now,
+		}
+		if !reconciler.reserve(firstSnapshot, pod) {
+			t.Fatal("reserve first Run = false, want true")
+		}
+		secondSnapshot := &schedulingSnapshot{
+			run:              second,
+			request:          request,
+			actualUsageByPod: map[string]corev1.ResourceList{},
+			runs:             []v1alpha1.Run{*first, *second},
+			now:              now,
+		}
+		if reconciler.reserve(secondSnapshot, pod) {
+			t.Fatal("reserve second Run = true, want false")
+		}
+		assertReservationConflictMetric(t, registry, reservationConflictStageReserve)
+	})
+
+	t.Run("bind", func(t *testing.T) {
+		registry := prometheus.NewPedanticRegistry()
+		run := reservationTestRun("run-a", "run-a-uid")
+		pod := reservationTestPod(time.Now(), "runtime-a", 1)
+		reconciler := &RunReconciler{
+			Client: statusUpdateErrorClient{err: apierrors.NewConflict(
+				schema.GroupResource{Group: "kruntimes.io", Resource: "runs"},
+				run.Name,
+				errors.New("test conflict"),
+			)},
+			metrics: newSchedulerMetrics(registry),
+		}
+		if err := reconciler.bind(context.Background(), run, pod); !apierrors.IsConflict(err) {
+			t.Fatalf("bind error = %v, want conflict", err)
+		}
+		assertReservationConflictMetric(t, registry, reservationConflictStageBind)
+	})
+}
+
+func assertReservationConflictMetric(t *testing.T, registry *prometheus.Registry, stage reservationConflictStage) {
+	t.Helper()
+	want := `# HELP kruntimes_scheduler_reservation_conflicts_total Total scheduler reservation conflicts.
+# TYPE kruntimes_scheduler_reservation_conflicts_total counter
+kruntimes_scheduler_reservation_conflicts_total{stage="` + string(stage) + `"} 1
+`
+	if err := testutil.GatherAndCompare(
+		registry,
+		strings.NewReader(want),
+		"kruntimes_scheduler_reservation_conflicts_total",
+	); err != nil {
+		t.Fatalf("reservation conflict metric: %v", err)
 	}
 }

@@ -5,12 +5,20 @@ import (
 	controllermetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
+type reservationConflictStage string
+
+const (
+	reservationConflictStageReserve reservationConflictStage = "reserve"
+	reservationConflictStageBind    reservationConflictStage = "bind"
+)
+
 type schedulerMetrics struct {
-	runsScheduled    *prometheus.CounterVec
-	syncDuration     *prometheus.HistogramVec
-	noPodsTotal      *prometheus.CounterVec
-	runQueueDuration *prometheus.HistogramVec
-	filterRejections *prometheus.CounterVec
+	runsScheduled        *prometheus.CounterVec
+	syncDuration         *prometheus.HistogramVec
+	noPodsTotal          *prometheus.CounterVec
+	runQueueDuration     *prometheus.HistogramVec
+	filterRejections     *prometheus.CounterVec
+	reservationConflicts *prometheus.CounterVec
 }
 
 func newSchedulerMetrics(registerer prometheus.Registerer) *schedulerMetrics {
@@ -52,6 +60,13 @@ func newSchedulerMetrics(registerer prometheus.Registerer) *schedulerMetrics {
 			},
 			[]string{"plugin", "reason"},
 		),
+		reservationConflicts: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "kruntimes_scheduler_reservation_conflicts_total",
+				Help: "Total scheduler reservation conflicts.",
+			},
+			[]string{"stage"},
+		),
 	}
 	registerer.MustRegister(
 		metrics.runsScheduled,
@@ -59,6 +74,7 @@ func newSchedulerMetrics(registerer prometheus.Registerer) *schedulerMetrics {
 		metrics.noPodsTotal,
 		metrics.runQueueDuration,
 		metrics.filterRejections,
+		metrics.reservationConflicts,
 	)
 	return metrics
 }
@@ -74,4 +90,8 @@ func (r *RunReconciler) metricsRecorder() *schedulerMetrics {
 
 func (m *schedulerMetrics) observeFilterRejection(plugin string, reason filterReason) {
 	m.filterRejections.WithLabelValues(plugin, string(reason)).Inc()
+}
+
+func (m *schedulerMetrics) observeReservationConflict(stage reservationConflictStage) {
+	m.reservationConflicts.WithLabelValues(string(stage)).Inc()
 }

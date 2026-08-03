@@ -123,7 +123,7 @@ wiring from accumulating avoidable conflicts.
       and errors;
   - [ ] add bounded scheduler metrics:
     - [x] count Filter-plugin Pod rejections by bounded plugin and reason;
-    - [ ] count stale `Reserve` and conflicting `Bind` operations by bounded
+    - [x] count stale `Reserve` and conflicting `Bind` operations by bounded
       stage;
     - [ ] count requested Pending Run wakeups by bounded event source;
   - [ ] define priority, fairness, and starvation policy in a separate API

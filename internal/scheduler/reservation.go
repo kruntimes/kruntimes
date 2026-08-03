@@ -4,6 +4,7 @@ import (
 	"context"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -19,9 +20,13 @@ func (r *RunReconciler) effectiveUsage(actual map[string]corev1.ResourceList, ru
 }
 
 func (r *RunReconciler) reserve(snapshot *schedulingSnapshot, pod *corev1.Pod) bool {
-	return r.assumptions.reserve(snapshot, pod, func(usage corev1.ResourceList) bool {
+	reserved := r.assumptions.reserve(snapshot, pod, func(usage corev1.ResourceList) bool {
 		return r.isRuntimePodAvailable(pod, snapshot.now, usage, snapshot.request)
 	})
+	if !reserved {
+		r.metricsRecorder().observeReservationConflict(reservationConflictStageReserve)
+	}
+	return reserved
 }
 
 // bind persists an assumed assignment. The assumption remains in the local
@@ -40,6 +45,9 @@ func (r *RunReconciler) bind(ctx context.Context, run *v1alpha1.Run, pod *corev1
 	})
 	if err := r.Status().Update(ctx, run); err != nil {
 		r.releaseReservation(run)
+		if apierrors.IsConflict(err) {
+			r.metricsRecorder().observeReservationConflict(reservationConflictStageBind)
+		}
 		return err
 	}
 	return nil
