@@ -83,17 +83,21 @@ controller wiring 累积不必要的冲突。
   - [x] 在 queue/planner interfaces 后重构 scheduler internals，同时保留当前 observable behavior 和
     metrics；
   - [x] 增加 deterministic selection、assumed-capacity、bind-conflict 和 restart-recovery coverage；
-  - [ ] 实现 assumed affinity targets 和 Run 间亲和性 bootstrap：
-    - [ ] review Filter-plugin 修订，然后在 scheduler planner 中实现独立的
+  - [x] 实现 assumed affinity targets 和 Run 间亲和性 bootstrap：
+    - [x] review Filter-plugin 修订，然后在 scheduler planner 中实现独立的
       RuntimePodAvailability 和 RunAffinity filters；
-    - [ ] 将 namespace-local actual assignment 和尚未确认的 assumed assignment 投影为不可变的
+    - [x] 将 namespace-local actual assignment 和尚未确认的 assumed assignment 投影为不可变的
       affinity-target snapshot；
-    - [ ] 增加 required Run affinity 和 anti-affinity filter，以及有界的 Pending waiting reason；
-    - [ ] 在 deterministic capacity placement 前，对 preferred affinity 和 anti-affinity 评分；
-    - [ ] 允许 label-matching 的 eligible Run seed 一个空的 Run 间亲和性 cohort，同时让不能满足的
+    - [x] 增加 required Run affinity 和 anti-affinity filter，以及有界的 Pending waiting reason；
+    - [x] 在 deterministic capacity placement 前，对 preferred affinity 和 anti-affinity 评分；
+    - [x] 允许 label-matching 的 eligible Run seed 一个空的 Run 间亲和性 cohort，同时让不能满足的
       dependency 保持 Pending；
-    - [ ] 增加 actual target、assumed target、bootstrap、anti-affinity、capacity 和 recovery 的
+    - [x] 增加 actual target、assumed target、bootstrap、anti-affinity、capacity 和 recovery 的
       unit、integration 与 E2E coverage；
+  - [x] 为 Pending Run wakeups 增加 Runtime field index，避免每次 Runtime Pod 或 capacity event 都扫描
+    namespace；
+  - [ ] review 并引入 Score plugins，使 preferred affinity 和 capacity placement 可以独立组合；
+  - [ ] 增加 filter rejections、reservation conflicts 和 Pending Run wakeups 的有界 scheduler metrics；
   - [ ] 在增加 `Run.spec.priority` 或等价 API 前，通过独立 API design 定义 priority、fairness 和
     starvation policy；
 - [ ] Agent sandbox 所需的 Function-mode Runs：定义 mutually exclusive 的
@@ -209,7 +213,7 @@ controller wiring 累积不必要的冲突。
     skeleton；
   - [x] review Run workspace reference 与 affinity 的专用 API shape，再增加 API skeleton；
   - [x] 为 Run 增加 workspace reference 和 Kubernetes-style Run affinity 字段；
-  - [ ] 通过经过 review 的 [scheduler framework](design/scheduler-framework.md) 实现
+  - [x] 通过经过 review 的 [scheduler framework](design/scheduler-framework.md) 实现
     required/preferred Run affinity，同时在无 capacity 时继续保持 Run Pending；
   - [ ] review 并定义 `RuntimePodLocal` binding semantics：不预留 capacity 的 deterministic
     ready-Pod selection、planned path ownership，以及 bound-Pod deletion 后 sticky `Lost` status：

@@ -4,9 +4,7 @@ title: "Scheduler Framework"
 
 # Scheduler Framework
 
-状态：**Accepted；Reserve/Assume/Bind 实现完成**
-
-Filter-plugin 修订：**Proposed，等待 review**
+状态：**Accepted；Filter、Reserve/Assume/Bind 和 Run 间亲和性实现完成**
 
 本文定义 kruntimes 的目标调度架构。它将当前“每个 Pending Run 独立 reconcile”的模型替换为 scheduler
 queue 与单 Run scheduling cycle。每个 cycle 针对一个 Run，读取 Runtime Pods、active assignments 和
@@ -44,9 +42,10 @@ scheduler-local assumed assignments 的一致快照。
 
 ## 调度范围与队列
 
-scheduler queue 为每条 eligible Pending Run 保存一个 `(namespace, name)` Run key。dequeue 一个 key 时，只为
-该 Run 执行一次 scheduling cycle。确定性的基础排序使用 creation timestamp 和 UID；未来经过 review 的
-priority policy 可以替换 queue ordering，但必须保留 aging 或 fairness rules。
+controller-runtime workqueue 为每条 eligible Pending Run 保存一个 `(namespace, name)` Run key，并合并同一
+key 的重复激活。dequeue 一个 key 时，只为该 Run 执行一次 scheduling cycle。当前排序遵循
+controller-runtime 的 event 和 requeue ordering；kruntimes 尚未额外施加 creation-time 或 UID ordering。
+未来经过 review 的 priority policy 可以定义 ordering、aging 和 fairness。
 
 以下 events 会创建或重新激活 queue entries：
 
@@ -54,9 +53,10 @@ priority policy 可以替换 queue ordering，但必须保留 aging 或 fairness
 - 一条 Runtime Pod 变为 ready、unavailable，或其 capacity 发生变化；或
 - 一条 assigned Run 离开 active set 并释放 capacity。
 
-对于 Runtime Pod 和 capacity events，scheduler 通过 index 找到引用该 Runtime 的 Pending Runs，并将它们的
-Run keys 加入 queue。event handler 不会选择 Runtime Pod 或 patch Run；只有 queue worker dequeue 单条 Run key
-后才会执行这些操作。
+对于 Runtime Pod 和 capacity events，scheduler 使用 controller-runtime local-cache 的 `Run.spec.runtime`
+field index 查找引用该 Runtime 的 Pending Runs，并将它们的 Run keys 加入 queue。这不是 Kubernetes API Server
+field selector，因此该查询必须继续使用 manager cache client，而不能改用 API reader。event handler 不会选择
+Runtime Pod 或 patch Run；只有 queue worker dequeue 单条 Run key 后才会执行这些操作。
 
 ## Planning Cycle
 
@@ -75,7 +75,7 @@ Run keys 加入 queue。event handler 不会选择 Runtime Pod 或 patch Run；�
 6. **Bind**：将该 Run patch 为带 Pod name 和 UID 的 `Scheduled`。resource-version conflict 或 stale Pod
    observation 会释放该 Run 的 reservation 并重新 enqueue 它；这不是 terminal failure。
 
-### Filter 插件（Proposed）
+### Filter 插件
 
 scheduler 会对 snapshot 中的每个 Runtime Pod 执行已注册的 Filter 插件。一个插件接收不可变的 scheduling
 snapshot、该 Run 预计算后的 state 和一个 Pod，并返回 feasible 或一个有界的 rejection reason。插件不能 patch
@@ -92,7 +92,9 @@ planner 在 PreFilter 阶段对每个插件的 Run-specific state 只准备一�
 rejection 后停止处理该 Pod。只有被所有 filter 接受的 Pods 才会进入 Score。rejection reasons 只能聚合成有界的
 Pending status message 和 metrics，不能暴露 Pod names、selectors 或 Run names。
 
-preferred affinity 仍是 scoring concern，而不是 Filter plugin。Reserve、Assume 和 Bind 仍是唯一允许修改
+preferred affinity 仍是 scoring concern，而不是 Filter plugin。当前实现会在存在匹配 preferred term 的 Pod
+时先将 feasible candidates 收窄为这些 Pod，随后使用带有稳定 Pod name tie breaking 的 `LeastLoaded` capacity
+placement。registered Score-plugin contract 是后续工作；Reserve、Assume 和 Bind 仍是唯一允许修改
 scheduler-local placement state 的操作。
 
 每个 reservation 属于一条 Run。与 Kubernetes 一样，assumed placement 让后续 scheduling cycles 在 status
@@ -179,19 +181,20 @@ Run A 拥有的 labels，二者都不能成为 placement seed。它们会带着 
 
 framework 有显式的 internal extension points：
 
-- **Queue ordering**：当前是确定性的 FIFO-like ordering；未来 priority design 可以定义 priority classes、
-  aging、quotas 和 fairness。
+- **Queue ordering**：当前使用 controller-runtime event/requeue ordering；未来 priority design 可以定义
+  priority classes、aging、quotas 和 fairness。
 - **PreFilter/Filter**：Runtime readiness/capacity 和 required affinity 是独立注册的 Filter plugins，
   而不是一个 reconciler 中的 branches。未来 hard predicates 也遵循该 contract。
-- **Score**：preferred affinity 和 least-loaded scoring 是独立 weighted inputs，并具有 stable tie breaking。
+- **Score**：preferred affinity 当前会在 least-loaded capacity strategy 之前收窄 candidates。registered
+  Score-plugin contract 是实现相互独立 weighted inputs 的下一步。
 - **Reserve/Assume/Bind**：assumed assignment 会让选中的 Runtime Pod 和已消耗的 capacity 在 Run bind 前
   对后续 Run cycles 可见。
 
 ## 可观测性
 
-实现应保留现有 scheduling latency 与 result metrics，再增加 queue activation、scheduling-cycle duration、
-filter rejection reason、assumed-assignment conflict 和 unschedulable wakeup 的有界 labels/counters。Run names、
-selectors 和 Pod names 不能作为 metric labels。
+实现已保留 scheduling latency、queue duration 和 result metrics。后续工作增加 queue activation、
+scheduling-cycle duration、filter rejection reason、assumed-assignment conflict 和 unschedulable wakeup 的有界
+labels/counters。Run names、selectors 和 Pod names 不能作为 metric labels。
 
 ## 实现顺序
 
@@ -201,9 +204,10 @@ selectors 和 Pod names 不能作为 metric labels。
    或 affinity semantics。
 3. 实现 Reserve/Assume 和 Bind，并增加 deterministic selection、assumed capacity accounting、handoff 到 actual
    assignments 以及 bind conflicts 的 unit tests。此步骤已完成。
-4. 实现 assumed-target matching 和 Run 间亲和性 bootstrap，并增加 integration 与 E2E coverage。先实现经过
-   review 的 Filter-plugin 修订，避免 RuntimePodAvailability 和 RunAffinity 继续堆积在 planner 的
-   candidate loop 中。
-5. 只有经过独立 API 与 fairness design review 后，才加入 priority。
-
-在第 1 步以及预期 bootstrap/status semantics 被 review 前，affinity implementation PR 不能 merge。
+4. 实现独立的 RuntimePodAvailability 和 RunAffinity filters、assumed-target matching 以及 Run 间亲和性
+   bootstrap，并增加 unit、integration 与 E2E coverage。此步骤已完成。
+5. 为 Pending Run wakeups 增加 Runtime field index，同时保持现有 coalesced-key 和 one-Run-cycle behavior。
+   此步骤已完成。
+6. review 并引入 Score-plugin contract，用于 preferred affinity 和 capacity placement。
+7. 增加 filter rejection、reservations 和 wakeups 的有界 metrics。
+8. 只有经过独立 API 与 fairness design review 后，才加入 priority。

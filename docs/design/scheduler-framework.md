@@ -1,8 +1,6 @@
 # Scheduler Framework
 
-Status: **Accepted; Reserve/Assume/Bind implementation complete**
-
-Filter-plugin amendment: **Proposed for review**
+Status: **Accepted; Filter, Reserve/Assume/Bind, and Inter-Run Affinity implementation complete**
 
 This document defines the target scheduling architecture for kruntimes. It
 replaces the current model of independently reconciling each Pending Run with
@@ -48,11 +46,12 @@ That model has two limits:
 
 ## Scheduling Scope and Queue
 
-The scheduler queue holds one `(namespace, name)` Run key per Pending Run that
-is eligible to schedule. A dequeue performs one scheduling cycle for that Run.
-A deterministic base ordering uses creation timestamp and UID; a future
-reviewed priority policy can replace that queue ordering while retaining aging
-or fairness rules.
+The controller-runtime workqueue holds one `(namespace, name)` Run key per
+eligible Pending Run and coalesces repeated activations for the same key. A
+dequeue performs one scheduling cycle for that Run. Current ordering follows
+controller-runtime event and requeue ordering; kruntimes does not yet impose a
+creation-time or UID ordering. A future reviewed priority policy can define
+ordering, aging, and fairness.
 
 Queue entries are created or reactivated by these events:
 
@@ -60,10 +59,13 @@ Queue entries are created or reactivated by these events:
 - a Runtime Pod becomes ready, unavailable, or changes capacity; or
 - an assigned Run leaves the active set and releases capacity.
 
-For Runtime Pod and capacity events, the scheduler finds Pending Runs for that
-Runtime through an index and adds their Run keys to the queue. The event handler
-does not select a Runtime Pod or patch a Run; that happens only after the queue
-worker dequeues an individual Run key.
+For Runtime Pod and capacity events, the scheduler uses a controller-runtime
+local-cache `Run.spec.runtime` field index to find Pending Runs for that
+Runtime and adds their Run keys to the queue. This is not a Kubernetes API
+Server field selector, so this query must continue to use the manager cache
+client rather than an API reader. The event handler does not select a Runtime
+Pod or patch a Run; that happens only after the queue worker dequeues an
+individual Run key.
 
 ## Planning Cycle
 
@@ -87,7 +89,7 @@ For one dequeued Run, the scheduler performs:
    resource-version conflict or stale Pod observation discards that Run's
 reservation and requeues the key; it is not a terminal failure.
 
-### Filter Plugins (Proposed)
+### Filter Plugins
 
 The scheduler applies registered Filter plugins to every Runtime Pod in the
 snapshot. A plugin receives the immutable scheduling snapshot, the Run's
@@ -110,7 +112,10 @@ rejection. It passes only Pods accepted by every filter to Score. Rejection
 reasons are aggregated only into bounded Pending status messages and metrics;
 they never expose Pod names, selectors, or Run names.
 
-Preferred affinity remains a scoring concern, not a Filter plugin. Reserve,
+Preferred affinity remains a scoring concern, not a Filter plugin. The current
+implementation first narrows feasible candidates to Pods matching a preferred
+term when any exist, then uses `LeastLoaded` capacity placement with stable Pod
+name tie breaking. A registered Score-plugin contract is a follow-up; Reserve,
 Assume, and Bind remain the only operations allowed to mutate scheduler-local
 placement state.
 
@@ -222,22 +227,25 @@ transition so conditions and completion time remain normalized.
 
 The framework has explicit internal extension points:
 
-- **Queue ordering**: currently deterministic FIFO-like ordering; a future
-  priority design can define priority classes, aging, quotas, and fairness.
+- **Queue ordering**: controller-runtime event/requeue ordering is used today;
+  a future priority design can define priority classes, aging, quotas, and
+  fairness.
 - **PreFilter/Filter**: Runtime readiness/capacity and required affinity are
   independently registered Filter plugins rather than branches in one
   reconciler. Future hard predicates follow the same contract.
-- **Score**: preferred affinity and least-loaded scoring are independent
-  weighted inputs with stable tie breaking.
+- **Score**: preferred affinity currently narrows candidates before the
+  least-loaded capacity strategy. A registered Score-plugin contract is the
+  next step for independently weighted inputs.
 - **Reserve/Assume/Bind**: an assumed assignment makes a selected Runtime Pod
   and consumed capacity visible to later Run cycles before the Run is bound.
 
 ## Observability
 
-The implementation should retain scheduling latency and result metrics, then
-add bounded labels/counters for queue activation, scheduling-cycle duration,
-filter rejection reason, assumed-assignment conflict, and unschedulable wakeup. Run
-names, selectors, and Pod names must not be metric labels.
+The implementation retains scheduling latency, queue duration, and result
+metrics. Follow-up work adds bounded labels/counters for queue activation,
+scheduling-cycle duration, filter rejection reason, assumed-assignment
+conflict, and unschedulable wakeup. Run names, selectors, and Pod names must
+not be metric labels.
 
 ## Implementation Sequence
 
@@ -250,11 +258,12 @@ names, selectors, and Pod names must not be metric labels.
 3. Implement Reserve/Assume and Bind with unit tests for deterministic
    selection, assumed capacity accounting, handoff to actual assignments, and
    bind conflicts. This step is complete.
-4. Implement assumed-target matching and Inter-Run Affinity bootstrap with
-   integration and E2E coverage. First implement the reviewed Filter-plugin
-   amendment so RuntimePodAvailability and RunAffinity do not accumulate in
-   the planner's candidate loop.
-5. Add priority only after a separate API and fairness design review.
-
-The affinity implementation PR must not merge until steps 1 and the intended
-bootstrap/status semantics are reviewed.
+4. Implement independent RuntimePodAvailability and RunAffinity filters,
+   assumed-target matching, and Inter-Run Affinity bootstrap with unit,
+   integration, and E2E coverage. This step is complete.
+5. Add a Runtime field index for Pending Run wakeups, preserving the existing
+   coalesced-key and one-Run-cycle behavior. This step is complete.
+6. Review and introduce a Score-plugin contract for preferred affinity and
+   capacity placement.
+7. Add bounded metrics for filter rejection, reservations, and wakeups.
+8. Add priority only after a separate API and fairness design review.

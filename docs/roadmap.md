@@ -93,19 +93,25 @@ wiring from accumulating avoidable conflicts.
     preserving current observable behavior and metrics;
   - [x] add deterministic selection, assumed-capacity, bind-conflict,
     and restart-recovery coverage;
-  - [ ] implement assumed affinity targets and Inter-Run Affinity bootstrap:
-    - [ ] review the Filter-plugin amendment, then implement independent
+  - [x] implement assumed affinity targets and Inter-Run Affinity bootstrap:
+    - [x] review the Filter-plugin amendment, then implement independent
       RuntimePodAvailability and RunAffinity filters in the scheduler planner;
-    - [ ] project namespace-local actual assignments and unconfirmed assumed
+    - [x] project namespace-local actual assignments and unconfirmed assumed
       assignments into an immutable affinity-target snapshot;
-    - [ ] add required Run affinity and anti-affinity filtering with bounded
+    - [x] add required Run affinity and anti-affinity filtering with bounded
       Pending waiting reasons;
-    - [ ] score preferred affinity and anti-affinity ahead of deterministic
+    - [x] score preferred affinity and anti-affinity ahead of deterministic
       capacity placement;
-    - [ ] allow an eligible label-matching Run to seed an empty Inter-Run
+    - [x] allow an eligible label-matching Run to seed an empty Inter-Run
       Affinity cohort, while keeping unsatisfiable dependencies Pending;
-    - [ ] add unit, integration, and E2E coverage for actual targets, assumed
+    - [x] add unit, integration, and E2E coverage for actual targets, assumed
       targets, bootstrap, anti-affinity, capacity, and recovery;
+  - [x] add a Runtime field index for Pending Run wakeups instead of scanning a
+    namespace for every Runtime Pod or capacity event;
+  - [ ] review and introduce Score plugins so preferred affinity and capacity
+    placement are independently composable;
+  - [ ] add bounded scheduler metrics for filter rejections, reservation
+    conflicts, and Pending Run wakeups;
   - [ ] define priority, fairness, and starvation policy in a separate API
     design before adding `Run.spec.priority` or equivalent API;
 - [ ] Function-mode Runs for agent sandboxes: define mutually exclusive
@@ -240,7 +246,7 @@ wiring from accumulating avoidable conflicts.
   - [x] review the dedicated Run workspace-reference and affinity API shape
     before adding the API skeleton;
   - [x] add Run fields for workspace reference and Kubernetes-style Run affinity;
-  - [ ] implement required/preferred Run affinity through the reviewed
+  - [x] implement required/preferred Run affinity through the reviewed
     [scheduler framework](design/scheduler-framework.md), while keeping
     no-capacity Runs Pending;
   - [ ] review and define `RuntimePodLocal` binding semantics: deterministic

@@ -413,6 +413,7 @@ func TestPendingRunsForReleasedCapacity(t *testing.T) {
 
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
+		WithIndex(&v1alpha1.Run{}, runRuntimeIndexField, runRuntimeIndexValues).
 		WithObjects(released, pendingSameRuntime, pendingEmptyPhase, pendingOtherRuntime, scheduledSameRuntime, pendingOtherNamespace).
 		Build()
 	reconciler := &RunReconciler{Client: k8sClient, Log: logr.Discard()}
@@ -465,6 +466,7 @@ func TestPendingRunsForRuntimePod(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
+		WithIndex(&v1alpha1.Run{}, runRuntimeIndexField, runRuntimeIndexValues).
 		WithObjects(pendingSameRuntime, pendingOtherRuntime, scheduledSameRuntime, pendingOtherNamespace).
 		Build()
 	reconciler := &RunReconciler{Client: k8sClient, Log: logr.Discard()}

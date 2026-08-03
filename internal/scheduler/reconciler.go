@@ -30,6 +30,8 @@ import (
 
 const defaultRuntimedHeartbeatStaleAfter = 15 * time.Second
 
+const runRuntimeIndexField = "spec.runtime"
+
 var (
 	runsScheduled = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -295,6 +297,9 @@ func pendingRetryDelay(run *v1alpha1.Run) time.Duration {
 
 // SetupWithManager registers the reconciler with the controller manager.
 func (r *RunReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &v1alpha1.Run{}, runRuntimeIndexField, runRuntimeIndexValues); err != nil {
+		return fmt.Errorf("index Runs by runtime: %w", err)
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Run{}, builder.WithPredicates(pendingRunPredicate())).
 		Watches(
@@ -332,7 +337,7 @@ func (r *RunReconciler) pendingRunsForRuntimePod(ctx context.Context, object cli
 
 func (r *RunReconciler) pendingRunsForRuntime(ctx context.Context, namespace, runtimeName, source string) []reconcile.Request {
 	var runs v1alpha1.RunList
-	if err := r.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
+	if err := r.List(ctx, &runs, client.InNamespace(namespace), client.MatchingFields{runRuntimeIndexField: runtimeName}); err != nil {
 		r.Log.Error(err, "unable to list pending runs", "source", source, "namespace", namespace, "runtime", runtimeName)
 		return nil
 	}
@@ -340,15 +345,20 @@ func (r *RunReconciler) pendingRunsForRuntime(ctx context.Context, namespace, ru
 	requests := make([]reconcile.Request, 0, len(runs.Items))
 	for i := range runs.Items {
 		pending := &runs.Items[i]
-		if pending.Spec.Runtime != runtimeName {
-			continue
-		}
 		if pending.Status.Phase != "" && pending.Status.Phase != v1alpha1.RunPending {
 			continue
 		}
 		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pending)})
 	}
 	return requests
+}
+
+func runRuntimeIndexValues(object client.Object) []string {
+	run, ok := object.(*v1alpha1.Run)
+	if !ok || run.Spec.Runtime == "" {
+		return nil
+	}
+	return []string{run.Spec.Runtime}
 }
 
 func runtimePodSchedulingPredicate() predicate.Predicate {
