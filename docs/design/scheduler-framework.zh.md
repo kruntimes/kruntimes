@@ -4,7 +4,7 @@ title: "Scheduler Framework"
 
 # Scheduler Framework
 
-状态：**Accepted；Filter、Reserve/Assume/Bind 和 Run 间亲和性实现完成**
+状态：**Accepted；Filter、Score、Reserve/Assume/Bind 和 Run 间亲和性实现完成**
 
 本文定义 kruntimes 的目标调度架构。它将当前“每个 Pending Run 独立 reconcile”的模型替换为 scheduler
 queue 与单 Run scheduling cycle。每个 cycle 针对一个 Run，读取 Runtime Pods、active assignments 和
@@ -95,7 +95,7 @@ Pending status message 和 metrics，不能暴露 Pod names、selectors 或 Run 
 preferred affinity 仍是 scoring concern，而不是 Filter plugin。它只表示 feasible Pods 之间的偏好，不能使其他原本 feasible 的 Pod
 变为不可调度。Reserve、Assume 和 Bind 仍是唯一允许修改 scheduler-local placement state 的操作。
 
-### Score 插件（Proposed）
+### Score 插件
 
 scheduler 会对每个通过 Filter 的 Pod 应用每个已注册 Score plugin。一个 plugin 接收不可变 snapshot、预计算后的
 Run state 和一个 candidate Pod，并返回一个 score。它不会移除 candidates、选择 Pod、patch Kubernetes object 或修改 reservation
@@ -216,9 +216,20 @@ framework 有显式的 internal extension points：
 
 ## 可观测性
 
-实现已保留 scheduling latency、queue duration 和 result metrics。后续工作增加 queue activation、
-scheduling-cycle duration、filter rejection reason、assumed-assignment conflict 和 unschedulable wakeup 的有界
-labels/counters。Run names、selectors 和 Pod names 不能作为 metric labels。
+实现已保留 scheduling-cycle duration、Run queue duration 和 scheduling-result metrics。
+framework 增加以下 counters：
+
+- `kruntimes_scheduler_filter_rejections_total{plugin,reason}`：每当一个 Runtime Pod evaluation
+  被 Filter plugin 拒绝时增加一次。两个 label 都来自已注册的内部 plugin 及其有界 rejection-reason set。
+- `kruntimes_scheduler_reservation_conflicts_total{stage}`：当 `Reserve` 发现已选择的 Pod 不再有
+  capacity，或者 `Bind` 遇到 Kubernetes resource-version conflict 时增加。`stage` 只有
+  `reserve` 和 `bind` 两个有界值；其他 API failure 仍然是 controller error，而不是 reservation conflict。
+- `kruntimes_scheduler_pending_run_wakeups_total{source}`：Runtime Pod event 或 capacity release event
+  每发出一个 Pending Run key 时增加一次。`source` 只有 `runtime_pod` 和 `capacity_released` 两个有界值。
+  这个 counter 测量 requested queue activation；controller-runtime 随后可能合并同一个 key 的重复 request。
+
+Metric labels 不能包含 Runtime name、Run name、Pod name、namespace、selector、resource name 或其他
+user-controlled value。这样 time series 的数量只由 scheduler implementation 决定并保持有界。
 
 ## 实现顺序
 
@@ -233,6 +244,6 @@ labels/counters。Run names、selectors 和 Pod names 不能作为 metric labels
 5. 为 Pending Run wakeups 增加 Runtime field index，同时保持现有 coalesced-key 和 one-Run-cycle behavior。
    此步骤已完成。
 6. 引入用于 preferred affinity 和 capacity placement 的 weighted Score plugins，包括 score normalization、framework-owned
-   aggregation 以及确定性 Pod-name tie breaking。
-7. 增加 filter rejection、reservations 和 wakeups 的有界 metrics。
+   aggregation 以及确定性 Pod-name tie breaking。此步骤已完成。
+7. 增加 filter rejection、reservation conflicts 和 Pending Run wakeups 的有界 metrics。
 8. 只有经过独立 API 与 fairness design review 后，才加入 priority。

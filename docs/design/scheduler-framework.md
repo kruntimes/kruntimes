@@ -1,6 +1,6 @@
 # Scheduler Framework
 
-Status: **Accepted; Filter, Reserve/Assume/Bind, and Inter-Run Affinity implementation complete**
+Status: **Accepted; Filter, Score, Reserve/Assume/Bind, and Inter-Run Affinity implementation complete**
 
 This document defines the target scheduling architecture for kruntimes. It
 replaces the current model of independently reconciling each Pending Run with
@@ -117,7 +117,7 @@ a preference among feasible Pods and must not make an otherwise feasible Pod
 unschedulable. Reserve, Assume, and Bind remain the only operations allowed to
 mutate scheduler-local placement state.
 
-### Score Plugins (Proposed)
+### Score Plugins
 
 The scheduler applies every registered Score plugin to every Pod that passed
 Filter. A plugin receives the immutable snapshot, precomputed Run state, and
@@ -277,11 +277,26 @@ The framework has explicit internal extension points:
 
 ## Observability
 
-The implementation retains scheduling latency, queue duration, and result
-metrics. Follow-up work adds bounded labels/counters for queue activation,
-scheduling-cycle duration, filter rejection reason, assumed-assignment
-conflict, and unschedulable wakeup. Run names, selectors, and Pod names must
-not be metric labels.
+The implementation retains scheduling-cycle duration, Run queue duration, and
+scheduling-result metrics. The framework adds these counters:
+
+- `kruntimes_scheduler_filter_rejections_total{plugin,reason}` increments once
+  for each Runtime Pod evaluation rejected by a Filter plugin. Both labels come
+  from the registered internal plugin and its bounded rejection-reason set.
+- `kruntimes_scheduler_reservation_conflicts_total{stage}` increments when
+  `Reserve` observes that the selected Pod no longer has capacity, or when
+  `Bind` encounters a Kubernetes resource-version conflict. The bounded
+  `stage` values are `reserve` and `bind`; other API failures remain controller
+  errors rather than reservation conflicts.
+- `kruntimes_scheduler_pending_run_wakeups_total{source}` increments once for
+  each Pending Run key emitted by a Runtime Pod or released-capacity event.
+  The bounded `source` values are `runtime_pod` and `capacity_released`. This
+  measures requested queue activation; controller-runtime may coalesce
+  repeated requests for the same key afterward.
+
+Metric labels must never contain Runtime names, Run names, Pod names,
+namespaces, selectors, resource names, or other user-controlled values. This
+keeps the number of time series bounded by the scheduler implementation.
 
 ## Implementation Sequence
 
@@ -301,6 +316,7 @@ not be metric labels.
    coalesced-key and one-Run-cycle behavior. This step is complete.
 6. Introduce weighted Score plugins for preferred affinity and capacity
    placement, including score normalization, framework-owned aggregation, and
-   deterministic Pod-name tie breaking.
-7. Add bounded metrics for filter rejection, reservations, and wakeups.
+   deterministic Pod-name tie breaking. This step is complete.
+7. Add bounded metrics for filter rejection, reservation conflicts, and
+   Pending Run wakeups.
 8. Add priority only after a separate API and fairness design review.

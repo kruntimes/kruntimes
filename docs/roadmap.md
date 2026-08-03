@@ -121,8 +121,11 @@ wiring from accumulating avoidable conflicts.
       totals;
     - [x] add unit and integration coverage for normalization, weights, ties,
       and errors;
-  - [ ] add bounded scheduler metrics for filter rejections, reservation
-    conflicts, and Pending Run wakeups;
+  - [ ] add bounded scheduler metrics:
+    - [ ] count Filter-plugin Pod rejections by bounded plugin and reason;
+    - [ ] count stale `Reserve` and conflicting `Bind` operations by bounded
+      stage;
+    - [ ] count requested Pending Run wakeups by bounded event source;
   - [ ] define priority, fairness, and starvation policy in a separate API
     design before adding `Run.spec.priority` or equivalent API;
 - [ ] Function-mode Runs for agent sandboxes: define mutually exclusive
