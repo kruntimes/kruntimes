@@ -86,6 +86,13 @@ type workflowCallValidationError struct {
 func (e *workflowCallValidationError) Error() string { return e.err.Error() }
 func (e *workflowCallValidationError) Unwrap() error { return e.err }
 
+type workflowStepValidationError struct {
+	err error
+}
+
+func (e *workflowStepValidationError) Error() string { return e.err.Error() }
+func (e *workflowStepValidationError) Unwrap() error { return e.err }
+
 // WorkflowRunReconciler owns WorkflowRun execution-instance status.
 type WorkflowRunReconciler struct {
 	client.Client
@@ -421,6 +428,11 @@ func (r *WorkflowRunReconciler) applyStartRunnableTargets(ctx context.Context, r
 			job := resources.snapshot.Spec.Jobs[target.step.jobName]
 			run, err := r.createOrReuseStepRun(ctx, resources, target.step.jobName, job, target.step.stepIndex)
 			if err != nil {
+				var validationErr *workflowStepValidationError
+				if errors.As(err, &validationErr) {
+					recordStepFailure(workflowRun, target.step.jobName, target.step.stepIndex, validationErr.Error())
+					continue
+				}
 				return err
 			}
 			recordStepRun(workflowRun, target.step.jobName, target.step.stepIndex, run.Name)
@@ -522,7 +534,11 @@ func (r *WorkflowRunReconciler) createOrReuseStepRun(ctx context.Context, resour
 		return run, nil
 	}
 
-	run = buildStepRun(workflowRun, jobName, job, step, workflowStepLabels(workflowRun, jobName, step.Name))
+	resolved, err := resolveStepExecution(step, workflowRunStepContext(workflowRun.Status.Jobs, jobName))
+	if err != nil {
+		return nil, &workflowStepValidationError{err: err}
+	}
+	run = buildStepRun(workflowRun, jobName, job, resolved, workflowStepLabels(workflowRun, jobName, step.Name))
 	if err := controllerutil.SetControllerReference(workflowRun, run, r.Scheme); err != nil {
 		return nil, fmt.Errorf("set workflowrun owner reference on run %s/%s: %w", run.Namespace, run.Name, err)
 	}
@@ -546,6 +562,15 @@ func recordStepRun(workflowRun *v1alpha1.WorkflowRun, jobName string, stepIndex 
 	status.Steps[stepIndex].RunName = runName
 	workflowRun.Status.Jobs[jobName] = status
 	workflowRun.Status.Phase = v1alpha1.WorkflowRunning
+}
+
+func recordStepFailure(workflowRun *v1alpha1.WorkflowRun, jobName string, stepIndex int, message string) {
+	status := workflowRun.Status.Jobs[jobName]
+	status.Phase = v1alpha1.JobRunning
+	status.Steps[stepIndex].Phase = v1alpha1.StepFailed
+	workflowRun.Status.Jobs[jobName] = status
+	workflowRun.Status.Phase = v1alpha1.WorkflowRunning
+	workflowRun.Status.Message = fmt.Sprintf("resolve step %q in job %q: %s", status.Steps[stepIndex].Name, jobName, message)
 }
 
 func runnableStepTargets(statuses map[string]v1alpha1.JobStatus, jobs map[string]v1alpha1.JobSpec) []workflowRunTarget {
@@ -594,11 +619,26 @@ func runnableWorkflowCallTargets(statuses map[string]v1alpha1.JobStatus, jobs ma
 func workflowRunJobOutputContext(statuses map[string]v1alpha1.JobStatus) *resolveContext {
 	jobs := make(map[string]map[string]string, len(statuses))
 	for name, status := range statuses {
-		if len(status.Outputs) > 0 {
+		if status.Phase == v1alpha1.JobSucceeded && len(status.Outputs) > 0 {
 			jobs[name] = status.Outputs
 		}
 	}
 	return &resolveContext{jobs: jobs}
+}
+
+func workflowRunStepContext(statuses map[string]v1alpha1.JobStatus, jobName string) *resolveContext {
+	ctx := workflowRunJobOutputContext(statuses)
+	ctx.steps = make(map[string]map[string]string)
+	status, ok := statuses[jobName]
+	if !ok {
+		return ctx
+	}
+	for _, step := range status.Steps {
+		if step.Phase == v1alpha1.StepSucceeded && len(step.Outputs) > 0 {
+			ctx.steps[step.Name] = step.Outputs
+		}
+	}
+	return ctx
 }
 
 func resolveWorkflowCallInputs(values map[string]string, ctx *resolveContext) (map[string]string, error) {

@@ -194,6 +194,102 @@ func TestWorkflowRunReconcilerStartsAllIndependentReadyJobs(t *testing.T) {
 	assertChildRunCount(t, c, workflowRun.Namespace, 2)
 }
 
+func TestWorkflowRunReconcilerResolvesStepExpressionsBeforeCreatingRun(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "release-uid"},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowRunning,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"build": {
+					Phase: v1alpha1.JobRunning,
+					Steps: []v1alpha1.StepStatus{
+						{Name: "package", Phase: v1alpha1.StepSucceeded, Outputs: map[string]string{"artifact": "dist.tgz"}},
+						{Name: "publish", Phase: v1alpha1.StepPending},
+					},
+				},
+				"prepare": {Phase: v1alpha1.JobSucceeded, Outputs: map[string]string{"registry": "registry.example.com"}},
+			},
+		},
+	}
+	job := v1alpha1.JobSpec{RunsOn: "bash", Steps: []v1alpha1.StepSpec{
+		{Name: "package", Run: "package"},
+		{
+			Name: "publish",
+			Run:  "publish ${{ steps.package.outputs.artifact }} to ${{ jobs.prepare.outputs.registry }}",
+			Args: []string{"--artifact", "${{ steps.package.outputs.artifact }}"},
+			Env:  map[string]string{"REGISTRY": "${{ jobs.prepare.outputs.registry }}"},
+		},
+	}}
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	resources := &workflowRunResources{
+		workflowRun: workflowRun,
+		childRuns:   map[string]*v1alpha1.Run{},
+		snapshot:    &workflowExecutionSnapshot{Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{"build": job}}},
+	}
+
+	if err := reconciler.applyStartRunnableTargets(context.Background(), resources, []workflowRunTarget{stepRunTarget("build", 1)}); err != nil {
+		t.Fatalf("start resolved step: %v", err)
+	}
+	var runs v1alpha1.RunList
+	if err := c.List(context.Background(), &runs, client.InNamespace("default")); err != nil {
+		t.Fatalf("list child runs: %v", err)
+	}
+	if len(runs.Items) != 1 {
+		t.Fatalf("child runs = %#v, want one", runs.Items)
+	}
+	run := runs.Items[0]
+	if run.Spec.Source == nil || run.Spec.Source.Inline == nil || *run.Spec.Source.Inline != "publish dist.tgz to registry.example.com" {
+		t.Fatalf("run inline = %#v, want resolved script", run.Spec.Source)
+	}
+	if got := run.Spec.Mode.Task.Args; !reflect.DeepEqual(got, []string{"--artifact", "dist.tgz"}) {
+		t.Fatalf("run args = %v, want resolved args", got)
+	}
+	if len(run.Spec.Env) != 1 || run.Spec.Env[0].Name != "REGISTRY" || run.Spec.Env[0].Value != "registry.example.com" {
+		t.Fatalf("run env = %#v, want resolved env", run.Spec.Env)
+	}
+}
+
+func TestWorkflowRunReconcilerFailsStepWithUnavailableExpression(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "release", Namespace: "default", UID: "release-uid"},
+		Status: v1alpha1.WorkflowRunStatus{
+			Phase: v1alpha1.WorkflowPending,
+			Jobs: map[string]v1alpha1.JobStatus{
+				"build": {Phase: v1alpha1.JobPending, Steps: []v1alpha1.StepStatus{{Name: "publish", Phase: v1alpha1.StepPending}}},
+			},
+		},
+	}
+	job := v1alpha1.JobSpec{RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "publish", Run: "publish ${{ steps.package.outputs.artifact }}"}}}
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	resources := &workflowRunResources{
+		workflowRun: workflowRun,
+		childRuns:   map[string]*v1alpha1.Run{},
+		snapshot:    &workflowExecutionSnapshot{Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{"build": job}}},
+	}
+
+	if err := reconciler.applyStartRunnableTargets(context.Background(), resources, []workflowRunTarget{stepRunTarget("build", 0)}); err != nil {
+		t.Fatalf("start invalid step returned error: %v", err)
+	}
+	status := workflowRun.Status.Jobs["build"]
+	if status.Steps[0].Phase != v1alpha1.StepFailed || status.Phase != v1alpha1.JobRunning {
+		t.Fatalf("step status = %#v, want failed step in running job", status)
+	}
+	if !strings.Contains(workflowRun.Status.Message, "resolve step \"publish\"") {
+		t.Fatalf("message = %q, want expression failure", workflowRun.Status.Message)
+	}
+	var runs v1alpha1.RunList
+	if err := c.List(context.Background(), &runs, client.InNamespace("default")); err != nil {
+		t.Fatalf("list child runs: %v", err)
+	}
+	if len(runs.Items) != 0 {
+		t.Fatalf("child runs = %#v, want none", runs.Items)
+	}
+}
+
 func TestCalculateWorkflowRunPlanSeparatesCurrentStateFromAction(t *testing.T) {
 	empty := &v1alpha1.WorkflowRun{}
 	plan := calculateWorkflowRunPlan(&workflowRunResources{workflowRun: empty})
