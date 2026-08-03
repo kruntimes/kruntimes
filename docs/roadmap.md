@@ -108,8 +108,15 @@ wiring from accumulating avoidable conflicts.
       targets, bootstrap, anti-affinity, capacity, and recovery;
   - [x] add a Runtime field index for Pending Run wakeups instead of scanning a
     namespace for every Runtime Pod or capacity event;
-  - [ ] review and introduce Score plugins so preferred affinity and capacity
-    placement are independently composable;
+  - [ ] review and introduce ordered Score plugins while preserving existing
+    preferred-affinity precedence:
+    - [ ] make PreferredRunAffinity retain highest-scoring candidates before
+      capacity placement;
+    - [ ] make LeastLoaded retain candidates with the best projected complete
+      logical-resource utilization;
+    - [ ] apply framework-owned deterministic Pod-name tie breaking only after
+      all Score phases;
+    - [ ] add unit and integration coverage for plugin order, ties, and errors;
   - [ ] add bounded scheduler metrics for filter rejections, reservation
     conflicts, and Pending Run wakeups;
   - [ ] define priority, fairness, and starvation policy in a separate API

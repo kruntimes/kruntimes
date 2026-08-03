@@ -115,9 +115,40 @@ they never expose Pod names, selectors, or Run names.
 Preferred affinity remains a scoring concern, not a Filter plugin. The current
 implementation first narrows feasible candidates to Pods matching a preferred
 term when any exist, then uses `LeastLoaded` capacity placement with stable Pod
-name tie breaking. A registered Score-plugin contract is a follow-up; Reserve,
-Assume, and Bind remain the only operations allowed to mutate scheduler-local
-placement state.
+name tie breaking. The proposed Score-plugin contract below preserves this
+behavior; Reserve, Assume, and Bind remain the only operations allowed to
+mutate scheduler-local placement state.
+
+### Score Plugins (Proposed)
+
+The scheduler applies registered Score plugins in deterministic order to the
+Pods that passed every Filter plugin. A Score plugin receives the immutable
+snapshot, precomputed Run state, and current candidate set. It calculates one
+comparable score per candidate, retains only candidates tied for its best
+score, and passes that reduced set to the next Score plugin. It must not patch
+Kubernetes objects or mutate reservation state.
+
+This is an ordered score-phase pipeline, not a weighted-score sum. It preserves
+the current public behavior: a preferred affinity match wins over a lower
+capacity score, while capacity resolves ties between equally preferred Pods.
+Changing that precedence to an additive or configurable weighted policy would
+change Run placement semantics and requires a separate reviewed design.
+
+The initial registry will be:
+
+1. **PreferredRunAffinity** sums the existing preferred affinity and
+   anti-affinity weights for each candidate, then retains the highest-scoring
+   candidates.
+2. **LeastLoaded** compares projected complete logical-resource utilization,
+   first by dominant utilization and then by total utilization, retaining the
+   least-loaded candidates.
+3. **PodNameTieBreak** chooses the lexicographically smallest remaining Pod
+   name. It is a framework-owned finalization step, not a configurable plugin.
+
+Score plugins make their own errors explicit. A scoring error aborts the
+planning cycle without creating an assumption or writing a Run status; normal
+controller retry handles transient errors. Filters remain responsible for
+unschedulability and bounded Pending messages.
 
 Each reservation belongs to one Run. As in Kubernetes, the assumed placement
 lets later scheduling cycles observe capacity consumption and an affinity target
@@ -233,9 +264,9 @@ The framework has explicit internal extension points:
 - **PreFilter/Filter**: Runtime readiness/capacity and required affinity are
   independently registered Filter plugins rather than branches in one
   reconciler. Future hard predicates follow the same contract.
-- **Score**: preferred affinity currently narrows candidates before the
-  least-loaded capacity strategy. A registered Score-plugin contract is the
-  next step for independently weighted inputs.
+- **Score**: ordered Score plugins preserve preferred-affinity precedence,
+  then resolve ties by least-loaded capacity and Pod name. A future weighted
+  aggregation policy needs its own design.
 - **Reserve/Assume/Bind**: an assumed assignment makes a selected Runtime Pod
   and consumed capacity visible to later Run cycles before the Run is bound.
 
@@ -263,7 +294,7 @@ not be metric labels.
    integration, and E2E coverage. This step is complete.
 5. Add a Runtime field index for Pending Run wakeups, preserving the existing
    coalesced-key and one-Run-cycle behavior. This step is complete.
-6. Review and introduce a Score-plugin contract for preferred affinity and
-   capacity placement.
+6. Review and introduce ordered Score plugins for preferred affinity and
+   capacity placement while preserving existing precedence.
 7. Add bounded metrics for filter rejection, reservations, and wakeups.
 8. Add priority only after a separate API and fairness design review.

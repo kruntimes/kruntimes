@@ -94,8 +94,32 @@ Pending status message 和 metrics，不能暴露 Pod names、selectors 或 Run 
 
 preferred affinity 仍是 scoring concern，而不是 Filter plugin。当前实现会在存在匹配 preferred term 的 Pod
 时先将 feasible candidates 收窄为这些 Pod，随后使用带有稳定 Pod name tie breaking 的 `LeastLoaded` capacity
-placement。registered Score-plugin contract 是后续工作；Reserve、Assume 和 Bind 仍是唯一允许修改
+placement。下文的 proposed Score-plugin contract 会保留这一行为；Reserve、Assume 和 Bind 仍是唯一允许修改
 scheduler-local placement state 的操作。
+
+### Score 插件（Proposed）
+
+scheduler 按确定性的顺序，对所有通过 Filter plugins 的 Pods 应用已注册 Score plugins。一个 Score plugin 接收
+不可变 snapshot、预计算后的 Run state，以及当前 candidate set。它为每个 candidate 计算一个可比较的 score，只保留
+该 plugin 最高分的 candidates，并将收窄后的集合传给下一个 Score plugin。它不能 patch Kubernetes object 或修改
+reservation state。
+
+这是一条 ordered score-phase pipeline，而不是 weighted-score sum。它保留当前 public behavior：preferred
+affinity match 优先于更低的 capacity score，而 capacity 只负责解决 equally preferred Pods 之间的平分。若改为
+additive 或 configurable weighted policy，将改变 Run placement semantics，必须经过单独 review 的 design。
+
+初始 registry 为：
+
+1. **PreferredRunAffinity** 为每个 candidate 累加现有 preferred affinity 和 anti-affinity weights，然后保留
+   最高分 candidates。
+2. **LeastLoaded** 比较 projected complete logical-resource utilization，先比较 dominant utilization，再比较
+   total utilization，并保留 least-loaded candidates。
+3. **PodNameTieBreak** 选择剩余 candidates 中 lexicographically 最小的 Pod name。它是 framework-owned 的
+   finalization step，不是 configurable plugin。
+
+Score plugins 必须显式返回自己的 errors。scoring error 会中止 planning cycle，不创建 assumption，也不写入 Run
+status；normal controller retry 负责处理 transient errors。Filters 继续负责 unschedulability 和有界的 Pending
+messages。
 
 每个 reservation 属于一条 Run。与 Kubernetes 一样，assumed placement 让后续 scheduling cycles 在 status
 patch 完成前看到 capacity consumption 和 affinity target。bind 失败会释放 reservation 并移除 assumed
@@ -185,8 +209,8 @@ framework 有显式的 internal extension points：
   priority classes、aging、quotas 和 fairness。
 - **PreFilter/Filter**：Runtime readiness/capacity 和 required affinity 是独立注册的 Filter plugins，
   而不是一个 reconciler 中的 branches。未来 hard predicates 也遵循该 contract。
-- **Score**：preferred affinity 当前会在 least-loaded capacity strategy 之前收窄 candidates。registered
-  Score-plugin contract 是实现相互独立 weighted inputs 的下一步。
+- **Score**：ordered Score plugins 保留 preferred-affinity precedence，随后通过 least-loaded capacity 和 Pod name
+  解决平分。future weighted aggregation policy 需要单独 design。
 - **Reserve/Assume/Bind**：assumed assignment 会让选中的 Runtime Pod 和已消耗的 capacity 在 Run bind 前
   对后续 Run cycles 可见。
 
@@ -208,6 +232,6 @@ labels/counters。Run names、selectors 和 Pod names 不能作为 metric labels
    bootstrap，并增加 unit、integration 与 E2E coverage。此步骤已完成。
 5. 为 Pending Run wakeups 增加 Runtime field index，同时保持现有 coalesced-key 和 one-Run-cycle behavior。
    此步骤已完成。
-6. review 并引入 Score-plugin contract，用于 preferred affinity 和 capacity placement。
+6. review 并引入 ordered Score plugins，用于 preferred affinity 和 capacity placement，同时保留现有 precedence。
 7. 增加 filter rejection、reservations 和 wakeups 的有界 metrics。
 8. 只有经过独立 API 与 fairness design review 后，才加入 priority。

@@ -96,7 +96,11 @@ controller wiring 累积不必要的冲突。
       unit、integration 与 E2E coverage；
   - [x] 为 Pending Run wakeups 增加 Runtime field index，避免每次 Runtime Pod 或 capacity event 都扫描
     namespace；
-  - [ ] review 并引入 Score plugins，使 preferred affinity 和 capacity placement 可以独立组合；
+  - [ ] review 并引入 ordered Score plugins，同时保留现有 preferred-affinity precedence：
+    - [ ] 让 PreferredRunAffinity 在 capacity placement 前保留最高分 candidates；
+    - [ ] 让 LeastLoaded 保留具有最佳 projected complete logical-resource utilization 的 candidates；
+    - [ ] 仅在全部 Score phases 后应用 framework-owned 的 deterministic Pod-name tie breaking；
+    - [ ] 增加 plugin order、ties 和 errors 的 unit 与 integration coverage；
   - [ ] 增加 filter rejections、reservation conflicts 和 Pending Run wakeups 的有界 scheduler metrics；
   - [ ] 在增加 `Run.spec.priority` 或等价 API 前，通过独立 API design 定义 priority、fairness 和
     starvation policy；
