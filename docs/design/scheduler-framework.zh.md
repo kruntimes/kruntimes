@@ -92,30 +92,30 @@ planner 在 PreFilter 阶段对每个插件的 Run-specific state 只准备一�
 rejection 后停止处理该 Pod。只有被所有 filter 接受的 Pods 才会进入 Score。rejection reasons 只能聚合成有界的
 Pending status message 和 metrics，不能暴露 Pod names、selectors 或 Run names。
 
-preferred affinity 仍是 scoring concern，而不是 Filter plugin。当前实现会在存在匹配 preferred term 的 Pod
-时先将 feasible candidates 收窄为这些 Pod，随后使用带有稳定 Pod name tie breaking 的 `LeastLoaded` capacity
-placement。下文的 proposed Score-plugin contract 会保留这一行为；Reserve、Assume 和 Bind 仍是唯一允许修改
-scheduler-local placement state 的操作。
+preferred affinity 仍是 scoring concern，而不是 Filter plugin。它只表示 feasible Pods 之间的偏好，不能使其他原本 feasible 的 Pod
+变为不可调度。Reserve、Assume 和 Bind 仍是唯一允许修改 scheduler-local placement state 的操作。
 
 ### Score 插件（Proposed）
 
-scheduler 按确定性的顺序，对所有通过 Filter plugins 的 Pods 应用已注册 Score plugins。一个 Score plugin 接收
-不可变 snapshot、预计算后的 Run state，以及当前 candidate set。它为每个 candidate 计算一个可比较的 score，只保留
-该 plugin 最高分的 candidates，并将收窄后的集合传给下一个 Score plugin。它不能 patch Kubernetes object 或修改
-reservation state。
+scheduler 会对每个通过 Filter 的 Pod 应用每个已注册 Score plugin。一个 plugin 接收不可变 snapshot、预计算后的
+Run state 和一个 candidate Pod，并返回一个 score。它不会移除 candidates、选择 Pod、patch Kubernetes object 或修改 reservation
+state。
 
-这是一条 ordered score-phase pipeline，而不是 weighted-score sum。它保留当前 public behavior：preferred
-affinity match 优先于更低的 capacity score，而 capacity 只负责解决 equally preferred Pods 之间的平分。若改为
-additive 或 configurable weighted policy，将改变 Run placement semantics，必须经过单独 review 的 design。
+score 使用包含 `0..100` 的闭区间，数值越大越好。如果 plugin 需要在 feasible Pod 集合中比较它的结果，它可在所有 raw
+score 已得出后，选择实现 framework-owned 的 normalization。normalized value 仍必须在 `0..100` 范围。framework 将每个 normalized
+plugin score 乘以已注册的正整数 weight，为每个 Pod 累加这些乘积，再按 total 降序排名。对 total 相同的 Pod，选择
+lexicographically 最小的 Pod name。不同于 Kubernetes scheduler 对 equal-score 的随机选择，这个 final tie break 特意保持确定性，以便
+Run placement 与测试可重复。
 
-初始 registry 为：
+初始 registry 和 fixed internal weights 为：
 
-1. **PreferredRunAffinity** 为每个 candidate 累加现有 preferred affinity 和 anti-affinity weights，然后保留
-   最高分 candidates。
-2. **LeastLoaded** 比较 projected complete logical-resource utilization，先比较 dominant utilization，再比较
-   total utilization，并保留 least-loaded candidates。
-3. **PodNameTieBreak** 选择剩余 candidates 中 lexicographically 最小的 Pod name。它是 framework-owned 的
-   finalization step，不是 configurable plugin。
+1. **PreferredRunAffinity**（weight `1`）为每个 candidate 累加匹配的 preferred affinity 和 anti-affinity term weights，然后在
+   feasible Pods 之间对 raw values normalization。满足更多 preferred terms 的 Pod 会获得更高分。
+2. **LeastLoaded**（weight `1`）评估分配 Run 后的 projected complete logical-resource utilization。它比较 dominant
+   utilization，再比较 total utilization，并将这个比较 normalization，使更低的 projected utilization 获得更高分。
+
+这会改变之前 preferred affinity 与 least-loaded placement 之间的 strict precedence：两个 signal 现在共同贡献于一个 weighted total。
+plugin registration 和 weights 在 v0.x 仍是 internal implementation details。暴露 user-configurable scoring policy 需要单独的 API design。
 
 Score plugins 必须显式返回自己的 errors。scoring error 会中止 planning cycle，不创建 assumption，也不写入 Run
 status；normal controller retry 负责处理 transient errors。Filters 继续负责 unschedulability 和有界的 Pending
@@ -209,8 +209,8 @@ framework 有显式的 internal extension points：
   priority classes、aging、quotas 和 fairness。
 - **PreFilter/Filter**：Runtime readiness/capacity 和 required affinity 是独立注册的 Filter plugins，
   而不是一个 reconciler 中的 branches。未来 hard predicates 也遵循该 contract。
-- **Score**：ordered Score plugins 保留 preferred-affinity precedence，随后通过 least-loaded capacity 和 Pod name
-  解决平分。future weighted aggregation policy 需要单独 design。
+- **Score**：plugin 独立为每个 feasible Pod 打分；framework 在需要时 normalization，应用已注册的 weight 并聚合 total，之后执行确定性
+  Pod-name tie breaking。future user-configurable scoring policy 需要单独的 API design。
 - **Reserve/Assume/Bind**：assumed assignment 会让选中的 Runtime Pod 和已消耗的 capacity 在 Run bind 前
   对后续 Run cycles 可见。
 
@@ -232,6 +232,7 @@ labels/counters。Run names、selectors 和 Pod names 不能作为 metric labels
    bootstrap，并增加 unit、integration 与 E2E coverage。此步骤已完成。
 5. 为 Pending Run wakeups 增加 Runtime field index，同时保持现有 coalesced-key 和 one-Run-cycle behavior。
    此步骤已完成。
-6. review 并引入 ordered Score plugins，用于 preferred affinity 和 capacity placement，同时保留现有 precedence。
+6. 引入用于 preferred affinity 和 capacity placement 的 weighted Score plugins，包括 score normalization、framework-owned
+   aggregation 以及确定性 Pod-name tie breaking。
 7. 增加 filter rejection、reservations 和 wakeups 的有界 metrics。
 8. 只有经过独立 API 与 fairness design review 后，才加入 priority。
