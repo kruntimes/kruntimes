@@ -299,8 +299,15 @@ controller wiring 累积不必要的冲突。
     - [x] 验证 child 创建前的 late-binding、child 创建后的 deterministic behavior、restart
       recovery、nested calls、cancellation 和 invalid graphs，包括创建 child 前拒绝
       `A -> B -> A` cycle；
-  - 实现 step-level Action expansion；
-  - 实现 `inputs`、`steps` 和 `jobs` contexts 的 expression evaluation；
+  - 按照已 review 的 [Action Execution](design/workflow-action-execution.md)
+    模型实现 step-level Action expansion：
+    - [ ] 增加 Action call 的 status、immutable snapshot 和 CRD validation shape；
+    - [ ] 在定义的 execution boundaries 计算 `inputs`、`steps` 和 `jobs` expressions；
+    - [ ] 将 Action calls materialize 为普通 child Runs，聚合其 terminal states 和
+      declared outputs，并在 controller restart 后恢复；
+    - [ ] 在为受影响目标创建任何 child Run 前，拒绝 nested Action calls、missing Actions、
+      invalid input bindings 和 invalid Action output expressions；
+  - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；
   - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；
   - 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
     validation failures、output propagation 和 controller restart recovery。

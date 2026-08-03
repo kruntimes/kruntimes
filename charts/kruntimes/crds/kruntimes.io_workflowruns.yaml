@@ -115,22 +115,28 @@ spec:
                             maxLength: 262144
                             type: string
                           uses:
-                            description: Uses references an Action or WorkflowTemplate
-                              (future).
-                            maxLength: 2048
+                            description: Uses references an Action in the same namespace.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                             type: string
                           with:
                             additionalProperties:
                               type: string
-                            description: With passes parameters to an Action (future).
+                            description: With passes string inputs to the Action referenced
+                              by Uses.
                             maxProperties: 256
                             type: object
                         required:
                         - name
                         type: object
                         x-kubernetes-validations:
-                        - message: run must be set and uses is not supported yet
-                          rule: has(self.run) && !has(self.uses)
+                        - message: exactly one of run or uses must be set
+                          rule: has(self.run) != has(self.uses)
+                        - message: with can only be set when uses is set
+                          rule: '!has(self.with) || has(self.uses)'
+                        - message: args and env can only be set on run steps
+                          rule: '!has(self.uses) || (!has(self.args) && !has(self.env))'
                       maxItems: 128
                       minItems: 1
                       type: array
@@ -282,6 +288,47 @@ spec:
                         description: StepStatus tracks the execution status of a WorkflowRun
                           step.
                         properties:
+                          actionSteps:
+                            description: |-
+                              ActionSteps tracks the ordered child Runs of an Action-call step. It is
+                              empty for an inline run step.
+                            items:
+                              description: |-
+                                ActionStepStatus tracks one Action-internal child Run. Action steps are not
+                                caller-defined job steps, so they are nested below the logical call step.
+                              properties:
+                                name:
+                                  description: Name is the Action-local step name.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$
+                                  type: string
+                                outputs:
+                                  additionalProperties:
+                                    type: string
+                                  description: Outputs is key-value pairs exposed
+                                    by this Action-internal step.
+                                  maxProperties: 64
+                                  type: object
+                                phase:
+                                  description: Phase is the current phase of this
+                                    Action-internal step.
+                                  enum:
+                                  - Pending
+                                  - Running
+                                  - Succeeded
+                                  - Failed
+                                  type: string
+                                runName:
+                                  description: RunName is the name of the Run CRD
+                                    created for this Action step.
+                                  type: string
+                              required:
+                              - name
+                              - phase
+                              type: object
+                            maxItems: 128
+                            type: array
                           name:
                             description: Name is the step name.
                             maxLength: 63

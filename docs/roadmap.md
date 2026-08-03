@@ -349,8 +349,19 @@ wiring from accumulating avoidable conflicts.
       behavior after child creation, restart recovery, nested calls,
       cancellation, and invalid graphs, including `A -> B -> A` cycle
       rejection before child creation;
-  - implement step-level Action expansion;
-  - implement expression evaluation for `inputs`, `steps`, and `jobs` contexts;
+  - implement step-level Action expansion through the reviewed
+    [Action Execution](design/workflow-action-execution.md) model:
+    - [ ] add the Action-call status, immutable snapshot, and CRD validation
+      shape;
+    - [ ] evaluate `inputs`, `steps`, and `jobs` expressions at the defined
+      execution boundaries;
+    - [ ] materialize Action calls into ordinary child Runs, aggregate their
+      terminal states and declared outputs, and recover after a controller
+      restart;
+    - [ ] reject nested Action calls, missing Actions, invalid input bindings,
+      and invalid Action output expressions before creating an affected child
+      Run;
+  - promote child Run outputs into WorkflowRun step/job/workflow outputs;
   - promote child Run outputs into WorkflowRun step/job/workflow outputs;
   - add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
     calls, validation failures, output propagation, and controller restart

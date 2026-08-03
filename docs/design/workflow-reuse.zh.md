@@ -1,7 +1,7 @@
 # Workflow Reuse
 
-本文定义 v0.x workflow reuse model。execution-instance split 和 template trigger 已经实现；
-job-level workflow call 与 reusable Action 仍在规划中。
+本文定义 v0.x workflow reuse model。execution-instance split、template trigger 和
+job-level reusable Workflow calls 已经实现；step-level reusable Action execution 仍在规划中。
 
 ## 当前状态
 
@@ -10,9 +10,11 @@ job-level workflow call 与 reusable Action 仍在规划中。
 - 带 immutable inline `jobs` 的 `WorkflowRun` execution instances；
 - 带 declared inputs 和 output contracts 的 reusable `Workflow` definitions；
 - `krt wf trigger`，用于校验 template inputs 并 materialize inline WorkflowRun；
-- inline step `run` scripts、`needs` dependencies，以及有界 step/job outputs。
+- inline step `run` scripts、`needs` dependencies，以及有界 step/job outputs；以及
+- 带 local snapshots、frozen output contracts、nested calls 和 late-bound input rendering 的
+  job-level reusable Workflow calls。
 
-job-level workflow call 与 reusable Action call 已在 API 中表示，但 controller 尚未执行它们。
+reusable Action calls 已在 API 中表示，但 controller 尚未执行它们。
 
 ## 目标
 
@@ -165,8 +167,9 @@ spec:
 Validation 必须保证 step `uses` 和 step `run` 互斥。
 
 Actions 在 caller job context 内运行。默认共享 caller job 的 runtime、workspace、artifacts、
-environment 和 scheduling placement。这意味着 Actions 是轻量 step composition，而不是
-nested workflow execution。
+environment 和 placement constraints。这意味着 Actions 是轻量 step composition，而不是
+nested workflow execution。具体的 status、snapshot 和 execution behavior 见
+[Action Execution](../workflow-action-execution/)。
 
 ## Inputs and Outputs
 

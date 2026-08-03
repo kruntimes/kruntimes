@@ -160,6 +160,36 @@ type StepStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxProperties=64
 	Outputs map[string]string `json:"outputs,omitempty"`
+
+	// ActionSteps tracks the ordered child Runs of an Action-call step. It is
+	// empty for an inline run step.
+	// +optional
+	// +kubebuilder:validation:MaxItems=128
+	ActionSteps []ActionStepStatus `json:"actionSteps,omitempty"`
+}
+
+// +kubebuilder:object:generate=true
+// ActionStepStatus tracks one Action-internal child Run. Action steps are not
+// caller-defined job steps, so they are nested below the logical call step.
+type ActionStepStatus struct {
+	// Name is the Action-local step name.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`
+	Name string `json:"name"`
+
+	// Phase is the current phase of this Action-internal step.
+	Phase StepPhase `json:"phase"`
+
+	// RunName is the name of the Run CRD created for this Action step.
+	// +optional
+	RunName string `json:"runName,omitempty"`
+
+	// Outputs is key-value pairs exposed by this Action-internal step.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=64
+	Outputs map[string]string `json:"outputs,omitempty"`
 }
 
 // +kubebuilder:object:root=true

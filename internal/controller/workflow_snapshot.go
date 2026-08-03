@@ -23,7 +23,17 @@ const maxWorkflowSnapshotBytes = 1 << 20
 // workflowExecutionSnapshot is controller-private storage for one WorkflowRun.
 // It contains that WorkflowRun's accepted inline spec.
 type workflowExecutionSnapshot struct {
-	Spec v1alpha1.WorkflowRunSpec `json:"spec"`
+	Spec    v1alpha1.WorkflowRunSpec          `json:"spec"`
+	Actions map[string]workflowActionSnapshot `json:"actions,omitempty"`
+}
+
+// workflowActionSnapshot freezes one Action definition used by a logical
+// caller step. The map key is controller-private and identifies that call site.
+// Unlike a reusable Workflow call, an Action does not create a child
+// WorkflowRun with its own execution snapshot.
+type workflowActionSnapshot struct {
+	Name string              `json:"name"`
+	Spec v1alpha1.ActionSpec `json:"spec"`
 }
 
 type workflowSnapshotError struct {

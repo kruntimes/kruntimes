@@ -100,7 +100,9 @@ type JobSpec struct {
 
 // +kubebuilder:object:generate=true
 // StepSpec defines a single step within a job.
-// +kubebuilder:validation:XValidation:rule="has(self.run) && !has(self.uses)",message="run must be set and uses is not supported yet"
+// +kubebuilder:validation:XValidation:rule="has(self.run) != has(self.uses)",message="exactly one of run or uses must be set"
+// +kubebuilder:validation:XValidation:rule="!has(self.with) || has(self.uses)",message="with can only be set when uses is set"
+// +kubebuilder:validation:XValidation:rule="!has(self.uses) || (!has(self.args) && !has(self.env))",message="args and env can only be set on run steps"
 type StepSpec struct {
 	// Name of the step.
 	// +kubebuilder:validation:Required
@@ -127,12 +129,14 @@ type StepSpec struct {
 	// +kubebuilder:validation:MaxProperties=256
 	Env map[string]string `json:"env,omitempty"`
 
-	// Uses references an Action or WorkflowTemplate (future).
+	// Uses references an Action in the same namespace.
 	// +optional
-	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
 	Uses string `json:"uses,omitempty"`
 
-	// With passes parameters to an Action (future).
+	// With passes string inputs to the Action referenced by Uses.
 	// +optional
 	// +kubebuilder:validation:MaxProperties=256
 	With map[string]string `json:"with,omitempty"`
