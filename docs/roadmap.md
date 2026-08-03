@@ -79,6 +79,10 @@ wiring from accumulating avoidable conflicts.
   than a manually observed single Run, and clarify whether benchmarks measure
   end-to-end latency, scheduling latency, watch/update latency, or runtime
   execution time.
+- [ ] Runtime readiness visibility: reliably reconcile Deployment readiness
+  into `Runtime.status.readyReplicas`, show it through `krt runtime list/get`,
+  and add integration and E2E coverage for status updates as Pods become ready
+  or unavailable.
 - [ ] Scheduler framework: replace independent per-Run placement with a
   scheduler queue and Kubernetes-style single-Run scheduling cycles. Review the
   [Scheduler Framework](design/scheduler-framework.md) architecture before
