@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"maps"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -28,6 +29,7 @@ type assumedReservation struct {
 	runName string
 	podName string
 	request corev1.ResourceList
+	labels  map[string]string
 }
 
 func reservationKeyFor(run *v1alpha1.Run) reservationKey {
@@ -35,10 +37,29 @@ func reservationKeyFor(run *v1alpha1.Run) reservationKey {
 }
 
 func (c *assumedReservationCache) effectiveUsage(actual map[string]corev1.ResourceList, runs []v1alpha1.Run) map[string]corev1.ResourceList {
+	usage, _ := c.snapshot(actual, runs)
+	return usage
+}
+
+// snapshot returns capacity accounting and affinity targets from one cache
+// observation, so a scheduling cycle cannot combine usage from one assumption
+// set with targets from another.
+func (c *assumedReservationCache) snapshot(actual map[string]corev1.ResourceList, runs []v1alpha1.Run) (map[string]corev1.ResourceList, []affinityTarget) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.syncLocked(runs)
-	return mergeUsage(actual, c.usageLocked())
+
+	targets := make([]affinityTarget, 0, len(runs)+len(c.reservations))
+	for i := range runs {
+		run := &runs[i]
+		if isActiveAffinityTarget(run) {
+			targets = append(targets, affinityTarget{podName: run.Status.AssignedPod, labels: maps.Clone(run.Labels)})
+		}
+	}
+	for _, reservation := range c.reservations {
+		targets = append(targets, affinityTarget{podName: reservation.podName, labels: maps.Clone(reservation.labels)})
+	}
+	return mergeUsage(actual, c.usageLocked()), targets
 }
 
 func (c *assumedReservationCache) reserve(snapshot *schedulingSnapshot, pod *corev1.Pod, available func(corev1.ResourceList) bool) bool {
@@ -78,7 +99,17 @@ func (c *assumedReservationCache) assumeLocked(run *v1alpha1.Run, podName string
 		runName: run.Name,
 		podName: podName,
 		request: cloneResourceList(request),
+		labels:  maps.Clone(run.Labels),
 	}
+}
+
+// affinityTargets returns immutable placement targets from active observed Runs
+// and still-pending reservations. Keeping this view in the reservation cache
+// makes a selected placement available to a later scheduling cycle before the
+// informer observes the status update.
+func (c *assumedReservationCache) affinityTargets(runs []v1alpha1.Run) []affinityTarget {
+	_, targets := c.snapshot(nil, runs)
+	return targets
 }
 
 func (c *assumedReservationCache) syncLocked(runs []v1alpha1.Run) {

@@ -1637,6 +1637,40 @@ capacityObserved:
 	waitForRun(t, second, 30*time.Second)
 }
 
+func TestSchedulerInterRunAffinityBootstrap(t *testing.T) {
+	runtimeName := "bash-affinity"
+	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 2)
+	affinity := &v1alpha1.RunAffinity{RunAffinity: &v1alpha1.RunAffinityRules{
+		RequiredDuringSchedulingIgnoredDuringExecution: []v1alpha1.RunAffinityTerm{{
+			TopologyKey:   v1alpha1.RunAffinityTopologyRuntimePod,
+			LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"cohort": "build"}},
+		}},
+	}}
+	first := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-affinity-first-", Namespace: testNamespace, Labels: map[string]string{"cohort": "build"}},
+		Spec:       v1alpha1.RunSpec{Runtime: runtimeName, Affinity: affinity, Mode: taskMode("sleep 5; echo first")},
+	}
+	if err := k8sClient.Create(context.Background(), first); err != nil {
+		t.Fatalf("create first affinity run: %v", err)
+	}
+	defer func() { _ = k8sClient.Delete(context.Background(), first) }()
+	waitForRunPhase(t, first, 20*time.Second, v1alpha1.RunRunning)
+
+	second := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-affinity-second-", Namespace: testNamespace, Labels: map[string]string{"cohort": "build"}},
+		Spec:       v1alpha1.RunSpec{Runtime: runtimeName, Affinity: affinity, Mode: taskMode("sleep 1; echo second")},
+	}
+	if err := k8sClient.Create(context.Background(), second); err != nil {
+		t.Fatalf("create second affinity run: %v", err)
+	}
+	defer func() { _ = k8sClient.Delete(context.Background(), second) }()
+	waitForRun(t, second, 20*time.Second)
+	if second.Status.AssignedPod != first.Status.AssignedPod {
+		t.Fatalf("second Run assigned to %q, want affinity target %q", second.Status.AssignedPod, first.Status.AssignedPod)
+	}
+	waitForRun(t, first, 20*time.Second)
+}
+
 func killRuntimed(t *testing.T, podName string) {
 	t.Helper()
 	if _, stderr, err := execInPod(context.Background(), podName, "runtimed", []string{"/bin/sh", "-c", "kill 1"}); err != nil {
