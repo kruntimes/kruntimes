@@ -8,59 +8,72 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
-// LeastLoaded selects the Pod with the lowest projected resource utilization.
-type LeastLoaded struct{}
+type leastLoadedScore struct{}
 
-func (s *LeastLoaded) Name() string { return "least-loaded" }
+func newLeastLoadedScore(_ *RunReconciler, _ *schedulingSnapshot, _ *schedulingPreFilterState) (scorePlugin, error) {
+	return &leastLoadedScore{}, nil
+}
 
-func (s *LeastLoaded) Select(candidates []corev1.Pod, usageByPod map[string]corev1.ResourceList, run *v1alpha1.Run) (*corev1.Pod, error) {
-	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no candidate pods")
+func (s *leastLoadedScore) Name() string {
+	return "LeastLoaded"
+}
+
+// Score defers conversion to the shared 0..100 range to NormalizeScores. The
+// complete utilization comparison is a two-part exact rational value, so a
+// scalar raw score would lose the dominant-utilization tie-breaking semantics.
+func (s *leastLoadedScore) Score(_ *schedulingSnapshot, _ *corev1.Pod) (int64, error) {
+	return 0, nil
+}
+
+func (s *leastLoadedScore) NormalizeScores(snapshot *schedulingSnapshot, scores []podScore) error {
+	byName := make(map[string]*corev1.Pod, len(snapshot.pods))
+	for i := range snapshot.pods {
+		byName[snapshot.pods[i].Name] = &snapshot.pods[i]
 	}
-	request, err := run.Spec.ResourceRequests()
-	if err != nil {
-		return nil, fmt.Errorf("get run resource requests: %w", err)
-	}
-
-	type podLoad struct {
-		pod   *corev1.Pod
+	type rankedScore struct {
+		index int
 		score resourceScore
 	}
-
-	pods := make([]podLoad, 0, len(candidates))
-	for i := range candidates {
-		pod := &candidates[i]
-		if pod.DeletionTimestamp != nil {
-			continue
+	ranked := make([]rankedScore, len(scores))
+	for i := range scores {
+		pod := byName[scores[i].podName]
+		if pod == nil {
+			return fmt.Errorf("candidate pod %q is not in the scheduling snapshot", scores[i].podName)
 		}
-
-		score, err := resourceCapacityScore(
+		resourceScore, err := resourceCapacityScore(
 			runtimepod.Capacity(pod, defaultRuntimePodCapacity()),
-			usageByPod[pod.Name],
-			request,
+			snapshot.usageByPod[pod.Name],
+			snapshot.request,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("score pod %q: %w", pod.Name, err)
+			return fmt.Errorf("score pod %q: %w", pod.Name, err)
 		}
-		pods = append(pods, podLoad{pod: pod, score: score})
+		ranked[i] = rankedScore{index: i, score: resourceScore}
 	}
-
-	if len(pods) == 0 {
-		return nil, fmt.Errorf("no available pods")
-	}
-
-	sort.Slice(pods, func(i, j int) bool {
-		if comparison := pods[i].score.compare(pods[j].score); comparison != 0 {
-			return comparison < 0
-		}
-		return pods[i].pod.Name < pods[j].pod.Name
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return ranked[i].score.compare(ranked[j].score) < 0
 	})
-
-	return pods[0].pod, nil
+	if len(ranked) == 1 {
+		scores[ranked[0].index].score = maxPodScore
+		return nil
+	}
+	for start := 0; start < len(ranked); {
+		end := start + 1
+		for end < len(ranked) && ranked[end].score.compare(ranked[start].score) == 0 {
+			end++
+		}
+		// Rank groups preserve ties and map the least-loaded group to 100 and
+		// the most-loaded group to 0.
+		normalized := int64(len(ranked)-1-start) * maxPodScore / int64(len(ranked)-1)
+		for i := start; i < end; i++ {
+			scores[ranked[i].index].score = normalized
+		}
+		start = end
+	}
+	return nil
 }
 
 // resourceScore ranks a projected allocation by its dominant resource

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"testing"
@@ -49,9 +50,8 @@ func TestReconcileKeepsRunPendingWhenNoRuntimePodAvailable(t *testing.T) {
 		Build()
 
 	reconciler := &RunReconciler{
-		Client:   client,
-		Log:      logr.Discard(),
-		Strategy: &LeastLoaded{},
+		Client: client,
+		Log:    logr.Discard(),
 	}
 
 	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
@@ -101,7 +101,7 @@ func TestReconcileFailsInvalidResourceRequests(t *testing.T) {
 		WithStatusSubresource(&v1alpha1.Run{}).
 		WithObjects(run).
 		Build()
-	reconciler := &RunReconciler{Client: client, Log: logr.Discard(), Strategy: &LeastLoaded{}}
+	reconciler := &RunReconciler{Client: client, Log: logr.Discard()}
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: run.Name, Namespace: run.Namespace}}); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -142,9 +142,8 @@ func TestReconcileCancelsPendingRun(t *testing.T) {
 		Build()
 
 	reconciler := &RunReconciler{
-		Client:   client,
-		Log:      logr.Discard(),
-		Strategy: &LeastLoaded{},
+		Client: client,
+		Log:    logr.Discard(),
 	}
 
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{
@@ -216,9 +215,8 @@ func TestReconcileRecordsScheduledCondition(t *testing.T) {
 		Build()
 
 	reconciler := &RunReconciler{
-		Client:   client,
-		Log:      logr.Discard(),
-		Strategy: &LeastLoaded{},
+		Client: client,
+		Log:    logr.Discard(),
 	}
 
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{
@@ -243,6 +241,50 @@ func TestReconcileRecordsScheduledCondition(t *testing.T) {
 	condition := meta.FindStatusCondition(updated.Status.Conditions, runstatus.ConditionScheduled)
 	if condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "Assigned" {
 		t.Fatalf("Scheduled condition = %#v, want true/Assigned", condition)
+	}
+}
+
+func TestReconcileRetriesScorePluginErrorWithoutChangingRunStatus(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add kruntimes scheme: %v", err)
+	}
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "score-error", Namespace: "default"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunPending},
+	}
+	pod := readyAffinityPod("runtime-a", time.Now())
+	pod.Namespace = run.Namespace
+	pod.Labels = map[string]string{"runtime": run.Spec.Runtime}
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run, &pod).
+		Build()
+	reconciler := &RunReconciler{
+		Client: client,
+		Log:    logr.Discard(),
+		scorePluginRegistrations: []scorePluginRegistration{{factory: func(*RunReconciler, *schedulingSnapshot, *schedulingPreFilterState) (scorePlugin, error) {
+			return &recordingScorePlugin{name: "broken", err: errors.New("test failure")}, nil
+		}, weight: 1}},
+	}
+
+	key := types.NamespacedName{Name: run.Name, Namespace: run.Namespace}
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
+	if err == nil || !isScorePluginError(err) {
+		t.Fatalf("reconcile error = %v, want score plugin error", err)
+	}
+	var updated v1alpha1.Run
+	if err := client.Get(context.Background(), key, &updated); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.RunPending || updated.Status.Message != "" {
+		t.Fatalf("status = %#v, want unchanged Pending status", updated.Status)
 	}
 }
 

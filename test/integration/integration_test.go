@@ -66,9 +66,8 @@ func TestMain(m *testing.M) {
 	}
 
 	if err := (&scheduler.RunReconciler{
-		Client:   testMgr.GetClient(),
-		Log:      ctrl.Log.WithName("scheduler"),
-		Strategy: &scheduler.LeastLoaded{},
+		Client: testMgr.GetClient(),
+		Log:    ctrl.Log.WithName("scheduler"),
 	}).SetupWithManager(testMgr); err != nil {
 		panic("failed to setup scheduler: " + err.Error())
 	}
@@ -171,6 +170,58 @@ func TestSchedulerReconcile(t *testing.T) {
 		}
 	}
 	t.Errorf("expected Scheduled, got phase=%s assignedPod=%s", updated.Status.Phase, updated.Status.AssignedPod)
+}
+
+func TestSchedulerAggregatesAffinityAndCapacityScores(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-scheduler-score-")
+
+	runtimeA := createReadyRuntimePod(t, ctx, ns.Name, "runtime-a", 2)
+	runtimeB := createReadyRuntimePod(t, ctx, ns.Name, "runtime-b", 4)
+	runtimeC := createReadyRuntimePod(t, ctx, ns.Name, "runtime-c", 4)
+	// The active Runs provide both affinity targets and current resource usage.
+	// Once weighted-score is placed, projected runs usage is A=2/2, B=3/4,
+	// and C=2/4. LeastLoaded therefore assigns normalized scores A=0, B=50,
+	// and C=100.
+	createAssignedRun(t, ctx, ns.Name, "target-a", runtimeA.Name, map[string]string{"zone": "blue", "tier": "gold"})
+	createAssignedRun(t, ctx, ns.Name, "target-b-1", runtimeB.Name, nil)
+	createAssignedRun(t, ctx, ns.Name, "target-b-2", runtimeB.Name, nil)
+	createAssignedRun(t, ctx, ns.Name, "target-c", runtimeC.Name, map[string]string{"zone": "blue"})
+
+	term := func(labels map[string]string) v1alpha1.WeightedRunAffinityTerm {
+		return v1alpha1.WeightedRunAffinityTerm{
+			Weight: 1,
+			RunAffinityTerm: v1alpha1.RunAffinityTerm{
+				TopologyKey:   v1alpha1.RunAffinityTopologyRuntimePod,
+				LabelSelector: &metav1.LabelSelector{MatchLabels: labels},
+			},
+		}
+	}
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "weighted-score", Namespace: ns.Name},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Mode:    v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+			Affinity: &v1alpha1.RunAffinity{RunAffinity: &v1alpha1.RunAffinityRules{
+				// A matches both terms and has affinity score 100; C matches only
+				// zone=blue and has score 50; B has score 0. With equal plugin
+				// weights, totals are A=100, B=50, C=150, so C must win. This
+				// verifies weighted aggregation rather than strict affinity precedence.
+				PreferredDuringSchedulingIgnoredDuringExecution: []v1alpha1.WeightedRunAffinityTerm{
+					term(map[string]string{"zone": "blue"}),
+					term(map[string]string{"tier": "gold"}),
+				},
+			}},
+		},
+	}
+	if err := k8sClient.Create(ctx, run); err != nil {
+		t.Fatalf("create weighted-score run: %v", err)
+	}
+
+	updated := waitForRunAssignment(t, ctx, run)
+	if updated.Status.AssignedPod != runtimeC.Name {
+		t.Fatalf("assigned pod = %q, want %q; the equal-weight aggregate must allow lower load to outweigh one missing preferred term", updated.Status.AssignedPod, runtimeC.Name)
+	}
 }
 
 func TestRuntimedClaimAndExecute(t *testing.T) {
@@ -1432,4 +1483,71 @@ func testNamespace(t *testing.T, generateName string) *corev1.Namespace {
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), ns) })
 	return ns
+}
+
+func createReadyRuntimePod(t *testing.T, ctx context.Context, namespace, name string, runsCapacity int64) *corev1.Pod {
+	t.Helper()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels:    map[string]string{"runtime": "bash"},
+			Annotations: map[string]string{
+				runtimepod.CapacityAnnotation(v1alpha1.RuntimeResourceRuns): resource.NewQuantity(runsCapacity, resource.DecimalSI).String(),
+			},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "runtime", Image: "busybox"}}},
+	}
+	if err := k8sClient.Create(ctx, pod); err != nil {
+		t.Fatalf("create runtime pod %q: %v", name, err)
+	}
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.Conditions = []corev1.PodCondition{
+		{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.Now()},
+		{Type: v1alpha1.RuntimePodRuntimedReadyCondition, Status: corev1.ConditionTrue, LastProbeTime: metav1.Now(), LastTransitionTime: metav1.Now()},
+	}
+	if err := k8sClient.Status().Update(ctx, pod); err != nil {
+		t.Fatalf("update runtime pod %q status: %v", name, err)
+	}
+	return pod
+}
+
+func createAssignedRun(t *testing.T, ctx context.Context, namespace, name, podName string, labels map[string]string) {
+	t.Helper()
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels},
+		Spec: v1alpha1.RunSpec{
+			Runtime: "bash",
+			Mode:    v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+		},
+	}
+	if err := k8sClient.Create(ctx, run); err != nil {
+		t.Fatalf("create assigned run %q: %v", name, err)
+	}
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			return err
+		}
+		run.Status.Phase = v1alpha1.RunScheduled
+		run.Status.AssignedPod = podName
+		return k8sClient.Status().Update(ctx, run)
+	}); err != nil {
+		t.Fatalf("assign run %q to pod %q: %v", name, podName, err)
+	}
+}
+
+func waitForRunAssignment(t *testing.T, ctx context.Context, run *v1alpha1.Run) v1alpha1.Run {
+	t.Helper()
+	var updated v1alpha1.Run
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), &updated); err != nil {
+			t.Fatalf("get run %q: %v", run.Name, err)
+		}
+		if updated.Status.Phase == v1alpha1.RunScheduled && updated.Status.AssignedPod != "" {
+			return updated
+		}
+	}
+	t.Fatalf("run %q was not scheduled: phase=%s assignedPod=%q", run.Name, updated.Status.Phase, updated.Status.AssignedPod)
+	return v1alpha1.Run{}
 }

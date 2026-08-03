@@ -84,9 +84,13 @@ type filterPlugin interface {
 // selector compilation and other Run-specific work out of the Pod loop.
 type filterPluginFactory func(*RunReconciler, *schedulingSnapshot, *schedulingPreFilterState) (filterPlugin, error)
 
-var defaultFilterPluginFactories = []filterPluginFactory{
-	newRuntimePodAvailabilityFilter,
-	newRunAffinityFilter,
+type filterPluginRegistration struct {
+	factory filterPluginFactory
+}
+
+var defaultFilterPluginRegistrations = []filterPluginRegistration{
+	{factory: newRuntimePodAvailabilityFilter},
+	{factory: newRunAffinityFilter},
 }
 
 // loadSchedulingSnapshot performs the Snapshot and PreFilter framework
@@ -134,6 +138,10 @@ func (r *RunReconciler) planSchedulingCycle(snapshot *schedulingSnapshot) (sched
 	if err != nil {
 		return schedulingPlan{}, err
 	}
+	scores, err := r.registeredScorePlugins(snapshot, preFilter)
+	if err != nil {
+		return schedulingPlan{}, err
+	}
 	candidates := make([]corev1.Pod, 0, len(snapshot.pods))
 	rejections := make(map[filterReason]int)
 	for i := range snapshot.pods {
@@ -159,12 +167,11 @@ func (r *RunReconciler) planSchedulingCycle(snapshot *schedulingSnapshot) (sched
 		}, nil
 	}
 
-	candidates = preFilter.affinity.preferredCandidates(candidates)
-	selected, err := r.Strategy.Select(candidates, snapshot.usageByPod, snapshot.run)
+	candidates, err = scoreAndRankPods(snapshot, candidates, scores)
 	if err != nil {
-		return schedulingPlan{}, fmt.Errorf("score runtime pods: %w", err)
+		return schedulingPlan{}, err
 	}
-	return schedulingPlan{action: schedulingPlanBind, selected: selected}, nil
+	return schedulingPlan{action: schedulingPlanBind, selected: &candidates[0]}, nil
 }
 
 func (r *RunReconciler) preFilter(snapshot *schedulingSnapshot) (*schedulingPreFilterState, error) {
@@ -176,11 +183,21 @@ func (r *RunReconciler) preFilter(snapshot *schedulingSnapshot) (*schedulingPreF
 }
 
 func (r *RunReconciler) registeredFilterPlugins(snapshot *schedulingSnapshot, preFilter *schedulingPreFilterState) ([]filterPlugin, error) {
-	plugins := make([]filterPlugin, 0, len(defaultFilterPluginFactories))
-	for _, factory := range defaultFilterPluginFactories {
-		plugin, err := factory(r, snapshot, preFilter)
+	registrations := r.filterPluginRegistrations
+	if len(registrations) == 0 {
+		registrations = defaultFilterPluginRegistrations
+	}
+	plugins := make([]filterPlugin, 0, len(registrations))
+	for _, registration := range registrations {
+		if registration.factory == nil {
+			return nil, fmt.Errorf("initialize filter plugin: nil factory")
+		}
+		plugin, err := registration.factory(r, snapshot, preFilter)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("initialize filter plugin: %w", err)
+		}
+		if plugin == nil {
+			return nil, fmt.Errorf("initialize filter plugin: nil plugin")
 		}
 		plugins = append(plugins, plugin)
 	}

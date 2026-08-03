@@ -30,9 +30,11 @@ func TestRunAffinityFiltersActualTargetsAndScoresPreferences(t *testing.T) {
 	if !affinity.filter("pod-a").feasible || affinity.filter("pod-b").feasible || affinity.filter("pod-c").feasible {
 		t.Fatalf("required filter results are incorrect")
 	}
-	candidates := affinity.preferredCandidates([]corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "pod-a"}}, {ObjectMeta: metav1.ObjectMeta{Name: "pod-c"}}})
-	if len(candidates) != 1 || candidates[0].Name != "pod-a" {
-		t.Fatalf("preferred candidates = %#v, want pod-a", candidates)
+	if score := affinity.preferredScore("pod-a"); score != 10 {
+		t.Fatalf("preferred score for pod-a = %d, want 10", score)
+	}
+	if score := affinity.preferredScore("pod-c"); score != 0 {
+		t.Fatalf("preferred score for pod-c = %d, want 0", score)
 	}
 }
 

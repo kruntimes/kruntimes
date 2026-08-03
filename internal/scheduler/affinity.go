@@ -120,34 +120,19 @@ func (a runAffinity) filter(podName string) filterResult {
 	return filterResult{feasible: true}
 }
 
-func (a runAffinity) preferredCandidates(candidates []corev1.Pod) []corev1.Pod {
-	if len(candidates) < 2 || (len(a.preferred) == 0 && len(a.preferredAnti) == 0) {
-		return candidates
-	}
-	var best int32
-	scores := make([]int32, len(candidates))
-	for i, pod := range candidates {
-		for _, rule := range a.preferred {
-			if rule.pods[pod.Name] {
-				scores[i] += rule.weight
-			}
-		}
-		for _, rule := range a.preferredAnti {
-			if !rule.pods[pod.Name] {
-				scores[i] += rule.weight
-			}
-		}
-		if i == 0 || scores[i] > best {
-			best = scores[i]
+func (a runAffinity) preferredScore(podName string) int64 {
+	var score int64
+	for _, rule := range a.preferred {
+		if rule.pods[podName] {
+			score += int64(rule.weight)
 		}
 	}
-	selected := make([]corev1.Pod, 0, len(candidates))
-	for i, pod := range candidates {
-		if scores[i] == best {
-			selected = append(selected, pod)
+	for _, rule := range a.preferredAnti {
+		if !rule.pods[podName] {
+			score += int64(rule.weight)
 		}
 	}
-	return selected
+	return score
 }
 
 func isActiveAffinityTarget(run *v1alpha1.Run) bool {

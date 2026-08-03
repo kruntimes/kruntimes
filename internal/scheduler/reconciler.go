@@ -73,10 +73,11 @@ func init() {
 type RunReconciler struct {
 	client.Client
 	Log                         logr.Logger
-	Strategy                    Strategy
 	RuntimedHeartbeatStaleAfter time.Duration
 
-	assumptions assumedReservationCache
+	assumptions               assumedReservationCache
+	filterPluginRegistrations []filterPluginRegistration
+	scorePluginRegistrations  []scorePluginRegistration
 }
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;update;patch
@@ -125,6 +126,9 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 	plan, err := r.planSchedulingCycle(snapshot)
 	if err != nil {
+		if isScorePluginError(err) {
+			return ctrl.Result{}, err
+		}
 		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
 		run.Status.Phase = v1alpha1.RunFailed
 		run.Status.Message = fmt.Sprintf("pod selection failed: %v", err)

@@ -19,7 +19,6 @@ func TestPlanSchedulingCycle(t *testing.T) {
 		t.Fatalf("resource requests: %v", err)
 	}
 	reconciler := &RunReconciler{
-		Strategy:                    &LeastLoaded{},
 		RuntimedHeartbeatStaleAfter: time.Minute,
 	}
 
@@ -77,7 +76,7 @@ func TestPlanSchedulingCycleHonorsRunAffinity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reconciler := &RunReconciler{Strategy: &LeastLoaded{}, RuntimedHeartbeatStaleAfter: time.Minute}
+	reconciler := &RunReconciler{RuntimedHeartbeatStaleAfter: time.Minute}
 	pods := []corev1.Pod{readyAffinityPod("runtime-a", now), readyAffinityPod("runtime-b", now)}
 
 	plan, err := reconciler.planSchedulingCycle(&schedulingSnapshot{
@@ -110,7 +109,7 @@ func TestPlanSchedulingCycleReportsAffinityRejection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reconciler := &RunReconciler{Strategy: &LeastLoaded{}, RuntimedHeartbeatStaleAfter: time.Minute}
+	reconciler := &RunReconciler{RuntimedHeartbeatStaleAfter: time.Minute}
 	plan, err := reconciler.planSchedulingCycle(&schedulingSnapshot{
 		run:             run,
 		request:         request,
@@ -146,6 +145,31 @@ func TestRegisteredFilterPlugins(t *testing.T) {
 	if plugins[0].Name() != "RuntimePodAvailability" || plugins[1].Name() != "RunAffinity" {
 		t.Fatalf("registered plugin order = %q, %q", plugins[0].Name(), plugins[1].Name())
 	}
+}
+
+func TestRegisteredFilterPluginsUsesConfiguredRegistrations(t *testing.T) {
+	reconciler := &RunReconciler{filterPluginRegistrations: []filterPluginRegistration{{factory: func(*RunReconciler, *schedulingSnapshot, *schedulingPreFilterState) (filterPlugin, error) {
+		return testFilterPlugin{name: "test"}, nil
+	}}}}
+	plugins, err := reconciler.registeredFilterPlugins(&schedulingSnapshot{}, &schedulingPreFilterState{})
+	if err != nil {
+		t.Fatalf("registeredFilterPlugins: %v", err)
+	}
+	if len(plugins) != 1 || plugins[0].Name() != "test" {
+		t.Fatalf("registered plugins = %#v, want test", plugins)
+	}
+}
+
+type testFilterPlugin struct {
+	name string
+}
+
+func (p testFilterPlugin) Name() string {
+	return p.name
+}
+
+func (testFilterPlugin) Filter(*schedulingSnapshot, *corev1.Pod) filterResult {
+	return filterResult{feasible: true}
 }
 
 func readyAffinityPod(name string, now time.Time) corev1.Pod {
