@@ -163,3 +163,18 @@ kruntimes_scheduler_reservation_conflicts_total{stage="` + string(stage) + `"} 1
 		t.Fatalf("reservation conflict metric: %v", err)
 	}
 }
+
+func assertPendingRunWakeupMetric(t *testing.T, registry *prometheus.Registry, source pendingRunWakeupSource, count int) {
+	t.Helper()
+	want := `# HELP kruntimes_scheduler_pending_run_wakeups_total Total Pending Run wakeup requests emitted by scheduler event handlers.
+# TYPE kruntimes_scheduler_pending_run_wakeups_total counter
+kruntimes_scheduler_pending_run_wakeups_total{source="` + string(source) + `"} ` + strconv.Itoa(count) + `
+`
+	if err := testutil.GatherAndCompare(
+		registry,
+		strings.NewReader(want),
+		"kruntimes_scheduler_pending_run_wakeups_total",
+	); err != nil {
+		t.Fatalf("pending Run wakeup metric: %v", err)
+	}
+}

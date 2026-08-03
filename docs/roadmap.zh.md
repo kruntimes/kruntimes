@@ -104,10 +104,10 @@ controller wiring 累积不必要的冲突。
     - [x] 将 plugin score normalization 至 `0..100`，应用 fixed internal weights，聚合 totals 并按总分降序排名；
     - [x] 对 equal totals 保留 framework-owned 的 deterministic Pod-name tie breaking；
     - [x] 增加 normalization、weights、ties 和 errors 的 unit 与 integration coverage；
-  - [ ] 增加有界 scheduler metrics：
+  - [x] 增加有界 scheduler metrics：
     - [x] 按有界 plugin 和 reason 统计 Filter-plugin 对 Pod 的 rejection；
     - [x] 按有界 stage 统计 stale `Reserve` 和 conflicting `Bind` 操作；
-    - [ ] 按有界 event source 统计 requested Pending Run wakeups；
+    - [x] 按有界 event source 统计 requested Pending Run wakeups；
   - [ ] 在增加 `Run.spec.priority` 或等价 API 前，通过独立 API design 定义 priority、fairness 和
     starvation policy；
 - [ ] Agent sandbox 所需的 Function-mode Runs：定义 mutually exclusive 的

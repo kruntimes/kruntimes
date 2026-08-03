@@ -286,7 +286,7 @@ func (r *RunReconciler) pendingRunsForReleasedCapacity(ctx context.Context, obje
 	if !ok || run.Spec.Runtime == "" {
 		return nil
 	}
-	return r.pendingRunsForRuntime(ctx, run.Namespace, run.Spec.Runtime, "released runtime capacity")
+	return r.pendingRunsForRuntime(ctx, run.Namespace, run.Spec.Runtime, pendingRunWakeupSourceCapacityReleased)
 }
 
 func (r *RunReconciler) pendingRunsForRuntimePod(ctx context.Context, object client.Object) []reconcile.Request {
@@ -298,10 +298,10 @@ func (r *RunReconciler) pendingRunsForRuntimePod(ctx context.Context, object cli
 	if runtimeName == "" {
 		return nil
 	}
-	return r.pendingRunsForRuntime(ctx, pod.Namespace, runtimeName, "runtime pod scheduling change")
+	return r.pendingRunsForRuntime(ctx, pod.Namespace, runtimeName, pendingRunWakeupSourceRuntimePod)
 }
 
-func (r *RunReconciler) pendingRunsForRuntime(ctx context.Context, namespace, runtimeName, source string) []reconcile.Request {
+func (r *RunReconciler) pendingRunsForRuntime(ctx context.Context, namespace, runtimeName string, source pendingRunWakeupSource) []reconcile.Request {
 	var runs v1alpha1.RunList
 	if err := r.List(ctx, &runs, client.InNamespace(namespace), client.MatchingFields{runRuntimeIndexField: runtimeName}); err != nil {
 		r.Log.Error(err, "unable to list pending runs", "source", source, "namespace", namespace, "runtime", runtimeName)
@@ -316,6 +316,7 @@ func (r *RunReconciler) pendingRunsForRuntime(ctx context.Context, namespace, ru
 		}
 		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pending)})
 	}
+	r.metricsRecorder().observePendingRunWakeups(source, len(requests))
 	return requests
 }
 

@@ -12,6 +12,13 @@ const (
 	reservationConflictStageBind    reservationConflictStage = "bind"
 )
 
+type pendingRunWakeupSource string
+
+const (
+	pendingRunWakeupSourceRuntimePod       pendingRunWakeupSource = "runtime_pod"
+	pendingRunWakeupSourceCapacityReleased pendingRunWakeupSource = "capacity_released"
+)
+
 type schedulerMetrics struct {
 	runsScheduled        *prometheus.CounterVec
 	syncDuration         *prometheus.HistogramVec
@@ -19,6 +26,7 @@ type schedulerMetrics struct {
 	runQueueDuration     *prometheus.HistogramVec
 	filterRejections     *prometheus.CounterVec
 	reservationConflicts *prometheus.CounterVec
+	pendingRunWakeups    *prometheus.CounterVec
 }
 
 func newSchedulerMetrics(registerer prometheus.Registerer) *schedulerMetrics {
@@ -67,6 +75,13 @@ func newSchedulerMetrics(registerer prometheus.Registerer) *schedulerMetrics {
 			},
 			[]string{"stage"},
 		),
+		pendingRunWakeups: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "kruntimes_scheduler_pending_run_wakeups_total",
+				Help: "Total Pending Run wakeup requests emitted by scheduler event handlers.",
+			},
+			[]string{"source"},
+		),
 	}
 	registerer.MustRegister(
 		metrics.runsScheduled,
@@ -75,6 +90,7 @@ func newSchedulerMetrics(registerer prometheus.Registerer) *schedulerMetrics {
 		metrics.runQueueDuration,
 		metrics.filterRejections,
 		metrics.reservationConflicts,
+		metrics.pendingRunWakeups,
 	)
 	return metrics
 }
@@ -94,4 +110,10 @@ func (m *schedulerMetrics) observeFilterRejection(plugin string, reason filterRe
 
 func (m *schedulerMetrics) observeReservationConflict(stage reservationConflictStage) {
 	m.reservationConflicts.WithLabelValues(string(stage)).Inc()
+}
+
+func (m *schedulerMetrics) observePendingRunWakeups(source pendingRunWakeupSource, count int) {
+	if count > 0 {
+		m.pendingRunWakeups.WithLabelValues(string(source)).Add(float64(count))
+	}
 }

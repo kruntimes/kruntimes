@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -458,7 +459,8 @@ func TestPendingRunsForReleasedCapacity(t *testing.T) {
 		WithIndex(&v1alpha1.Run{}, runRuntimeIndexField, runRuntimeIndexValues).
 		WithObjects(released, pendingSameRuntime, pendingEmptyPhase, pendingOtherRuntime, scheduledSameRuntime, pendingOtherNamespace).
 		Build()
-	reconciler := &RunReconciler{Client: k8sClient, Log: logr.Discard()}
+	registry := prometheus.NewPedanticRegistry()
+	reconciler := &RunReconciler{Client: k8sClient, Log: logr.Discard(), metrics: newSchedulerMetrics(registry)}
 
 	requests := reconciler.pendingRunsForReleasedCapacity(context.Background(), released)
 	got := make([]string, 0, len(requests))
@@ -475,6 +477,7 @@ func TestPendingRunsForReleasedCapacity(t *testing.T) {
 	if requests := reconciler.pendingRunsForReleasedCapacity(context.Background(), &corev1.Pod{}); len(requests) != 0 {
 		t.Fatalf("requests for non-Run object = %v, want none", requests)
 	}
+	assertPendingRunWakeupMetric(t, registry, pendingRunWakeupSourceCapacityReleased, 2)
 }
 
 func TestPendingRunsForRuntimePod(t *testing.T) {
@@ -511,7 +514,8 @@ func TestPendingRunsForRuntimePod(t *testing.T) {
 		WithIndex(&v1alpha1.Run{}, runRuntimeIndexField, runRuntimeIndexValues).
 		WithObjects(pendingSameRuntime, pendingOtherRuntime, scheduledSameRuntime, pendingOtherNamespace).
 		Build()
-	reconciler := &RunReconciler{Client: k8sClient, Log: logr.Discard()}
+	registry := prometheus.NewPedanticRegistry()
+	reconciler := &RunReconciler{Client: k8sClient, Log: logr.Discard(), metrics: newSchedulerMetrics(registry)}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 		Name:      "runtime-bash",
 		Namespace: "default",
@@ -525,6 +529,7 @@ func TestPendingRunsForRuntimePod(t *testing.T) {
 	if requests := reconciler.pendingRunsForRuntimePod(context.Background(), &corev1.Pod{}); len(requests) != 0 {
 		t.Fatalf("requests without runtime label = %v, want none", requests)
 	}
+	assertPendingRunWakeupMetric(t, registry, pendingRunWakeupSourceRuntimePod, 1)
 }
 
 func TestRuntimePodSchedulingPredicate(t *testing.T) {
