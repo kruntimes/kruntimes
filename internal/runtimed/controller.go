@@ -994,7 +994,18 @@ func prepareSource(run *v1alpha1.Run) (string, error) {
 		return runDir, nil
 	}
 	if run.Spec.Source.Inline != nil {
-		scriptPath := filepath.Join(runDir, "script")
+		scriptPath := "script"
+		if run.Spec.Mode.Function != nil {
+			var err error
+			scriptPath, err = execpath.ResolveEntrypoint(run.Spec.Source.InlinePath, "")
+			if err != nil {
+				return "", fmt.Errorf("resolve inline function source path: %w", err)
+			}
+		}
+		scriptPath = filepath.Join(runDir, scriptPath)
+		if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
+			return "", fmt.Errorf("mkdir inline source parent: %w", err)
+		}
 		if err := os.WriteFile(scriptPath, []byte(*run.Spec.Source.Inline), 0o644); err != nil {
 			return "", fmt.Errorf("write inline: %w", err)
 		}

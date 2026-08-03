@@ -137,6 +137,62 @@ func TestPrepareSource_InlineDefaultEntrypoint(t *testing.T) {
 	}
 }
 
+func TestPrepareSource_FunctionInlineMaterializesInlinePath(t *testing.T) {
+	dir := t.TempDir()
+	workspacePath = dir
+
+	inline := "def invoke(request):\n    return request\n"
+	run := &v1alpha1.Run{
+		Spec: v1alpha1.RunSpec{
+			Source: &v1alpha1.CodeSource{
+				Inline:     &inline,
+				InlinePath: "app/handler.py",
+			},
+			Mode: v1alpha1.RunMode{
+				Function: &v1alpha1.RunFunctionMode{Handler: "app.handler.invoke"},
+			},
+		},
+	}
+	run.UID = "test-function-uid"
+
+	workDir, err := prepareSource(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(workDir, "app", "handler.py"))
+	if err != nil {
+		t.Fatalf("read inline function source: %v", err)
+	}
+	if string(data) != inline {
+		t.Errorf("inline function source = %q, want %q", data, inline)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "script")); !os.IsNotExist(err) {
+		t.Fatalf("function inline source should not create default script, stat err = %v", err)
+	}
+}
+
+func TestPrepareSource_FunctionInlineRejectsEscapingInlinePath(t *testing.T) {
+	dir := t.TempDir()
+	workspacePath = dir
+
+	inline := "def invoke(request):\n    return request\n"
+	run := &v1alpha1.Run{
+		Spec: v1alpha1.RunSpec{
+			Source: &v1alpha1.CodeSource{Inline: &inline, InlinePath: "../handler.py"},
+			Mode:   v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "handler.invoke"}},
+		},
+	}
+	run.UID = "test-function-uid"
+
+	if _, err := prepareSource(run); err == nil {
+		t.Fatal("prepareSource succeeded for escaping inlinePath")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "handler.py")); !os.IsNotExist(err) {
+		t.Fatalf("escaping inlinePath created a file outside the Run directory: %v", err)
+	}
+}
+
 func TestPrepareSource_InlineIgnoresEscapingEntrypoint(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath = dir

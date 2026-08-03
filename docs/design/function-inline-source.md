@@ -1,6 +1,6 @@
 # Function Inline Source Materialization
 
-Status: **Proposed for review**
+Status: **Accepted; API and generic source preparation complete**
 
 Function-mode Runs can use either repository source or inline source. Repository
 source already preserves its file layout. Inline source currently does not: runtimed
@@ -8,19 +8,20 @@ writes it to a fixed file named `script`. That is insufficient for function hand
 whose runtime-defined handler notation identifies a file or module, such as Python
 `app.invoke` or Bash `handler.handle`.
 
-This document proposes the minimal API needed to materialize a single inline
+This document defines the minimal API needed to materialize a single inline
 function source file predictably, without making runtimed understand any specific
 runtime language.
 
-## Proposed API
+## API
 
 Add `inlinePath` to `Run.spec.source`:
 
 ```go
 type CodeSource struct {
-    Inline     string `json:"inline,omitempty"`
+    Inline     *string `json:"inline,omitempty"`
     InlinePath string `json:"inlinePath,omitempty"`
-    Git        *GitSource `json:"git,omitempty"`
+    RepoURL    string `json:"repoURL,omitempty"`
+    CommitSHA  string `json:"commitSHA,omitempty"`
 }
 ```
 
@@ -96,10 +97,9 @@ they receive their own API review.
 
 ## Implementation Follow-Up
 
-After this API is approved:
+The API field, CEL validation, generated deepcopy code, CRD manifests, and
+generic source preparation are complete. The remaining implementation is:
 
-1. add the API field, CEL validation, generated deepcopy code, and CRD manifests;
-2. update generic source preparation to materialize the validated path;
-3. update function examples and validation tests for Python, Bash, repository, and
+1. update function examples and validation tests for Python, Bash, repository, and
    invalid-path cases;
-4. implement the function registration lifecycle from `Scheduled` through `Ready`.
+2. implement the function registration lifecycle from `Scheduled` through `Ready`.
