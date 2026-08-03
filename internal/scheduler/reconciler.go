@@ -140,7 +140,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
 		log.Info("No available runtime pods", "runtime", run.Spec.Runtime)
 
-		message := plan.pendingMessage
+		message := plan.message
 		if run.Status.Phase != v1alpha1.RunPending || run.Status.Message != message {
 			run.Status.Phase = v1alpha1.RunPending
 			run.Status.Message = message

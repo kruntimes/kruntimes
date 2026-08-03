@@ -28,9 +28,9 @@ type schedulingSnapshot struct {
 }
 
 type schedulingPlan struct {
-	action         schedulingPlanAction
-	selected       *corev1.Pod
-	pendingMessage string
+	action   schedulingPlanAction
+	selected *corev1.Pod
+	message  string
 }
 
 type schedulingPlanAction string
@@ -154,8 +154,8 @@ func (r *RunReconciler) planSchedulingCycle(snapshot *schedulingSnapshot) (sched
 	}
 	if len(candidates) == 0 {
 		return schedulingPlan{
-			action:         schedulingPlanWait,
-			pendingMessage: waitingMessageForFilterRejections(snapshot.run.Spec.Runtime, rejections),
+			action:  schedulingPlanWait,
+			message: waitingMessageForFilterRejections(snapshot.run.Spec.Runtime, rejections),
 		}, nil
 	}
 

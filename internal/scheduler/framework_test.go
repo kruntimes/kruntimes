@@ -124,8 +124,8 @@ func TestPlanSchedulingCycleReportsAffinityRejection(t *testing.T) {
 	if plan.action != schedulingPlanWait {
 		t.Fatalf("plan action = %q, want Wait", plan.action)
 	}
-	if got := plan.pendingMessage; got != `waiting for available runtime pods satisfying required Run affinity for runtime "bash"` {
-		t.Fatalf("pending message = %q", got)
+	if got := plan.message; got != `waiting for available runtime pods satisfying required Run affinity for runtime "bash"` {
+		t.Fatalf("message = %q", got)
 	}
 }
 
