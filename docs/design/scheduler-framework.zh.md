@@ -4,7 +4,7 @@ title: "Scheduler Framework"
 
 # Scheduler Framework
 
-状态：**Accepted；Filter、Score、Reserve/Assume/Bind 和 Run 间亲和性实现完成**
+状态：**Accepted；v0.x 实现完成（Filter、Score、Reserve/Assume/Bind、Run 间亲和性和有界可观测性）**
 
 本文定义 kruntimes 的目标调度架构。它将当前“每个 Pending Run 独立 reconcile”的模型替换为 scheduler
 queue 与单 Run scheduling cycle。每个 cycle 针对一个 Run，读取 Runtime Pods、active assignments 和
@@ -246,4 +246,5 @@ user-controlled value。这样 time series 的数量只由 scheduler implementat
 6. 引入用于 preferred affinity 和 capacity placement 的 weighted Score plugins，包括 score normalization、framework-owned
    aggregation 以及确定性 Pod-name tie breaking。此步骤已完成。
 7. 增加 filter rejection、reservation conflicts 和 Pending Run wakeups 的有界 metrics。
-8. 只有经过独立 API 与 fairness design review 后，才加入 priority。
+   此步骤已完成。
+8. priority 是 v1.0 工作；只有经过独立 API 与 fairness design review 后，才加入。

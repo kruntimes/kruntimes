@@ -83,7 +83,7 @@ wiring from accumulating avoidable conflicts.
   into `Runtime.status.readyReplicas`, show it through `krt runtime list/get`,
   and add integration and E2E coverage for status updates as Pods become ready
   or unavailable.
-- [ ] Scheduler framework: replace independent per-Run placement with a
+- [x] Scheduler framework: replace independent per-Run placement with a
   scheduler queue and Kubernetes-style single-Run scheduling cycles. Review the
   [Scheduler Framework](design/scheduler-framework.md) architecture before
   changing scheduler behavior.
@@ -126,8 +126,6 @@ wiring from accumulating avoidable conflicts.
     - [x] count stale `Reserve` and conflicting `Bind` operations by bounded
       stage;
     - [x] count requested Pending Run wakeups by bounded event source;
-  - [ ] define priority, fairness, and starvation policy in a separate API
-    design before adding `Run.spec.priority` or equivalent API;
 - [ ] Function-mode Runs for agent sandboxes: define mutually exclusive
   `Run.spec.mode.task` and `Run.spec.mode.function` semantics so a function Run
   can reserve a pre-warmed Runtime Pod, register a callable function with
@@ -378,6 +376,11 @@ wiring from accumulating avoidable conflicts.
 ### Toward v1.0
 
 - Stabilize CRD APIs.
+- [ ] Add `Run.spec.priority` as a scheduler API. First review the priority,
+  fairness, aging/starvation, namespace isolation, authorization, retry/backoff,
+  and non-preemption semantics, then replace controller-runtime event ordering
+  with scheduler-owned queue ordering and add unit, integration, and E2E
+  coverage.
 - [ ] Support explicitly configured concurrent invocations for a function-mode
   Run. Preserve the default single in-flight invocation, define per-function
   concurrency limits and invocation/workspace isolation semantics, and retain

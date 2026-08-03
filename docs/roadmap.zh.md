@@ -75,7 +75,7 @@ controller wiring 累积不必要的冲突。
 - [ ] Runtime readiness visibility：可靠地将 Deployment readiness reconcile 到
   `Runtime.status.readyReplicas`，通过 `krt runtime list/get` 展示，并为 Pod 变为 ready 或 unavailable 时的
   status update 增加 integration 和 E2E coverage。
-- [ ] Scheduler framework：将独立的 per-Run placement 替换为 scheduler queue 和 Kubernetes-style 的
+- [x] Scheduler framework：将独立的 per-Run placement 替换为 scheduler queue 和 Kubernetes-style 的
   单 Run scheduling cycles。在改变 scheduler behavior 前，review
   [Scheduler Framework](design/scheduler-framework.md) architecture。
   初始实现 TODO：
@@ -108,8 +108,6 @@ controller wiring 累积不必要的冲突。
     - [x] 按有界 plugin 和 reason 统计 Filter-plugin 对 Pod 的 rejection；
     - [x] 按有界 stage 统计 stale `Reserve` 和 conflicting `Bind` 操作；
     - [x] 按有界 event source 统计 requested Pending Run wakeups；
-  - [ ] 在增加 `Run.spec.priority` 或等价 API 前，通过独立 API design 定义 priority、fairness 和
-    starvation policy；
 - [ ] Agent sandbox 所需的 Function-mode Runs：定义 mutually exclusive 的
   `Run.spec.mode.task` 和 `Run.spec.mode.function` 语义，让 function Run 可以 reserve
   预热 Runtime Pod，向 runtimed/runtime-server 注册 callable function，保持 ready 状态
@@ -324,6 +322,15 @@ controller wiring 累积不必要的冲突。
 ### 迈向 v1.0
 
 - 稳定 CRD API。
+- [ ] 将 `Run.spec.priority` 作为 scheduler API 加入。先 review priority、fairness、aging/starvation、
+  namespace isolation、authorization、retry/backoff 和 non-preemption semantics，再用 scheduler-owned
+  queue ordering 替换 controller-runtime event ordering，并增加 unit、integration 和 E2E coverage。
+- [ ] 支持为 function-mode Run 显式配置 concurrent invocations。保留默认的单个 in-flight invocation，
+  定义 per-function concurrency limits、invocation/workspace isolation semantics，并继续执行 Runtime Pod
+  capacity enforcement。
+- [ ] 设计 persistent per-registration Function worker processes，以降低 Python invocation 的启动开销。
+  在替换当前每次 invocation 都启动 subprocess 的模型前，review worker lifecycle、module state、
+  cancellation、concurrency、output limits 和 isolation。
 - 定义兼容性和迁移保证。
 - 记录弃用策略。
 - 明确生产环境的多租户隔离策略。

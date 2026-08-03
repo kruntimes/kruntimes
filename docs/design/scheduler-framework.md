@@ -1,6 +1,6 @@
 # Scheduler Framework
 
-Status: **Accepted; Filter, Score, Reserve/Assume/Bind, and Inter-Run Affinity implementation complete**
+Status: **Accepted; v0.x implementation complete (Filter, Score, Reserve/Assume/Bind, Inter-Run Affinity, and bounded observability)**
 
 This document defines the target scheduling architecture for kruntimes. It
 replaces the current model of independently reconciling each Pending Run with
@@ -318,5 +318,6 @@ keeps the number of time series bounded by the scheduler implementation.
    placement, including score normalization, framework-owned aggregation, and
    deterministic Pod-name tie breaking. This step is complete.
 7. Add bounded metrics for filter rejection, reservation conflicts, and
-   Pending Run wakeups.
-8. Add priority only after a separate API and fairness design review.
+   Pending Run wakeups. This step is complete.
+8. Add priority as v1.0 work only, after a separate API and fairness design
+   review.
