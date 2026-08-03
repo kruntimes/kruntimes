@@ -99,11 +99,11 @@ controller wiring 累积不必要的冲突。
       unit、integration 与 E2E coverage；
   - [x] 为 Pending Run wakeups 增加 Runtime field index，避免每次 Runtime Pod 或 capacity event 都扫描
     namespace；
-  - [ ] 引入 Kubernetes-style 的 weighted Score plugins：
-    - [ ] 每个 plugin 为每个通过 Filter 的 Pod 打分，而不在 plugin 内缩小 candidate set；
-    - [ ] 将 plugin score normalization 至 `0..100`，应用 fixed internal weights，聚合 totals 并按总分降序排名；
-    - [ ] 对 equal totals 保留 framework-owned 的 deterministic Pod-name tie breaking；
-    - [ ] 增加 normalization、weights、ties 和 errors 的 unit 与 integration coverage；
+  - [x] 引入 Kubernetes-style 的 weighted Score plugins：
+    - [x] 每个 plugin 为每个通过 Filter 的 Pod 打分，而不在 plugin 内缩小 candidate set；
+    - [x] 将 plugin score normalization 至 `0..100`，应用 fixed internal weights，聚合 totals 并按总分降序排名；
+    - [x] 对 equal totals 保留 framework-owned 的 deterministic Pod-name tie breaking；
+    - [x] 增加 normalization、weights、ties 和 errors 的 unit 与 integration coverage；
   - [ ] 增加 filter rejections、reservation conflicts 和 Pending Run wakeups 的有界 scheduler metrics；
   - [ ] 在增加 `Run.spec.priority` 或等价 API 前，通过独立 API design 定义 priority、fairness 和
     starvation policy；
