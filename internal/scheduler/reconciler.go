@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -18,7 +17,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -32,43 +30,6 @@ const defaultRuntimedHeartbeatStaleAfter = 15 * time.Second
 
 const runRuntimeIndexField = "spec.runtime"
 
-var (
-	runsScheduled = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "kruntimes_scheduler_sync_total",
-			Help: "Total number of tasks processed by the scheduler.",
-		},
-		[]string{"runtime", "result"},
-	)
-	syncDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "kruntimes_scheduler_sync_duration_seconds",
-			Help:    "Latency of run scheduling.",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"runtime"},
-	)
-	noPodsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "kruntimes_scheduler_no_pods_total",
-			Help: "Total number of tasks that could not find a matching runtime pod.",
-		},
-		[]string{"runtime"},
-	)
-	runQueueDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "kruntimes_scheduler_run_queue_duration_seconds",
-			Help:    "Time from Run creation until scheduler assignment.",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"runtime"},
-	)
-)
-
-func init() {
-	metrics.Registry.MustRegister(runsScheduled, syncDuration, noPodsTotal, runQueueDuration)
-}
-
 // RunReconciler watches Pending Tasks and assigns them to Runtime Pods.
 type RunReconciler struct {
 	client.Client
@@ -78,6 +39,7 @@ type RunReconciler struct {
 	assumptions               assumedReservationCache
 	filterPluginRegistrations []filterPluginRegistration
 	scorePluginRegistrations  []scorePluginRegistration
+	metrics                   *schedulerMetrics
 }
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;update;patch
@@ -113,7 +75,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	log.Info("Scheduling run", "runtime", run.Spec.Runtime)
 	start := time.Now()
 	defer func() {
-		syncDuration.WithLabelValues(run.Spec.Runtime).Observe(time.Since(start).Seconds())
+		r.metricsRecorder().syncDuration.WithLabelValues(run.Spec.Runtime).Observe(time.Since(start).Seconds())
 	}()
 
 	if retryDelay := pendingRetryDelay(&run); retryDelay > 0 {
@@ -129,7 +91,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		if isScorePluginError(err) {
 			return ctrl.Result{}, err
 		}
-		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
+		r.metricsRecorder().noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
 		run.Status.Phase = v1alpha1.RunFailed
 		run.Status.Message = fmt.Sprintf("pod selection failed: %v", err)
 		if err := r.Status().Update(ctx, &run); err != nil {
@@ -138,12 +100,12 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			}
 			return ctrl.Result{}, fmt.Errorf("update selection failure status: %w", err)
 		}
-		runsScheduled.WithLabelValues(run.Spec.Runtime, "selection_error").Inc()
+		r.metricsRecorder().runsScheduled.WithLabelValues(run.Spec.Runtime, "selection_error").Inc()
 		return ctrl.Result{}, nil
 	}
 
 	if plan.action == schedulingPlanWait {
-		noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
+		r.metricsRecorder().noPodsTotal.WithLabelValues(run.Spec.Runtime).Inc()
 		log.Info("No available runtime pods", "runtime", run.Spec.Runtime)
 
 		message := plan.message
@@ -154,7 +116,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 				return ctrl.Result{}, fmt.Errorf("update run status: %w", err)
 			}
 		}
-		runsScheduled.WithLabelValues(run.Spec.Runtime, "no_pods").Inc()
+		r.metricsRecorder().runsScheduled.WithLabelValues(run.Spec.Runtime, "no_pods").Inc()
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 	if plan.action != schedulingPlanBind || plan.selected == nil {
@@ -173,14 +135,14 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 
 	log.Info("Run scheduled", "pod", plan.selected.Name)
-	runsScheduled.WithLabelValues(run.Spec.Runtime, "scheduled").Inc()
-	observeRunQueueDuration(&run, time.Now())
+	r.metricsRecorder().runsScheduled.WithLabelValues(run.Spec.Runtime, "scheduled").Inc()
+	r.observeRunQueueDuration(&run, time.Now())
 	return ctrl.Result{}, nil
 }
 
-func observeRunQueueDuration(run *v1alpha1.Run, scheduledAt time.Time) {
+func (r *RunReconciler) observeRunQueueDuration(run *v1alpha1.Run, scheduledAt time.Time) {
 	if seconds, ok := runQueueDurationSeconds(run, scheduledAt); ok {
-		runQueueDuration.WithLabelValues(run.Spec.Runtime).Observe(seconds)
+		r.metricsRecorder().runQueueDuration.WithLabelValues(run.Spec.Runtime).Observe(seconds)
 	}
 }
 

@@ -152,6 +152,7 @@ func (r *RunReconciler) planSchedulingCycle(snapshot *schedulingSnapshot) (sched
 			if result.feasible {
 				continue
 			}
+			r.metricsRecorder().observeFilterRejection(filter.Name(), result.reason)
 			rejections[result.reason]++
 			feasible = false
 			break

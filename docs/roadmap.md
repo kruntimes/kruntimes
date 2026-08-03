@@ -122,7 +122,7 @@ wiring from accumulating avoidable conflicts.
     - [x] add unit and integration coverage for normalization, weights, ties,
       and errors;
   - [ ] add bounded scheduler metrics:
-    - [ ] count Filter-plugin Pod rejections by bounded plugin and reason;
+    - [x] count Filter-plugin Pod rejections by bounded plugin and reason;
     - [ ] count stale `Reserve` and conflicting `Bind` operations by bounded
       stage;
     - [ ] count requested Pending Run wakeups by bounded event source;
