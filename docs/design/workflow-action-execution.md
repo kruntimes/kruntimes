@@ -1,6 +1,6 @@
 # Action Execution
 
-Status: **Proposed**
+Status: **Implemented**
 
 This document defines step-level reusable Action execution for v0.x Workflow
 reuse. It extends the existing inline WorkflowRun execution and job-level

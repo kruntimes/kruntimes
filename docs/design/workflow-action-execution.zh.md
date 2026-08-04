@@ -4,7 +4,7 @@ title: "Action Execution"
 
 # Action Execution
 
-状态：**Proposed**
+状态：**Implemented**
 
 本文定义 v0.x Workflow reuse 的 step-level reusable Action execution。它扩展现有的
 inline WorkflowRun execution 和 job-level reusable Workflow call model，但不会引入新的

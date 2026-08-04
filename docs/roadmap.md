@@ -275,7 +275,7 @@ wiring from accumulating avoidable conflicts.
   - add E2E coverage for Runtime workspace volume sources, job-local workspace
     sharing, job-to-job artifact passing, Runtime Pod loss, cleanup, and
     permission boundaries.
-- [ ] Workflow reuse model: split execution instances from reusable
+- [x] Workflow reuse model: split execution instances from reusable
   definitions before Workflow APIs stabilize. Target model:
   - replace the current execution-instance `Workflow` API with `WorkflowRun`;
   - `WorkflowRun.spec` contains inline `jobs` only; `krt workflow trigger`
@@ -349,7 +349,7 @@ wiring from accumulating avoidable conflicts.
       behavior after child creation, restart recovery, nested calls,
       cancellation, and invalid graphs, including `A -> B -> A` cycle
       rejection before child creation;
-  - implement step-level Action expansion through the reviewed
+  - [x] implement step-level Action expansion through the reviewed
     [Action Execution](design/workflow-action-execution.md) model:
     - [x] add the Action-call status, immutable snapshot, and CRD validation
       shape;
@@ -361,8 +361,6 @@ wiring from accumulating avoidable conflicts.
     - [x] reject nested Action calls, missing Actions, invalid input bindings,
       and invalid Action output expressions before creating an affected child
       Run;
-  - promote child Run outputs into WorkflowRun step/job/workflow outputs;
-  - promote child Run outputs into WorkflowRun step/job/workflow outputs;
   - [x] add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
     calls, validation failures, output propagation, and controller restart
     recovery.
