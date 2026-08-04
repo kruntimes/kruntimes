@@ -693,6 +693,100 @@ func TestWorkflowRunExecutesActionAndProjectsOutputs(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunFailsWhenActionChildRunFails(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-fail-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.ActionSpec{
+			Steps: []v1alpha1.StepSpec{{Name: "fail", Run: "exit 17"}},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), action); err != nil {
+		t.Fatalf("create failing Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), action) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-fail-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: action.Name}}},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create WorkflowRun with failing Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	waitForWorkflowRunPhase(t, workflowRun, 30*time.Second, v1alpha1.WorkflowFailed)
+	step := workflowRun.Status.Jobs["build"].Steps[0]
+	if step.Phase != v1alpha1.StepFailed || len(step.ActionSteps) != 1 || step.ActionSteps[0].Phase != v1alpha1.StepFailed {
+		t.Fatalf("failing Action status = %#v, want failed caller and child step", step)
+	}
+}
+
+func TestWorkflowRunCancellationPropagatesToActionChildRun(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-cancel-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.ActionSpec{
+			Steps: []v1alpha1.StepSpec{{Name: "wait", Run: "sleep 30"}},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), action); err != nil {
+		t.Fatalf("create cancellable Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), action) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-cancel-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: action.Name}}},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create WorkflowRun with cancellable Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	actionRunName := waitForActionChildRun(t, workflowRun, "build", "setup", 20*time.Second)
+	workflowRun.Spec.CancelRequested = true
+	if err := k8sClient.Update(context.Background(), workflowRun); err != nil {
+		t.Fatalf("request WorkflowRun cancellation: %v", err)
+	}
+
+	actionRun := &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{Name: actionRunName, Namespace: testNamespace}}
+	waitForRunPhase(t, actionRun, 30*time.Second, v1alpha1.RunCancelled)
+	if !actionRun.Spec.CancelRequested {
+		t.Fatalf("Action child Run %s cancelRequested=false, want true", actionRun.Name)
+	}
+	waitForWorkflowRunPhase(t, workflowRun, 30*time.Second, v1alpha1.WorkflowCancelled)
+}
+
+func waitForActionChildRun(t *testing.T, workflowRun *v1alpha1.WorkflowRun, jobName, stepName string, timeout time.Duration) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for {
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+			t.Fatalf("get WorkflowRun while waiting for Action child: %v", err)
+		}
+		for _, step := range workflowRun.Status.Jobs[jobName].Steps {
+			if step.Name == stepName && len(step.ActionSteps) == 1 && step.ActionSteps[0].RunName != "" {
+				return step.ActionSteps[0].RunName
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for Action child Run: %#v", workflowRun.Status)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
 func TestWorkflowRunExecutesReusableWorkflowAndProjectsOutputs(t *testing.T) {
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
