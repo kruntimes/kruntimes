@@ -48,6 +48,9 @@ const (
 	WorkflowJobLabel = "kruntimes.io/workflow-job"
 	// WorkflowStepLabel identifies the workflow step that owns a child Run.
 	WorkflowStepLabel = "kruntimes.io/workflow-step"
+	// WorkflowActionStepLabel identifies the Action-local step that owns a
+	// child Run. It is empty for an inline WorkflowRun step.
+	WorkflowActionStepLabel = "kruntimes.io/workflow-action-step"
 	// WorkflowOutputAnnotationPrefix identifies frozen reusable Workflow output
 	// expressions on a materialized child WorkflowRun. The suffix is the output
 	// name from the source Workflow.

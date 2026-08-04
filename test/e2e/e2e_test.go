@@ -628,6 +628,71 @@ func TestWorkflowTriggerMaterializesAndExecutesTemplate(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunExecutesActionAndProjectsOutputs(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.ActionSpec{
+			Inputs: map[string]v1alpha1.ActionInputSpec{
+				"message": {Required: true},
+			},
+			Outputs: map[string]v1alpha1.ActionOutputSpec{
+				"endpoint": {Value: "${{ steps.emit.outputs.endpoint }}"},
+			},
+			Steps: []v1alpha1.StepSpec{
+				{
+					Name: "validate",
+					Run:  `test "$MESSAGE" = "action-input"`,
+					Env:  map[string]string{"MESSAGE": "${{ inputs.message }}"},
+				},
+				{
+					Name: "emit",
+					Run:  `printf 'endpoint=https://action.e2e.example.com\n' > "$KRUNTIME_OUTPUTS"`,
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), action); err != nil {
+		t.Fatalf("create Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), action) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {
+				RunsOn: "bash",
+				Steps: []v1alpha1.StepSpec{
+					{Name: "setup", Uses: action.Name, With: map[string]string{"message": "action-input"}},
+					{
+						Name: "consume",
+						Run:  `test "$ENDPOINT" = "https://action.e2e.example.com"`,
+						Env:  map[string]string{"ENDPOINT": "${{ steps.setup.outputs.endpoint }}"},
+					},
+				},
+			},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create WorkflowRun with Action call: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	waitForWorkflowRunPhase(t, workflowRun, 45*time.Second, v1alpha1.WorkflowSucceeded)
+	setup := workflowRun.Status.Jobs["build"].Steps[0]
+	if setup.Phase != v1alpha1.StepSucceeded || setup.Outputs["endpoint"] != "https://action.e2e.example.com" {
+		t.Fatalf("Action caller step = %#v, want projected endpoint", setup)
+	}
+	if len(setup.ActionSteps) != 2 || setup.ActionSteps[0].Phase != v1alpha1.StepSucceeded || setup.ActionSteps[1].Phase != v1alpha1.StepSucceeded {
+		t.Fatalf("Action internal steps = %#v, want both succeeded", setup.ActionSteps)
+	}
+	if consume := workflowRun.Status.Jobs["build"].Steps[1]; consume.Phase != v1alpha1.StepSucceeded {
+		t.Fatalf("consumer step = %#v, want succeeded after Action output projection", consume)
+	}
+}
+
 func TestWorkflowRunExecutesReusableWorkflowAndProjectsOutputs(t *testing.T) {
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 

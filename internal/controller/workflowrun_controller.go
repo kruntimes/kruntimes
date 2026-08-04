@@ -71,8 +71,9 @@ type workflowRunTarget struct {
 }
 
 type jobStepRunTarget struct {
-	jobName   string
-	stepIndex int
+	jobName         string
+	stepIndex       int
+	actionStepIndex int // 0 identifies an inline caller step; Action steps are one-based.
 }
 
 type jobWorkflowCallTarget struct {
@@ -173,7 +174,7 @@ func (r *WorkflowRunReconciler) loadWorkflowRunResources(ctx context.Context, ke
 	childRuns := make(map[string]*v1alpha1.Run, len(runs.Items))
 	for i := range runs.Items {
 		run := &runs.Items[i]
-		key := workflowStepKey(run.Labels[v1alpha1.WorkflowJobLabel], run.Labels[v1alpha1.WorkflowStepLabel])
+		key := workflowStepKey(run.Labels[v1alpha1.WorkflowJobLabel], run.Labels[v1alpha1.WorkflowStepLabel], run.Labels[v1alpha1.WorkflowActionStepLabel])
 		if existing, ok := childRuns[key]; !ok || run.Name < existing.Name {
 			childRuns[key] = run.DeepCopy()
 		}
@@ -258,6 +259,10 @@ func (r *WorkflowRunReconciler) applyInitializeWorkflowRun(ctx context.Context, 
 		if err := validateWorkflowRunJobs(snapshot.Spec.Jobs); err != nil {
 			return rejectWorkflowRun(workflowRun, "WorkflowValidationFailed", err.Error())
 		}
+		snapshot.Actions, err = r.resolveWorkflowRunActions(ctx, workflowRun, snapshot.Spec.Jobs)
+		if err != nil {
+			return rejectWorkflowRun(workflowRun, "WorkflowValidationFailed", err.Error())
+		}
 		persistedName, persistedSnapshot, err := r.ensureWorkflowSnapshot(ctx, workflowRun, snapshot)
 		if err != nil {
 			var snapshotErr *workflowSnapshotError
@@ -273,6 +278,7 @@ func (r *WorkflowRunReconciler) applyInitializeWorkflowRun(ctx context.Context, 
 	workflowRun.Status.Phase = v1alpha1.WorkflowPending
 	workflowRun.Status.Message = ""
 	workflowRun.Status.Jobs = resolvedJobStatuses(snapshot.Spec.Jobs)
+	initializeActionStepStatuses(workflowRun.Status.Jobs, snapshot.Spec.Jobs, snapshot.Actions)
 	workflowRun.Status.SnapshotName = snapshotName
 	setWorkflowRunAcceptedCondition(workflowRun, metav1.ConditionTrue, "Accepted", "WorkflowRun accepted and initialized")
 	return nil
@@ -420,13 +426,80 @@ func resolvedJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.J
 	return statuses
 }
 
+func (r *WorkflowRunReconciler) resolveWorkflowRunActions(ctx context.Context, workflowRun *v1alpha1.WorkflowRun, jobs map[string]v1alpha1.JobSpec) (map[string]workflowActionSnapshot, error) {
+	actions := make(map[string]workflowActionSnapshot)
+	jobNames := make([]string, 0, len(jobs))
+	for jobName := range jobs {
+		jobNames = append(jobNames, jobName)
+	}
+	sort.Strings(jobNames)
+	for _, jobName := range jobNames {
+		for _, step := range jobs[jobName].Steps {
+			if step.Uses == "" {
+				continue
+			}
+			action := &v1alpha1.Action{}
+			if err := r.Get(ctx, client.ObjectKey{Namespace: workflowRun.Namespace, Name: step.Uses}, action); err != nil {
+				if apierrors.IsNotFound(err) {
+					return nil, fmt.Errorf("Action %q for step %q in job %q does not exist", step.Uses, step.Name, jobName)
+				}
+				return nil, fmt.Errorf("get Action %q for step %q in job %q: %w", step.Uses, step.Name, jobName, err)
+			}
+			if err := validateActionSpec(action.Spec); err != nil {
+				return nil, fmt.Errorf("validate Action %q for step %q in job %q: %w", action.Name, step.Name, jobName, err)
+			}
+			actions[workflowActionSnapshotKey(jobName, step.Name)] = workflowActionSnapshot{
+				Name: action.Name,
+				Spec: *action.Spec.DeepCopy(),
+			}
+		}
+	}
+	return actions, nil
+}
+
+func validateActionSpec(spec v1alpha1.ActionSpec) error {
+	if len(spec.Steps) == 0 {
+		return fmt.Errorf("Action must contain at least one step")
+	}
+	stepNames := make(map[string]struct{}, len(spec.Steps))
+	for _, step := range spec.Steps {
+		if step.Run == "" || step.Uses != "" || len(step.With) != 0 {
+			return fmt.Errorf("Action step %q must set run and may not use another Action", step.Name)
+		}
+		if _, exists := stepNames[step.Name]; exists {
+			return fmt.Errorf("Action step name %q is duplicated", step.Name)
+		}
+		stepNames[step.Name] = struct{}{}
+	}
+	return nil
+}
+
+func initializeActionStepStatuses(statuses map[string]v1alpha1.JobStatus, jobs map[string]v1alpha1.JobSpec, actions map[string]workflowActionSnapshot) {
+	for jobName, job := range jobs {
+		status := statuses[jobName]
+		for stepIndex, step := range job.Steps {
+			if step.Uses == "" {
+				continue
+			}
+			action, ok := actions[workflowActionSnapshotKey(jobName, step.Name)]
+			if !ok {
+				continue
+			}
+			status.Steps[stepIndex].ActionSteps = make([]v1alpha1.ActionStepStatus, 0, len(action.Spec.Steps))
+			for _, actionStep := range action.Spec.Steps {
+				status.Steps[stepIndex].ActionSteps = append(status.Steps[stepIndex].ActionSteps, v1alpha1.ActionStepStatus{Name: actionStep.Name, Phase: v1alpha1.StepPending})
+			}
+		}
+		statuses[jobName] = status
+	}
+}
+
 func (r *WorkflowRunReconciler) applyStartRunnableTargets(ctx context.Context, resources *workflowRunResources, targets []workflowRunTarget) error {
 	workflowRun := resources.workflowRun
 	for _, target := range targets {
 		switch {
 		case target.step != nil:
-			job := resources.snapshot.Spec.Jobs[target.step.jobName]
-			run, err := r.createOrReuseStepRun(ctx, resources, target.step.jobName, job, target.step.stepIndex)
+			run, err := r.createOrReuseStepRun(ctx, resources, *target.step)
 			if err != nil {
 				var validationErr *workflowStepValidationError
 				if errors.As(err, &validationErr) {
@@ -435,7 +508,7 @@ func (r *WorkflowRunReconciler) applyStartRunnableTargets(ctx context.Context, r
 				}
 				return err
 			}
-			recordStepRun(workflowRun, target.step.jobName, target.step.stepIndex, run.Name)
+			recordStepRun(workflowRun, *target.step, run.Name)
 		case target.workflowCall != nil:
 			job := resources.snapshot.Spec.Jobs[target.workflowCall.jobName]
 			child, err := r.createWorkflowCall(ctx, workflowRun, target.workflowCall.jobName, job)
@@ -526,19 +599,41 @@ func recordWorkflowCallFailure(workflowRun *v1alpha1.WorkflowRun, jobName string
 	workflowRun.Status.Message = message
 }
 
-func (r *WorkflowRunReconciler) createOrReuseStepRun(ctx context.Context, resources *workflowRunResources, jobName string, job v1alpha1.JobSpec, stepIndex int) (*v1alpha1.Run, error) {
+func (r *WorkflowRunReconciler) createOrReuseStepRun(ctx context.Context, resources *workflowRunResources, target jobStepRunTarget) (*v1alpha1.Run, error) {
 	workflowRun := resources.workflowRun
-	step := job.Steps[stepIndex]
-	run := resources.childRuns[workflowStepKey(jobName, step.Name)]
+	job := resources.snapshot.Spec.Jobs[target.jobName]
+	step := job.Steps[target.stepIndex]
+	actionStepName := ""
+	executionStep := step
+	resolveCtx := workflowRunStepContext(workflowRun.Status.Jobs, target.jobName)
+	if target.actionStepIndex > 0 {
+		actionStepIndex := target.actionStepIndex - 1
+		action, ok := resources.snapshot.Actions[workflowActionSnapshotKey(target.jobName, step.Name)]
+		if !ok {
+			return nil, &workflowStepValidationError{err: fmt.Errorf("Action %q for step %q in job %q is missing from the execution snapshot", step.Uses, step.Name, target.jobName)}
+		}
+		if actionStepIndex >= len(action.Spec.Steps) {
+			return nil, &workflowStepValidationError{err: fmt.Errorf("Action %q has no step at index %d", action.Name, actionStepIndex)}
+		}
+		inputs, err := resolveActionInputs(step.With, resolveCtx, action.Spec.Inputs)
+		if err != nil {
+			return nil, &workflowStepValidationError{err: fmt.Errorf("resolve Action %q inputs: %w", action.Name, err)}
+		}
+		resolveCtx.inputs = inputs
+		executionStep = action.Spec.Steps[actionStepIndex]
+		actionStepName = executionStep.Name
+	}
+
+	run := resources.childRuns[workflowStepKey(target.jobName, step.Name, actionStepName)]
 	if run != nil {
 		return run, nil
 	}
 
-	resolved, err := resolveStepExecution(step, workflowRunStepContext(workflowRun.Status.Jobs, jobName))
+	resolved, err := resolveStepExecution(executionStep, resolveCtx)
 	if err != nil {
 		return nil, &workflowStepValidationError{err: err}
 	}
-	run = buildStepRun(workflowRun, jobName, job, resolved, workflowStepLabels(workflowRun, jobName, step.Name))
+	run = buildStepRun(workflowRun, target.jobName, step.Name, actionStepName, job, resolved, workflowStepLabels(workflowRun, target.jobName, step.Name, actionStepName))
 	if err := controllerutil.SetControllerReference(workflowRun, run, r.Scheme); err != nil {
 		return nil, fmt.Errorf("set workflowrun owner reference on run %s/%s: %w", run.Namespace, run.Name, err)
 	}
@@ -555,12 +650,19 @@ func (r *WorkflowRunReconciler) createOrReuseStepRun(ctx context.Context, resour
 	return run, nil
 }
 
-func recordStepRun(workflowRun *v1alpha1.WorkflowRun, jobName string, stepIndex int, runName string) {
-	status := workflowRun.Status.Jobs[jobName]
+func recordStepRun(workflowRun *v1alpha1.WorkflowRun, target jobStepRunTarget, runName string) {
+	status := workflowRun.Status.Jobs[target.jobName]
 	status.Phase = v1alpha1.JobRunning
-	status.Steps[stepIndex].Phase = v1alpha1.StepRunning
-	status.Steps[stepIndex].RunName = runName
-	workflowRun.Status.Jobs[jobName] = status
+	step := &status.Steps[target.stepIndex]
+	step.Phase = v1alpha1.StepRunning
+	if target.actionStepIndex == 0 {
+		step.RunName = runName
+	} else {
+		actionStepIndex := target.actionStepIndex - 1
+		step.ActionSteps[actionStepIndex].Phase = v1alpha1.StepRunning
+		step.ActionSteps[actionStepIndex].RunName = runName
+	}
+	workflowRun.Status.Jobs[target.jobName] = status
 	workflowRun.Status.Phase = v1alpha1.WorkflowRunning
 }
 
@@ -587,15 +689,74 @@ func runnableStepTargets(statuses map[string]v1alpha1.JobStatus, jobs map[string
 		if !ok || job.Uses != "" || len(status.Steps) != len(job.Steps) || len(job.Steps) == 0 {
 			continue
 		}
-		if jobReadyToStart(status, statuses) && status.Steps[0].RunName == "" {
-			targets = append(targets, workflowRunTarget{step: &jobStepRunTarget{jobName: jobName, stepIndex: 0}})
+		if status.Phase != v1alpha1.JobRunning && !jobReadyToStart(status, statuses) {
 			continue
 		}
-		if stepIndex, ok := nextStepToStart(status); ok {
-			targets = append(targets, workflowRunTarget{step: &jobStepRunTarget{jobName: jobName, stepIndex: stepIndex}})
+		if target, ok := nextStepRunTarget(jobName, job, status); ok {
+			targets = append(targets, workflowRunTarget{step: &target})
 		}
 	}
 	return targets
+}
+
+func nextStepRunTarget(jobName string, job v1alpha1.JobSpec, status v1alpha1.JobStatus) (jobStepRunTarget, bool) {
+	stepIndex, found := nextRunnableWorkflowStep(status.Steps)
+	if !found {
+		return jobStepRunTarget{}, false
+	}
+	if job.Steps[stepIndex].Uses == "" {
+		return nextInlineStepRunTarget(jobName, stepIndex, status.Steps[stepIndex])
+	}
+	return nextActionStepRunTarget(jobName, stepIndex, status.Steps[stepIndex])
+}
+
+// nextRunnableWorkflowStep returns the first step that has not succeeded. A
+// failed step prevents every later step from starting. An Action caller stays
+// Running while its sequential Action-local steps are materialized.
+func nextRunnableWorkflowStep(steps []v1alpha1.StepStatus) (int, bool) {
+	for index, step := range steps {
+		switch step.Phase {
+		case v1alpha1.StepSucceeded:
+			continue
+		case v1alpha1.StepFailed:
+			return 0, false
+		default:
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func nextInlineStepRunTarget(jobName string, stepIndex int, status v1alpha1.StepStatus) (jobStepRunTarget, bool) {
+	if status.Phase != v1alpha1.StepPending || status.RunName != "" {
+		return jobStepRunTarget{}, false
+	}
+	return jobStepRunTarget{jobName: jobName, stepIndex: stepIndex}, true
+}
+
+func nextActionStepRunTarget(jobName string, stepIndex int, status v1alpha1.StepStatus) (jobStepRunTarget, bool) {
+	actionStepIndex, found := nextRunnableActionStep(status.ActionSteps)
+	if !found || status.ActionSteps[actionStepIndex].RunName != "" {
+		return jobStepRunTarget{}, false
+	}
+	return jobStepRunTarget{jobName: jobName, stepIndex: stepIndex, actionStepIndex: actionStepIndex + 1}, true
+}
+
+// nextRunnableActionStep returns the first Action-local step that has not
+// succeeded. Action steps are sequential, so a failed or active step blocks
+// all later Action-local steps.
+func nextRunnableActionStep(steps []v1alpha1.ActionStepStatus) (int, bool) {
+	for index, step := range steps {
+		switch step.Phase {
+		case v1alpha1.StepSucceeded:
+			continue
+		case v1alpha1.StepPending:
+			return index, true
+		default:
+			return 0, false
+		}
+	}
+	return 0, false
 }
 
 func runnableWorkflowCallTargets(statuses map[string]v1alpha1.JobStatus, jobs map[string]v1alpha1.JobSpec) []workflowRunTarget {
@@ -639,6 +800,32 @@ func workflowRunStepContext(statuses map[string]v1alpha1.JobStatus, jobName stri
 		}
 	}
 	return ctx
+}
+
+func resolveActionInputs(values map[string]string, ctx *resolveContext, inputs map[string]v1alpha1.ActionInputSpec) (map[string]string, error) {
+	resolved := make(map[string]string, len(values))
+	for name, value := range values {
+		if _, ok := inputs[name]; !ok {
+			return nil, fmt.Errorf("unknown input %q", name)
+		}
+		result, err := resolveExpr(value, ctx)
+		if err != nil {
+			return nil, fmt.Errorf("input %q: %w", name, err)
+		}
+		resolved[name] = result
+	}
+	bound := make(map[string]string, len(inputs))
+	for name, input := range inputs {
+		value, ok := resolved[name]
+		if !ok {
+			if input.Required && input.Default == "" {
+				return nil, fmt.Errorf("missing required input %q", name)
+			}
+			value = input.Default
+		}
+		bound[name] = value
+	}
+	return bound, nil
 }
 
 func resolveWorkflowCallInputs(values map[string]string, ctx *resolveContext) (map[string]string, error) {
@@ -726,6 +913,7 @@ func terminalJobPhase(status v1alpha1.JobStatus) (v1alpha1.JobPhase, bool) {
 
 func deriveWorkflowRunStatus(resources *workflowRunResources) {
 	deriveStepStatusesFromChildRuns(resources)
+	deriveActionStepStatuses(resources)
 	deriveWorkflowCallStatuses(resources)
 	deriveJobStatuses(resources)
 	if resources.workflowRun.Spec.CancelRequested {
@@ -978,39 +1166,191 @@ func jobReadyToStart(status v1alpha1.JobStatus, jobs map[string]v1alpha1.JobStat
 }
 
 func deriveStepStatusesFromChildRuns(resources *workflowRunResources) {
-	workflowRun := resources.workflowRun
 	keys := make([]string, 0, len(resources.childRuns))
 	for key := range resources.childRuns {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		run := resources.childRuns[key]
-		stepPhase, terminal := terminalRunStepPhase(run.Status.Phase)
-		if !terminal {
-			continue
+		projectChildRunStatus(resources.workflowRun, resources.childRuns[key])
+	}
+}
+
+// projectChildRunStatus copies one terminal child Run into its owning logical
+// step. It ignores stale or malformed child labels rather than letting a child
+// Run overwrite another step's identity.
+func projectChildRunStatus(workflowRun *v1alpha1.WorkflowRun, run *v1alpha1.Run) {
+	phase, terminal := terminalRunStepPhase(run.Status.Phase)
+	if !terminal {
+		return
+	}
+	jobName := run.Labels[v1alpha1.WorkflowJobLabel]
+	jobStatus, found := workflowRun.Status.Jobs[jobName]
+	if !found {
+		return
+	}
+	step := workflowStepStatus(&jobStatus, run.Labels[v1alpha1.WorkflowStepLabel])
+	if step == nil {
+		return
+	}
+	if actionStepName := run.Labels[v1alpha1.WorkflowActionStepLabel]; actionStepName != "" {
+		actionStep := actionStepStatus(step, actionStepName)
+		if actionStep == nil || !recordTerminalActionRunStatus(actionStep, run.Name, phase, run.Status.Outputs) {
+			return
 		}
-		jobName := run.Labels[v1alpha1.WorkflowJobLabel]
-		stepName := run.Labels[v1alpha1.WorkflowStepLabel]
-		jobStatus, ok := workflowRun.Status.Jobs[jobName]
-		if !ok {
-			continue
-		}
-		for i := range jobStatus.Steps {
-			step := &jobStatus.Steps[i]
-			if step.Name != stepName {
-				continue
-			}
-			if step.RunName != "" && step.RunName != run.Name {
-				break
-			}
-			step.RunName = run.Name
-			step.Phase = stepPhase
-			step.Outputs = maps.Clone(run.Status.Outputs)
-			workflowRun.Status.Jobs[jobName] = jobStatus
-			break
+	} else if !recordTerminalRunStatus(step, run.Name, phase, run.Status.Outputs) {
+		return
+	}
+	workflowRun.Status.Jobs[jobName] = jobStatus
+}
+
+func workflowStepStatus(status *v1alpha1.JobStatus, name string) *v1alpha1.StepStatus {
+	for index := range status.Steps {
+		if status.Steps[index].Name == name {
+			return &status.Steps[index]
 		}
 	}
+	return nil
+}
+
+func actionStepStatus(step *v1alpha1.StepStatus, name string) *v1alpha1.ActionStepStatus {
+	for index := range step.ActionSteps {
+		if step.ActionSteps[index].Name == name {
+			return &step.ActionSteps[index]
+		}
+	}
+	return nil
+}
+
+func recordTerminalRunStatus(step *v1alpha1.StepStatus, runName string, phase v1alpha1.StepPhase, outputs map[string]string) bool {
+	if step.RunName != "" && step.RunName != runName {
+		return false
+	}
+	step.RunName = runName
+	step.Phase = phase
+	step.Outputs = maps.Clone(outputs)
+	return true
+}
+
+func recordTerminalActionRunStatus(step *v1alpha1.ActionStepStatus, runName string, phase v1alpha1.StepPhase, outputs map[string]string) bool {
+	if step.RunName != "" && step.RunName != runName {
+		return false
+	}
+	step.RunName = runName
+	step.Phase = phase
+	step.Outputs = maps.Clone(outputs)
+	return true
+}
+
+func deriveActionStepStatuses(resources *workflowRunResources) {
+	if resources.snapshot == nil {
+		return
+	}
+	jobNames := make([]string, 0, len(resources.snapshot.Spec.Jobs))
+	for jobName := range resources.snapshot.Spec.Jobs {
+		jobNames = append(jobNames, jobName)
+	}
+	sort.Strings(jobNames)
+	for _, jobName := range jobNames {
+		deriveActionStepsForJob(resources, jobName)
+	}
+}
+
+func deriveActionStepsForJob(resources *workflowRunResources, jobName string) {
+	workflowRun := resources.workflowRun
+	jobStatus, found := workflowRun.Status.Jobs[jobName]
+	if !found {
+		return
+	}
+	job := resources.snapshot.Spec.Jobs[jobName]
+	for stepIndex, stepSpec := range job.Steps {
+		if stepSpec.Uses == "" || stepIndex >= len(jobStatus.Steps) {
+			continue
+		}
+		message := deriveActionCallStatus(resources.snapshot, jobName, stepSpec, &jobStatus.Steps[stepIndex], workflowRunStepContext(workflowRun.Status.Jobs, jobName))
+		if message != "" {
+			workflowRun.Status.Message = message
+		}
+	}
+	workflowRun.Status.Jobs[jobName] = jobStatus
+}
+
+func deriveActionCallStatus(snapshot *workflowExecutionSnapshot, jobName string, spec v1alpha1.StepSpec, status *v1alpha1.StepStatus, ctx *resolveContext) string {
+	if status.Phase == v1alpha1.StepSucceeded || status.Phase == v1alpha1.StepFailed {
+		return ""
+	}
+	action, found := snapshot.Actions[workflowActionSnapshotKey(jobName, spec.Name)]
+	if !found || len(status.ActionSteps) != len(action.Spec.Steps) {
+		status.Phase = v1alpha1.StepFailed
+		return fmt.Sprintf("Action %q for step %q in job %q is missing from the execution snapshot", spec.Uses, spec.Name, jobName)
+	}
+	switch actionCallPhase(status.ActionSteps) {
+	case v1alpha1.StepFailed:
+		status.Phase = v1alpha1.StepFailed
+		return ""
+	case v1alpha1.StepPending, v1alpha1.StepRunning:
+		return ""
+	}
+	outputs, err := resolveActionOutputs(action.Spec, status.ActionSteps, spec.With, ctx)
+	if err != nil {
+		status.Phase = v1alpha1.StepFailed
+		return fmt.Sprintf("resolve Action outputs for step %q in job %q: %v", spec.Name, jobName, err)
+	}
+	status.Phase = v1alpha1.StepSucceeded
+	status.Outputs = outputs
+	return ""
+}
+
+func actionCallPhase(steps []v1alpha1.ActionStepStatus) v1alpha1.StepPhase {
+	hasRunning := false
+	hasPending := false
+	for _, step := range steps {
+		switch step.Phase {
+		case v1alpha1.StepFailed:
+			return v1alpha1.StepFailed
+		case v1alpha1.StepSucceeded:
+		case v1alpha1.StepRunning:
+			hasRunning = true
+		default:
+			hasPending = true
+		}
+	}
+	if hasRunning {
+		return v1alpha1.StepRunning
+	}
+	if hasPending {
+		return v1alpha1.StepPending
+	}
+	return v1alpha1.StepSucceeded
+}
+
+func resolveActionOutputs(spec v1alpha1.ActionSpec, actionSteps []v1alpha1.ActionStepStatus, values map[string]string, ctx *resolveContext) (map[string]string, error) {
+	inputs, err := resolveActionInputs(values, ctx, spec.Inputs)
+	if err != nil {
+		return nil, err
+	}
+	steps := make(map[string]map[string]string, len(actionSteps))
+	for _, step := range actionSteps {
+		if step.Phase == v1alpha1.StepSucceeded && len(step.Outputs) > 0 {
+			steps[step.Name] = step.Outputs
+		}
+	}
+	outputCtx := &resolveContext{inputs: inputs, steps: steps, jobs: ctx.jobs}
+	outputs := make(map[string]string, len(spec.Outputs))
+	outputNames := make([]string, 0, len(spec.Outputs))
+	for name := range spec.Outputs {
+		outputNames = append(outputNames, name)
+	}
+	sort.Strings(outputNames)
+	for _, name := range outputNames {
+		output := spec.Outputs[name]
+		value, err := resolveExpr(output.Value, outputCtx)
+		if err != nil {
+			return nil, fmt.Errorf("output %q: %w", name, err)
+		}
+		outputs[name] = value
+	}
+	return outputs, nil
 }
 
 func terminalRunStepPhase(phase v1alpha1.RunPhase) (v1alpha1.StepPhase, bool) {
@@ -1024,7 +1364,7 @@ func terminalRunStepPhase(phase v1alpha1.RunPhase) (v1alpha1.StepPhase, bool) {
 	}
 }
 
-func buildStepRun(workflowRun *v1alpha1.WorkflowRun, jobName string, job v1alpha1.JobSpec, step v1alpha1.StepSpec, labels map[string]string) *v1alpha1.Run {
+func buildStepRun(workflowRun *v1alpha1.WorkflowRun, jobName, stepName, actionStepName string, job v1alpha1.JobSpec, step v1alpha1.StepSpec, labels map[string]string) *v1alpha1.Run {
 	inline := step.Run
 	env := make([]corev1.EnvVar, 0, len(step.Env))
 	envNames := make([]string, 0, len(step.Env))
@@ -1037,7 +1377,7 @@ func buildStepRun(workflowRun *v1alpha1.WorkflowRun, jobName string, job v1alpha
 	}
 	return &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      workflowStepRunName(workflowRun.Name, jobName, step.Name),
+			Name:      workflowStepRunName(workflowRun.Name, jobName, stepName, actionStepName),
 			Namespace: workflowRun.Namespace,
 			Labels:    labels,
 		},
@@ -1052,20 +1392,32 @@ func buildStepRun(workflowRun *v1alpha1.WorkflowRun, jobName string, job v1alpha
 	}
 }
 
-func workflowStepLabels(workflowRun *v1alpha1.WorkflowRun, jobName string, stepName string) map[string]string {
-	return map[string]string{
+func workflowStepLabels(workflowRun *v1alpha1.WorkflowRun, jobName, stepName string, actionStepNames ...string) map[string]string {
+	actionStepName := ""
+	if len(actionStepNames) > 0 {
+		actionStepName = actionStepNames[0]
+	}
+	labels := map[string]string{
 		v1alpha1.WorkflowRunUIDLabel: string(workflowRun.UID),
 		v1alpha1.WorkflowJobLabel:    jobName,
 		v1alpha1.WorkflowStepLabel:   stepName,
 	}
+	if actionStepName != "" {
+		labels[v1alpha1.WorkflowActionStepLabel] = actionStepName
+	}
+	return labels
 }
 
-func workflowStepKey(jobName string, stepName string) string {
-	return jobName + "\x00" + stepName
+func workflowStepKey(jobName, stepName string, actionStepNames ...string) string {
+	actionStepName := ""
+	if len(actionStepNames) > 0 {
+		actionStepName = actionStepNames[0]
+	}
+	return jobName + "\x00" + stepName + "\x00" + actionStepName
 }
 
-func workflowStepRunName(workflowRunName string, jobName string, stepName string) string {
-	sum := sha256.Sum256([]byte(jobName + "/" + stepName))
+func workflowStepRunName(workflowRunName, jobName, stepName, actionStepName string) string {
+	sum := sha256.Sum256([]byte(jobName + "/" + stepName + "/" + actionStepName))
 	suffix := hex.EncodeToString(sum[:])[:10]
 	const maxNameLength = 253
 	maxPrefixLength := maxNameLength - len(suffix) - 1
@@ -1078,6 +1430,10 @@ func workflowStepRunName(workflowRunName string, jobName string, stepName string
 		return suffix
 	}
 	return prefix + "-" + suffix
+}
+
+func workflowActionSnapshotKey(jobName, stepName string) string {
+	return jobName + "\x00" + stepName
 }
 
 func workflowCallRunName(parentName string, jobName string) string {

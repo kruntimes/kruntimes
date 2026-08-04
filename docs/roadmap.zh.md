@@ -303,9 +303,9 @@ controller wiring 累积不必要的冲突。
     模型实现 step-level Action expansion：
     - [x] 增加 Action call 的 status、immutable snapshot 和 CRD validation shape；
     - [x] 在定义的 execution boundaries 计算 `inputs`、`steps` 和 `jobs` expressions；
-    - [ ] 将 Action calls materialize 为普通 child Runs，聚合其 terminal states 和
+    - [x] 将 Action calls materialize 为普通 child Runs，聚合其 terminal states 和
       declared outputs，并在 controller restart 后恢复；
-    - [ ] 在为受影响目标创建任何 child Run 前，拒绝 nested Action calls、missing Actions、
+    - [x] 在为受影响目标创建任何 child Run 前，拒绝 nested Action calls、missing Actions、
       invalid input bindings 和 invalid Action output expressions；
   - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；
   - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；

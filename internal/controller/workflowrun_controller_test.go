@@ -194,6 +194,184 @@ func TestWorkflowRunReconcilerStartsAllIndependentReadyJobs(t *testing.T) {
 	assertChildRunCount(t, c, workflowRun.Namespace, 2)
 }
 
+func TestWorkflowRunReconcilerExecutesFrozenActionSteps(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "setup-tools", Namespace: "default"},
+		Spec: v1alpha1.ActionSpec{
+			Inputs: map[string]v1alpha1.ActionInputSpec{"version": {Default: "3.13"}},
+			Outputs: map[string]v1alpha1.ActionOutputSpec{
+				"version": {Value: "${{ steps.verify.outputs.version }}"},
+			},
+			Steps: []v1alpha1.StepSpec{
+				{Name: "install", Run: "install-python ${{ inputs.version }}"},
+				{Name: "verify", Run: "verify-python ${{ inputs.version }}"},
+			},
+		},
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: "default", UID: "build-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: action.Name}}},
+		}},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(action, workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}, &v1alpha1.Run{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+
+	// Initialization resolves the Action once and persists it with the local
+	// WorkflowRun execution snapshot before any Action Run is created.
+	reconcileWorkflowRun(t, reconciler, req, 1)
+	resources, err := reconciler.loadWorkflowRunResources(context.Background(), client.ObjectKeyFromObject(workflowRun))
+	if err != nil {
+		t.Fatalf("load initialized workflowrun: %v", err)
+	}
+	frozen, ok := resources.snapshot.Actions[workflowActionSnapshotKey("build", "setup")]
+	if !ok || frozen.Name != action.Name || len(frozen.Spec.Steps) != 2 {
+		t.Fatalf("frozen Actions = %#v, want setup-tools definition", resources.snapshot.Actions)
+	}
+	status := resources.workflowRun.Status.Jobs["build"].Steps[0]
+	if len(status.ActionSteps) != 2 || status.ActionSteps[0].Name != "install" || status.ActionSteps[1].Name != "verify" {
+		t.Fatalf("Action status = %#v, want ordered Action steps", status)
+	}
+
+	// Later edits to the reusable Action must not change this WorkflowRun after
+	// its execution snapshot has been persisted.
+	var liveAction v1alpha1.Action
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(action), &liveAction); err != nil {
+		t.Fatalf("get Action before update: %v", err)
+	}
+	liveAction.Spec.Steps[0].Run = "install-python 3.14"
+	if err := c.Update(context.Background(), &liveAction); err != nil {
+		t.Fatalf("update Action after snapshot: %v", err)
+	}
+
+	// A restarted controller only reloads the WorkflowRun and ControllerRevision;
+	// it must still materialize the frozen 3.13 Action definition.
+	restarted := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	reconcileWorkflowRun(t, restarted, req, 1)
+	first := getSingleWorkflowActionRun(t, c, workflowRun, "setup", "install")
+	if first.Spec.Source == nil || first.Spec.Source.Inline == nil || *first.Spec.Source.Inline != "install-python 3.13" {
+		t.Fatalf("first Action run = %#v, want resolved install input", first.Spec)
+	}
+	first.Status.Phase = v1alpha1.RunSucceeded
+	if err := c.Status().Update(context.Background(), first); err != nil {
+		t.Fatalf("complete first Action run: %v", err)
+	}
+
+	reconcileWorkflowRun(t, restarted, req, 1)
+	second := getSingleWorkflowActionRun(t, c, workflowRun, "setup", "verify")
+	if second.Spec.Source == nil || second.Spec.Source.Inline == nil || *second.Spec.Source.Inline != "verify-python 3.13" {
+		t.Fatalf("second Action run = %#v, want resolved verify input", second.Spec)
+	}
+	second.Status.Phase = v1alpha1.RunSucceeded
+	second.Status.Outputs = map[string]string{"version": "3.13"}
+	if err := c.Status().Update(context.Background(), second); err != nil {
+		t.Fatalf("complete second Action run: %v", err)
+	}
+
+	reconcileWorkflowRun(t, restarted, req, 1)
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get completed workflowrun: %v", err)
+	}
+	step := updated.Status.Jobs["build"].Steps[0]
+	if step.Phase != v1alpha1.StepSucceeded || step.Outputs["version"] != "3.13" {
+		t.Fatalf("Action step = %#v, want succeeded Action output", step)
+	}
+	if updated.Status.Jobs["build"].Phase != v1alpha1.JobSucceeded || updated.Status.Phase != v1alpha1.WorkflowSucceeded {
+		t.Fatalf("workflowrun status = %#v, want succeeded job and workflow", updated.Status)
+	}
+}
+
+func TestWorkflowRunReconcilerRejectsMissingActionBeforeCreatingRuns(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "missing-action", Namespace: "default", UID: "missing-action-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: "does-not-exist"}}},
+		}},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+
+	reconcileWorkflowRun(t, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}, 1)
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get rejected workflowrun: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.WorkflowFailed || !strings.Contains(updated.Status.Message, "does not exist") {
+		t.Fatalf("workflowrun status = %#v, want missing Action rejection", updated.Status)
+	}
+	condition := apimeta.FindStatusCondition(updated.Status.Conditions, v1alpha1.WorkflowRunAcceptedCondition)
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "WorkflowValidationFailed" {
+		t.Fatalf("accepted condition = %#v, want rejected validation condition", condition)
+	}
+	assertChildRunCount(t, c, workflowRun.Namespace, 0)
+}
+
+func TestWorkflowRunReconcilerRejectsInvalidActionInputBeforeCreatingRuns(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "requires-version", Namespace: "default"},
+		Spec: v1alpha1.ActionSpec{
+			Inputs: map[string]v1alpha1.ActionInputSpec{"version": {Required: true}},
+			Steps:  []v1alpha1.StepSpec{{Name: "install", Run: "install-python ${{ inputs.version }}"}},
+		},
+	}
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-input", Namespace: "default", UID: "invalid-input-uid"},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: action.Name}}},
+		}},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(action, workflowRun).
+		WithStatusSubresource(&v1alpha1.WorkflowRun{}).
+		Build()
+	reconciler := &WorkflowRunReconciler{Client: c, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflowRun)}
+
+	reconcileWorkflowRun(t, reconciler, req, 1) // initialize and snapshot the Action
+	reconcileWorkflowRun(t, reconciler, req, 1) // reject the call binding
+
+	var updated v1alpha1.WorkflowRun
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), &updated); err != nil {
+		t.Fatalf("get workflowrun after invalid Action input: %v", err)
+	}
+	step := updated.Status.Jobs["build"].Steps[0]
+	if step.Phase != v1alpha1.StepFailed || !strings.Contains(updated.Status.Message, "missing required input") {
+		t.Fatalf("Action step = %#v, message = %q; want input binding failure", step, updated.Status.Message)
+	}
+	assertChildRunCount(t, c, workflowRun.Namespace, 0)
+}
+
+func getSingleWorkflowActionRun(t *testing.T, c client.Client, workflowRun *v1alpha1.WorkflowRun, stepName, actionStepName string) *v1alpha1.Run {
+	t.Helper()
+	var runs v1alpha1.RunList
+	if err := c.List(context.Background(), &runs, client.InNamespace(workflowRun.Namespace), client.MatchingLabels{
+		v1alpha1.WorkflowRunUIDLabel:     string(workflowRun.UID),
+		v1alpha1.WorkflowStepLabel:       stepName,
+		v1alpha1.WorkflowActionStepLabel: actionStepName,
+	}); err != nil {
+		t.Fatalf("list Action runs: %v", err)
+	}
+	if len(runs.Items) != 1 {
+		t.Fatalf("Action runs = %#v, want one for %s", runs.Items, actionStepName)
+	}
+	return runs.Items[0].DeepCopy()
+}
+
 func TestWorkflowRunReconcilerResolvesStepExpressionsBeforeCreatingRun(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 	workflowRun := &v1alpha1.WorkflowRun{

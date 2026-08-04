@@ -355,10 +355,10 @@ wiring from accumulating avoidable conflicts.
       shape;
     - [x] evaluate `inputs`, `steps`, and `jobs` expressions at the defined
       execution boundaries;
-    - [ ] materialize Action calls into ordinary child Runs, aggregate their
+    - [x] materialize Action calls into ordinary child Runs, aggregate their
       terminal states and declared outputs, and recover after a controller
       restart;
-    - [ ] reject nested Action calls, missing Actions, invalid input bindings,
+    - [x] reject nested Action calls, missing Actions, invalid input bindings,
       and invalid Action output expressions before creating an affected child
       Run;
   - promote child Run outputs into WorkflowRun step/job/workflow outputs;
