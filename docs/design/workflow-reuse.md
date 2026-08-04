@@ -1,8 +1,8 @@
 # Workflow Reuse
 
 This document defines the v0.x workflow reuse model. The execution-instance
-split and template triggering are implemented; job-level workflow calls and
-reusable Actions remain planned.
+split, template triggering, and job-level reusable Workflow calls are
+implemented. Step-level reusable Action execution remains planned.
 
 ## Current State
 
@@ -13,10 +13,12 @@ The current API provides:
 - `krt wf trigger`, which validates template inputs and materializes an inline
   WorkflowRun;
 - inline step `run` scripts, `needs` dependencies, and bounded step/job
-  outputs.
+  outputs; and
+- job-level reusable Workflow calls with local snapshots, frozen output
+  contracts, nested calls, and late-bound input rendering.
 
-Job-level workflow calls and reusable Action calls are represented in the API
-but are not yet executed by the controller.
+Reusable Action calls are represented in the API but are not yet executed by
+the controller.
 
 ## Goals
 
@@ -173,8 +175,10 @@ spec:
 Validation must enforce that step `uses` and step `run` are mutually exclusive.
 
 Actions run inside the caller job context. By default they share the caller job
-runtime, workspace, artifacts, environment, and scheduling placement. This makes
-Actions lightweight step composition, not a nested workflow execution.
+runtime, workspace, artifacts, environment, and placement constraints. This
+makes Actions lightweight step composition, not a nested workflow execution.
+The concrete status, snapshot, and execution behavior is defined in
+[Action Execution](../workflow-action-execution/).
 
 ## Inputs and Outputs
 

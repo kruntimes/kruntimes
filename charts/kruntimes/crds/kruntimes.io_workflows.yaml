@@ -131,22 +131,28 @@ spec:
                             maxLength: 262144
                             type: string
                           uses:
-                            description: Uses references an Action or WorkflowTemplate
-                              (future).
-                            maxLength: 2048
+                            description: Uses references an Action in the same namespace.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                             type: string
                           with:
                             additionalProperties:
                               type: string
-                            description: With passes parameters to an Action (future).
+                            description: With passes string inputs to the Action referenced
+                              by Uses.
                             maxProperties: 256
                             type: object
                         required:
                         - name
                         type: object
                         x-kubernetes-validations:
-                        - message: run must be set and uses is not supported yet
-                          rule: has(self.run) && !has(self.uses)
+                        - message: exactly one of run or uses must be set
+                          rule: has(self.run) != has(self.uses)
+                        - message: with can only be set when uses is set
+                          rule: '!has(self.with) || has(self.uses)'
+                        - message: args and env can only be set on run steps
+                          rule: '!has(self.uses) || (!has(self.args) && !has(self.env))'
                       maxItems: 128
                       minItems: 1
                       type: array

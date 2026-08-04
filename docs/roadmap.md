@@ -275,7 +275,7 @@ wiring from accumulating avoidable conflicts.
   - add E2E coverage for Runtime workspace volume sources, job-local workspace
     sharing, job-to-job artifact passing, Runtime Pod loss, cleanup, and
     permission boundaries.
-- [ ] Workflow reuse model: split execution instances from reusable
+- [x] Workflow reuse model: split execution instances from reusable
   definitions before Workflow APIs stabilize. Target model:
   - replace the current execution-instance `Workflow` API with `WorkflowRun`;
   - `WorkflowRun.spec` contains inline `jobs` only; `krt workflow trigger`
@@ -349,10 +349,19 @@ wiring from accumulating avoidable conflicts.
       behavior after child creation, restart recovery, nested calls,
       cancellation, and invalid graphs, including `A -> B -> A` cycle
       rejection before child creation;
-  - implement step-level Action expansion;
-  - implement expression evaluation for `inputs`, `steps`, and `jobs` contexts;
-  - promote child Run outputs into WorkflowRun step/job/workflow outputs;
-  - add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
+  - [x] implement step-level Action expansion through the reviewed
+    [Action Execution](design/workflow-action-execution.md) model:
+    - [x] add the Action-call status, immutable snapshot, and CRD validation
+      shape;
+    - [x] evaluate `inputs`, `steps`, and `jobs` expressions at the defined
+      execution boundaries;
+    - [x] materialize Action calls into ordinary child Runs, aggregate their
+      terminal states and declared outputs, and recover after a controller
+      restart;
+    - [x] reject nested Action calls, missing Actions, invalid input bindings,
+      and invalid Action output expressions before creating an affected child
+      Run;
+  - [x] add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
     calls, validation failures, output propagation, and controller restart
     recovery.
 - [ ] Dashboard: design and build a read-only web dashboard, similar in spirit

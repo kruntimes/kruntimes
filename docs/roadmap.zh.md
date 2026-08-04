@@ -233,7 +233,7 @@ controller wiring 累积不必要的冲突。
   - 将 child Run artifact refs 提升到 Workflow status，并增加显式 step artifact inputs；
   - 增加 E2E 覆盖 Runtime workspace volume sources、job-local workspace sharing、
     job-to-job artifact passing、Runtime Pod loss、cleanup 和权限边界。
-- [ ] Workflow reuse model：在 Workflow API 稳定前拆分执行实例和可复用定义。目标模型：
+- [x] Workflow reuse model：在 Workflow API 稳定前拆分执行实例和可复用定义。目标模型：
   - 将当前表示 execution instance 的 `Workflow` API 替换为 `WorkflowRun`；
   - `WorkflowRun.spec` 只包含 inline `jobs`；`krt workflow trigger` 将 reusable
     Workflow 渲染为 inline execution instance；
@@ -299,10 +299,15 @@ controller wiring 累积不必要的冲突。
     - [x] 验证 child 创建前的 late-binding、child 创建后的 deterministic behavior、restart
       recovery、nested calls、cancellation 和 invalid graphs，包括创建 child 前拒绝
       `A -> B -> A` cycle；
-  - 实现 step-level Action expansion；
-  - 实现 `inputs`、`steps` 和 `jobs` contexts 的 expression evaluation；
-  - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；
-  - 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
+  - [x] 按照已 review 的 [Action Execution](design/workflow-action-execution.md)
+    模型实现 step-level Action expansion：
+    - [x] 增加 Action call 的 status、immutable snapshot 和 CRD validation shape；
+    - [x] 在定义的 execution boundaries 计算 `inputs`、`steps` 和 `jobs` expressions；
+    - [x] 将 Action calls materialize 为普通 child Runs，聚合其 terminal states 和
+      declared outputs，并在 controller restart 后恢复；
+    - [x] 在为受影响目标创建任何 child Run 前，拒绝 nested Action calls、missing Actions、
+      invalid input bindings 和 invalid Action output expressions；
+  - [x] 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
     validation failures、output propagation 和 controller restart recovery。
 - [ ] Dashboard：设计并实现只读 web dashboard，类似 Tekton Dashboard，可以按
   namespace 查看 Runs，并检查状态和日志。

@@ -41,6 +41,7 @@ type ActionOutputSpec struct {
 
 // +kubebuilder:object:generate=true
 // ActionSpec defines the desired state of Action.
+// +kubebuilder:validation:XValidation:rule="self.steps.all(step, has(step.run) && !has(step.uses) && !has(step.with))",message="Action steps must set run and may not use another Action"
 type ActionSpec struct {
 	// Inputs defines parameters accepted by this Action.
 	// +optional

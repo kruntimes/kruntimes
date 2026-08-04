@@ -1229,7 +1229,29 @@ func TestCRDValidationRejectsInvalidWorkflowRunShape(t *testing.T) {
 	}
 }
 
-func TestCRDValidationRejectsUnsupportedWorkflowStepShape(t *testing.T) {
+func TestCRDValidationAllowsWorkflowActionCallStep(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-action-call-step-")
+
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "action-call", Namespace: ns.Name},
+		Spec: v1alpha1.WorkflowSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {
+				RunsOn: "bash",
+				Steps: []v1alpha1.StepSpec{{
+					Name: "setup",
+					Uses: "setup-python-tools",
+					With: map[string]string{"version": "3.13"},
+				}},
+			},
+		}},
+	}
+	if err := k8sClient.Create(ctx, workflow); err != nil {
+		t.Fatalf("create workflow with Action call: %v", err)
+	}
+}
+
+func TestCRDValidationRejectsInvalidWorkflowStepShape(t *testing.T) {
 	ctx := context.Background()
 	ns := testNamespace(t, "test-step-validation-")
 
@@ -1238,12 +1260,24 @@ func TestCRDValidationRejectsUnsupportedWorkflowStepShape(t *testing.T) {
 		step v1alpha1.StepSpec
 	}{
 		{
-			name: "uses-only",
-			step: v1alpha1.StepSpec{Name: "compile", Uses: "future/action"},
+			name: "missing-run-and-uses",
+			step: v1alpha1.StepSpec{Name: "compile"},
 		},
 		{
 			name: "run-and-uses",
 			step: v1alpha1.StepSpec{Name: "compile", Run: "echo build", Uses: "future/action"},
+		},
+		{
+			name: "with-without-uses",
+			step: v1alpha1.StepSpec{Name: "compile", Run: "echo build", With: map[string]string{"version": "3.13"}},
+		},
+		{
+			name: "action-call-with-args",
+			step: v1alpha1.StepSpec{Name: "compile", Uses: "setup-python-tools", Args: []string{"3.13"}},
+		},
+		{
+			name: "action-call-with-env",
+			step: v1alpha1.StepSpec{Name: "compile", Uses: "setup-python-tools", Env: map[string]string{"VERSION": "3.13"}},
 		},
 	}
 	for _, tt := range tests {
@@ -1471,6 +1505,43 @@ func TestCRDValidationRejectsActionStepUses(t *testing.T) {
 	}
 	if err := k8sClient.Create(ctx, action); !apierrors.IsInvalid(err) {
 		t.Fatalf("action step uses error = %v, want Invalid", err)
+	}
+}
+
+func TestCRDValidationAllowsActionStepStatus(t *testing.T) {
+	ctx := context.Background()
+	ns := testNamespace(t, "test-action-step-status-")
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "build", Namespace: ns.Name},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: "setup-python-tools"}}},
+		}},
+	}
+	if err := k8sClient.Create(ctx, workflowRun); err != nil {
+		t.Fatalf("create workflowrun: %v", err)
+	}
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+		t.Fatalf("get workflowrun: %v", err)
+	}
+	workflowRun.Status.Phase = v1alpha1.WorkflowRunning
+	workflowRun.Status.Jobs = map[string]v1alpha1.JobStatus{
+		"build": {
+			Phase: v1alpha1.JobRunning,
+			Steps: []v1alpha1.StepStatus{{
+				Name:  "setup",
+				Phase: v1alpha1.StepRunning,
+				ActionSteps: []v1alpha1.ActionStepStatus{{
+					Name:    "install",
+					Phase:   v1alpha1.StepSucceeded,
+					RunName: "build-setup-install",
+					Outputs: map[string]string{"version": "3.13"},
+				}},
+			}},
+		},
+	}
+	if err := k8sClient.Status().Update(ctx, workflowRun); err != nil {
+		t.Fatalf("update Action step status: %v", err)
 	}
 }
 

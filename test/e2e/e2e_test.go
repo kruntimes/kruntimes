@@ -628,6 +628,277 @@ func TestWorkflowTriggerMaterializesAndExecutesTemplate(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunExecutesActionAndProjectsOutputs(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.ActionSpec{
+			Inputs: map[string]v1alpha1.ActionInputSpec{
+				"message": {Required: true},
+			},
+			Outputs: map[string]v1alpha1.ActionOutputSpec{
+				"endpoint": {Value: "${{ steps.emit.outputs.endpoint }}"},
+			},
+			Steps: []v1alpha1.StepSpec{
+				{
+					Name: "validate",
+					Run:  `test "$MESSAGE" = "action-input"`,
+					Env:  map[string]string{"MESSAGE": "${{ inputs.message }}"},
+				},
+				{
+					Name: "emit",
+					Run:  `printf 'endpoint=https://action.e2e.example.com\n' > "$KRUNTIME_OUTPUTS"`,
+				},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), action); err != nil {
+		t.Fatalf("create Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), action) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {
+				RunsOn: "bash",
+				Steps: []v1alpha1.StepSpec{
+					{Name: "setup", Uses: action.Name, With: map[string]string{"message": "action-input"}},
+					{
+						Name: "consume",
+						Run:  `test "$ENDPOINT" = "https://action.e2e.example.com"`,
+						Env:  map[string]string{"ENDPOINT": "${{ steps.setup.outputs.endpoint }}"},
+					},
+				},
+			},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create WorkflowRun with Action call: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	waitForWorkflowRunPhase(t, workflowRun, 45*time.Second, v1alpha1.WorkflowSucceeded)
+	setup := workflowRun.Status.Jobs["build"].Steps[0]
+	if setup.Phase != v1alpha1.StepSucceeded || setup.Outputs["endpoint"] != "https://action.e2e.example.com" {
+		t.Fatalf("Action caller step = %#v, want projected endpoint", setup)
+	}
+	if len(setup.ActionSteps) != 2 || setup.ActionSteps[0].Phase != v1alpha1.StepSucceeded || setup.ActionSteps[1].Phase != v1alpha1.StepSucceeded {
+		t.Fatalf("Action internal steps = %#v, want both succeeded", setup.ActionSteps)
+	}
+	if consume := workflowRun.Status.Jobs["build"].Steps[1]; consume.Phase != v1alpha1.StepSucceeded {
+		t.Fatalf("consumer step = %#v, want succeeded after Action output projection", consume)
+	}
+}
+
+func TestWorkflowRunFailsWhenActionChildRunFails(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-fail-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.ActionSpec{
+			Steps: []v1alpha1.StepSpec{{Name: "fail", Run: "exit 17"}},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), action); err != nil {
+		t.Fatalf("create failing Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), action) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-fail-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: action.Name}}},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create WorkflowRun with failing Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	waitForWorkflowRunPhase(t, workflowRun, 30*time.Second, v1alpha1.WorkflowFailed)
+	step := workflowRun.Status.Jobs["build"].Steps[0]
+	if step.Phase != v1alpha1.StepFailed || len(step.ActionSteps) != 1 || step.ActionSteps[0].Phase != v1alpha1.StepFailed {
+		t.Fatalf("failing Action status = %#v, want failed caller and child step", step)
+	}
+}
+
+func TestWorkflowRunCancellationPropagatesToActionChildRun(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-cancel-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.ActionSpec{
+			Steps: []v1alpha1.StepSpec{{Name: "wait", Run: "sleep 30"}},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), action); err != nil {
+		t.Fatalf("create cancellable Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), action) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-cancel-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: action.Name}}},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create WorkflowRun with cancellable Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	actionRunName := waitForActionChildRun(t, workflowRun, "build", "wait", 20*time.Second)
+	workflowRun.Spec.CancelRequested = true
+	if err := k8sClient.Update(context.Background(), workflowRun); err != nil {
+		t.Fatalf("request WorkflowRun cancellation: %v", err)
+	}
+
+	actionRun := &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{Name: actionRunName, Namespace: testNamespace}}
+	waitForRunPhase(t, actionRun, 30*time.Second, v1alpha1.RunCancelled)
+	if !actionRun.Spec.CancelRequested {
+		t.Fatalf("Action child Run %s cancelRequested=false, want true", actionRun.Name)
+	}
+	waitForWorkflowRunPhase(t, workflowRun, 30*time.Second, v1alpha1.WorkflowCancelled)
+}
+
+func TestWorkflowRunRejectsMissingActionWithoutChildRun(t *testing.T) {
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-missing-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: "does-not-exist-" + nameSuffix}}},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create WorkflowRun with missing Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	waitForWorkflowRunPhase(t, workflowRun, 30*time.Second, v1alpha1.WorkflowFailed)
+	if !strings.Contains(workflowRun.Status.Message, "does not exist") {
+		t.Fatalf("missing Action message = %q, want missing definition", workflowRun.Status.Message)
+	}
+	var runs v1alpha1.RunList
+	if err := k8sClient.List(context.Background(), &runs,
+		client.InNamespace(testNamespace),
+		client.MatchingLabels{v1alpha1.WorkflowRunUIDLabel: string(workflowRun.UID)}); err != nil {
+		t.Fatalf("list child Runs for rejected WorkflowRun: %v", err)
+	}
+	if len(runs.Items) != 0 {
+		t.Fatalf("child Runs = %#v, want none for missing Action", runs.Items)
+	}
+}
+
+func TestWorkflowRunRecoversActionAfterControllerRestart(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-recovery-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.ActionSpec{
+			Steps: []v1alpha1.StepSpec{
+				{Name: "first", Run: "sleep 5"},
+				{Name: "second", Run: "true"},
+			},
+		},
+	}
+	if err := k8sClient.Create(context.Background(), action); err != nil {
+		t.Fatalf("create recovery Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), action) })
+
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-recovery-run-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {RunsOn: "bash", Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: action.Name}}},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create WorkflowRun with recovery Action: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	firstRunName := waitForActionChildRun(t, workflowRun, "build", "first", 20*time.Second)
+	restartController(t)
+	waitForWorkflowRunPhase(t, workflowRun, 45*time.Second, v1alpha1.WorkflowSucceeded)
+	setup := workflowRun.Status.Jobs["build"].Steps[0]
+	if len(setup.ActionSteps) != 2 || setup.ActionSteps[0].RunName != firstRunName || setup.ActionSteps[0].Phase != v1alpha1.StepSucceeded || setup.ActionSteps[1].Phase != v1alpha1.StepSucceeded {
+		t.Fatalf("recovered Action status = %#v, want both persisted Action steps succeeded", setup)
+	}
+}
+
+func waitForActionChildRun(t *testing.T, workflowRun *v1alpha1.WorkflowRun, jobName, actionStepName string, timeout time.Duration) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for {
+		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
+			t.Fatalf("get WorkflowRun while waiting for Action child: %v", err)
+		}
+		for _, step := range workflowRun.Status.Jobs[jobName].Steps {
+			for _, actionStep := range step.ActionSteps {
+				if actionStep.Name == actionStepName && actionStep.RunName != "" {
+					return actionStep.RunName
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for Action child Run: %#v", workflowRun.Status)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func restartController(t *testing.T) {
+	t.Helper()
+	const selector = "app.kubernetes.io/component=controller,app.kubernetes.io/instance=kruntimes"
+	pods, err := coreClientset.CoreV1().Pods(testNamespace).List(context.Background(), metav1.ListOptions{LabelSelector: selector})
+	if err != nil || len(pods.Items) != 1 {
+		t.Fatalf("list controller Pods: err=%v pods=%#v", err, pods.Items)
+	}
+	previousName := pods.Items[0].Name
+	if err := coreClientset.CoreV1().Pods(testNamespace).Delete(context.Background(), previousName, metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("delete controller Pod %s: %v", previousName, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	for {
+		pods, err := coreClientset.CoreV1().Pods(testNamespace).List(context.Background(), metav1.ListOptions{LabelSelector: selector})
+		if err == nil {
+			for index := range pods.Items {
+				pod := &pods.Items[index]
+				if pod.Name != previousName && podIsReady(pod) {
+					return
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for controller replacement after deleting %s", previousName)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func podIsReady(pod *corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil {
+		return false
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
 func TestWorkflowRunExecutesReusableWorkflowAndProjectsOutputs(t *testing.T) {
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 

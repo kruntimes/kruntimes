@@ -4,14 +4,17 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
 var exprPattern = regexp.MustCompile(`\$\{\{\s*(.+?)\s*\}\}`)
 
 // resolveContext holds the current state for expression resolution.
 type resolveContext struct {
-	steps map[string]map[string]string // job's step outputs: stepName -> outputs
-	jobs  map[string]map[string]string // completed job outputs: jobName -> outputs
+	inputs map[string]string            // resolved reusable Workflow or Action inputs
+	steps  map[string]map[string]string // job's step outputs: stepName -> outputs
+	jobs   map[string]map[string]string // completed job outputs: jobName -> outputs
 }
 
 // resolveExpr replaces ${{ }} expressions in s.
@@ -33,6 +36,19 @@ func resolveRef(path string, ctx *resolveContext) (string, error) {
 	parts := strings.SplitN(path, ".", 4)
 
 	switch parts[0] {
+	case "inputs":
+		if len(parts) != 2 {
+			return "", fmt.Errorf("invalid inputs ref: %s (expected inputs.<name>)", path)
+		}
+		if ctx.inputs == nil {
+			return "", fmt.Errorf("no inputs available")
+		}
+		value, ok := ctx.inputs[parts[1]]
+		if !ok {
+			return "", fmt.Errorf("no input %q", parts[1])
+		}
+		return value, nil
+
 	case "steps":
 		if len(parts) != 4 || parts[2] != "outputs" {
 			return "", fmt.Errorf("invalid steps ref: %s (expected steps.<name>.outputs.<key>)", path)
@@ -46,8 +62,25 @@ func resolveRef(path string, ctx *resolveContext) (string, error) {
 		return resolveMap(ctx.jobs, parts[1], parts[3])
 
 	default:
-		return "", fmt.Errorf("unknown ref prefix: %s (expected steps or jobs)", parts[0])
+		return "", fmt.Errorf("unknown ref prefix: %s (expected inputs, steps, or jobs)", parts[0])
 	}
+}
+
+// resolveStepExecution resolves expressions in the fields carried into a
+// child Run. It intentionally leaves Action-call fields for Action expansion.
+func resolveStepExecution(step v1alpha1.StepSpec, ctx *resolveContext) (v1alpha1.StepSpec, error) {
+	resolved := *step.DeepCopy()
+	var err error
+	if resolved.Run, err = resolveExpr(resolved.Run, ctx); err != nil {
+		return v1alpha1.StepSpec{}, fmt.Errorf("run: %w", err)
+	}
+	if resolved.Args, err = resolveStepArgs(resolved.Args, ctx); err != nil {
+		return v1alpha1.StepSpec{}, err
+	}
+	if resolved.Env, err = resolveEnv(resolved.Env, ctx); err != nil {
+		return v1alpha1.StepSpec{}, err
+	}
+	return resolved, nil
 }
 
 func resolveMap(m map[string]map[string]string, name, key string) (string, error) {
