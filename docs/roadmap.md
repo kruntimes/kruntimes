@@ -363,7 +363,7 @@ wiring from accumulating avoidable conflicts.
       Run;
   - promote child Run outputs into WorkflowRun step/job/workflow outputs;
   - promote child Run outputs into WorkflowRun step/job/workflow outputs;
-  - add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
+  - [x] add E2E coverage for inline `WorkflowRun`, reusable Workflow calls, Action
     calls, validation failures, output propagation, and controller restart
     recovery.
 - [ ] Dashboard: design and build a read-only web dashboard, similar in spirit

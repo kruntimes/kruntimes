@@ -309,7 +309,7 @@ controller wiring 累积不必要的冲突。
       invalid input bindings 和 invalid Action output expressions；
   - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；
   - 将 child Run outputs 提升为 WorkflowRun step/job/workflow outputs；
-  - 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
+  - [x] 增加 E2E 覆盖 inline `WorkflowRun`、reusable Workflow calls、Action calls、
     validation failures、output propagation 和 controller restart recovery。
 - [ ] Dashboard：设计并实现只读 web dashboard，类似 Tekton Dashboard，可以按
   namespace 查看 Runs，并检查状态和日志。
