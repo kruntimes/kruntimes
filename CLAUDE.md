@@ -31,6 +31,24 @@ make deploy             # helm install the platform chart
 make deploy-runtimes    # helm install built-in runtimes (bash, python)
 ```
 
+### E2E execution
+
+`make e2e` builds fresh images, creates or updates the `kruntimes-e2e` kind
+cluster, deploys the chart, then runs `make e2e-test`. It is the normal command
+for validating a change that affects deployed components.
+
+- Run only one E2E command at a time. In particular, do not run `make e2e`
+  concurrently with `make e2e-setup` or another `make e2e`: both mutate the
+  same Helm release and can leave Helm's operation lock active.
+- For a clean environment, run `make e2e-cleanup` first, then run `make e2e`.
+  There is no `e2e-clean` target.
+- E2E can exceed an interactive command timeout. Start it in a named `tmux`
+  session and redirect output to a unique file under `/tmp`; poll the log and
+  save the exit code to a companion file. Do not start a second run merely
+  because the caller returns before the background process completes.
+- E2E needs Docker, kind, kubectl, Helm, the local Kubernetes API, and service
+  ports. Run it with the required sandbox escalation.
+
 Run a single Go test: `go test ./internal/scheduler/... -run TestName -v`
 Run Python tests: `cd runtimes/python && uv run python -m unittest server_test -v`
 
