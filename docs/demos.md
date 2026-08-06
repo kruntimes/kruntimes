@@ -287,6 +287,310 @@ that when Bash, Python, or another existing Runtime cannot model the execution
 semantics you need. The protocol contract is covered in
 [Custom Runtime Development](custom-runtime.md).
 
+## Demo 4: Workflow Reuse and Data Sharing
+
+This demo records the target v0.x workflow shape and the current API skeleton.
+The current release includes `WorkflowRun`, reusable `Workflow`, and `Action`
+definition CRDs, but workflow execution, `uses` resolution, Action expansion,
+artifact fan-in, and workspace wiring are still planned work.
+
+Create reusable definitions and a WorkflowRun execution instance:
+
+```bash
+kubectl apply -n kruntimes-demo -f - <<'EOF'
+apiVersion: kruntimes.io/v1alpha1
+kind: Action
+metadata:
+  name: setup-python-tools
+spec:
+  inputs:
+    version:
+      type: string
+      default: "3.12"
+  steps:
+    - name: setup
+      run: |
+        echo "python-version=${{ inputs.version }}" >> "$KRUNTIME_OUTPUTS"
+        echo "installing toolchain"
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: Workflow
+metadata:
+  name: build-and-test
+spec:
+  inputs:
+    image:
+      type: string
+      required: true
+  jobs:
+    build:
+      runs-on: bash
+      steps:
+        - name: package
+          run: |
+            echo "building ${{ inputs.image }}"
+            echo package=ok >> "$KRUNTIME_OUTPUTS"
+    test:
+      runs-on: bash
+      needs:
+        - build
+      steps:
+        - name: verify
+          run: |
+            echo "tests passed"
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  name: release-demo
+spec:
+  uses: build-and-test
+  with:
+    image: agent:v0.1.0
+EOF
+```
+
+Inspect the created skeleton resources:
+
+```bash
+kubectl get actions,workflows,workflowruns -n kruntimes-demo
+kubectl get workflow build-and-test -n kruntimes-demo -o yaml
+kubectl get workflowrun release-demo -n kruntimes-demo -o yaml
+```
+
+At this stage, treat the WorkflowRun as an API object rather than an executable
+workflow. The controller does not yet create child Runs or resolve reusable
+definitions into an execution graph.
+
+Expected workflow data sharing should look like this:
+
+- Jobs pass durable data to other jobs through ArtifactStore-backed artifacts.
+- Runs within one job share a job-local `PersistentWorkspace` created by the
+  workflow controller.
+- Workflow API does not expose workspace plumbing for the common case.
+- Scheduler and runtimed stay workflow-agnostic. They only implement generic
+  Run affinity and workspace primitives.
+
+Target data-sharing sketch for future v0.x work:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: task-with-persistent-workspace
+spec:
+  runtime: bash
+  workspace:
+    name: ci-build-workspace
+    kind: PersistentWorkspace
+    apiGroup: kruntimes.io/v1alpha1
+  source:
+    inline: |
+      mkdir -p src
+      echo 'print("hello")' > src/app.py
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  name: ci-data-sharing-demo
+spec:
+  jobs:
+    build:
+      runs-on: bash
+      steps:
+        - name: checkout
+          run: |
+            mkdir -p src
+            echo 'print("hello")' > src/app.py
+        - name: test
+          run: |
+            test -f src/app.py
+            echo "tests=passed" >> "$KRUNTIME_OUTPUTS"
+        - name: package
+          run: |
+            mkdir -p "$KRUNTIME_ARTIFACTS_DIR"
+            tar -czf "$KRUNTIME_ARTIFACTS_DIR/dist.tgz" src
+    deploy:
+      runs-on: bash
+      needs:
+        - build
+      steps:
+        - name: verify-artifact
+          artifacts:
+            - from: jobs.build.artifacts.dist.tgz
+              path: ./dist.tgz
+          run: |
+            tar -tzf dist.tgz
+            echo "artifact verified"
+```
+
+In this model, `checkout`, `test`, and `package` share the same job-local
+workspace without uploading and downloading intermediate files. The `deploy`
+job receives only the explicit `dist.tgz` artifact from `build`, so data
+crossing a job boundary remains durable, auditable, and independent of Runtime
+Pod placement.
+
+Reusable Workflow and Action expansion should look like this:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Action
+metadata:
+  name: setup-python-tools
+spec:
+  inputs:
+    version:
+      type: string
+      default: "3.12"
+  steps:
+    - name: setup
+      run: |
+        echo "python-version=${{ inputs.version }}" >> "$KRUNTIME_OUTPUTS"
+        echo "installing toolchain"
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: Workflow
+metadata:
+  name: build-and-test
+spec:
+  inputs:
+    image:
+      type: string
+      required: true
+  jobs:
+    build:
+      runs-on: bash
+      steps:
+        - name: setup
+          uses: setup-python-tools
+          with:
+            version: "3.13"
+        - name: package
+          run: |
+            echo "building ${{ inputs.image }}"
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  name: release-demo
+spec:
+  jobs:
+    release:
+      uses: build-and-test
+      with:
+        image: agent:v0.1.0
+```
+
+`WorkflowRun.spec.uses`, `Workflow.spec.jobs.<job>.uses`, and `Action` CRDs are
+already part of the skeleton API. The missing pieces are namespace-local lookup,
+input binding, output propagation, step-level Action expansion, and execution
+status.
+
+## Demo 5: LLM Agent Tool Execution
+
+This demo is a target v0.x scenario and is not supported by the current release
+yet. It should remain draft until the product gaps in
+[Function Mode and Agent Sandboxes](design/function-mode.md) are implemented.
+
+The agent owns LLM reasoning, model routing, prompts, memory, and planning.
+kruntimes owns the low-latency sandbox execution path. The SDK should expose
+sandbox semantics to the agent developer, while the underlying Kubernetes
+lifecycle object remains a function-mode Run.
+
+Target agent-side SDK flow:
+
+```python
+from kruntimes import SandboxClient
+from openai import OpenAI
+
+client = OpenAI()
+sandboxes = SandboxClient(namespace="kruntimes-demo")
+
+with sandboxes.create_sandbox(
+    name="kube-diagnose-agent",
+    runtime="python-agent-sandbox",
+    source_file="agent_tools.py",
+    idle_timeout_seconds=600,
+) as sandbox:
+    plan = client.responses.create(
+        model="gpt-4.1",
+        input="Diagnose pending Kubernetes pods and produce next actions.",
+    )
+
+    sandbox.files.write("cluster-snapshot.json", b'{"namespace":"default","pods":[]}')
+
+    result = sandbox.commands.run({
+        "tool": "diagnose-kubernetes",
+        "plan": plan.output_text,
+        "inputPath": "cluster-snapshot.json",
+    })
+
+    report = sandbox.files.read("report.md")
+    print(result.outputs["summary"])
+```
+
+The SDK presents a sandbox handle with `commands`, `files`, `logs`,
+`artifacts`, `info`, `disconnect`, `reattach`, and `terminate` operations.
+The caller does not need to know which Runtime Pod owns the sandbox or how the
+gateway connection is established.
+
+The underlying target Run shape is:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Runtime
+metadata:
+  name: python-agent-sandbox
+spec:
+  capacity:
+    resources:
+      runs: "1"
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: kube-diagnose-agent
+spec:
+  runtime: python-agent-sandbox
+  source:
+    inline: |
+      def invoke(request):
+          return {
+              "outputs": {
+                  "summary": "diagnosis complete"
+              },
+              "artifactRefs": [
+                  {
+                      "name": "report.md",
+                      "uri": "s3://kruntimes-artifacts/runs/kube-diagnose-agent/report.md"
+                  }
+              ],
+          }
+  mode:
+    function:
+      handler: agent_tools.invoke
+      idleTimeoutSeconds: 600
+```
+
+Function-mode Runs still obey Runtime capacity. Multiple function-mode Runs can
+share one Runtime Pod when capacity allows it. For AgentSandbox-style use, the
+recommended deployment shape is one Run per Runtime Pod, so the SDK should warn
+or help create a dedicated Runtime when `runs` is greater than `1`.
+
+Required gaps before this demo can become executable:
+
+- Function-mode registration and readiness handling for
+  `Run.spec.mode.function.handler`.
+- Runtime gateway Service per Runtime.
+- runtimed ownership cache and invoke routing.
+- Runtime Server register, invoke, unregister, and status APIs.
+- Python and Go sandbox-facing SDKs.
+- Workspace/file/log/artifact APIs that do not require Kubernetes
+  reconciliation for each operation.
+- E2E coverage for ready, local/proxied invoke, repeated invocation,
+  disconnect, reattach, terminate, idle timeout, cleanup, and Runtime Pod
+  restart recovery.
+
 ## Clean Up
 
 ```bash
