@@ -160,7 +160,7 @@ controller wiring 累积不必要的冲突。
       stale-pod fencing 的 unit、integration 和 E2E coverage；
   - [ ] 覆盖 function registration、ready status、local/proxied invoke、多次 invocation、
     idle timeout、explicit release、Runtime Pod restart recovery 和 cleanup。
-- [ ] Runtime gateway invoke path：在 Helm chart 中增加可选的共享 `runtime-gateway`
+- [x] Runtime gateway invoke path：在 Helm chart 中增加可选的共享 `runtime-gateway`
   Deployment 和 ClusterIP Service。gateway 暴露稳定的 HTTP Run endpoint，解析目标 Run，并调用
   其 Runtime 的 Kubernetes Service。Kubernetes 选择 ready Runtime Pod；runtimed 只在该 Runtime
   内解析 owner。

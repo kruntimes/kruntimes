@@ -185,7 +185,7 @@ wiring from accumulating avoidable conflicts.
   - [ ] cover function registration, ready status, local and proxied invoke,
     repeated invocation, idle timeout, explicit release, Runtime Pod restart
     recovery, and cleanup.
-- [ ] Runtime gateway invoke path: add an optional shared `runtime-gateway`
+- [x] Runtime gateway invoke path: add an optional shared `runtime-gateway`
   Deployment and ClusterIP Service to the Helm chart. The gateway exposes the
   stable HTTP Run endpoint, resolves the requested Run, and calls the
   Kubernetes Service for its Runtime. Kubernetes selects a ready Runtime Pod;
