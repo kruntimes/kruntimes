@@ -150,7 +150,7 @@ func stageArtifactDirectory(ctx context.Context, reader io.Reader, destination s
 			if err := ensureArtifactInputParent(destination, filepath.Dir(target)); err != nil {
 				return err
 			}
-			file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
+			file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, artifactInputFileMode(header.FileInfo().Mode()))
 			if err != nil {
 				return fmt.Errorf("create archive file: %w", err)
 			}
@@ -169,6 +169,20 @@ func stageArtifactDirectory(ctx context.Context, reader io.Reader, destination s
 	}
 	ok = true
 	return nil
+}
+
+// artifactInputFileMode deliberately restores only the owner execute bit from
+// a directory artifact. Artifact producers may run under a different UID or
+// group than consumers, so preserving arbitrary read, write, group, or other
+// permission bits would make the resulting access policy depend on producer
+// metadata. The stable 0640 baseline retains the existing confidentiality and
+// mutability boundary while allowing checked-in scripts to be invoked.
+func artifactInputFileMode(source os.FileMode) os.FileMode {
+	mode := os.FileMode(0o640)
+	if source&0o100 != 0 {
+		mode |= 0o100
+	}
+	return mode
 }
 
 func archiveEntryDestination(root, name string) (string, error) {

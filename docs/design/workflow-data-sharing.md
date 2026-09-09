@@ -83,7 +83,10 @@ data and runtimed never needs Workflow knowledge:
    through its configured `ArtifactStore` and safely stages it below the Run
    working directory. File artifacts are copied to the destination path;
    directory artifacts are extracted into it without permitting symlinks or
-   path traversal.
+   path traversal. Extracted regular files use a normalized `0640` mode;
+   the producer's owner-execute bit is retained, yielding `0740` for an
+   executable file. Group, other, write, and special mode bits are never
+   inherited from artifact metadata.
 2. A Workflow step expresses the source as
    `jobs.<job-id>.artifacts.<artifact-name>`. When its job becomes ready, the
    Workflow controller resolves that name from the producing job's compact

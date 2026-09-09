@@ -72,7 +72,9 @@ artifact transfer 分为两层，这样 Workflow controller 不复制数据，�
 1. 通用 Run artifact input 包含 immutable `ArtifactRef` 和 relative destination
    path。执行前，runtimed 通过配置的 `ArtifactStore` 打开该 reference，并将内容安全地
    stage 到 Run working directory 下。file artifact 会复制到 destination path；directory
-   artifact 会被解压到该位置，且不允许 symlink 或 path traversal。
+   artifact 会被解压到该位置，且不允许 symlink 或 path traversal。解压后的 regular file
+   使用规范化的 `0640` mode；如果 producer 文件具有 owner-execute bit，则保留该 bit，
+   得到 `0740`。不会继承 artifact metadata 中的 group、other、write 或 special mode bits。
 2. Workflow step 使用 `jobs.<job-id>.artifacts.<artifact-name>` 表达 source。当 job
    ready 后，Workflow controller 从 producing job 的 compact artifact status 解析该名称，
    再 materialize 通用 Run input。Run API 和 runtimed 都不包含 Workflow、job 或 step

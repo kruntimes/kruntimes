@@ -33,7 +33,7 @@ func TestStageArtifactInputFile(t *testing.T) {
 
 func TestStageArtifactInputDirectoryRejectsTraversal(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "inputs")
-	if err := stageArtifactInput(t.Context(), directoryArchive(t, "../escape", "bad"), v1alpha1.ArtifactRef{Type: v1alpha1.ArtifactTypeDirectory}, destination, 1024); err == nil {
+	if err := stageArtifactInput(t.Context(), directoryArchive(t, "../escape", "bad", 0o600), v1alpha1.ArtifactRef{Type: v1alpha1.ArtifactTypeDirectory}, destination, 1024); err == nil {
 		t.Fatal("stageArtifactInput accepted a traversal entry")
 	}
 	if _, err := os.Stat(destination); !os.IsNotExist(err) {
@@ -43,7 +43,7 @@ func TestStageArtifactInputDirectoryRejectsTraversal(t *testing.T) {
 
 func TestStageArtifactInputDirectoryExtractsFiles(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "inputs")
-	if err := stageArtifactInput(t.Context(), directoryArchive(t, "nested/report.txt", "report"), v1alpha1.ArtifactRef{Type: v1alpha1.ArtifactTypeDirectory}, destination, 1024); err != nil {
+	if err := stageArtifactInput(t.Context(), directoryArchive(t, "nested/report.txt", "report", 0o600), v1alpha1.ArtifactRef{Type: v1alpha1.ArtifactTypeDirectory}, destination, 1024); err != nil {
 		t.Fatalf("stageArtifactInput: %v", err)
 	}
 	content, err := os.ReadFile(filepath.Join(destination, "nested", "report.txt"))
@@ -52,6 +52,27 @@ func TestStageArtifactInputDirectoryExtractsFiles(t *testing.T) {
 	}
 	if got := string(content); got != "report" {
 		t.Fatalf("content = %q, want report", got)
+	}
+	info, err := os.Stat(filepath.Join(destination, "nested", "report.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o640); got != want {
+		t.Fatalf("mode = %o, want %o", got, want)
+	}
+}
+
+func TestStageArtifactInputDirectoryPreservesOwnerExecuteBit(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "inputs")
+	if err := stageArtifactInput(t.Context(), directoryArchive(t, "hack/verify.sh", "#!/bin/sh\necho verified\n", 0o755), v1alpha1.ArtifactRef{Type: v1alpha1.ArtifactTypeDirectory}, destination, 1024); err != nil {
+		t.Fatalf("stageArtifactInput: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(destination, "hack", "verify.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o740); got != want {
+		t.Fatalf("mode = %o, want %o", got, want)
 	}
 }
 
@@ -83,12 +104,12 @@ func TestStageArtifactInputsUsesRunWorkingDirectory(t *testing.T) {
 	}
 }
 
-func directoryArchive(t *testing.T, name, content string) *bytes.Reader {
+func directoryArchive(t *testing.T, name, content string, mode int64) *bytes.Reader {
 	t.Helper()
 	var buffer bytes.Buffer
 	gzipWriter := gzip.NewWriter(&buffer)
 	tarWriter := tar.NewWriter(gzipWriter)
-	if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+	if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tarWriter.Write([]byte(content)); err != nil {
