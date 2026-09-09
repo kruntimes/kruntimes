@@ -70,6 +70,9 @@ func TestArtifactCleanupEnsuresFilesystemWorkerWithoutRuntime(t *testing.T) {
 	if container.Image != "controller:test" || container.Command[0] != "/runtime-maintainer" {
 		t.Fatalf("cleaner container = %#v", container)
 	}
+	if container.ImagePullPolicy != corev1.PullIfNotPresent {
+		t.Fatalf("imagePullPolicy = %q, want %q", container.ImagePullPolicy, corev1.PullIfNotPresent)
+	}
 	for _, want := range []string{"--store-hash=" + storeHash, "--filesystem-volume-claim=artifacts-pvc"} {
 		if !slices.Contains(container.Args, want) {
 			t.Fatalf("cleaner args = %v, missing %s", container.Args, want)

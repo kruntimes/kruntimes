@@ -70,6 +70,7 @@ spec:
             - --default-daemon-image={{ include "kruntimes.image" (list . .Values.runtimed.image) }}
             - --runtimed-service-account-name={{ include "kruntimes.runtimed.name" . }}
             - --runtime-maintainer-image={{ include "kruntimes.image" (list . .Values.controller.image) }}
+            - --runtime-maintainer-image-pull-policy={{ .Values.controller.imagePullPolicy }}
             - --session-max-queue-size={{ .Values.runtimed.session.maxQueueSize }}
             - --session-max-operation-timeout={{ .Values.runtimed.session.maxOperationTimeout }}
             - --session-close-timeout={{ .Values.runtimed.session.closeTimeout }}

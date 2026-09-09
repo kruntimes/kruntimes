@@ -49,6 +49,7 @@ func main() {
 		defaultDaemonImage                       string
 		runtimedServiceAccountName               string
 		runtimeMaintainerImage                   string
+		runtimeMaintainerImagePullPolicy         string
 		runtimeMaintainerPullSecrets             string
 		gatewayNamespace                         string
 		gatewaySelectorLabels                    string
@@ -70,6 +71,7 @@ func main() {
 	flag.StringVar(&defaultDaemonImage, "default-daemon-image", "", "Default runtimed daemon image injected into Runtime Pods.")
 	flag.StringVar(&runtimedServiceAccountName, "runtimed-service-account-name", "", "ServiceAccount name injected into Runtime Pods for the runtimed sidecar.")
 	flag.StringVar(&runtimeMaintainerImage, "runtime-maintainer-image", "", "Image containing the long-running runtime maintainer.")
+	flag.StringVar(&runtimeMaintainerImagePullPolicy, "runtime-maintainer-image-pull-policy", "IfNotPresent", "Image pull policy for long-running runtime maintainers.")
 	flag.StringVar(&runtimeMaintainerPullSecrets, "runtime-maintainer-image-pull-secrets", "", "Comma-separated image pull Secret names for runtime maintainers.")
 	flag.StringVar(&gatewayNamespace, "gateway-namespace", "", "Namespace of the enabled Runtime gateway. Empty keeps Runtime Pod ingress denied.")
 	flag.StringVar(&gatewaySelectorLabels, "gateway-selector-labels", "", "Comma-separated key=value labels selecting Runtime gateway Pods.")
@@ -165,11 +167,12 @@ func main() {
 	}
 
 	artifactCleanup := &controller.ArtifactCleanupReconciler{
-		Client:           mgr.GetClient(),
-		Log:              ctrl.Log.WithName("controllers").WithName("ArtifactCleanup"),
-		Recorder:         mgr.GetEventRecorderFor("artifact-cleanup"),
-		MaintainerImage:  runtimeMaintainerImage,
-		ImagePullSecrets: localObjectReferences(runtimeMaintainerPullSecrets),
+		Client:                    mgr.GetClient(),
+		Log:                       ctrl.Log.WithName("controllers").WithName("ArtifactCleanup"),
+		Recorder:                  mgr.GetEventRecorderFor("artifact-cleanup"),
+		MaintainerImage:           runtimeMaintainerImage,
+		MaintainerImagePullPolicy: corev1.PullPolicy(runtimeMaintainerImagePullPolicy),
+		ImagePullSecrets:          localObjectReferences(runtimeMaintainerPullSecrets),
 	}
 	if err := artifactCleanup.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ArtifactCleanup")

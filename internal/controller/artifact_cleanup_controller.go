@@ -36,10 +36,11 @@ const (
 // survive Runtime deletion and artifactStore changes.
 type ArtifactCleanupReconciler struct {
 	client.Client
-	Log              logr.Logger
-	Recorder         record.EventRecorder
-	MaintainerImage  string
-	ImagePullSecrets []corev1.LocalObjectReference
+	Log                       logr.Logger
+	Recorder                  record.EventRecorder
+	MaintainerImage           string
+	MaintainerImagePullPolicy corev1.PullPolicy
+	ImagePullSecrets          []corev1.LocalObjectReference
 }
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runs,verbs=get;list;watch;update;patch
@@ -144,10 +145,15 @@ func (r *ArtifactCleanupReconciler) buildCleanupWorkerDeployment(run *v1alpha1.R
 			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 	}
+	pullPolicy := r.MaintainerImagePullPolicy
+	if pullPolicy == "" {
+		pullPolicy = corev1.PullIfNotPresent
+	}
 	container := corev1.Container{
-		Name:    "cleaner",
-		Image:   r.MaintainerImage,
-		Command: []string{"/runtime-maintainer"},
+		Name:            "cleaner",
+		Image:           r.MaintainerImage,
+		ImagePullPolicy: pullPolicy,
+		Command:         []string{"/runtime-maintainer"},
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: kptr.To(false),
 			ReadOnlyRootFilesystem:   kptr.To(true),
