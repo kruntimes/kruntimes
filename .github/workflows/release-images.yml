@@ -36,6 +36,8 @@ jobs:
             dockerfile: Dockerfile.runtimed
           - image: gateway
             dockerfile: Dockerfile.gateway
+          - image: runtime-log-apiserver
+            dockerfile: Dockerfile.log-api
           - image: dashboard
             dockerfile: dashboard/Dockerfile
           - image: bash-runtime

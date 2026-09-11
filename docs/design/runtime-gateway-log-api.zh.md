@@ -1,6 +1,6 @@
 # Runtime Gateway Run Log API
 
-状态：**已实现**
+状态：**已实现——直连 Gateway 与 Kubernetes 聚合 API**
 
 ## 问题
 
@@ -15,9 +15,14 @@ Run output 会作为 structured records 写入 owner Runtime Pod 的 `runtimed` 
 
 ## 决定
 
-共享 Runtime Gateway 将成为 Dashboard 和 `krt logs` 唯一的普通 HTTP Run-log API。它不是
-Kubernetes aggregation API server，不注册 `APIService`，也不创建 log store。它读取现有的
-Kubernetes container-log stream，只暴露经过过滤且有界的 Run records。
+Runtime Gateway 保留为直连、外部 HTTP Run-log API；它不会变成 aggregation server，仍适合
+独立部署的 client。同时 chart 会部署独立的 `runtime-log-apiserver`，并通过 Kubernetes API
+aggregation 注册 `logs.kruntimes.io/v1alpha1`。两条路径都不创建 log store，只读取相同的现有
+Kubernetes container-log stream，并只暴露经过过滤且有界的 Run records。
+
+`krt logs` 缺省使用聚合 endpoint，因此用户普通 kubeconfig（bearer token、exec credential 或
+client certificate）由 API server 认证。显式提供 `--gateway-url` 才选择直连 Gateway。Dashboard
+也缺省使用 aggregation；chart 可显式选择直连 Gateway mode。
 
 初始 endpoint 为：
 
@@ -27,6 +32,18 @@ GET /v1/namespaces/{namespace}/runtimes/{runtime}/runs/{runUID}/logs?tailLines={
 
 `namespace`、`runtime` 和 `runUID` 与现有 Gateway API 使用相同的 immutable Run selection。
 `runUID` 绝不替换为可变的 Run name，从而避免被删除后重建的 Run 收到前一个对象的 records。
+
+聚合 endpoint 故意使用独立 API group，避免接管 CRD 的 `kruntimes.io/v1alpha1` group/version：
+
+```text
+GET /apis/logs.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/log?tailLines={lines}&follow={true|false}&cursor={opaque}&timeoutSeconds={seconds}
+```
+
+它受 Kubernetes `get` `logs.kruntimes.io/runs/log` 保护；backend 还会对目标
+`kruntimes.io/runs` 做 exact `get` SubjectAccessReview。aggregated server 仅在 mTLS 验证
+Kubernetes aggregation proxy 后才信任 identity headers；启动时读取 API server 所有的
+`kube-system/extension-apiserver-authentication` ConfigMap，其中包括 request-header client CA
+和允许的 proxy identity。
 
 ## Request 和 Response Contract
 
@@ -111,6 +128,24 @@ Pod-log URL。
 `follow=false` 时，同一个 decoder 在 bounded ring 中最多收集 `tailLines` 条 matching records，
 只在 source stream 关闭后才写出文档定义的 JSON envelope。它刻意与 streaming writer 分离，以保持
 普通 tail response 始终是有效 JSON，绝不成为 partial document。
+
+## One-Shot Runtime Output 投影
+
+one-shot `Runtime.Execute` 是异步操作：它创建本地 execution 后立即返回其 ID，不会等待 command
+完成。Runtime Server 的 unary `Status` response 会在 execution 运行期间返回当前有界的 cumulative
+stdout/stderr buffer；exit code 和 final state 只有在进入 terminal state 后才是 authoritative。
+
+owner runtimed 在 one-shot Run active 期间轮询既有 status，并只把新观察到的**完整行**投影到自身的
+structured container log。它为 stdout/stderr 分别保存 cursor 和尚未完成的 trailing line。terminal
+status 在 Run terminal status update 成功后才 flush 剩余的未换行内容。因此 Gateway `follow=true`
+reader、Dashboard 和 `krt logs --follow` 都能在 command exit 前观察到 output，而不需要把日志内容
+放进 `Run.status`，也不需要引入第二种 log transport。
+
+该投影刻意采用 at-least-once 语义。cursor 只存在于一个 runtimed process；在 runtimed 或 Runtime
+Server recovery 后，仍保留的 output 可以再次写出，而不是被静默丢失。重新连接 Gateway follow stream
+的 client 同样必须容忍 retained record 重复。Runtime Server 的 per-stream output limit 仍是上界：其
+bounded buffer 截断后会写出 truncation marker，但之后被丢弃的 bytes 无法恢复。Kubernetes log
+collection 仍负责 durable retention。
 
 ## Client Streaming Contract
 

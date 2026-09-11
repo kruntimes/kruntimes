@@ -69,7 +69,7 @@ type runtimedLogRecord struct {
 	DurationMilliseconds int64  `json:"duration_milliseconds,omitempty"`
 }
 
-type runLogEntry struct {
+type RunLogEntry struct {
 	Timestamp            string `json:"timestamp,omitempty"`
 	Stream               string `json:"stream"`
 	Message              string `json:"message"`
@@ -81,6 +81,10 @@ type runLogEntry struct {
 	TimedOut             bool   `json:"timedOut,omitempty"`
 	DurationMilliseconds int64  `json:"durationMilliseconds,omitempty"`
 }
+
+// runLogEntry retains the original internal name while allowing the
+// aggregation API to use the exact same structured log representation.
+type runLogEntry = RunLogEntry
 
 func (r runtimedLogRecord) entry(timestamp string) runLogEntry {
 	return runLogEntry{
@@ -95,6 +99,27 @@ func (r runtimedLogRecord) entry(timestamp string) runLogEntry {
 		TimedOut:             r.TimedOut,
 		DurationMilliseconds: r.DurationMilliseconds,
 	}
+}
+
+// OpenRunLogStream opens the runtimed container log source for a Run. Callers
+// apply Run UID filtering after opening it because a Runtime Pod is shared by
+// multiple Runs.
+func OpenRunLogStream(ctx context.Context, podLogs PodLogReader, run *v1alpha1.Run, follow bool, limitBytes int64) (io.ReadCloser, error) {
+	if podLogs == nil {
+		return nil, errors.New("Runtime Pod log reader is not configured")
+	}
+	if run == nil || run.Status.AssignedPod == "" {
+		return nil, status.Error(codes.FailedPrecondition, "Run has no assigned Runtime Pod")
+	}
+	logStartTime := run.CreationTimestamp
+	if run.Status.StartTime != nil {
+		logStartTime = *run.Status.StartTime
+	}
+	options := corev1.PodLogOptions{Container: "runtimed", Follow: follow, SinceTime: &logStartTime, Timestamps: true}
+	if !follow && limitBytes > 0 {
+		options.LimitBytes = &limitBytes
+	}
+	return podLogs.ReadPodLogs(ctx, run.Namespace, run.Status.AssignedPod, options)
 }
 
 func runLogRoute(path string) (namespace, runtimeName, runUID string, ok bool) {
@@ -176,15 +201,7 @@ func (s *Server) serveRunLogs(w http.ResponseWriter, r *http.Request, namespace,
 	// global tail first can exclude an older selected Run even while its records
 	// are still retained. Start at this Run instead, then apply tailLines after
 	// UID filtering below.
-	logStartTime := run.CreationTimestamp
-	if run.Status.StartTime != nil {
-		logStartTime = *run.Status.StartTime
-	}
-	podLogOptions := corev1.PodLogOptions{Container: "runtimed", Follow: options.follow, SinceTime: &logStartTime, Timestamps: true}
-	if !options.follow {
-		podLogOptions.LimitBytes = &options.limitBytes
-	}
-	stream, err := s.PodLogs.ReadPodLogs(r.Context(), run.Namespace, run.Status.AssignedPod, podLogOptions)
+	stream, err := OpenRunLogStream(r.Context(), s.PodLogs, run, options.follow, options.limitBytes)
 	if err != nil {
 		s.writeRunLogReadError(w, err)
 		return
@@ -270,7 +287,9 @@ func readRunLogEntries(stream io.Reader, runUID string, limit int64) ([]runLogEn
 	return entries, err
 }
 
-func forEachRunLogEntry(stream io.Reader, runUID string, visit func(runLogEntry) error) error {
+// ForEachRunLogEntry filters a shared runtimed container log stream to the
+// requested Run. It is shared by the direct Gateway and aggregated log API.
+func ForEachRunLogEntry(stream io.Reader, runUID string, visit func(RunLogEntry) error) error {
 	reader := bufio.NewReaderSize(stream, 64<<10)
 	for {
 		line, err := readLogLine(reader)
@@ -293,6 +312,10 @@ func forEachRunLogEntry(stream io.Reader, runUID string, visit func(runLogEntry)
 			return nil
 		}
 	}
+}
+
+func forEachRunLogEntry(stream io.Reader, runUID string, visit func(runLogEntry) error) error {
+	return ForEachRunLogEntry(stream, runUID, visit)
 }
 
 func readLogLine(reader *bufio.Reader) ([]byte, error) {

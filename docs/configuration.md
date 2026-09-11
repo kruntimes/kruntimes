@@ -69,6 +69,34 @@ other external exposure separately.
 
 ## Gateway client-certificate authentication
 
+## Aggregated Run-log API
+
+`logAPI.enabled` defaults to `true` independently of `gateway.enabled`. It
+installs the `logs.kruntimes.io/v1alpha1` APIService and a dedicated backend.
+This is the default transport for `krt logs` and Dashboard: normal kubeconfig
+authentication, including client certificates, is verified by the Kubernetes
+API server. The caller needs both exact `get` on the Run and `get` on the
+`logs.kruntimes.io` `runs/log` subresource; it never needs `pods/log`.
+
+The APIService is cluster-scoped, so a cluster can have one aggregated log API
+backend for this API group/version. When installing a second kruntimes platform
+release in the same cluster, retain `logAPI.enabled: true` for the release that
+owns the API and set it to `false` for every other release.
+
+```yaml
+logAPI:
+  enabled: true
+dashboard:
+  logs:
+    mode: aggregation
+```
+
+Set `dashboard.logs.mode: gateway` only to opt into the direct Gateway path.
+Likewise, `krt logs --gateway-url=https://...` is an explicit direct-client
+choice. The direct Gateway client-certificate configuration below remains
+useful for that external endpoint, but is not needed for ordinary kubeconfig
+use of the aggregated API.
+
 The Runtime Gateway always accepts Kubernetes bearer tokens. To additionally
 allow `krt logs` to use a kubeconfig client certificate, enable Gateway HTTPS
 and provide the Secret key containing the CA that signs Kubernetes user

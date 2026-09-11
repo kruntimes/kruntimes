@@ -1,6 +1,7 @@
 package runtimed
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"io"
 	"os"
@@ -43,8 +44,16 @@ func outputFromStatus(resp *pb.StatusResponse) executionOutput {
 	return executionOutput{stdout: resp.Stdout, stderr: resp.Stderr}
 }
 
-func (c *Controller) emitExecutionOutput(run *v1alpha1.Run, output executionOutput) {
-	if run == nil {
+// emitExecutionOutputDelta writes only complete lines newly observed through
+// Runtime Status. A Runtime restart loses the local cursor, so the retained
+// Runtime buffer may be written again; container logs deliberately provide
+// at-least-once, rather than exactly-once, delivery.
+//
+// terminal flushes a final unterminated line. It must only be true after the
+// Run terminal status update succeeds, so callers never observe a terminal
+// fragment before the Run itself is terminal.
+func (c *Controller) emitExecutionOutputDelta(ar *activeRun, output executionOutput, terminal bool) {
+	if ar == nil || ar.run == nil {
 		return
 	}
 	writer := c.ExecutionLogWriter
@@ -52,18 +61,47 @@ func (c *Controller) emitExecutionOutput(run *v1alpha1.Run, output executionOutp
 		writer = os.Stdout
 	}
 
+	ar.outputMu.Lock()
+	defer ar.outputMu.Unlock()
 	c.logMu.Lock()
 	defer c.logMu.Unlock()
-	c.emitStream(writer, run, "stdout", output.stdout)
-	c.emitStream(writer, run, "stderr", output.stderr)
+	c.emitOutputDelta(writer, ar.run, "stdout", output.stdout, &ar.stdoutCursor, terminal)
+	c.emitOutputDelta(writer, ar.run, "stderr", output.stderr, &ar.stderrCursor, terminal)
 }
 
-func (c *Controller) emitStream(writer io.Writer, run *v1alpha1.Run, stream, content string) {
-	for _, message := range strings.Split(strings.TrimSuffix(content, "\n"), "\n") {
-		if message == "" {
-			continue
+func (c *Controller) emitOutputDelta(writer io.Writer, run *v1alpha1.Run, stream, content string, cursor *outputCursor, terminal bool) {
+	if cursor == nil {
+		return
+	}
+	if cursor.seen > len(content) || (cursor.hasHash && sha256.Sum256([]byte(content[:cursor.seen])) != cursor.prefixHash) {
+		// Runtime Status no longer contains the previous prefix. This can happen
+		// after a Runtime Server restart or a bounded-buffer implementation
+		// change. Restart from the retained content; duplicates are preferable to
+		// silently losing logs.
+		cursor.seen = 0
+		cursor.pending = ""
+	}
+
+	newContent := content[cursor.seen:]
+	cursor.seen = len(content)
+	cursor.prefixHash = sha256.Sum256([]byte(content))
+	cursor.hasHash = true
+	combined := cursor.pending + newContent
+	lastNewline := strings.LastIndexByte(combined, '\n')
+	if lastNewline >= 0 {
+		for _, message := range strings.Split(combined[:lastNewline], "\n") {
+			if message != "" {
+				writeExecutionLogLine(writer, executionLogLineFor(run, c.PodName, stream, strings.TrimSuffix(message, "\r")))
+			}
 		}
-		writeExecutionLogLine(writer, executionLogLineFor(run, c.PodName, stream, strings.TrimSuffix(message, "\r")))
+		cursor.pending = combined[lastNewline+1:]
+	} else {
+		cursor.pending = combined
+	}
+
+	if terminal && cursor.pending != "" {
+		writeExecutionLogLine(writer, executionLogLineFor(run, c.PodName, stream, strings.TrimSuffix(cursor.pending, "\r")))
+		cursor.pending = ""
 	}
 }
 

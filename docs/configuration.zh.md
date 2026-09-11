@@ -68,6 +68,30 @@ ingress 或其它对外暴露需要单独配置。
 
 ## Gateway client-certificate authentication
 
+## 聚合 Run-log API
+
+`logAPI.enabled` 独立于 `gateway.enabled`，默认是 `true`。它安装
+`logs.kruntimes.io/v1alpha1` APIService 及独立 backend。这是 `krt logs` 和 Dashboard 的默认
+transport：普通 kubeconfig authentication（包括 client certificate）由 Kubernetes API server 验证。
+caller 需要目标 Run 的 exact `get`，以及 `logs.kruntimes.io` `runs/log` subresource 的 `get`；不需要
+`pods/log`。
+
+该 APIService 是 cluster-scoped，因此同一集群中一个 API group/version 只能有一个聚合
+Run-log API backend。若在同一集群安装第二个 kruntimes platform release，应保留拥有该 API
+的 release 的 `logAPI.enabled: true`，并将其它 release 设为 `false`。
+
+```yaml
+logAPI:
+  enabled: true
+dashboard:
+  logs:
+    mode: aggregation
+```
+
+仅在需要直连 Gateway 时设置 `dashboard.logs.mode: gateway`；同样，
+`krt logs --gateway-url=https://...` 是显式的直连选择。下文直连 Gateway 的 client-certificate
+配置仍适用于外部 endpoint，但普通 kubeconfig 使用聚合 API 时不需要它。
+
 Runtime Gateway 始终接受 Kubernetes bearer tokens。要让 `krt logs` 也能使用 kubeconfig
 client certificate，启用 Gateway HTTPS，并提供包含签发 Kubernetes user certificate 的 CA 的
 Secret key：

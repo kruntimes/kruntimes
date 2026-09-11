@@ -861,10 +861,63 @@ func TestGatewayServesAuthorizedRunLogs(t *testing.T) {
 		t.Fatalf("krt logs stdout = %q, want %q", cliStdout.String(), marker)
 	}
 
+	// With no Gateway URL, krt uses the aggregated API and the ordinary
+	// kubeconfig bearer-token transport. This proves neither direct Gateway
+	// reachability nor pods/log permission is needed for the default UX.
+	cmd = krt.NewRootCmd()
+	cliStdout.Reset()
+	cliStderr.Reset()
+	cmd.SetOut(&cliStdout)
+	cmd.SetErr(&cliStderr)
+	cmd.SetArgs([]string{"logs", run.Name, "--namespace", testNamespace, "--token", token, "--tail", "100"})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("krt logs through aggregated API: %v\nstderr: %s", err, cliStderr.String())
+	}
+	if !strings.Contains(cliStdout.String(), marker) {
+		t.Fatalf("krt logs through aggregated API stdout = %q, want %q", cliStdout.String(), marker)
+	}
+
 	followEntries := followGatewayRunLogs(t, logURL+"?tailLines=100&follow=true", token, marker)
 	if !hasGatewayRunLogEntry(followEntries, "stdout", marker) {
 		t.Fatalf("follow Run logs = %#v, want stdout record", followEntries)
 	}
+}
+
+func TestGatewayFollowsOneShotRunLogsBeforeCompletion(t *testing.T) {
+	runtimeName := fmt.Sprintf("live-task-logs-%d", time.Now().UnixNano())
+	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
+
+	marker := "one-shot-live-log-e2e"
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-live-task-logs-", Namespace: testNamespace},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Mode:    taskMode("printf '" + marker + "\\n'; sleep 10; printf 'completed\\n'"),
+		},
+	}
+	if err := k8sClient.Create(t.Context(), run); err != nil {
+		t.Fatalf("create one-shot Run: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), run) })
+	waitForRunPhase(t, run, 20*time.Second, v1alpha1.RunRunning)
+
+	// Task Runs do not expose a Session endpoint, but the log route itself is
+	// independent of it. Use the shared Gateway port-forward at its root.
+	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), "http://runtime-gateway/")
+	token := sessionGatewayToken(t, run)
+	entries := followGatewayRunLogs(t, gatewayRunLogsURL(t, baseURL, run)+"?tailLines=100&follow=true", token, marker)
+	if !hasGatewayRunLogEntry(entries, "stdout", marker) {
+		t.Fatalf("follow Run logs = %#v, want stdout marker", entries)
+	}
+
+	var current v1alpha1.Run
+	if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), &current); err != nil {
+		t.Fatalf("get one-shot Run after live log: %v", err)
+	}
+	if current.Status.Phase != v1alpha1.RunRunning {
+		t.Fatalf("Run phase after receiving live log = %s, want Running", current.Status.Phase)
+	}
+	waitForRunPhase(t, run, 20*time.Second, v1alpha1.RunSucceeded)
 }
 
 type gatewayRunLogEntry struct {
@@ -2071,12 +2124,10 @@ func sessionGatewayToken(t *testing.T, run *v1alpha1.Run) string {
 
 	role := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{Name: serviceAccount.Name, Namespace: testNamespace},
-		Rules: []rbacv1.PolicyRule{{
-			APIGroups:     []string{v1alpha1.GroupVersion.Group},
-			Resources:     []string{"runs"},
-			ResourceNames: []string{run.Name},
-			Verbs:         []string{"get"},
-		}},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"runs"}, ResourceNames: []string{run.Name}, Verbs: []string{"get"}},
+			{APIGroups: []string{"logs.kruntimes.io"}, Resources: []string{"runs/log"}, ResourceNames: []string{run.Name}, Verbs: []string{"get"}},
+		},
 	}
 	if err := k8sClient.Create(ctx, role); err != nil {
 		t.Fatalf("create gateway test Role: %v", err)

@@ -1,6 +1,6 @@
 # Runtime Gateway Run Log API
 
-Status: **Implemented**
+Status: **Implemented — direct Gateway and Kubernetes aggregated API**
 
 ## Problem
 
@@ -17,11 +17,18 @@ capability that kruntimes intends to offer: *read the logs of this Run*.
 
 ## Decision
 
-The shared Runtime Gateway will be the single ordinary HTTP Run-log API for
-both Dashboard and `krt logs`. It is not a Kubernetes aggregation API server,
-does not register an `APIService`, and does not create a log store. It reads
-the existing Kubernetes container-log stream and exposes only filtered,
-bounded Run records.
+The Runtime Gateway remains the direct, external HTTP Run-log API. It does not
+become an aggregation server and remains useful for independently deployed
+clients. In addition, the chart installs a separate `runtime-log-apiserver`
+and registers `logs.kruntimes.io/v1alpha1` through Kubernetes API aggregation.
+It does not create a log store: both paths read the same existing Kubernetes
+container-log stream and expose only filtered, bounded Run records.
+
+`krt logs` uses the aggregated endpoint by default, so the user's ordinary
+kubeconfig (bearer token, exec credential, or client certificate) is
+authenticated by the API server. Supplying `--gateway-url` deliberately opts
+into the direct Gateway contract. Dashboard likewise uses aggregation by
+default; its chart can explicitly select the direct Gateway mode.
 
 The initial endpoint is:
 
@@ -33,6 +40,20 @@ GET /v1/namespaces/{namespace}/runtimes/{runtime}/runs/{runUID}/logs?tailLines={
 used by the existing Gateway APIs. `runUID` is never replaced with a mutable
 Run name, so a deleted-and-recreated Run cannot receive records from its
 predecessor.
+
+The aggregated endpoint is intentionally a distinct API group so it cannot
+take ownership of the CRD's `kruntimes.io/v1alpha1` group/version:
+
+```text
+GET /apis/logs.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/log?tailLines={lines}&follow={true|false}&cursor={opaque}&timeoutSeconds={seconds}
+```
+
+It is protected by Kubernetes `get` on `logs.kruntimes.io/runs/log`, and the
+backend also submits an exact SubjectAccessReview for `get` on the selected
+`kruntimes.io/runs` object. The aggregated server trusts identity headers only
+after mTLS verification of the Kubernetes aggregation proxy. At startup it
+reads the API-server-owned `kube-system/extension-apiserver-authentication`
+ConfigMap, including its request-header client CA and allowed proxy identity.
 
 ## Request and Response Contract
 
@@ -139,6 +160,32 @@ records in a bounded ring and writes the documented JSON envelope only after
 the source stream closes. This is intentionally separate from the streaming
 writer so an ordinary tail response remains valid JSON and never becomes a
 partially written document.
+
+## One-Shot Runtime Output Projection
+
+One-shot `Runtime.Execute` is asynchronous: it creates the local execution and
+returns its ID without waiting for command completion. The Runtime Server's
+unary `Status` response contains the current bounded cumulative stdout and
+stderr buffers while that execution is running; exit code and final state are
+only authoritative once it becomes terminal.
+
+Owner runtimed polls that existing status while a one-shot Run is active and
+projects only newly observed **complete lines** into its structured container
+log. It retains a cursor and an unfinished trailing line independently for
+stdout and stderr. A final terminal status flushes a remaining unterminated
+line after the Run terminal status update succeeds. Consequently a Gateway
+`follow=true` reader, Dashboard, and `krt logs --follow` can observe command
+output before the command exits, without placing log contents in `Run.status`
+or introducing a second log transport.
+
+This projection is deliberately at-least-once. The cursor is local to one
+runtimed process; after runtimed or Runtime Server recovery, retained output
+can be emitted again rather than silently lost. Clients that reconnect to the
+Gateway follow stream must likewise tolerate duplicate retained records. The
+Runtime Server's per-stream output limit remains the upper bound: once its
+bounded buffer truncates output, the truncation marker is emitted but later
+discarded bytes cannot be recovered. Kubernetes log collection remains the
+durable retention mechanism.
 
 ## Client Streaming Contract
 

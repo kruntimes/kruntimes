@@ -67,6 +67,13 @@ func main() {
 			os.Exit(1)
 		}
 		dashboardServer.Gateway = gateway
+	} else {
+		gateway, err := dashboard.NewAggregatedRunLogGateway(config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "configure Dashboard aggregated Run log API: %v\n", err)
+			os.Exit(1)
+		}
+		dashboardServer.Gateway = gateway
 	}
 	if publicRead {
 		publicClient, err := client.New(config, client.Options{Scheme: scheme})

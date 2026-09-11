@@ -41,6 +41,20 @@ type activeRun struct {
 	functionRegistering    bool
 	functionCloseMu        sync.Mutex
 	functionClosed         atomic.Bool
+	outputMu               sync.Mutex
+	stdoutCursor           outputCursor
+	stderrCursor           outputCursor
+}
+
+// outputCursor tracks one Runtime Status stream as runtimed projects it into
+// structured container logs. Runtime Status returns a bounded cumulative
+// buffer, so the cursor retains an unflushed trailing line as well as the
+// number of source bytes already inspected.
+type outputCursor struct {
+	seen       int
+	prefixHash [32]byte
+	hasHash    bool
+	pending    string
 }
 
 type functionRegistrationState struct {

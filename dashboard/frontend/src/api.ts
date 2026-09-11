@@ -89,6 +89,30 @@ export class DashboardAPI {
       ).json()) as { items: LogEntry[] }
     ).items;
   }
+  async followLogs(
+    namespace: string,
+    name: string,
+    signal: AbortSignal,
+    onEntry: (entry: LogEntry) => void,
+  ): Promise<void> {
+    const response = await this.request(
+      `/api/namespaces/${encodeURIComponent(namespace)}/runs/${encodeURIComponent(name)}/logs?tail=100&follow=true`,
+      { signal },
+    );
+    if (!response.body)
+      throw new Error("Log streaming is not supported by this browser");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      pending += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = pending.split("\n");
+      pending = lines.pop() || "";
+      for (const line of lines) if (line) onEntry(JSON.parse(line) as LogEntry);
+      if (done) break;
+    }
+  }
   async runtimes(namespace: string): Promise<RuntimeSummary[]> {
     return (
       (await (

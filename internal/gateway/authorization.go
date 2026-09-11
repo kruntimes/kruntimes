@@ -37,7 +37,25 @@ func (a KubernetesAuthorizer) Authorize(ctx context.Context, request *http.Reque
 	if err != nil {
 		return err
 	}
-	subjectAccessReview, err := a.Client.AuthorizationV1().SubjectAccessReviews().Create(ctx, &authorizationv1.SubjectAccessReview{
+	return AuthorizeRunUser(ctx, a.Client, user, run, a.timeout())
+}
+
+// AuthorizeRunUser checks the same Kubernetes Run permission used by the
+// direct Gateway, but accepts an identity which has already been authenticated
+// by a trusted Kubernetes API aggregation proxy.
+func AuthorizeRunUser(ctx context.Context, kubernetesClient kubernetes.Interface, user authenticationv1.UserInfo, run *v1alpha1.Run, timeout time.Duration) error {
+	if kubernetesClient == nil {
+		return status.Error(codes.FailedPrecondition, "Kubernetes authorization client is not configured")
+	}
+	if run == nil {
+		return status.Error(codes.NotFound, "Run not found")
+	}
+	if timeout <= 0 {
+		timeout = defaultAuthorizationTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	subjectAccessReview, err := kubernetesClient.AuthorizationV1().SubjectAccessReviews().Create(ctx, &authorizationv1.SubjectAccessReview{
 		Spec: authorizationv1.SubjectAccessReviewSpec{
 			User:   user.Username,
 			UID:    user.UID,
@@ -53,10 +71,10 @@ func (a KubernetesAuthorizer) Authorize(ctx context.Context, request *http.Reque
 		},
 	}, metav1CreateOptions)
 	if err != nil {
-		return status.Errorf(codes.Unavailable, "authorize Session Run: %v", err)
+		return status.Errorf(codes.Unavailable, "authorize Run: %v", err)
 	}
 	if !subjectAccessReview.Status.Allowed {
-		return status.Error(codes.PermissionDenied, "not authorized to access Session Run")
+		return status.Error(codes.PermissionDenied, "not authorized to access Run")
 	}
 	return nil
 }

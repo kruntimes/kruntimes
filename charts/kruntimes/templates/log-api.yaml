@@ -1,0 +1,115 @@
+{{- if .Values.logAPI.enabled }}
+{{- include "kruntimes.logAPI.ensureTLSCertificates" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kruntimes.logAPI.name" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kruntimes.logAPI.name" . }}
+rules:
+  - apiGroups: ["kruntimes.io"]
+    resources: ["runs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["extension-apiserver-authentication"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kruntimes.logAPI.name" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kruntimes.logAPI.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kruntimes.logAPI.name" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kruntimes.logAPI.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kruntimes.logAPI.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.logAPI.replicas }}
+  selector:
+    matchLabels:
+      {{- include "kruntimes.logAPI.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kruntimes.logAPI.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "kruntimes.logAPI.name" . }}
+      containers:
+        - name: log-api
+          image: {{ include "kruntimes.image" (list . .Values.logAPI.image) }}
+          imagePullPolicy: {{ .Values.logAPI.imagePullPolicy }}
+          command: ["/runtime-log-apiserver"]
+          args:
+            - --bind-address={{ .Values.logAPI.bindAddress }}
+            - --tls-certificate-file=/var/run/kruntimes/log-api-tls/{{ .Values.logAPI.tls.certificateKey }}
+            - --tls-private-key-file=/var/run/kruntimes/log-api-tls/{{ .Values.logAPI.tls.privateKeyKey }}
+            - --metrics-bind-address={{ .Values.logAPI.metricsBindAddress }}
+            - --health-probe-bind-address={{ .Values.logAPI.probeBindAddress }}
+          ports:
+            - name: https
+              containerPort: {{ .Values.logAPI.containerPort }}
+          livenessProbe:
+            httpGet: {path: /healthz, port: {{ .Values.logAPI.probePort }}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: {{ .Values.logAPI.probePort }}}
+          resources:
+            {{- toYaml .Values.logAPI.resources | nindent 12 }}
+          volumeMounts:
+            - name: tls
+              mountPath: /var/run/kruntimes/log-api-tls
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ include "kruntimes.logAPI.tlsSecretName" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kruntimes.logAPI.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    {{- include "kruntimes.logAPI.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ .Values.logAPI.servicePort }}
+      targetPort: https
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1alpha1.logs.kruntimes.io
+spec:
+  group: logs.kruntimes.io
+  version: v1alpha1
+  groupPriorityMinimum: 1000
+  versionPriority: 15
+  service:
+    name: {{ include "kruntimes.logAPI.name" . }}
+    namespace: {{ .Release.Namespace }}
+    port: {{ .Values.logAPI.servicePort }}
+  caBundle: {{ index .Values "_logAPICertificates" "caCert" | b64enc }}
+{{- end }}

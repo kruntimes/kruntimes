@@ -16,6 +16,7 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/transport"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
@@ -35,8 +36,9 @@ type runLogEntry struct {
 // Runtime Gateway. Its HTTP transport retains kubeconfig bearer, exec, or
 // client-certificate authentication, but has independent Gateway TLS trust.
 type runLogGateway struct {
-	baseURL *url.URL
-	client  *http.Client
+	baseURL    *url.URL
+	client     *http.Client
+	aggregated bool
 }
 
 func newRunLogGateway(restConfig *rest.Config, rawURL, caFile string, insecureSkipTLSVerify bool) (*runLogGateway, error) {
@@ -79,15 +81,43 @@ func newRunLogGateway(restConfig *rest.Config, rawURL, caFile string, insecureSk
 	return &runLogGateway{baseURL: endpoint, client: &http.Client{Transport: roundTripper}}, nil
 }
 
+// newAggregatedRunLogAPI uses the current kubeconfig transport and Kubernetes
+// API endpoint. Authentication and runs/log RBAC are therefore handled by the
+// API server; no Gateway URL or client CA is required.
+func newAggregatedRunLogAPI(restConfig *rest.Config) (*runLogGateway, error) {
+	if restConfig == nil || restConfig.Host == "" {
+		return nil, errors.New("Kubernetes REST configuration is required for the aggregated Run log API")
+	}
+	endpoint, err := url.Parse(restConfig.Host)
+	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" {
+		return nil, errors.New("Kubernetes API URL must be absolute")
+	}
+	client, err := rest.HTTPClientFor(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("configure aggregated Run log API client: %w", err)
+	}
+	return &runLogGateway{baseURL: endpoint, client: client, aggregated: true}, nil
+}
+
 func (g *runLogGateway) logs(ctx context.Context, namespace, runtimeName, runUID string, tailLines int, follow bool) (*http.Response, error) {
+	return g.logsWithCursor(ctx, namespace, runtimeName, runUID, tailLines, follow, "")
+}
+
+func (g *runLogGateway) logsWithCursor(ctx context.Context, namespace, runtimeName, runUID string, tailLines int, follow bool, cursor string) (*http.Response, error) {
 	if g == nil || g.baseURL == nil || g.client == nil {
 		return nil, errors.New("Runtime Gateway client is not configured")
 	}
 	endpoint := g.baseURL.JoinPath("v1", "namespaces", namespace, "runtimes", runtimeName, "runs", runUID, "logs")
+	if g.aggregated {
+		endpoint = g.baseURL.JoinPath("apis", "logs.kruntimes.io", "v1alpha1", "namespaces", namespace, "runs", runUID, "log")
+	}
 	query := endpoint.Query()
 	query.Set("tailLines", fmt.Sprintf("%d", tailLines))
 	if follow {
 		query.Set("follow", "true")
+	}
+	if cursor != "" {
+		query.Set("cursor", cursor)
 	}
 	endpoint.RawQuery = query.Encode()
 
@@ -103,6 +133,7 @@ func (g *runLogGateway) logs(ctx context.Context, namespace, runtimeName, runUID
 		defer response.Body.Close()
 		return nil, gatewayLogError(response)
 	}
+	klog.V(3).InfoS("received Run log API response", "aggregated", g.aggregated, "status", response.Status, "follow", follow)
 	return response, nil
 }
 
@@ -134,29 +165,44 @@ func newLogsCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Schem
 			if tailLines < 1 || tailLines > maxRunLogTailLines {
 				return fmt.Errorf("tail must be an integer from 1 through %d", maxRunLogTailLines)
 			}
-			k8sClient, err := clientFromConfig(getter, scheme)
-			if err != nil {
-				return err
-			}
 			restConfig, err := restConfigFromConfig(getter)
-			if err != nil {
-				return err
-			}
-			gateway, err := newRunLogGateway(restConfig, gatewayURL, gatewayCAFile, gatewayInsecureSkipTLSVerify)
 			if err != nil {
 				return err
 			}
 			namespace := namespaceFromConfig(getter)
 			runName := args[0]
-			run := &v1alpha1.Run{}
-			if err := k8sClient.Get(cmd.Context(), client.ObjectKey{Name: runName, Namespace: namespace}, run); err != nil {
-				return fmt.Errorf("get run: %w", err)
+			var gateway *runLogGateway
+			var runtimeName, runUID string
+			if gatewayURL == "" {
+				klog.V(2).InfoS("using Kubernetes aggregated Run log API")
+				gateway, err = newAggregatedRunLogAPI(restConfig)
+				runUID = runName
+			} else {
+				klog.V(2).InfoS("using direct Runtime Gateway log API", "gatewayURL", gatewayURL)
+				gateway, err = newRunLogGateway(restConfig, gatewayURL, gatewayCAFile, gatewayInsecureSkipTLSVerify)
+				if err == nil {
+					k8sClient, clientErr := clientFromConfig(getter, scheme)
+					if clientErr != nil {
+						return clientErr
+					}
+					run := &v1alpha1.Run{}
+					if clientErr = k8sClient.Get(cmd.Context(), client.ObjectKey{Name: runName, Namespace: namespace}, run); clientErr != nil {
+						return fmt.Errorf("get run: %w", clientErr)
+					}
+					runtimeName, runUID = run.Spec.Runtime, string(run.UID)
+				}
 			}
-			response, err := gateway.logs(cmd.Context(), run.Namespace, run.Spec.Runtime, string(run.UID), tailLines, follow)
+			if err != nil {
+				return err
+			}
+			response, err := gateway.logs(cmd.Context(), namespace, runtimeName, runUID, tailLines, follow)
 			if err != nil {
 				return err
 			}
 			defer response.Body.Close()
+			if follow && gateway.aggregated {
+				return followAggregatedRunLogs(cmd.Context(), gateway, namespace, runtimeName, runUID, tailLines, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			}
 			if follow {
 				return writeFollowRunLogs(response.Body, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
@@ -166,10 +212,34 @@ func newLogsCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Schem
 
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output")
 	cmd.Flags().IntVar(&tailLines, "tail", defaultRunLogTailLines, "Number of recent structured log records to show (1-500)")
-	cmd.Flags().StringVar(&gatewayURL, "gateway-url", "", "Operator-managed Runtime Gateway base URL")
+	cmd.Flags().StringVar(&gatewayURL, "gateway-url", "", "Operator-managed Runtime Gateway base URL (empty uses the Kubernetes aggregated Run log API)")
 	cmd.Flags().StringVar(&gatewayCAFile, "gateway-ca-file", "", "PEM trust bundle file for an HTTPS Runtime Gateway")
 	cmd.Flags().BoolVar(&gatewayInsecureSkipTLSVerify, "gateway-insecure-skip-tls-verify", false, "Allow an HTTPS Runtime Gateway with an unverified certificate")
 	return cmd
+}
+
+// followAggregatedRunLogs reconnects the intentionally time-bounded
+// aggregation stream. The opaque cursor means a reconnect resumes after the
+// last delivered record instead of replaying the initial tail.
+func followAggregatedRunLogs(ctx context.Context, api *runLogGateway, namespace, runtimeName, runName string, tailLines int, stdout, stderr io.Writer) error {
+	cursor := ""
+	for {
+		response, err := api.logsWithCursor(ctx, namespace, runtimeName, runName, tailLines, true, cursor)
+		if err != nil {
+			return err
+		}
+		next, err := writeFollowRunLogsWithCursor(response.Body, stdout, stderr)
+		_ = response.Body.Close()
+		if err != nil {
+			return err
+		}
+		if next != "" {
+			cursor = next
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
 }
 
 func writeSnapshotRunLogs(reader io.Reader, stdout, stderr io.Writer) error {
@@ -183,21 +253,33 @@ func writeSnapshotRunLogs(reader io.Reader, stdout, stderr io.Writer) error {
 }
 
 func writeFollowRunLogs(reader io.Reader, stdout, stderr io.Writer) error {
+	_, err := writeFollowRunLogsWithCursor(reader, stdout, stderr)
+	return err
+}
+
+func writeFollowRunLogsWithCursor(reader io.Reader, stdout, stderr io.Writer) (string, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64<<10), 2<<20)
+	cursor := ""
 	for scanner.Scan() {
-		var entry runLogEntry
-		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			return fmt.Errorf("decode Runtime Gateway log record: %w", err)
+		var entry struct {
+			runLogEntry
+			Cursor string `json:"cursor"`
 		}
-		if err := writeRunLogEntries([]runLogEntry{entry}, stdout, stderr); err != nil {
-			return err
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			return "", fmt.Errorf("decode Runtime Gateway log record: %w", err)
+		}
+		if err := writeRunLogEntries([]runLogEntry{entry.runLogEntry}, stdout, stderr); err != nil {
+			return "", err
+		}
+		if entry.Cursor != "" {
+			cursor = entry.Cursor
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read Runtime Gateway log stream: %w", err)
+		return "", fmt.Errorf("read Runtime Gateway log stream: %w", err)
 	}
-	return nil
+	return cursor, nil
 }
 
 func writeRunLogEntries(entries []runLogEntry, stdout, stderr io.Writer) error {

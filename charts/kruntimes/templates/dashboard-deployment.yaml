@@ -62,7 +62,8 @@ spec:
             - --tls-certificate-file=/var/run/kruntimes/dashboard-tls/{{ .Values.dashboard.tls.certificateKey }}
             - --tls-private-key-file=/var/run/kruntimes/dashboard-tls/{{ .Values.dashboard.tls.privateKeyKey }}
             - --public-read={{ .Values.dashboard.publicRead.enabled }}
-            {{- if .Values.gateway.enabled }}
+            {{- if eq .Values.dashboard.logs.mode "gateway" }}
+            {{- if not .Values.gateway.enabled }}{{- fail "dashboard.logs.mode=gateway requires gateway.enabled=true" }}{{- end }}
             {{- $gatewayUsesHTTP := has "http" .Values.gateway.protocols }}
             - --gateway-url={{ ternary "http" "https" $gatewayUsesHTTP }}://{{ include "kruntimes.gateway.name" . }}.{{ .Release.Namespace }}.svc:{{ ternary .Values.gateway.httpServicePort .Values.gateway.httpsServicePort $gatewayUsesHTTP }}
             {{- if not $gatewayUsesHTTP }}
@@ -93,7 +94,7 @@ spec:
             - name: dashboard-tls
               mountPath: /var/run/kruntimes/dashboard-tls
               readOnly: true
-            {{- if and .Values.gateway.enabled (not (has "http" .Values.gateway.protocols)) }}
+            {{- if and (eq .Values.dashboard.logs.mode "gateway") .Values.gateway.enabled (not (has "http" .Values.gateway.protocols)) }}
             - name: gateway-ca
               mountPath: /var/run/kruntimes/gateway-ca
               readOnly: true
@@ -102,7 +103,7 @@ spec:
         - name: dashboard-tls
           secret:
             secretName: {{ include "kruntimes.dashboard.tlsSecretName" . }}
-        {{- if and .Values.gateway.enabled (not (has "http" .Values.gateway.protocols)) }}
+        {{- if and (eq .Values.dashboard.logs.mode "gateway") .Values.gateway.enabled (not (has "http" .Values.gateway.protocols)) }}
         - name: gateway-ca
           secret:
             secretName: {{ include "kruntimes.gateway.tlsSecretName" . }}

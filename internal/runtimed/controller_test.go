@@ -1111,6 +1111,35 @@ func TestReconcileRunningRecoveredKeepsRunActiveOnTransientStatusError(t *testin
 	}
 }
 
+func TestReconcileRunningRecoveredEmitsRetainedLiveOutput(t *testing.T) {
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "recovered-live", Namespace: "default", UID: "recovered-live-uid"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash"},
+		Status: v1alpha1.RunStatus{
+			Phase:       v1alpha1.RunRunning,
+			AssignedPod: "pod-a",
+			StartTime:   &metav1.Time{Time: time.Now().Add(-time.Second)},
+		},
+	}
+	var output bytes.Buffer
+	c := &Controller{
+		PodName:            "pod-a",
+		ExecutionLogWriter: &output,
+		runtimeCli: &fakeRuntimeClient{status: &pb.StatusResponse{
+			Id:     string(run.UID),
+			State:  pb.ExecutionState_EXECUTION_STATE_RUNNING,
+			Stdout: "retained after recovery\n",
+		}},
+	}
+
+	if _, err := c.reconcileRunningRecovered(t.Context(), run); err != nil {
+		t.Fatalf("reconcile recovered Run: %v", err)
+	}
+	if !strings.Contains(output.String(), "retained after recovery") {
+		t.Fatalf("recovered live output = %q", output.String())
+	}
+}
+
 func TestReconcileRunningActiveDistinguishesStatusErrors(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1199,11 +1228,14 @@ func TestReconcileRunningActiveRequeuesWhileExecutionRunning(t *testing.T) {
 			StartTime:   &metav1.Time{Time: time.Now()},
 		},
 	}
+	var output bytes.Buffer
 	c := &Controller{
-		PodName: "pod-a",
+		PodName:            "pod-a",
+		ExecutionLogWriter: &output,
 		runtimeCli: &fakeRuntimeClient{status: &pb.StatusResponse{
-			Id:    string(run.UID),
-			State: pb.ExecutionState_EXECUTION_STATE_RUNNING,
+			Id:     string(run.UID),
+			State:  pb.ExecutionState_EXECUTION_STATE_RUNNING,
+			Stdout: "ready\n",
 		}},
 	}
 
@@ -1215,6 +1247,53 @@ func TestReconcileRunningActiveRequeuesWhileExecutionRunning(t *testing.T) {
 	}
 	if result.RequeueAfter != rlegpkg.DefaultRelistInterval {
 		t.Fatalf("RequeueAfter = %s, want %s", result.RequeueAfter, rlegpkg.DefaultRelistInterval)
+	}
+	var line executionLogLine
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &line); err != nil {
+		t.Fatalf("decode live log: %v; logs=%q", err, output.String())
+	}
+	if line.Stream != "stdout" || line.Message != "ready" || line.RunUID != string(run.UID) {
+		t.Fatalf("live log = %#v", line)
+	}
+}
+
+func TestEmitExecutionOutputDeltaBuffersPartialLinesAndAvoidsDuplicates(t *testing.T) {
+	run := &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{Name: "live", Namespace: "default", UID: "live-uid"}, Spec: v1alpha1.RunSpec{Runtime: "bash"}}
+	ar := &activeRun{run: run}
+	var output bytes.Buffer
+	c := &Controller{PodName: "pod-a", ExecutionLogWriter: &output}
+
+	c.emitExecutionOutputDelta(ar, executionOutput{stdout: "first\npartial", stderr: "warning\n"}, false)
+	c.emitExecutionOutputDelta(ar, executionOutput{stdout: "first\npartial line\n", stderr: "warning\n"}, false)
+	c.emitExecutionOutputDelta(ar, executionOutput{stdout: "first\npartial line\n", stderr: "warning\nlast"}, true)
+
+	var got []string
+	for _, encoded := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		var line executionLogLine
+		if err := json.Unmarshal([]byte(encoded), &line); err != nil {
+			t.Fatalf("decode log %q: %v", encoded, err)
+		}
+		got = append(got, line.Stream+":"+line.Message)
+	}
+	want := []string{"stdout:first", "stderr:warning", "stdout:partial line", "stderr:last"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("live log records = %#v, want %#v", got, want)
+	}
+}
+
+func TestEmitExecutionOutputDeltaReemitsRetainedOutputAfterRuntimeReset(t *testing.T) {
+	run := &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{Name: "reset", Namespace: "default", UID: "reset-uid"}, Spec: v1alpha1.RunSpec{Runtime: "bash"}}
+	ar := &activeRun{run: run}
+	var output bytes.Buffer
+	c := &Controller{PodName: "pod-a", ExecutionLogWriter: &output}
+
+	c.emitExecutionOutputDelta(ar, executionOutput{stdout: "before reset\n"}, false)
+	// A replacement Runtime Server can retain a different buffer under the same
+	// execution ID. Prefer at-least-once projection to losing its new output.
+	c.emitExecutionOutputDelta(ar, executionOutput{stdout: "after reset\n"}, false)
+
+	if !strings.Contains(output.String(), "before reset") || !strings.Contains(output.String(), "after reset") {
+		t.Fatalf("reset output = %q", output.String())
 	}
 }
 

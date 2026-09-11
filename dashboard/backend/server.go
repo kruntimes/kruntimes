@@ -524,7 +524,11 @@ func (s *Server) getRunLogs(writer http.ResponseWriter, request *http.Request) {
 		s.writeKubernetesError(writer, err)
 		return
 	}
-	response, err := s.Gateway.RunLogs(request.Context(), token, run.Namespace, run.Spec.Runtime, string(run.UID), tailLines, follow)
+	logTarget := string(run.UID)
+	if gateway, ok := s.Gateway.(interface{ UsesRunName() bool }); ok && gateway.UsesRunName() {
+		logTarget = run.Name
+	}
+	response, err := s.Gateway.RunLogs(request.Context(), token, run.Namespace, run.Spec.Runtime, logTarget, tailLines, follow)
 	if err != nil {
 		s.writeError(writer, http.StatusServiceUnavailable, "Runtime Gateway log API is unavailable")
 		return

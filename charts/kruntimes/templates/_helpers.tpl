@@ -162,6 +162,41 @@ app.kubernetes.io/component: runtime-gateway
 app: kruntimes-runtime-gateway
 {{- end }}
 
+{{- define "kruntimes.logAPI.name" -}}
+{{- printf "%s-log-api" ((include "kruntimes.fullname" .) | trunc 55 | trimSuffix "-") -}}
+{{- end }}
+{{- define "kruntimes.logAPI.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "kruntimes.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: runtime-log-api
+{{- end }}
+{{- define "kruntimes.logAPI.labels" -}}
+{{ include "kruntimes.labels" . }}
+app.kubernetes.io/component: runtime-log-api
+app: kruntimes-runtime-log-api
+{{- end }}
+{{- define "kruntimes.logAPI.tlsSecretName" -}}
+{{- default (printf "%s-tls" (include "kruntimes.logAPI.name" .)) .Values.logAPI.tls.secretName -}}
+{{- end }}
+{{- define "kruntimes.logAPI.ensureTLSCertificates" -}}
+{{- if not (hasKey .Values "_logAPICertificates") -}}
+{{- $secretName := include "kruntimes.logAPI.tlsSecretName" . -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
+{{- if $existing -}}
+{{- if not (hasKey $existing.data .Values.logAPI.tls.caBundleKey) -}}{{- fail (printf "logAPI TLS Secret %q must contain CA bundle key %q" $secretName .Values.logAPI.tls.caBundleKey) -}}{{- end -}}
+{{- if not (hasKey $existing.data .Values.logAPI.tls.certificateKey) -}}{{- fail (printf "logAPI TLS Secret %q must contain certificate key %q" $secretName .Values.logAPI.tls.certificateKey) -}}{{- end -}}
+{{- if not (hasKey $existing.data .Values.logAPI.tls.privateKeyKey) -}}{{- fail (printf "logAPI TLS Secret %q must contain private key key %q" $secretName .Values.logAPI.tls.privateKeyKey) -}}{{- end -}}
+{{- $_ := set .Values "_logAPICertificates" (dict "caCert" (index $existing.data .Values.logAPI.tls.caBundleKey | b64dec) "tlsCert" (index $existing.data .Values.logAPI.tls.certificateKey | b64dec) "tlsKey" (index $existing.data .Values.logAPI.tls.privateKeyKey | b64dec)) -}}
+{{- else if not .Values.logAPI.tls.secretName -}}
+{{- $name := include "kruntimes.logAPI.name" . -}}
+{{- $dns := list $name (printf "%s.%s" $name .Release.Namespace) (printf "%s.%s.svc" $name .Release.Namespace) (printf "%s.%s.svc.cluster.local" $name .Release.Namespace) -}}
+{{- $ca := genCA (printf "%s-ca" $name) 3650 -}}
+{{- $certificate := genSignedCert $name nil $dns 365 $ca -}}
+{{- $_ := set .Values "_logAPICertificates" (dict "caCert" $ca.Cert "tlsCert" $certificate.Cert "tlsKey" $certificate.Key) -}}
+{{- else -}}{{- fail (printf "logAPI TLS Secret %q was not found" $secretName) -}}{{- end -}}
+{{- end -}}
+{{- end }}
+
 {{- define "kruntimes.dashboard.name" -}}
 {{- printf "%s-dashboard" ((include "kruntimes.fullname" .) | trunc 54 | trimSuffix "-") -}}
 {{- end }}

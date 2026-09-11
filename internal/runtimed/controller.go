@@ -675,6 +675,9 @@ func (c *Controller) reconcileRunningRecovered(ctx context.Context, run *v1alpha
 		reason := classifyFailureReason(resp, nil)
 		msg := summarizeRuntimeFailure(resp)
 		return c.applyFailureWithOutput(ctx, ar, reason, msg, outputFromStatus(resp))
+	case pb.ExecutionState_EXECUTION_STATE_PENDING, pb.ExecutionState_EXECUTION_STATE_RUNNING:
+		c.emitExecutionOutputDelta(ar, outputFromStatus(resp), false)
+		return ctrl.Result{}, nil
 	default:
 		return ctrl.Result{}, nil
 	}
@@ -740,6 +743,7 @@ func (c *Controller) reconcileRunningActive(ctx context.Context, ar *activeRun) 
 
 	switch resp.State {
 	case pb.ExecutionState_EXECUTION_STATE_PENDING, pb.ExecutionState_EXECUTION_STATE_RUNNING:
+		c.emitExecutionOutputDelta(ar, outputFromStatus(resp), false)
 		if ar.started.CompareAndSwap(false, true) && c.rleg != nil {
 			c.rleg.AddRun(ar.run)
 		}
@@ -854,7 +858,7 @@ func (c *Controller) applySuccess(ctx context.Context, ar *activeRun, resp *pb.S
 		return ctrl.Result{}, err
 	}
 
-	c.emitExecutionOutput(run, outputFromStatus(resp))
+	c.emitExecutionOutputDelta(ar, outputFromStatus(resp), true)
 	c.cleanup(ctx, ar, v1alpha1.RunSucceeded)
 	if run.Status.Attempt > 1 {
 		c.recordEvent(run, corev1.EventTypeNormal, "RunSucceeded",
@@ -959,7 +963,7 @@ func (c *Controller) applyTerminalWithOutput(
 		return ctrl.Result{}, err
 	}
 
-	c.emitExecutionOutput(run, output)
+	c.emitExecutionOutputDelta(ar, output, true)
 	c.cleanup(ctx, ar, phase)
 	if phase == v1alpha1.RunFailed || phase == v1alpha1.RunTimeout {
 		runFailures.WithLabelValues(run.Spec.Runtime, string(phase), reason).Inc()
