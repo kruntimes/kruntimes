@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -17,8 +16,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
-	"github.com/kruntimes/kruntimes/internal/gateway"
 	"github.com/kruntimes/kruntimes/internal/logapi"
+	"github.com/kruntimes/kruntimes/internal/runlogs"
 )
 
 var scheme = runtime.NewScheme()
@@ -59,7 +58,7 @@ func main() {
 		ctrl.Log.WithName("setup").Error(err, "unable to configure Kubernetes aggregation authentication")
 		os.Exit(1)
 	}
-	if err := manager.Add(&logapi.Server{Runs: manager.GetCache(), Kubernetes: kube, PodLogs: gateway.KubernetesPodLogReader{Client: kube.CoreV1()}, Address: address, TLSCertificateFile: certificateFile, TLSPrivateKeyFile: privateKeyFile, RequestHeaderCA: requestHeaderCA, AllowedClientNames: allowedNames, UsernameHeaders: usernameHeaders, GroupHeaders: groupHeaders, AuthorizationTimeout: 2 * time.Second}); err != nil {
+	if err := manager.Add(&logapi.Server{Runs: manager.GetCache(), PodLogs: runlogs.KubernetesPodReader{Client: kube.CoreV1()}, Address: address, TLSCertificateFile: certificateFile, TLSPrivateKeyFile: privateKeyFile, RequestHeaderCA: requestHeaderCA, AllowedClientNames: allowedNames, UsernameHeaders: usernameHeaders, GroupHeaders: groupHeaders}); err != nil {
 		ctrl.Log.WithName("setup").Error(err, "unable to add Run log API server")
 		os.Exit(1)
 	}
