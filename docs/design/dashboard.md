@@ -121,23 +121,24 @@ The dashboard backend must not expose Runtime Pods directly to browsers.
 For v0.x, the implemented path is:
 
 1. The user opens logs for a Run.
-2. The Dashboard backend uses the caller token to read and authorize that
-   exact Run.
-3. The backend forwards the token only to the Runtime Gateway Run-log API.
-4. The Gateway resolves the assigned Runtime Pod and reads its `runtimed`
-   log with its own narrow `pods/log` permission.
-5. The backend streams or returns the requested filtered log records.
+2. The Dashboard backend forwards the caller token only to the Kubernetes
+   aggregated Run-log API.
+3. The API server authenticates and authorizes `get` on the exact
+   `logs.kruntimes.io/runs/log` subresource.
+4. The aggregated backend resolves the assigned Runtime Pod and reads its
+   `runtimed` log with its own narrow `pods/log` permission.
+5. The backend streams or returns the requested UID-filtered log records.
 
 Structured runtimed logs should remain keyed by Run UID so the dashboard can
 show the correct logs even when Runtime Pods handle multiple Runs.
 
-The Dashboard uses the in-cluster Gateway Service and does not create a
+The Dashboard uses the in-cluster Kubernetes API Service and does not create a
 browser-visible port-forward or expose Runtime Pods directly. The caller needs
-`get` on the exact Run, not `get pods/log`; the Gateway ServiceAccount
-performs the narrow Pod-log read. Artifact references are shown as Run metadata;
-artifact downloads are outside the first Dashboard slice. The complete endpoint,
-authorization, bounds, error, and migration contract is in the [Runtime Gateway
-Run Log API design](runtime-gateway-log-api.md).
+`get` on the exact `runs/log` subresource, not `get pods/log`; the Log API
+ServiceAccount performs the narrow Pod-log read. Artifact references are shown
+as Run metadata; artifact downloads are outside the first Dashboard slice. The
+complete endpoint, authorization, bounds, error, and migration contract is in
+the [aggregated Run Log API design](runtime-gateway-log-api.md).
 
 ## Security Model
 
@@ -151,12 +152,12 @@ The proposed v0.x production model is Kubernetes bearer-token login:
   the token, and it is never written to localStorage, sessionStorage, or logs;
 - the backend creates a request-scoped Kubernetes client with that bearer token,
   the in-cluster API server address, and the cluster CA. It uses this client
-  for protected pages and Pod log access;
+  for protected pages and aggregated Run-log access;
 - the chart's narrowly privileged Dashboard ServiceAccount supplies tokenless
   namespace, Run, Runtime, and WorkflowRun summaries by default. It has only
   `get`/`list` on those resources and can be disabled explicitly;
 - Kubernetes API authorization decides protected-page access. A token needs
-  `get` on the exact Run to read its logs through the Gateway;
+  `get` on the exact `logs.kruntimes.io/runs/log` subresource to read logs;
 - v0.x shows artifact references as Run metadata but does not download or proxy
   artifact content. A future artifact-download design must define its
   authorization and external-store boundary separately;

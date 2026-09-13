@@ -87,7 +87,7 @@ runtimes 内提供 per-Run 沙箱隔离。
 | `delete` `runs` | 移除执行状态，并在存在 finalizer 时启动 artifact 清理。 |
 | `get`、`list` 或 `watch` `runs` | 读取 Run 对象上存储的源码引用、参数、环境变量值、执行状态、输出和 artifact 元数据。 |
 | `update` 或 `patch` `runs/status` | 控制调度和执行状态。保留给 kruntimes 控制平面 service accounts。 |
-| `get` `runs` | 通过 Runtime Gateway 读取某个 Run 的日志。持有 `get pods/log` 的是 Gateway 自己的 ServiceAccount，而不是 caller。 |
+| `get` `logs.kruntimes.io/runs/log` | 通过 Kubernetes 聚合 Run-log API 读取某个 Run 的结构化日志。 |
 | `create` `pods/portforward` 加上 `get` `pods` 和 `runs` | 通过 Kubernetes API 访问 Runtime Pod artifact endpoint，如 artifact 下载所用。 |
 
 Kubernetes 不会将 Run 与引用的 Runtime 作为单独操作授权。如果主体可以在 namespace

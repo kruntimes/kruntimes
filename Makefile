@@ -3,6 +3,7 @@ IMG_SCHEDULER ?= kruntimes-scheduler:latest
 IMG_CONTROLLER ?= kruntimes-controller:latest
 IMG_RUNTIMED ?= kruntimes-runtimed:latest
 IMG_GATEWAY ?= kruntimes-gateway:latest
+IMG_LOG_API ?= kruntimes-runtime-log-apiserver:latest
 IMG_DASHBOARD ?= kruntimes-dashboard:latest
 IMG_BASH_RUNTIME ?= kruntimes-bash-runtime:latest
 IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:latest
@@ -130,6 +131,7 @@ E2E_IMG_SCHEDULER ?= kruntimes-scheduler:$(E2E_IMAGE_TAG)
 E2E_IMG_CONTROLLER ?= kruntimes-controller:$(E2E_IMAGE_TAG)
 E2E_IMG_RUNTIMED ?= kruntimes-runtimed:$(E2E_IMAGE_TAG)
 E2E_IMG_GATEWAY ?= kruntimes-gateway:$(E2E_IMAGE_TAG)
+E2E_IMG_LOG_API ?= kruntimes-runtime-log-apiserver:$(E2E_IMAGE_TAG)
 E2E_IMG_DASHBOARD ?= kruntimes-dashboard:$(E2E_IMAGE_TAG)
 E2E_IMG_BASH_RUNTIME ?= kruntimes-bash-runtime:$(E2E_IMAGE_TAG)
 E2E_IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:$(E2E_IMAGE_TAG)
@@ -146,6 +148,7 @@ e2e-setup: IMG_SCHEDULER = $(E2E_IMG_SCHEDULER)
 e2e-setup: IMG_CONTROLLER = $(E2E_IMG_CONTROLLER)
 e2e-setup: IMG_RUNTIMED = $(E2E_IMG_RUNTIMED)
 e2e-setup: IMG_GATEWAY = $(E2E_IMG_GATEWAY)
+e2e-setup: IMG_LOG_API = $(E2E_IMG_LOG_API)
 e2e-setup: IMG_DASHBOARD = $(E2E_IMG_DASHBOARD)
 e2e-setup: IMG_BASH_RUNTIME = $(E2E_IMG_BASH_RUNTIME)
 e2e-setup: IMG_PYTHON_RUNTIME = $(E2E_IMG_PYTHON_RUNTIME)
@@ -156,6 +159,7 @@ e2e-setup: manifests docker-build docker-build-diagnosis-runtime ## Create kind 
 	kind load docker-image $(E2E_IMG_CONTROLLER) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_RUNTIMED) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_GATEWAY) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image $(E2E_IMG_LOG_API) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_DASHBOARD) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_BASH_RUNTIME) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_PYTHON_RUNTIME) --name $(KIND_CLUSTER_NAME)
@@ -168,6 +172,7 @@ e2e-setup: manifests docker-build docker-build-diagnosis-runtime ## Create kind 
 		--set runtimed.image=$(E2E_IMG_RUNTIMED) \
 		--set gateway.enabled=true \
 		--set gateway.image=$(E2E_IMG_GATEWAY) \
+		--set logAPI.image=$(E2E_IMG_LOG_API) \
 		--set gateway.protocols[0]=http --set gateway.protocols[1]=https \
 		--set dashboard.enabled=true \
 		--set dashboard.image=$(E2E_IMG_DASHBOARD) \
@@ -260,6 +265,7 @@ build: generate proto dashboard-ui-build ## Build all binaries.
 	go build -o bin/runtimed ./cmd/runtimed
 	go build -o bin/controller ./cmd/controller
 	go build -o bin/runtime-gateway ./cmd/runtime-gateway
+	go build -o bin/runtime-log-apiserver ./cmd/runtime-log-apiserver
 	go build -o bin/dashboard ./dashboard/cmd
 	go build -o bin/krt ./cmd/krt
 	go build -o bin/bash-runtime ./runtimes/bash/cmd
@@ -299,7 +305,7 @@ run-runtimed: generate manifests proto ## Run runtimed locally (requires kubecon
 ##@ Docker
 
 .PHONY: docker-build
-docker-build: docker-build-scheduler docker-build-controller docker-build-runtimed docker-build-gateway docker-build-dashboard docker-build-bash-runtime docker-build-python-runtime ## Build all Docker images.
+docker-build: docker-build-scheduler docker-build-controller docker-build-runtimed docker-build-gateway docker-build-log-api docker-build-dashboard docker-build-bash-runtime docker-build-python-runtime ## Build all Docker images.
 
 .PHONY: docker-build-scheduler
 docker-build-scheduler: generate ## Build scheduler Docker image.
@@ -316,6 +322,10 @@ docker-build-runtimed: generate proto ## Build runtimed Docker image.
 .PHONY: docker-build-gateway
 docker-build-gateway: generate proto ## Build Runtime gateway Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_GATEWAY) -f Dockerfile.gateway .
+
+.PHONY: docker-build-log-api
+docker-build-log-api: generate proto ## Build aggregated Run log API Docker image.
+	$(CONTAINER_TOOL) build -t $(IMG_LOG_API) -f Dockerfile.log-api .
 
 .PHONY: docker-build-dashboard
 docker-build-dashboard: generate ## Build Dashboard Docker image.
@@ -342,6 +352,7 @@ docker-push: ## Push Docker images.
 	$(CONTAINER_TOOL) push $(IMG_CONTROLLER)
 	$(CONTAINER_TOOL) push $(IMG_RUNTIMED)
 	$(CONTAINER_TOOL) push $(IMG_GATEWAY)
+	$(CONTAINER_TOOL) push $(IMG_LOG_API)
 	$(CONTAINER_TOOL) push $(IMG_DASHBOARD)
 	$(CONTAINER_TOOL) push $(IMG_BASH_RUNTIME)
 	$(CONTAINER_TOOL) push $(IMG_PYTHON_RUNTIME)

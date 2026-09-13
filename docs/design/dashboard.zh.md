@@ -105,20 +105,21 @@ Dashboard backend 不能把 Runtime Pods 直接暴露给浏览器。
 v0.x 已实现的路径是：
 
 1. 用户打开某个 Run 的 logs。
-2. Dashboard backend 使用 caller token 读取并授权这个 exact Run。
-3. backend 只将该 token 转发给 Runtime Gateway Run-log API。
-4. Gateway 定位 assigned Runtime Pod，并用自身极窄的 `pods/log` permission 读取其
+2. Dashboard backend 只将 caller token 转发给 Kubernetes 聚合 Run-log API。
+3. API server 对 exact `logs.kruntimes.io/runs/log` subresource 完成 authentication 和
+   `get` authorization。
+4. 聚合 backend 定位 assigned Runtime Pod，并用自身极窄的 `pods/log` permission 读取其
    `runtimed` log。
-5. backend stream 或返回过滤后的 log records。
+5. backend stream 或返回按 UID 过滤后的 log records。
 
 结构化 runtimed logs 应继续以 Run UID 作为 key，这样即使 Runtime Pods 同时处理多个 Runs，
 dashboard 也能展示正确的 logs。
 
-Dashboard 使用 in-cluster Gateway Service，不创建 browser-visible port-forward，也不把 Runtime
-Pods 直接暴露给 browser。caller 需要这个 exact Run 的 `get`，而不是 `get pods/log`；
-Gateway ServiceAccount 执行极窄的 Pod-log read。artifact references 作为 Run metadata 展示；
-artifact download 不属于第一阶段 Dashboard。完整的 endpoint、authorization、bounds、error 和
-migration contract 见 [Runtime Gateway Run Log API 设计](runtime-gateway-log-api.zh.md)。
+Dashboard 使用 in-cluster Kubernetes API Service，不创建 browser-visible port-forward，也不把
+Runtime Pods 直接暴露给 browser。caller 需要 exact `runs/log` subresource 的 `get`，而不是
+`get pods/log`；Log API ServiceAccount 执行极窄的 Pod-log read。artifact references 作为 Run
+metadata 展示；artifact download 不属于第一阶段 Dashboard。完整的 endpoint、authorization、
+bounds、error 和 migration contract 见[聚合 Run Log API 设计](runtime-gateway-log-api.zh.md)。
 
 ## 安全模型
 
@@ -130,11 +131,11 @@ dashboard 默认必须是只读的。
   `HttpOnly`、`Secure`、`SameSite=Strict` session cookie 返回 token，时限八小时。JavaScript
   永远不读取或写入 token，且 token 不会写入 localStorage、sessionStorage 或 logs；
 - backend 使用该 bearer token、in-cluster API server 地址和 cluster CA 创建 request-scoped
-  Kubernetes client，并用它访问受保护页面和 Gateway logs；
+  Kubernetes client，并用它访问受保护页面和聚合 Run logs；
 - chart 默认以权限极窄的 Dashboard ServiceAccount 提供免 token 的 namespace、Run、Runtime 和
   WorkflowRun summary。它只有这些资源的 `get`/`list` 权限，并可以显式禁用；
-- Kubernetes API authorization 决定受保护页面的访问。token 需要这个 exact Run 的 `get`，
-  才能通过 Gateway 读取其 logs；
+- Kubernetes API authorization 决定受保护页面的访问。token 需要 exact
+  `logs.kruntimes.io/runs/log` subresource 的 `get` 才能读取 logs；
 - v0.x 只将 artifact references 作为 Run metadata 展示，不下载或代理 artifact content。
   将来的 artifact-download 设计必须单独定义 authorization 与 external-store 边界；
 - 默认隐藏 secrets、service account tokens、environment variables 和 raw pod specs，

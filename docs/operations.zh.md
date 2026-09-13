@@ -172,23 +172,16 @@ finalizer 清理，直到依赖项恢复。
 
 ### krt 无法读取日志或 artifacts
 
-`krt logs` 调用 operator-managed Runtime Gateway。为它提供可达的 Gateway URL；对于私有
-HTTPS certificate，还需要相应的 CA bundle：
+`krt logs` 通过当前 kubeconfig context 调用 Kubernetes 聚合 Run-log API：
 
 ```bash
-krt logs <run> -n <namespace> --gateway-url https://gateway.example \
-  --gateway-ca-file ./gateway-ca.crt
+krt logs <run> -n <namespace> --tail 100 --follow
 ```
 
-kubeconfig 选择的 credential 必须对目标 Run 有 `get` 权限。仅读取日志时不需要
-`pods/log`、`pods` 或 `pods/portforward`。bearer-token 和 exec-token credential 通过
-TokenReview 工作。client-certificate kubeconfig 在 operator 将签发 Kubernetes user certificate 的
-CA 配置为 `gateway.tls.clientCASecretName` 时也可使用；Gateway 验证 mTLS，并用 certificate
-CN/O 创建 SubjectAccessReview。
-
-对于明确受信任、但 HTTPS certificate 不可验证的开发 endpoint，可增加
-`--gateway-insecure-skip-tls-verify`。它会关闭 server identity verification，不应用于常规
-production access。
+kubeconfig 选择的 credential 必须对目标 `logs.kruntimes.io/runs/log` subresource 有 `get`
+权限。Kubernetes 使用其正常 authentication 配置接受 bearer-token、exec-token 和
+client-certificate kubeconfig。仅读取日志时 caller 不需要 `kruntimes.io/runs get`、`pods/log`、
+`pods` 或 `pods/portforward`。
 
 artifact 下载仍使用 Runtime Pod port-forward，需要独立的 `get pods` 与
 `create pods/portforward` 权限。

@@ -48,9 +48,9 @@ type Server struct {
 	// PublicReadClient is intentionally optional. When configured it serves the
 	// safe namespace and Run list endpoints, and resolves a Run's assigned Pod
 	// for unauthenticated list requests. Reading logs always requires the
-	// caller's credential and goes through Gateway.
+	// caller's credential and goes through the aggregated Run-log API.
 	PublicReadClient client.Client
-	Gateway          RunLogGateway
+	Logs             RunLogClient
 	Assets           fs.FS
 
 	routesOnce sync.Once
@@ -496,12 +496,9 @@ func summaryForWorkflowRun(workflowRun *v1alpha1.WorkflowRun) workflowRunSummary
 }
 
 func (s *Server) getRunLogs(writer http.ResponseWriter, request *http.Request) {
-	if s.Clients == nil {
-		s.writeError(writer, http.StatusServiceUnavailable, "dashboard Kubernetes client is not configured")
-		return
-	}
-	if s.Gateway == nil {
-		s.writeError(writer, http.StatusServiceUnavailable, "Runtime Gateway log API is not configured")
+	logs := s.Logs
+	if logs == nil {
+		s.writeError(writer, http.StatusServiceUnavailable, "aggregated Run log API is not configured")
 		return
 	}
 	tailLines, follow, err := parseLogOptions(request)
@@ -509,24 +506,18 @@ func (s *Server) getRunLogs(writer http.ResponseWriter, request *http.Request) {
 		s.writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	kubernetesClient, err := s.Clients.ClientForRequest(request)
-	if err != nil {
-		s.writeKubernetesError(writer, err)
-		return
-	}
-	run := &v1alpha1.Run{}
-	if err := kubernetesClient.Get(request.Context(), client.ObjectKey{Namespace: request.PathValue("namespace"), Name: request.PathValue("name")}, run); err != nil {
-		s.writeKubernetesError(writer, err)
-		return
-	}
 	token, err := bearerToken(request)
 	if err != nil {
 		s.writeKubernetesError(writer, err)
 		return
 	}
-	response, err := s.Gateway.RunLogs(request.Context(), token, run.Namespace, run.Spec.Runtime, string(run.UID), tailLines, follow)
+	response, err := logs.RunLogs(request.Context(), token, request.PathValue("namespace"), request.PathValue("name"), tailLines, follow)
 	if err != nil {
-		s.writeError(writer, http.StatusServiceUnavailable, "Runtime Gateway log API is unavailable")
+		if apierrors.IsUnauthorized(err) || apierrors.IsForbidden(err) || apierrors.IsNotFound(err) {
+			s.writeKubernetesError(writer, err)
+			return
+		}
+		s.writeError(writer, http.StatusServiceUnavailable, "aggregated Run log API is unavailable")
 		return
 	}
 	defer response.Body.Close()

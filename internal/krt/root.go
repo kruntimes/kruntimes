@@ -1,11 +1,14 @@
 package krt
 
 import (
+	"flag"
+
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/klog/v2"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
@@ -22,6 +25,12 @@ func NewRootCmd() *cobra.Command {
 		Short: "CLI for interacting with kruntimes Run CRDs.",
 	}
 	configFlags.AddFlags(root.PersistentFlags())
+	// Keep Kubernetes client diagnostics available to every krt subcommand.
+	// A private FlagSet avoids mutating the process-wide flag.CommandLine, so
+	// embedding NewRootCmd in tests and other Go programs remains safe.
+	klogFlags := flag.NewFlagSet("klog", flag.ContinueOnError)
+	klog.InitFlags(klogFlags)
+	root.PersistentFlags().AddGoFlagSet(klogFlags)
 
 	runtimeCmd := &cobra.Command{
 		Use:   "runtime",

@@ -37,7 +37,16 @@ func (a KubernetesAuthorizer) Authorize(ctx context.Context, request *http.Reque
 	if err != nil {
 		return err
 	}
-	subjectAccessReview, err := a.Client.AuthorizationV1().SubjectAccessReviews().Create(ctx, &authorizationv1.SubjectAccessReview{
+	return authorizeRunUser(ctx, a.Client, user, run, a.timeout())
+}
+
+func authorizeRunUser(ctx context.Context, kubernetesClient kubernetes.Interface, user authenticationv1.UserInfo, run *v1alpha1.Run, timeout time.Duration) error {
+	if run == nil {
+		return status.Error(codes.NotFound, "Run not found")
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	subjectAccessReview, err := kubernetesClient.AuthorizationV1().SubjectAccessReviews().Create(ctx, &authorizationv1.SubjectAccessReview{
 		Spec: authorizationv1.SubjectAccessReviewSpec{
 			User:   user.Username,
 			UID:    user.UID,
@@ -51,12 +60,12 @@ func (a KubernetesAuthorizer) Authorize(ctx context.Context, request *http.Reque
 				Name:      run.Name,
 			},
 		},
-	}, metav1CreateOptions)
+	}, metav1.CreateOptions{})
 	if err != nil {
-		return status.Errorf(codes.Unavailable, "authorize Session Run: %v", err)
+		return status.Errorf(codes.Unavailable, "authorize Run: %v", err)
 	}
 	if !subjectAccessReview.Status.Allowed {
-		return status.Error(codes.PermissionDenied, "not authorized to access Session Run")
+		return status.Error(codes.PermissionDenied, "not authorized to access Run")
 	}
 	return nil
 }
@@ -65,7 +74,7 @@ func authenticatedGatewayUser(ctx context.Context, kubernetesClient kubernetes.I
 	if token, ok := bearerToken(request.Header.Get("Authorization")); ok {
 		tokenReview, err := kubernetesClient.AuthenticationV1().TokenReviews().Create(ctx, &authenticationv1.TokenReview{
 			Spec: authenticationv1.TokenReviewSpec{Token: token},
-		}, metav1CreateOptions)
+		}, metav1.CreateOptions{})
 		if err != nil {
 			return authenticationv1.UserInfo{}, status.Errorf(codes.Unavailable, "authenticate bearer token: %v", err)
 		}
@@ -115,5 +124,3 @@ func bearerToken(header string) (string, bool) {
 	}
 	return strings.TrimSpace(token), true
 }
-
-var metav1CreateOptions = metav1.CreateOptions{}

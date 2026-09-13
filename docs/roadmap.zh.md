@@ -407,17 +407,14 @@ controller wiring 累积不必要的冲突。
     detail page，并提供可展开且自动加载 step logs 的视图；
   - [x] 在 `kruntimes` chart 中增加可选 Helm installation support；
   - [x] 在标准 E2E environment 中部署 Dashboard。
-  - [x] 通过 [Runtime Gateway Run-log API](design/runtime-gateway-log-api.zh.md) 统一
-    Dashboard 和 `krt logs`：
-    - [x] 增加 Gateway route、按 UID 过滤的有界 structured records，以及最小权限的
-      Gateway ServiceAccount `get pods/log`；
-    - [x] 将 Dashboard logs 迁移到 Gateway，并移除其 caller-scoped `pods/log` 路径；
-    - [x] 将 `krt logs` 迁移到 Gateway，并移除 Runtime-Pod `pods/portforward` 与 direct
-      `pods/log` 路径；
-    - [x] 支持 opt-in Gateway mTLS authorization，以使用 kubeconfig client certificate，
-      并提供显式的 development TLS-verification escape hatch；
-    - [x] 通过 E2E 证明 `get runs` 对 logs 已足够且仍然必需。
-    该 API 是普通 Gateway HTTP API，不是 Kubernetes aggregation API server。
+  - [x] 通过[聚合 Run-log API](design/runtime-gateway-log-api.zh.md)统一 Dashboard 和
+    `krt logs`：
+    - [x] 增加专用的 `logs.kruntimes.io/runs/log` APIService、按 UID 过滤的有界
+      structured records，以及最小权限的 Log API ServiceAccount `get pods/log`；
+    - [x] 将 Dashboard 和 `krt logs` 迁移到 Kubernetes aggregation API，移除 Gateway、
+      Runtime-Pod port-forward 和 direct `pods/log` 路径；
+    - [x] 通过 E2E 证明仅有 `get logs.kruntimes.io/runs/log` 即可完成 snapshot 和 follow
+      日志访问。
 - [ ] 随着安装面逐步稳定，继续推进供应链、安全、兼容性和运维加固。
 
 ### 迈向 v1.0

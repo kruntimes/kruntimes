@@ -88,10 +88,9 @@ kubectl logs deploy/<runtime-maintainer-deploy>
 
 ## krt 无法读取日志或 Artifacts
 
-对于 logs，确认 `krt logs` 具有可达的 `--gateway-url`、必要时正确的
-`--gateway-ca-file`，以及对目标 Run 有 `get` 权限的 credential。client-certificate
-kubeconfig 还要求 operator 配置 Gateway client CA。它不需要 `pods/log` 或
-`pods/portforward`。
+对于 logs，确认 Kubernetes API server 可达，且当前 kubeconfig credential 对目标 Run 具有
+`logs.kruntimes.io/runs/log` 的 `get` 权限。它不需要 `kruntimes.io/runs get`、`pods/log`
+或 `pods/portforward`。
 
 artifact 下载仍使用 Runtime Pod port-forward。对此类请求检查 Runtime namespace 中的
 `get pods` 与 `create pods/portforward`。

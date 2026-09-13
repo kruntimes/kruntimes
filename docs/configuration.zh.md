@@ -66,26 +66,25 @@ dashboard:
 `selfSigned`、已有 Secret 和 `certManager.enabled` 是互斥选择。Service 始终为 `ClusterIP`；
 ingress 或其它对外暴露需要单独配置。
 
-## Gateway client-certificate authentication
+## 聚合 Run-log API
 
-Runtime Gateway 始终接受 Kubernetes bearer tokens。要让 `krt logs` 也能使用 kubeconfig
-client certificate，启用 Gateway HTTPS，并提供包含签发 Kubernetes user certificate 的 CA 的
-Secret key：
+`logAPI.enabled` 独立于 `gateway.enabled`，默认是 `true`。它安装
+`logs.kruntimes.io/v1alpha1` APIService 及独立 backend。这是 `krt logs` 和 Dashboard 的默认
+transport：普通 kubeconfig authentication（包括 client certificate）由 Kubernetes API server 验证。
+caller 只需要 `logs.kruntimes.io` `runs/log` subresource 的 `get`；不需要 `kruntimes.io/runs get` 或
+`pods/log`。
+
+该 APIService 是 cluster-scoped，因此同一集群中一个 API group/version 只能有一个聚合
+Run-log API backend。若在同一集群安装第二个 kruntimes platform release，应保留拥有该 API
+的 release 的 `logAPI.enabled: true`，并将其它 release 设为 `false`。
 
 ```yaml
-gateway:
+logAPI:
   enabled: true
-  protocols:
-    - https
-  tls:
-    clientCASecretName: kubernetes-user-client-ca
-    clientCAKey: ca.crt
 ```
 
-Gateway 请求 client certificate，但不强制要求它，因此 bearer tokens 仍可工作。提供的
-certificate 必须由该 CA 验证；其 X.509 CN 会成为 Kubernetes username，O values 会成为用于
-exact-Run SubjectAccessReview 的 groups。这与 Gateway server certificate 不同，通常应由单独管理
-的 Secret 提供。
+Dashboard 和 `krt logs` 始终使用该聚合 API。Runtime Gateway 继续提供 Session 和 Function
+endpoint，但不再提供 Run logs。
 
 ### 公开资源列表
 
@@ -99,8 +98,8 @@ dashboard:
 ```
 
 chart 只给 Dashboard ServiceAccount 授予 `namespaces`、`runs`、`runtimes` 和 `workflowruns` 的
-`get`/`list` 权限。它们的详情仍必须使用 caller 的 bearer token。日志请求由 Runtime Gateway
-针对 exact Run 授权，因此 caller 需要该 `runs` resource 的 `get`，而不需要 `pods/log`。
+`get`/`list` 权限。它们的详情仍必须使用 caller 的 bearer token。日志请求需要
+`logs.kruntimes.io` `runs/log` subresource 的 `get`。
 
 ## Runtime Capacity
 

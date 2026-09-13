@@ -133,6 +133,33 @@ gateway:
       cpu: 500m
       memory: 256Mi
 
+# The aggregated Run-log API is intentionally independent from gateway.enabled:
+# kubectl/krt and the Dashboard can use normal kubeconfig authentication even
+# when no externally reachable Runtime Gateway is installed.
+logAPI:
+  enabled: true
+  image: ghcr.io/kruntimes/runtime-log-apiserver
+  imagePullPolicy: IfNotPresent
+  replicas: 2
+  bindAddress: ":8445"
+  containerPort: 8445
+  servicePort: 443
+  metricsBindAddress: ":8085"
+  probeBindAddress: ":8086"
+  probePort: 8086
+  tls:
+    secretName: ""
+    certificateKey: tls.crt
+    privateKeyKey: tls.key
+    caBundleKey: ca.crt
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
 dashboard:
   enabled: false
   image: ghcr.io/kruntimes/dashboard
@@ -144,9 +171,8 @@ dashboard:
   publicRead:
     # When enabled, the Dashboard ServiceAccount may list namespaces, Runs,
     # Runtimes, and WorkflowRuns without a user token. Details require a caller
-    # Kubernetes bearer token. Log access requires get permission on the Run;
-    # the Dashboard relays it through the Runtime Gateway, so callers do not
-    # need pods/log permission.
+    # Kubernetes bearer token. Log access is relayed through the aggregated
+    # Run-log API, so callers do not need pods/log permission.
     enabled: true
   tls:
     # Certificate sources are mutually exclusive. With selfSigned enabled, the

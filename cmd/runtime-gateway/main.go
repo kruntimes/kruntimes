@@ -102,7 +102,6 @@ func main() {
 			gateway.KubernetesAuthorizer{Client: kubernetesClient},
 			gateway.AuthorizationCacheOptions{Capacity: authorizationCacheCapacity, TTL: authorizationCacheTTL},
 		),
-		PodLogs:               gateway.KubernetesPodLogReader{Client: kubernetesClient.CoreV1()},
 		Dialer:                gateway.GRPCDialer{},
 		FunctionDialer:        gateway.GRPCDialer{},
 		HTTPAddress:           httpAddr,

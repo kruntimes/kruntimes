@@ -95,7 +95,7 @@ the Kubernetes resource name.
 | `delete` `runs` | Remove execution state and initiate artifact cleanup when finalizers are present. |
 | `get`, `list`, or `watch` `runs` | Read source references, arguments, environment values, execution status, outputs, and artifact metadata stored on the Run object. |
 | `update` or `patch` `runs/status` | Control scheduling and execution state. Reserve this for kruntimes control-plane service accounts. |
-| `get` `runs` | Read a specific Run's logs through the Runtime Gateway. The Gateway's own service account, not the caller, holds `get pods/log`. |
+| `get` `logs.kruntimes.io/runs/log` | Read a specific Run's structured logs through the Kubernetes aggregated Run-log API. |
 | `create` `pods/portforward` plus `get` `pods` and `runs` | Reach a Runtime Pod artifact endpoint through the Kubernetes API, as used by artifact downloads. |
 
 Kubernetes does not authorize a Run against the referenced Runtime as a

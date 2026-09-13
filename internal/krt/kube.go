@@ -2,6 +2,7 @@ package krt
 
 import (
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
@@ -22,7 +23,24 @@ func restConfigFromConfig(getter genericclioptions.RESTClientGetter) (*rest.Conf
 	if err != nil {
 		return nil, fmt.Errorf("load kubeconfig: %w", err)
 	}
+	// ConfigFlags normally applies --token while loading the kubeconfig. Make
+	// that override explicit as well: an exec plugin or client certificate from
+	// the selected kubeconfig user must never supersede a token supplied on the
+	// command line.
+	if flags, ok := getter.(*genericclioptions.ConfigFlags); ok {
+		return explicitBearerConfig(loaded, flags), nil
+	}
 	return loaded, nil
+}
+
+func explicitBearerConfig(loaded *rest.Config, flags *genericclioptions.ConfigFlags) *rest.Config {
+	if flags == nil || flags.BearerToken == nil || strings.TrimSpace(*flags.BearerToken) == "" {
+		return loaded
+	}
+	result := rest.AnonymousClientConfig(loaded)
+	result.BearerToken = strings.TrimSpace(*flags.BearerToken)
+	result.BearerTokenFile = ""
+	return result
 }
 
 func namespaceFromConfig(getter genericclioptions.RESTClientGetter) string {

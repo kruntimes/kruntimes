@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { DashboardAPI, type DashboardSession } from "./api";
 import type { LogEntry, WorkflowRunDetail } from "./types";
 import { ui } from "./ui";
@@ -469,12 +469,44 @@ function RunPage({ namespace, name }: { namespace: string; name: string }) {
     [namespace, name],
   );
   const [logs, setLogs] = useState<LogEntry[]>();
+  const [logAbort, setLogAbort] = useState<AbortController>();
+  const logAbortRef = useRef<AbortController | undefined>(undefined);
   const showNotice = useContext(NoticeContext);
-  const loadLogs = () =>
+  const stopLogs = () => {
+    logAbortRef.current?.abort();
+    logAbortRef.current = undefined;
+    setLogAbort(undefined);
+  };
+  const loadLogs = () => {
+    stopLogs();
+    const abort = new AbortController();
+    logAbortRef.current = abort;
     api
       .logs(namespace, name)
       .then(setLogs)
-      .catch((cause) => showNotice((cause as Error).message));
+      .then(() => {
+        setLogAbort(abort);
+        return api.followLogs(namespace, name, abort.signal, (entry) =>
+          setLogs((current = []) => [...current, entry]),
+        );
+      })
+      .catch((cause) => {
+        if ((cause as Error).name !== "AbortError")
+          showNotice((cause as Error).message);
+      })
+      .finally(() => {
+        if (logAbortRef.current === abort) {
+          logAbortRef.current = undefined;
+          setLogAbort(undefined);
+        }
+      });
+  };
+  useEffect(
+    () => () => {
+      logAbortRef.current?.abort();
+    },
+    [namespace, name],
+  );
   if (!run)
     return (
       <main>
@@ -490,8 +522,11 @@ function RunPage({ namespace, name }: { namespace: string; name: string }) {
           </p>
           <div className="flex items-center justify-between">
             <h2>Logs</h2>
-            <button className={ui.button} onClick={loadLogs}>
-              Load logs
+            <button
+              className={ui.button}
+              onClick={logAbort ? stopLogs : loadLogs}
+            >
+              {logAbort ? "Stop logs" : "Load logs"}
             </button>
           </div>
           <Logs entries={logs} />
@@ -530,8 +565,11 @@ function RunPage({ namespace, name }: { namespace: string; name: string }) {
         <JSONValue value={run.status} />
         <div className="flex items-center justify-between">
           <h2>Logs</h2>
-          <button className={ui.button} onClick={loadLogs}>
-            Load logs
+          <button
+            className={ui.button}
+            onClick={logAbort ? stopLogs : loadLogs}
+          >
+            {logAbort ? "Stop logs" : "Load logs"}
           </button>
         </div>
         <Logs entries={logs} />

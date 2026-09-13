@@ -12,7 +12,13 @@ from pathlib import Path
 
 CHART = Path("charts/kruntimes")
 NAMESPACE = "kruntimes-system"
-RELEASES = ("kruntimes-a", "kruntimes-b")
+# APIService objects are cluster-scoped and Kubernetes allows only one backend
+# for a group/version.  The aggregated log API is therefore installed by the
+# primary release only; a second platform release must disable logAPI.enabled.
+RELEASES = (
+    ("kruntimes-a", ()),
+    ("kruntimes-b", ("--set", "logAPI.enabled=false")),
+)
 
 
 @dataclass(frozen=True)
@@ -27,9 +33,17 @@ class Resource:
 
 def main() -> int:
     resources: list[Resource] = []
-    for release in RELEASES:
+    for release, values_args in RELEASES:
         rendered = subprocess.check_output(
-            ["helm", "template", release, str(CHART), "--namespace", NAMESPACE],
+            [
+                "helm",
+                "template",
+                release,
+                str(CHART),
+                "--namespace",
+                NAMESPACE,
+                *values_args,
+            ],
             text=True,
         )
         resources.extend(parse_resources(release, rendered))
@@ -56,7 +70,7 @@ def main() -> int:
             )
         return 1
 
-    for release in RELEASES:
+    for release, _ in RELEASES:
         expected = f"--runtimed-service-account-name={release}-runtimed"
         controller = find_resource(resources, release, "Deployment", f"{release}-controller")
         if controller is None or expected not in controller.text:

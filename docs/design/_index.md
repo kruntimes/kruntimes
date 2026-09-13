@@ -11,7 +11,7 @@ implemented.
 - [Task Execution Lifecycle](task-execution-lifecycle/)
 - [Session Mode for Agent Sandboxes](session-mode/)
 - [Runtime Gateway Transport Security and Transfer Bounds](runtime-gateway-transport/)
-- [Runtime Gateway Run Log API](runtime-gateway-log-api/)
+- [Aggregated Run Log API](runtime-gateway-log-api/)
 - [Runtime Readiness Visibility](runtime-readiness-visibility/)
 - [Function Inline Source Materialization](function-inline-source/)
 - [Function Mode Lifecycle and Invoke Dataplane](function-mode-lifecycle/)
