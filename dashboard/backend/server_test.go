@@ -48,19 +48,19 @@ func (s staticRequestClients) ClientForRequest(*http.Request) (client.Client, er
 	return s.client, s.err
 }
 
-type staticGateway struct {
+type staticRunLogClient struct {
 	statusCode int
 	body       string
 	err        error
 	request    struct {
-		token, namespace, runtime, runUID string
-		tailLines                         int64
-		follow                            bool
+		token, namespace, runUID string
+		tailLines                int64
+		follow                   bool
 	}
 }
 
-func (g *staticGateway) RunLogs(_ context.Context, token, namespace, runtimeName, runUID string, tailLines int64, follow bool) (*http.Response, error) {
-	g.request.token, g.request.namespace, g.request.runtime, g.request.runUID = token, namespace, runtimeName, runUID
+func (g *staticRunLogClient) RunLogs(_ context.Context, token, namespace, runUID string, tailLines int64, follow bool) (*http.Response, error) {
+	g.request.token, g.request.namespace, g.request.runUID = token, namespace, runUID
 	g.request.tailLines, g.request.follow = tailLines, follow
 	if g.err != nil {
 		return nil, g.err
@@ -184,13 +184,13 @@ func TestServerPublicReadOnlyPermitsLists(t *testing.T) {
 	}
 }
 
-func TestServerRequiresRunReadAndRelaysLogsThroughGateway(t *testing.T) {
+func TestServerRelaysLogsThroughAggregatedAPI(t *testing.T) {
 	scheme := dashboardScheme(t)
 	run := dashboardRun("logs", "team-a", "python", v1alpha1.RunRunning, metav1.Now())
 	clients := &staticRequestClients{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()}
 	server := dashboardTestServerWithClients(t, clients)
-	gateway := &staticGateway{body: `{"items":[{"stream":"stdout","message":"visible"}]}`}
-	server.Gateway = gateway
+	logs := &staticRunLogClient{body: `{"items":[{"stream":"stdout","message":"visible"}]}`}
+	server.Logs = logs
 
 	request := httptest.NewRequest(http.MethodGet, "/api/namespaces/team-a/runs/logs/logs", nil)
 	request.Header.Set("Authorization", "Bearer caller-token")
@@ -199,8 +199,8 @@ func TestServerRequiresRunReadAndRelaysLogsThroughGateway(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "visible") {
 		t.Fatalf("get logs status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if gateway.request.token != "caller-token" || gateway.request.namespace != "team-a" || gateway.request.runtime != "python" || gateway.request.runUID != "logs-uid" {
-		t.Fatalf("Gateway log request = %#v", gateway.request)
+	if logs.request.token != "caller-token" || logs.request.namespace != "team-a" || logs.request.runUID != "logs" {
+		t.Fatalf("aggregated log request = %#v", logs.request)
 	}
 }
 
@@ -371,26 +371,26 @@ func TestServerServesFilesystemFrontend(t *testing.T) {
 	}
 }
 
-func TestServerRelaysGatewayRunLogs(t *testing.T) {
+func TestServerRelaysAggregatedRunLogs(t *testing.T) {
 	now := metav1.NewTime(time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC))
 	run := dashboardRun("logs", "team-a", "python", v1alpha1.RunRunning, now)
 	server := dashboardTestServer(t, run)
-	gateway := &staticGateway{body: `{"items":[{"stream":"stderr","message":"second"},{"stream":"audit","message":"finished","invocationId":"invoke-1","durationMilliseconds":12}]}`}
-	server.Gateway = gateway
+	logs := &staticRunLogClient{body: `{"items":[{"stream":"stderr","message":"second"},{"stream":"audit","message":"finished","invocationId":"invoke-1","durationMilliseconds":12}]}`}
+	server.Logs = logs
 
 	response := requestDashboard(t, server, http.MethodGet, "/api/namespaces/team-a/runs/logs/logs?tail=2", http.Header{"Authorization": {"Bearer caller-token"}})
 	if response.Code != http.StatusOK {
 		t.Fatalf("get logs status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), `"durationMilliseconds":12`) || gateway.request.tailLines != 2 || gateway.request.follow {
-		t.Fatalf("response/Gateway request = %s/%#v", response.Body.String(), gateway.request)
+	if !strings.Contains(response.Body.String(), `"durationMilliseconds":12`) || logs.request.tailLines != 2 || logs.request.follow {
+		t.Fatalf("response/aggregated request = %s/%#v", response.Body.String(), logs.request)
 	}
 }
 
-func TestServerRelaysGatewayAuthorizationFailure(t *testing.T) {
+func TestServerRelaysAggregatedAuthorizationFailure(t *testing.T) {
 	run := dashboardRun("logs", "team-a", "python", v1alpha1.RunRunning, metav1.Now())
 	server := dashboardTestServer(t, run)
-	server.Gateway = &staticGateway{statusCode: http.StatusForbidden, body: `{"error":"Kubernetes authorization denied"}`}
+	server.Logs = &staticRunLogClient{statusCode: http.StatusForbidden, body: `{"error":"Kubernetes authorization denied"}`}
 
 	response := requestDashboard(t, server, http.MethodGet, "/api/namespaces/team-a/runs/logs/logs", http.Header{"Authorization": {"Bearer caller-token"}})
 	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "Kubernetes authorization denied") {
@@ -398,19 +398,19 @@ func TestServerRelaysGatewayAuthorizationFailure(t *testing.T) {
 	}
 }
 
-func TestServerStreamsGatewayRunLogs(t *testing.T) {
+func TestServerStreamsAggregatedRunLogs(t *testing.T) {
 	now := metav1.NewTime(time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC))
 	run := dashboardRun("follow", "team-a", "python", v1alpha1.RunRunning, now)
 	server := dashboardTestServer(t, run)
-	gateway := &staticGateway{body: `{"stream":"stdout","message":"followed"}` + "\n"}
-	server.Gateway = gateway
+	logs := &staticRunLogClient{body: `{"stream":"stdout","message":"followed"}` + "\n"}
+	server.Logs = logs
 
 	response := requestDashboard(t, server, http.MethodGet, "/api/namespaces/team-a/runs/follow/logs?follow=true", http.Header{"Authorization": {"Bearer caller-token"}})
 	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/x-ndjson" {
 		t.Fatalf("follow status/content type = %d/%q", response.Code, response.Header().Get("Content-Type"))
 	}
-	if !strings.Contains(response.Body.String(), "followed") || !gateway.request.follow {
-		t.Fatalf("follow response/Gateway request = %q/%#v", response.Body.String(), gateway.request)
+	if !strings.Contains(response.Body.String(), "followed") || !logs.request.follow {
+		t.Fatalf("follow response/aggregated request = %q/%#v", response.Body.String(), logs.request)
 	}
 }
 
@@ -428,10 +428,10 @@ func TestServerRejectsInvalidLogRequests(t *testing.T) {
 			t.Fatalf("%s status = %d, want %d", path, response.Code, http.StatusBadRequest)
 		}
 	}
-	server.Gateway = nil
+	server.Logs = nil
 	response := requestDashboard(t, server, http.MethodGet, "/api/namespaces/team-a/runs/unassigned/logs", nil)
-	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "Gateway") {
-		t.Fatalf("unconfigured Gateway logs status = %d, body = %s", response.Code, response.Body.String())
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "aggregated Run log API") {
+		t.Fatalf("unconfigured log API status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
 
@@ -447,7 +447,7 @@ func dashboardTestServerWithClients(t *testing.T, clients *staticRequestClients,
 		scheme := dashboardScheme(t)
 		clients.client = fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 	}
-	return &Server{Clients: clients, Authenticator: &staticTokenAuthenticator{accountName: "system:serviceaccount:team-a:viewer"}, Gateway: &staticGateway{body: `{"items":[]}`}, Assets: fstest.MapFS{
+	return &Server{Clients: clients, Authenticator: &staticTokenAuthenticator{accountName: "system:serviceaccount:team-a:viewer"}, Logs: &staticRunLogClient{body: `{"items":[]}`}, Assets: fstest.MapFS{
 		"index.html":    &fstest.MapFile{Data: []byte("<div id=\"root\"></div>")},
 		"dashboard.js":  &fstest.MapFile{Data: []byte("createRoot(document.getElementById('root'))")},
 		"dashboard.css": &fstest.MapFile{Data: []byte("body { margin: 0; }")},

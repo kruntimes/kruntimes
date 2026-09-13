@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -24,7 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
-	"github.com/kruntimes/kruntimes/internal/gateway"
+	"github.com/kruntimes/kruntimes/internal/runlogs"
 )
 
 const (
@@ -35,28 +34,28 @@ const (
 	defaultTimeout         = 30 * time.Second
 	maxTimeout             = 5 * time.Minute
 	maxSnapshotBytes int64 = 1 << 20
+	apiGroupPath           = "/apis/" + Group
+	apiVersionPath         = apiGroupPath + "/" + Version
+	runLogPath             = apiVersionPath + "/namespaces/{namespace}/runs/{name}/log"
 )
 
 // Server is an aggregated API backend. Kubernetes authenticates callers and
 // authorizes the runs/log resource before proxying here. The server accepts
-// identity headers only over the aggregation layer's verified mTLS connection,
-// then performs an exact SAR for the underlying kruntimes.io Run.
+// identity headers only over the aggregation layer's verified mTLS connection.
 type Server struct {
-	Runs                 client.Reader
-	Kubernetes           kubernetes.Interface
-	PodLogs              gateway.PodLogReader
-	Address              string
-	TLSCertificateFile   string
-	TLSPrivateKeyFile    string
-	RequestHeaderCA      []byte
-	AllowedClientNames   []string
-	UsernameHeaders      []string
-	GroupHeaders         []string
-	AuthorizationTimeout time.Duration
+	Runs               client.Reader
+	PodLogs            runlogs.PodReader
+	Address            string
+	TLSCertificateFile string
+	TLSPrivateKeyFile  string
+	RequestHeaderCA    []byte
+	AllowedClientNames []string
+	UsernameHeaders    []string
+	GroupHeaders       []string
 }
 
 type entry struct {
-	gateway.RunLogEntry
+	runlogs.Entry
 	Cursor string `json:"cursor,omitempty"`
 }
 
@@ -67,7 +66,7 @@ type cursor struct {
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	if s.Runs == nil || s.Kubernetes == nil || s.PodLogs == nil {
+	if s.Runs == nil || s.PodLogs == nil {
 		return errors.New("Run log API is not configured")
 	}
 	if s.TLSCertificateFile == "" || s.TLSPrivateKeyFile == "" {
@@ -89,7 +88,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("listen for Run log API: %w", err)
 	}
 	server := &http.Server{
-		Handler:           s,
+		Handler:           s.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate},
 			ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs},
@@ -112,50 +111,89 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	if r.Method == http.MethodGet && r.URL.Path == "/apis" {
-		s.writeJSON(w, http.StatusOK, map[string]any{"kind": "APIGroupList", "apiVersion": "v1", "groups": []any{}})
-		return
-	}
-	if r.Method == http.MethodGet && r.URL.Path == "/apis/"+Group {
-		s.writeJSON(w, http.StatusOK, map[string]any{"kind": "APIGroup", "apiVersion": "v1", "name": Group, "versions": []map[string]string{{"groupVersion": Group + "/" + Version, "version": Version}}, "preferredVersion": map[string]string{"groupVersion": Group + "/" + Version, "version": Version}})
-		return
-	}
-	if r.Method == http.MethodGet && r.URL.Path == "/apis/"+Group+"/"+Version {
-		s.writeJSON(w, http.StatusOK, map[string]any{"kind": "APIResourceList", "apiVersion": "v1", "groupVersion": Group + "/" + Version, "resources": []map[string]any{{"name": "runs/log", "singularName": "", "namespaced": true, "kind": "RunLog", "verbs": []string{"get"}}}})
-		return
-	}
-	namespace, name, ok := logRoute(r.URL.Path)
-	if !ok {
-		s.writeError(w, http.StatusNotFound, "endpoint not found")
-		return
-	}
+// Handler builds the aggregated API HTTP routes. Keeping each endpoint in its
+// own handler makes the API surface and its request flow explicit.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /apis", s.handleAPIGroupList)
+	mux.HandleFunc("GET "+apiGroupPath, s.handleAPIGroup)
+	mux.HandleFunc("GET "+apiVersionPath, s.handleAPIResourceList)
+	mux.HandleFunc(runLogPath, s.handleRunLog)
+	mux.HandleFunc("/", s.handleNotFound)
+	return mux
+}
+
+func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleAPIGroupList(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"kind":       "APIGroupList",
+		"apiVersion": "v1",
+		"groups":     []any{},
+	})
+}
+
+func (s *Server) handleAPIGroup(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"kind":       "APIGroup",
+		"apiVersion": "v1",
+		"name":       Group,
+		"versions": []map[string]string{
+			{
+				"groupVersion": Group + "/" + Version,
+				"version":      Version,
+			},
+		},
+		"preferredVersion": map[string]string{
+			"groupVersion": Group + "/" + Version,
+			"version":      Version,
+		},
+	})
+}
+
+func (s *Server) handleAPIResourceList(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"kind":         "APIResourceList",
+		"apiVersion":   "v1",
+		"groupVersion": Group + "/" + Version,
+		"resources": []map[string]any{
+			{
+				"name":         "runs/log",
+				"singularName": "",
+				"namespaced":   true,
+				"kind":         "RunLog",
+				"verbs":        []string{"get"},
+			},
+		},
+	})
+}
+
+func (s *Server) handleRunLog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	s.serveRunLog(w, r, namespace, name)
+	s.serveRunLog(w, r, r.PathValue("namespace"), r.PathValue("name"))
 }
 
-func logRoute(path string) (string, string, bool) {
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) != 8 || parts[0] != "apis" || parts[1] != Group || parts[2] != Version || parts[3] != "namespaces" || parts[5] != "runs" || parts[7] != "log" || parts[4] == "" || parts[6] == "" {
-		return "", "", false
-	}
-	return parts[4], parts[6], true
+func (s *Server) handleNotFound(w http.ResponseWriter, _ *http.Request) {
+	s.writeError(w, http.StatusNotFound, "endpoint not found")
 }
 
 func (s *Server) serveRunLog(w http.ResponseWriter, r *http.Request, namespace, name string) {
+	if namespace == "" || name == "" {
+		s.writeError(w, http.StatusNotFound, "endpoint not found")
+		return
+	}
 	tail, follow, timeout, requestedCursor, err := parseOptions(r)
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	user, err := s.requestUser(r)
+	_, err = s.requestUser(r)
 	if err != nil {
 		s.writeError(w, http.StatusUnauthorized, err.Error())
 		return
@@ -167,10 +205,6 @@ func (s *Server) serveRunLog(w http.ResponseWriter, r *http.Request, namespace, 
 		} else {
 			s.writeError(w, http.StatusServiceUnavailable, "read Run")
 		}
-		return
-	}
-	if err := gateway.AuthorizeRunUser(r.Context(), s.Kubernetes, user, run, s.AuthorizationTimeout); err != nil {
-		s.writeAuthorizationError(w, err)
 		return
 	}
 	entries, err := s.snapshot(r.Context(), run)
@@ -193,16 +227,16 @@ func (s *Server) serveRunLog(w http.ResponseWriter, r *http.Request, namespace, 
 }
 
 func (s *Server) snapshot(ctx context.Context, run *v1alpha1.Run) ([]entry, error) {
-	stream, err := gateway.OpenRunLogStream(ctx, s.PodLogs, run, false, maxSnapshotBytes)
+	stream, err := runlogs.Open(ctx, s.PodLogs, run, false, maxSnapshotBytes)
 	if err != nil {
 		return nil, err
 	}
 	defer stream.Close()
 	entries := []entry{}
 	index := 0
-	err = gateway.ForEachRunLogEntry(stream, string(run.UID), func(value gateway.RunLogEntry) error {
+	err = runlogs.ForEach(stream, string(run.UID), func(value runlogs.Entry) error {
 		index++
-		entries = append(entries, entry{RunLogEntry: value, Cursor: newCursor(string(run.UID), index, value)})
+		entries = append(entries, entry{Entry: value, Cursor: newCursor(string(run.UID), index, value)})
 		return nil
 	})
 	return entries, err
@@ -252,7 +286,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, run *v1alpha1.Ru
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
-	stream, err := gateway.OpenRunLogStream(ctx, s.PodLogs, run, true, 0)
+	stream, err := runlogs.Open(ctx, s.PodLogs, run, true, 0)
 	if err != nil {
 		return
 	}
@@ -260,9 +294,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, run *v1alpha1.Ru
 	encoder, flush := json.NewEncoder(w), http.NewResponseController(w).Flush
 	foundLast := last.Cursor == ""
 	index := 0
-	_ = gateway.ForEachRunLogEntry(stream, string(run.UID), func(value gateway.RunLogEntry) error {
+	_ = runlogs.ForEach(stream, string(run.UID), func(value runlogs.Entry) error {
 		index++
-		item := entry{RunLogEntry: value, Cursor: newCursor(string(run.UID), index, value)}
+		item := entry{Entry: value, Cursor: newCursor(string(run.UID), index, value)}
 		if !foundLast {
 			if item.Cursor == last.Cursor {
 				foundLast = true
@@ -276,7 +310,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, run *v1alpha1.Ru
 	})
 }
 
-func newCursor(runUID string, index int, value gateway.RunLogEntry) string {
+func newCursor(runUID string, index int, value runlogs.Entry) string {
 	payload, _ := json.Marshal(value)
 	sum := sha256.Sum256(payload)
 	raw, _ := json.Marshal(cursor{RunUID: runUID, Index: index, Hash: base64.RawURLEncoding.EncodeToString(sum[:])})
@@ -372,14 +406,6 @@ func (s *Server) writeReadError(w http.ResponseWriter, err error) {
 		s.writeError(w, http.StatusServiceUnavailable, "read Runtime Pod logs")
 	}
 }
-func (s *Server) writeAuthorizationError(w http.ResponseWriter, err error) {
-	message := err.Error()
-	code := http.StatusForbidden
-	if strings.Contains(message, "not configured") {
-		code = http.StatusServiceUnavailable
-	}
-	s.writeError(w, code, message)
-}
 
 // RequestHeaderConfig reads the API server's trusted aggregation identity
 // contract from kube-system/extension-apiserver-authentication.
@@ -399,5 +425,9 @@ func RequestHeaderConfig(ctx context.Context, kube kubernetes.Interface) ([]byte
 		}
 		return fallback
 	}
-	return ca, decode("requestheader-allowed-names", nil), decode("requestheader-username-headers", []string{"X-Remote-User"}), decode("requestheader-group-headers", []string{"X-Remote-Group"}), nil
+	return ca,
+		decode("requestheader-allowed-names", nil),
+		decode("requestheader-username-headers", []string{"X-Remote-User"}),
+		decode("requestheader-group-headers", []string{"X-Remote-Group"}),
+		nil
 }

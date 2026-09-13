@@ -487,19 +487,15 @@ wiring from accumulating avoidable conflicts.
     automatically loaded step logs;
   - [x] add optional Helm installation support in the `kruntimes` chart;
   - [x] deploy the Dashboard in the standard E2E environment.
-  - [x] unify Dashboard and `krt logs` behind the [Runtime Gateway Run-log
+  - [x] unify Dashboard and `krt logs` behind the [aggregated Run-log
     API](design/runtime-gateway-log-api.md):
-    - [x] add the Gateway route, UID-filtered bounded structured records, and
-      least-privilege Gateway ServiceAccount `get pods/log` permission;
-    - [x] migrate Dashboard logs to the Gateway and remove its caller-scoped
-      `pods/log` path;
-    - [x] migrate `krt logs` to the Gateway and remove Runtime-Pod
-      `pods/portforward` and direct `pods/log` paths;
-    - [x] support opt-in Gateway mTLS authorization for kubeconfig client
-      certificates and an explicit development TLS-verification escape hatch;
-    - [x] prove in E2E that `get runs` is sufficient for logs and is required.
-    This remains an ordinary Gateway HTTP API, not a Kubernetes aggregation
-    API server.
+    - [x] add a dedicated `logs.kruntimes.io/runs/log` APIService, bounded
+      UID-filtered structured records, and a least-privilege log API
+      ServiceAccount `get pods/log` permission;
+    - [x] migrate Dashboard and `krt logs` to the Kubernetes aggregation API,
+      removing Gateway, Runtime-Pod port-forward, and direct `pods/log` paths;
+    - [x] prove in E2E that only `get logs.kruntimes.io/runs/log` is sufficient
+      for snapshot and follow log access.
 - [ ] Continue supply-chain, security, compatibility, and operational
   hardening as the installation surface stabilizes.
 

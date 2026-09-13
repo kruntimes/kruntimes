@@ -67,16 +67,14 @@ dashboard:
 exclusive choices. The Service is always `ClusterIP`; configure ingress or
 other external exposure separately.
 
-## Gateway client-certificate authentication
-
 ## Aggregated Run-log API
 
 `logAPI.enabled` defaults to `true` independently of `gateway.enabled`. It
 installs the `logs.kruntimes.io/v1alpha1` APIService and a dedicated backend.
 This is the default transport for `krt logs` and Dashboard: normal kubeconfig
 authentication, including client certificates, is verified by the Kubernetes
-API server. The caller needs both exact `get` on the Run and `get` on the
-`logs.kruntimes.io` `runs/log` subresource; it never needs `pods/log`.
+API server. The caller needs `get` on the `logs.kruntimes.io` `runs/log`
+subresource; it never needs `kruntimes.io/runs get` or `pods/log`.
 
 The APIService is cluster-scoped, so a cluster can have one aggregated log API
 backend for this API group/version. When installing a second kruntimes platform
@@ -86,37 +84,10 @@ owns the API and set it to `false` for every other release.
 ```yaml
 logAPI:
   enabled: true
-dashboard:
-  logs:
-    mode: aggregation
 ```
 
-Set `dashboard.logs.mode: gateway` only to opt into the direct Gateway path.
-Likewise, `krt logs --gateway-url=https://...` is an explicit direct-client
-choice. The direct Gateway client-certificate configuration below remains
-useful for that external endpoint, but is not needed for ordinary kubeconfig
-use of the aggregated API.
-
-The Runtime Gateway always accepts Kubernetes bearer tokens. To additionally
-allow `krt logs` to use a kubeconfig client certificate, enable Gateway HTTPS
-and provide the Secret key containing the CA that signs Kubernetes user
-certificates:
-
-```yaml
-gateway:
-  enabled: true
-  protocols:
-    - https
-  tls:
-    clientCASecretName: kubernetes-user-client-ca
-    clientCAKey: ca.crt
-```
-
-The Gateway requests a client certificate but does not require one, so bearer
-tokens continue to work. A presented certificate must verify against this CA;
-its X.509 CN becomes the Kubernetes username and its O values become groups
-for the exact-Run SubjectAccessReview. This is distinct from the Gateway server
-certificate and should normally be a separately managed Secret.
+Dashboard and `krt logs` always use this aggregated API. The Runtime Gateway
+continues to serve Session and Function endpoints, but does not serve Run logs.
 
 ### Public resource lists
 
@@ -133,9 +104,8 @@ dashboard:
 
 The chart grants the Dashboard ServiceAccount only `get`/`list` on
 `namespaces`, `runs`, `runtimes`, and `workflowruns`. Their details require the
-caller's bearer token. Log requests are authorized by the Runtime Gateway
-against the exact Run, so the caller needs `get` on that `runs` resource,
-not `pods/log`.
+caller's bearer token. Log requests require `get` on the
+`logs.kruntimes.io` `runs/log` subresource.
 
 ## Runtime Capacity
 

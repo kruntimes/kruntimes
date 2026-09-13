@@ -9,7 +9,7 @@
 - [Task 执行生命周期](task-execution-lifecycle/)
 - [Agent Sandbox 的 Session Mode](session-mode/)
 - [Runtime Gateway 传输安全与传输边界](runtime-gateway-transport/)
-- [Runtime Gateway Run Log API](runtime-gateway-log-api/)
+- [聚合 Run Log API](runtime-gateway-log-api/)
 - [Runtime 就绪状态可见性](runtime-readiness-visibility/)
 - [Function Inline Source 物化](function-inline-source/)
 - [Function Mode 生命周期与 Invoke Dataplane](function-mode-lifecycle/)

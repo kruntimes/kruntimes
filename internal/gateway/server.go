@@ -63,7 +63,6 @@ type FunctionRuntimeDialer interface {
 type Server struct {
 	Runs           client.Reader
 	Authorizer     Authorizer
-	PodLogs        PodLogReader
 	Dialer         SessionRuntimeDialer
 	FunctionDialer FunctionRuntimeDialer
 	RuntimePort    int
@@ -232,10 +231,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if namespace, runtimeName, runUID, ok := functionRoute(r.URL.Path); ok {
 		s.serveFunctionInvoke(w, r, namespace, runtimeName, runUID)
-		return
-	}
-	if namespace, runtimeName, runUID, ok := runLogRoute(r.URL.Path); ok {
-		s.serveRunLogs(w, r, namespace, runtimeName, runUID)
 		return
 	}
 	namespace, runtimeName, runUID, suffix, ok := sessionRoute(r.URL.Path)

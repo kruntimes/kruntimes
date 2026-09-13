@@ -187,24 +187,18 @@ endpoints can prevent finalizer cleanup until the dependency is restored.
 
 ### krt cannot read logs or artifacts
 
-`krt logs` calls the operator-managed Runtime Gateway. Give it a reachable
-Gateway URL (and, for private HTTPS certificates, the corresponding CA bundle):
+`krt logs` calls the Kubernetes aggregated Run-log API through the current
+kubeconfig context:
 
 ```bash
-krt logs <run> -n <namespace> --gateway-url https://gateway.example \
-  --gateway-ca-file ./gateway-ca.crt
+krt logs <run> -n <namespace> --tail 100 --follow
 ```
 
-The credential selected by kubeconfig needs `get` on the exact Run. It does
-not need `pods/log`, `pods`, or `pods/portforward` just to read logs.
-Bearer-token and exec-token credentials work by TokenReview. A client-certificate
-kubeconfig works when the operator configures `gateway.tls.clientCASecretName`
-with the CA that signs Kubernetes user certificates; the Gateway verifies mTLS
-and authorizes the certificate CN/O with a SubjectAccessReview.
-
-For an explicitly trusted development endpoint with an unverified HTTPS
-certificate, add `--gateway-insecure-skip-tls-verify`. This disables server
-identity verification and must not be used for ordinary production access.
+The selected credential needs `get` on the exact `logs.kruntimes.io/runs/log`
+subresource. Kubernetes accepts bearer-token, exec-token, and client-certificate
+kubeconfigs using its normal authentication configuration. The caller does not
+need `kruntimes.io/runs get`, `pods/log`, `pods`, or `pods/portforward` just to
+read logs.
 
 Artifact downloads still use a Runtime Pod port-forward and require the
 separate `get pods` and `create pods/portforward` permissions.

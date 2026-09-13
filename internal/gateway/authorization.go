@@ -37,21 +37,12 @@ func (a KubernetesAuthorizer) Authorize(ctx context.Context, request *http.Reque
 	if err != nil {
 		return err
 	}
-	return AuthorizeRunUser(ctx, a.Client, user, run, a.timeout())
+	return authorizeRunUser(ctx, a.Client, user, run, a.timeout())
 }
 
-// AuthorizeRunUser checks the same Kubernetes Run permission used by the
-// direct Gateway, but accepts an identity which has already been authenticated
-// by a trusted Kubernetes API aggregation proxy.
-func AuthorizeRunUser(ctx context.Context, kubernetesClient kubernetes.Interface, user authenticationv1.UserInfo, run *v1alpha1.Run, timeout time.Duration) error {
-	if kubernetesClient == nil {
-		return status.Error(codes.FailedPrecondition, "Kubernetes authorization client is not configured")
-	}
+func authorizeRunUser(ctx context.Context, kubernetesClient kubernetes.Interface, user authenticationv1.UserInfo, run *v1alpha1.Run, timeout time.Duration) error {
 	if run == nil {
 		return status.Error(codes.NotFound, "Run not found")
-	}
-	if timeout <= 0 {
-		timeout = defaultAuthorizationTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -69,7 +60,7 @@ func AuthorizeRunUser(ctx context.Context, kubernetesClient kubernetes.Interface
 				Name:      run.Name,
 			},
 		},
-	}, metav1CreateOptions)
+	}, metav1.CreateOptions{})
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "authorize Run: %v", err)
 	}
@@ -83,7 +74,7 @@ func authenticatedGatewayUser(ctx context.Context, kubernetesClient kubernetes.I
 	if token, ok := bearerToken(request.Header.Get("Authorization")); ok {
 		tokenReview, err := kubernetesClient.AuthenticationV1().TokenReviews().Create(ctx, &authenticationv1.TokenReview{
 			Spec: authenticationv1.TokenReviewSpec{Token: token},
-		}, metav1CreateOptions)
+		}, metav1.CreateOptions{})
 		if err != nil {
 			return authenticationv1.UserInfo{}, status.Errorf(codes.Unavailable, "authenticate bearer token: %v", err)
 		}
@@ -133,5 +124,3 @@ func bearerToken(header string) (string, bool) {
 	}
 	return strings.TrimSpace(token), true
 }
-
-var metav1CreateOptions = metav1.CreateOptions{}

@@ -171,16 +171,9 @@ dashboard:
   publicRead:
     # When enabled, the Dashboard ServiceAccount may list namespaces, Runs,
     # Runtimes, and WorkflowRuns without a user token. Details require a caller
-    # Kubernetes bearer token. Log access requires get permission on the Run;
-    # the Dashboard relays it through the Runtime Gateway, so callers do not
-    # need pods/log permission.
+    # Kubernetes bearer token. Log access is relayed through the aggregated
+    # Run-log API, so callers do not need pods/log permission.
     enabled: true
-  logs:
-    # aggregation uses the Kubernetes API and is the default. gateway is an
-    # explicit opt-in for an operator-managed direct Gateway endpoint.
-    mode: aggregation
-    gatewayURL: ""
-    gatewayCAFile: ""
   tls:
     # Certificate sources are mutually exclusive. With selfSigned enabled, the
     # chart generates this Secret (or preserves it across upgrades). To mount

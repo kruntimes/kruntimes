@@ -14,11 +14,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/dashboard/backend"
+	"github.com/kruntimes/kruntimes/internal/logapi"
 )
 
 func main() {
@@ -27,16 +29,12 @@ func main() {
 		assetsDirectory string
 		certificateFile string
 		privateKeyFile  string
-		gatewayURL      string
-		gatewayCAFile   string
 		publicRead      bool
 	)
 	flag.StringVar(&address, "bind-address", ":8443", "The HTTPS address the Dashboard binds to.")
 	flag.StringVar(&assetsDirectory, "assets-dir", "/dashboard/assets", "Directory containing the Dashboard frontend assets.")
 	flag.StringVar(&certificateFile, "tls-certificate-file", "", "PEM TLS certificate file for the Dashboard. Required.")
 	flag.StringVar(&privateKeyFile, "tls-private-key-file", "", "PEM TLS private key file for the Dashboard. Required.")
-	flag.StringVar(&gatewayURL, "gateway-url", "", "In-cluster Runtime Gateway base URL for caller-authorized Run logs.")
-	flag.StringVar(&gatewayCAFile, "gateway-ca-file", "", "Optional PEM CA bundle used to verify an HTTPS Runtime Gateway.")
 	flag.BoolVar(&publicRead, "public-read", true, "Allow unauthenticated namespace and Run list requests using the Dashboard ServiceAccount.")
 	flag.Parse()
 	if certificateFile == "" || privateKeyFile == "" {
@@ -59,22 +57,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "configure Dashboard TokenReview client: %v\n", err)
 		os.Exit(1)
 	}
-	dashboardServer := &dashboard.Server{Clients: factory, Authenticator: authenticator, Assets: os.DirFS(assetsDirectory)}
-	if gatewayURL != "" {
-		gateway, err := dashboard.NewHTTPRunLogGateway(gatewayURL, gatewayCAFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "configure Dashboard Runtime Gateway client: %v\n", err)
-			os.Exit(1)
-		}
-		dashboardServer.Gateway = gateway
-	} else {
-		gateway, err := dashboard.NewAggregatedRunLogGateway(config)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "configure Dashboard aggregated Run log API: %v\n", err)
-			os.Exit(1)
-		}
-		dashboardServer.Gateway = gateway
+	logs, err := logapi.NewClient(rest.AnonymousClientConfig(config))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "configure Dashboard aggregated Run log API: %v\n", err)
+		os.Exit(1)
 	}
+	logClient, err := dashboard.NewAggregatedRunLogClient(logs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "configure Dashboard aggregated Run log API: %v\n", err)
+		os.Exit(1)
+	}
+	dashboardServer := &dashboard.Server{Clients: factory, Authenticator: authenticator, Logs: logClient, Assets: os.DirFS(assetsDirectory)}
 	if publicRead {
 		publicClient, err := client.New(config, client.Options{Scheme: scheme})
 		if err != nil {

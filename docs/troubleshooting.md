@@ -86,10 +86,9 @@ Cleanup is designed to be idempotent and resume after transient failures.
 
 ## krt Cannot Read Logs or Artifacts
 
-For logs, verify that `krt logs` has a reachable `--gateway-url`, the
-correct `--gateway-ca-file` when needed, and a credential with `get` on the
-target Run. A client-certificate kubeconfig additionally requires the operator
-to configure the Gateway client CA. It does not need `pods/log` or
+For logs, verify that the Kubernetes API server is reachable and the current
+kubeconfig credential has `get` on `logs.kruntimes.io/runs/log` for the target
+Run. It does not need `kruntimes.io/runs get`, `pods/log`, or
 `pods/portforward`.
 
 Artifact downloads still use a Runtime Pod port-forward. Check `get pods` and
