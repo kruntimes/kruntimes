@@ -1931,6 +1931,29 @@ func TestSessionRunFailsWhenAssignedRuntimePodIsLost(t *testing.T) {
 	if condition == nil || (condition.Reason != runretry.ReasonPodGone && condition.Reason != runretry.ReasonPodTerminating) {
 		t.Fatalf("Completed condition = %#v, want PodGone or PodTerminating", condition)
 	}
+
+	// The aggregated log API can no longer recover logs once the assigned
+	// Runtime Pod is gone. The CLI must retain that actionable API Status
+	// message instead of replacing it with client-go's generic 409 error.
+	cmd := krt.NewRootCmd()
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{
+		"logs", run.Name,
+		"--namespace", testNamespace,
+		"--token", aggregatedLogToken(t, run),
+		"--tail", "100",
+	})
+	err := cmd.ExecuteContext(t.Context())
+	if err == nil {
+		t.Fatal("krt logs for a Run whose assigned Runtime Pod was deleted succeeded")
+	}
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("krt logs error = %v, want Conflict", err)
+	}
+	const podGoneMessage = "assigned Runtime Pod is no longer available; Run logs cannot be read"
+	if !strings.Contains(err.Error(), podGoneMessage) {
+		t.Fatalf("krt logs error = %q, want actionable message %q", err, podGoneMessage)
+	}
 }
 
 func containsSessionFile(entries []struct {

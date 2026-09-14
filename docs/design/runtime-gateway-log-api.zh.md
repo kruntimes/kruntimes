@@ -47,6 +47,9 @@ snapshot 返回 JSON：
 `application/x-ndjson`，每行带 opaque cursor。reconnect 时传递 `cursor`，从最后一条已交付记录
 之后继续。backend 在写 response headers 前打开 Pod log stream，因此 log service 不可用仍是普通
 HTTP error。
+所有 non-success response 都使用 Kubernetes `metav1.Status` 格式，保留 HTTP code、reason
+和可操作的 message，供 `krt` 与 Dashboard 展示。特别地，`409 Conflict` 表示该 Run 分配的
+Runtime Pod 已不存在，因此其 ephemeral container logs 无法恢复。
 
 Go caller 使用与 client-go log request 类似的 `internal/logapi.Client`：
 

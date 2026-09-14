@@ -53,6 +53,10 @@ bounded to 1 MiB. `follow=true` returns `application/x-ndjson`; each line is a
 record with an opaque cursor. A reconnect passes `cursor` to resume after the
 last delivered record. The backend opens the Pod log stream before writing
 response headers, so an unavailable log service remains a regular HTTP error.
+Every non-success response uses the Kubernetes `metav1.Status` shape, preserving
+its HTTP code, reason, and actionable message for `krt` and Dashboard. In
+particular, a `409 Conflict` means the Run's assigned Runtime Pod no longer
+exists, so its ephemeral container logs cannot be recovered.
 
 Go callers use `internal/logapi.Client` in the same shape as client-go log
 requests:

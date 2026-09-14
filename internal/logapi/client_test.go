@@ -2,11 +2,15 @@ package logapi
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -57,5 +61,37 @@ func TestNewClientRequiresKubernetesConfiguration(t *testing.T) {
 		if _, err := NewClient(config); err == nil {
 			t.Fatalf("NewClient(%#v) succeeded without Kubernetes host", config)
 		}
+	}
+}
+
+func TestRESTClientPreservesKubernetesErrorStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(writer).Encode(metav1.Status{
+			TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"},
+			Status:   metav1.StatusFailure,
+			Reason:   metav1.StatusReasonConflict,
+			Code:     http.StatusConflict,
+			Message:  "assigned Runtime Pod is no longer available; Run logs cannot be read",
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	_, err = client.GetLogs("team-a", "run-a", nil).Do(t.Context()).Raw()
+	if err == nil {
+		t.Fatal("GetLogs() succeeded, want error")
+	}
+	var apiStatus apierrors.APIStatus
+	if !errors.As(err, &apiStatus) {
+		t.Fatalf("error %T does not expose Kubernetes status: %v", err, err)
+	}
+	status := apiStatus.Status()
+	if status.Code != http.StatusConflict || status.Reason != metav1.StatusReasonConflict || status.Message != "assigned Runtime Pod is no longer available; Run logs cannot be read" {
+		t.Fatalf("status = %#v", status)
 	}
 }

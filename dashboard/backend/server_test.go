@@ -398,6 +398,22 @@ func TestServerRelaysAggregatedAuthorizationFailure(t *testing.T) {
 	}
 }
 
+func TestServerRelaysAggregatedRunLogStatusFailure(t *testing.T) {
+	run := dashboardRun("logs", "team-a", "python", v1alpha1.RunFailed, metav1.Now())
+	server := dashboardTestServer(t, run)
+	server.Logs = &staticRunLogClient{err: &apierrors.StatusError{ErrStatus: metav1.Status{
+		Status:  metav1.StatusFailure,
+		Reason:  metav1.StatusReasonConflict,
+		Code:    http.StatusConflict,
+		Message: "assigned Runtime Pod is no longer available; Run logs cannot be read",
+	}}}
+
+	response := requestDashboard(t, server, http.MethodGet, "/api/namespaces/team-a/runs/logs/logs", http.Header{"Authorization": {"Bearer caller-token"}})
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "assigned Runtime Pod is no longer available") {
+		t.Fatalf("log status failure response = %d/%s", response.Code, response.Body.String())
+	}
+}
+
 func TestServerStreamsAggregatedRunLogs(t *testing.T) {
 	now := metav1.NewTime(time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC))
 	run := dashboardRun("follow", "team-a", "python", v1alpha1.RunRunning, now)
