@@ -517,6 +517,14 @@ func (s *Server) getRunLogs(writer http.ResponseWriter, request *http.Request) {
 			s.writeKubernetesError(writer, err)
 			return
 		}
+		var apiStatus apierrors.APIStatus
+		if errors.As(err, &apiStatus) {
+			status := apiStatus.Status()
+			if code := int(status.Code); code >= http.StatusBadRequest && code < 600 && strings.TrimSpace(status.Message) != "" {
+				s.writeError(writer, code, status.Message)
+				return
+			}
+		}
 		s.writeError(writer, http.StatusServiceUnavailable, "aggregated Run log API is unavailable")
 		return
 	}

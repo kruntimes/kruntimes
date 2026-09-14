@@ -1,9 +1,12 @@
 package logapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/kruntimes/kruntimes/internal/runlogs"
 )
@@ -51,5 +54,24 @@ func TestDiscoveryEndpoints(t *testing.T) {
 		if response.Code != http.StatusOK {
 			t.Fatalf("GET %s = %d, want 200", path, response.Code)
 		}
+	}
+}
+
+func TestWriteErrorUsesKubernetesStatus(t *testing.T) {
+	response := httptest.NewRecorder()
+	(&Server{}).writeError(response, http.StatusConflict, "assigned Runtime Pod is no longer available; Run logs cannot be read")
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusConflict)
+	}
+	var status metav1.Status
+	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.TypeMeta.Kind != "Status" || status.TypeMeta.APIVersion != "v1" || status.Status != metav1.StatusFailure || status.Reason != metav1.StatusReasonConflict || status.Code != http.StatusConflict {
+		t.Fatalf("status = %#v", status)
+	}
+	if status.Message != "assigned Runtime Pod is no longer available; Run logs cannot be read" {
+		t.Fatalf("message = %q", status.Message)
 	}
 }

@@ -397,7 +397,39 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
-	s.writeJSON(w, status, map[string]string{"error": message})
+	s.writeJSON(w, status, metav1.Status{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Status",
+			APIVersion: "v1",
+		},
+		Status:  metav1.StatusFailure,
+		Message: message,
+		Reason:  statusReason(status),
+		Code:    int32(status),
+	})
+}
+
+func statusReason(status int) metav1.StatusReason {
+	switch status {
+	case http.StatusBadRequest:
+		return metav1.StatusReasonBadRequest
+	case http.StatusUnauthorized:
+		return metav1.StatusReasonUnauthorized
+	case http.StatusForbidden:
+		return metav1.StatusReasonForbidden
+	case http.StatusNotFound:
+		return metav1.StatusReasonNotFound
+	case http.StatusMethodNotAllowed:
+		return metav1.StatusReasonMethodNotAllowed
+	case http.StatusConflict:
+		return metav1.StatusReasonConflict
+	case http.StatusGone:
+		return metav1.StatusReasonGone
+	case http.StatusServiceUnavailable:
+		return metav1.StatusReasonServiceUnavailable
+	default:
+		return metav1.StatusReasonUnknown
+	}
 }
 func (s *Server) writeReadError(w http.ResponseWriter, err error) {
 	if apierrors.IsNotFound(err) {
