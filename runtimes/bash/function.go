@@ -315,11 +315,51 @@ func validateBashFunction(workingDir, handlerPath, handlerName string, env map[s
 	cmd := exec.Command("bash", "-c", `source "$1"; declare -F "$2" >/dev/null`, "kruntimes-function-validation", handlerPath, handlerName)
 	cmd.Dir = workingDir
 	cmd.Env = functionEnvironment(env)
-	output, err := cmd.CombinedOutput()
+	output, err := managedCommandOutput(cmd)
 	if err != nil {
 		return fmt.Errorf("handler %q is not defined by %s: %w: %s", handlerName, filepath.Base(handlerPath), err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// managedCommandOutput runs a short-lived command through the child
+// supervisor. Every Bash runtime child must have the same wait owner: mixing
+// os/exec.Cmd.Wait with the subreaper races to reap the process.
+func managedCommandOutput(cmd *exec.Cmd) ([]byte, error) {
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	waitCh, err := startManagedCommand(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	var stdout, stderr bytes.Buffer
+	outputDone := make(chan struct{})
+	go func() {
+		var readers sync.WaitGroup
+		readers.Add(2)
+		go func() { defer readers.Done(); _, _ = io.Copy(&stdout, stdoutPipe) }()
+		go func() { defer readers.Done(); _, _ = io.Copy(&stderr, stderrPipe) }()
+		readers.Wait()
+		close(outputDone)
+	}()
+
+	result := <-waitCh
+	<-outputDone
+	output := append(stdout.Bytes(), stderr.Bytes()...)
+	if result.err != nil {
+		return output, result.err
+	}
+	if !result.status.Exited() || result.status.ExitStatus() != 0 {
+		return output, fmt.Errorf("exit status %d", result.status.ExitStatus())
+	}
+	return output, nil
 }
 
 func invokeBashFunction(ctx context.Context, workingDir, handlerFile, handlerName, input string, env map[string]string, outputLimit int) ([]byte, error) {
