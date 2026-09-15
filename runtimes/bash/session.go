@@ -127,17 +127,16 @@ func (s *Server) executeSessionCommand(ctx context.Context, entry *sessionEntry,
 	command.Stderr = &stderr
 	command.Env = sessionCommandEnv(entry.sessionEnv, commandRequest.Env)
 
-	if err := command.Start(); err != nil {
+	waitCh, err := startManagedCommand(command)
+	if err != nil {
 		return nil, status.Errorf(codes.Internal, "start session command: %v", err)
 	}
 	defer entry.touch()
-	waitCh := make(chan error, 1)
-	go func() { waitCh <- command.Wait() }()
 
 	select {
-	case err := <-waitCh:
+	case result := <-waitCh:
 		return &pb.SessionCommandResult{
-			ExitCode: sessionCommandExitCode(err),
+			ExitCode: sessionCommandExitCode(result),
 			Stdout:   []byte(stdout.String()),
 			Stderr:   []byte(stderr.String()),
 		}, nil
@@ -440,13 +439,12 @@ func sessionCommandEnv(sessionEnv, commandEnv map[string]string) []string {
 	return values
 }
 
-func sessionCommandExitCode(err error) int32 {
-	if err == nil {
+func sessionCommandExitCode(result commandWaitResult) int32 {
+	if result.err == nil && result.status.Exited() && result.status.ExitStatus() == 0 {
 		return 0
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return int32(exitErr.ExitCode())
+	if result.err == nil && result.status.Exited() {
+		return int32(result.status.ExitStatus())
 	}
 	return -1
 }

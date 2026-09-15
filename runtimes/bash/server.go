@@ -152,6 +152,8 @@ func NewServerWithSessionTerminationGrace(workDir string, grace time.Duration) *
 }
 
 func newServer(workDir string, outputLimit int, sessionTerminationGrace time.Duration) *Server {
+	enableChildSubreaper()
+
 	if workDir == "" {
 		workDir = "/workspace"
 	}
@@ -301,22 +303,18 @@ func (s *Server) execute(ctx context.Context, req *pb.ExecuteRequest, entry *exe
 		entry.complete(cancelledResult(err))
 		return
 	}
-	if err := cmd.Start(); err != nil {
+	waitCh, err := startManagedCommand(cmd)
+	if err != nil {
 		entry.complete(pb.ExecutionState_EXECUTION_STATE_FAILED, 0, err.Error())
 		return
 	}
 
-	waitCh := make(chan error, 1)
-	go func() {
-		waitCh <- cmd.Wait()
-	}()
-
-	var runErr error
+	var runResult commandWaitResult
 	select {
-	case runErr = <-waitCh:
-		entry.complete(commandResult(runErr))
+	case runResult = <-waitCh:
+		entry.complete(commandResult(runResult))
 	case <-ctx.Done():
-		runErr = terminateProcessGroupAndWait(cmd.Process.Pid, waitCh, processTerminationGrace)
+		runResult = terminateProcessGroupAndWait(cmd.Process.Pid, waitCh, processTerminationGrace)
 		entry.complete(cancelledResult(ctx.Err()))
 	}
 
@@ -366,15 +364,14 @@ func waitForExecution(ctx context.Context, done <-chan struct{}) error {
 	}
 }
 
-func commandResult(err error) (pb.ExecutionState, int32, string) {
-	if err == nil {
+func commandResult(result commandWaitResult) (pb.ExecutionState, int32, string) {
+	if result.err == nil && result.status.Exited() && result.status.ExitStatus() == 0 {
 		return pb.ExecutionState_EXECUTION_STATE_SUCCEEDED, 0, ""
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return pb.ExecutionState_EXECUTION_STATE_FAILED, int32(exitErr.ExitCode()), exitErr.Error()
+	if result.err != nil {
+		return pb.ExecutionState_EXECUTION_STATE_FAILED, 0, result.err.Error()
 	}
-	return pb.ExecutionState_EXECUTION_STATE_FAILED, 0, err.Error()
+	return pb.ExecutionState_EXECUTION_STATE_FAILED, int32(result.status.ExitStatus()), fmt.Sprintf("exit status %d", result.status.ExitStatus())
 }
 
 func cancelledResult(err error) (pb.ExecutionState, int32, string) {
@@ -393,7 +390,7 @@ func terminateProcessGroup(pid int, signal syscall.Signal) {
 	}
 }
 
-func terminateProcessGroupAndWait(pid int, waitCh <-chan error, grace time.Duration) error {
+func terminateProcessGroupAndWait(pid int, waitCh <-chan commandWaitResult, grace time.Duration) commandWaitResult {
 	terminateProcessGroup(pid, syscall.SIGTERM)
 
 	timer := time.NewTimer(grace)
@@ -404,12 +401,12 @@ func terminateProcessGroupAndWait(pid int, waitCh <-chan error, grace time.Durat
 	var (
 		commandDone bool
 		groupDone   bool
-		waitErr     error
+		waitResult  commandWaitResult
 		graceC      = timer.C
 	)
 	for !commandDone || !groupDone {
 		select {
-		case waitErr = <-waitCh:
+		case waitResult = <-waitCh:
 			commandDone = true
 			waitCh = nil
 			groupDone = !processGroupExists(pid)
@@ -420,7 +417,7 @@ func terminateProcessGroupAndWait(pid int, waitCh <-chan error, grace time.Durat
 			graceC = nil
 		}
 	}
-	return waitErr
+	return waitResult
 }
 
 func processGroupExists(pid int) bool {

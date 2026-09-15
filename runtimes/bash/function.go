@@ -338,15 +338,14 @@ func invokeBashFunction(ctx context.Context, workingDir, handlerFile, handlerNam
 	stderr = newBoundedBuffer(outputLimit)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
+	waitCh, err := startManagedCommand(cmd)
+	if err != nil {
 		return nil, err
 	}
-	waitCh := make(chan error, 1)
-	go func() { waitCh <- cmd.Wait() }()
 	select {
-	case err := <-waitCh:
-		if err != nil {
-			return nil, fmt.Errorf("%w: %s", err, stderr.String())
+	case result := <-waitCh:
+		if result.err != nil || !result.status.Exited() || result.status.ExitStatus() != 0 {
+			return nil, fmt.Errorf("exit status %d: %s", result.status.ExitStatus(), stderr.String())
 		}
 	case <-ctx.Done():
 		_ = terminateProcessGroupAndWait(cmd.Process.Pid, waitCh, processTerminationGrace)
