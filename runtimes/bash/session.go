@@ -123,26 +123,42 @@ func (s *Server) executeSessionCommand(ctx context.Context, entry *sessionEntry,
 	command.Stdin = bytes.NewReader(commandRequest.Stdin)
 	stdout := newBoundedBuffer(s.outputLimit)
 	stderr := newBoundedBuffer(s.outputLimit)
-	command.Stdout = &stdout
-	command.Stderr = &stderr
+	stdoutPipe, err := command.StdoutPipe()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "create stdout pipe: %v", err)
+	}
+	stderrPipe, err := command.StderrPipe()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "create stderr pipe: %v", err)
+	}
 	command.Env = sessionCommandEnv(entry.sessionEnv, commandRequest.Env)
 
-	if err := command.Start(); err != nil {
+	waitCh, err := startManagedCommand(command)
+	if err != nil {
 		return nil, status.Errorf(codes.Internal, "start session command: %v", err)
 	}
+	outputDone := make(chan struct{})
+	go func() {
+		var readers sync.WaitGroup
+		readers.Add(2)
+		go func() { defer readers.Done(); _, _ = io.Copy(&stdout, stdoutPipe) }()
+		go func() { defer readers.Done(); _, _ = io.Copy(&stderr, stderrPipe) }()
+		readers.Wait()
+		close(outputDone)
+	}()
 	defer entry.touch()
-	waitCh := make(chan error, 1)
-	go func() { waitCh <- command.Wait() }()
 
 	select {
-	case err := <-waitCh:
+	case result := <-waitCh:
+		<-outputDone
 		return &pb.SessionCommandResult{
-			ExitCode: sessionCommandExitCode(err),
+			ExitCode: sessionCommandExitCode(result),
 			Stdout:   []byte(stdout.String()),
 			Stderr:   []byte(stderr.String()),
 		}, nil
 	case <-commandCtx.Done():
 		_ = terminateProcessGroupAndWait(command.Process.Pid, waitCh, s.sessionTerminationGrace)
+		<-outputDone
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
 			return &pb.SessionCommandResult{
 				ExitCode: -1,
@@ -440,13 +456,12 @@ func sessionCommandEnv(sessionEnv, commandEnv map[string]string) []string {
 	return values
 }
 
-func sessionCommandExitCode(err error) int32 {
-	if err == nil {
+func sessionCommandExitCode(result commandWaitResult) int32 {
+	if result.err == nil && result.status.Exited() && result.status.ExitStatus() == 0 {
 		return 0
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return int32(exitErr.ExitCode())
+	if result.err == nil && result.status.Exited() {
+		return int32(result.status.ExitStatus())
 	}
 	return -1
 }
