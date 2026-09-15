@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -291,8 +292,6 @@ func (s *Server) execute(ctx context.Context, req *pb.ExecuteRequest, entry *exe
 		return
 	}
 	cmd.Dir = workDir
-	cmd.Stdout = executionOutput{entry: entry}
-	cmd.Stderr = executionOutput{entry: entry, stderr: true}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
@@ -303,18 +302,45 @@ func (s *Server) execute(ctx context.Context, req *pb.ExecuteRequest, entry *exe
 		entry.complete(cancelledResult(err))
 		return
 	}
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		entry.complete(pb.ExecutionState_EXECUTION_STATE_FAILED, 0, fmt.Sprintf("create stdout pipe: %v", err))
+		return
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		entry.complete(pb.ExecutionState_EXECUTION_STATE_FAILED, 0, fmt.Sprintf("create stderr pipe: %v", err))
+		return
+	}
 	waitCh, err := startManagedCommand(cmd)
 	if err != nil {
 		entry.complete(pb.ExecutionState_EXECUTION_STATE_FAILED, 0, err.Error())
 		return
 	}
+	outputDone := make(chan struct{})
+	go func() {
+		var readers sync.WaitGroup
+		readers.Add(2)
+		go func() {
+			defer readers.Done()
+			_, _ = io.Copy(executionOutput{entry: entry}, stdoutPipe)
+		}()
+		go func() {
+			defer readers.Done()
+			_, _ = io.Copy(executionOutput{entry: entry, stderr: true}, stderrPipe)
+		}()
+		readers.Wait()
+		close(outputDone)
+	}()
 
 	var runResult commandWaitResult
 	select {
 	case runResult = <-waitCh:
+		<-outputDone
 		entry.complete(commandResult(runResult))
 	case <-ctx.Done():
 		runResult = terminateProcessGroupAndWait(cmd.Process.Pid, waitCh, processTerminationGrace)
+		<-outputDone
 		entry.complete(cancelledResult(ctx.Err()))
 	}
 

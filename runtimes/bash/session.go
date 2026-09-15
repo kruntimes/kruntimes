@@ -123,18 +123,34 @@ func (s *Server) executeSessionCommand(ctx context.Context, entry *sessionEntry,
 	command.Stdin = bytes.NewReader(commandRequest.Stdin)
 	stdout := newBoundedBuffer(s.outputLimit)
 	stderr := newBoundedBuffer(s.outputLimit)
-	command.Stdout = &stdout
-	command.Stderr = &stderr
+	stdoutPipe, err := command.StdoutPipe()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "create stdout pipe: %v", err)
+	}
+	stderrPipe, err := command.StderrPipe()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "create stderr pipe: %v", err)
+	}
 	command.Env = sessionCommandEnv(entry.sessionEnv, commandRequest.Env)
 
 	waitCh, err := startManagedCommand(command)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "start session command: %v", err)
 	}
+	outputDone := make(chan struct{})
+	go func() {
+		var readers sync.WaitGroup
+		readers.Add(2)
+		go func() { defer readers.Done(); _, _ = io.Copy(&stdout, stdoutPipe) }()
+		go func() { defer readers.Done(); _, _ = io.Copy(&stderr, stderrPipe) }()
+		readers.Wait()
+		close(outputDone)
+	}()
 	defer entry.touch()
 
 	select {
 	case result := <-waitCh:
+		<-outputDone
 		return &pb.SessionCommandResult{
 			ExitCode: sessionCommandExitCode(result),
 			Stdout:   []byte(stdout.String()),
@@ -142,6 +158,7 @@ func (s *Server) executeSessionCommand(ctx context.Context, entry *sessionEntry,
 		}, nil
 	case <-commandCtx.Done():
 		_ = terminateProcessGroupAndWait(command.Process.Pid, waitCh, s.sessionTerminationGrace)
+		<-outputDone
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
 			return &pb.SessionCommandResult{
 				ExitCode: -1,

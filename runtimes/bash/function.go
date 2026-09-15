@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"os/exec"
@@ -336,19 +337,36 @@ func invokeBashFunction(ctx context.Context, workingDir, handlerFile, handlerNam
 	stdout = newBoundedBuffer(outputLimit)
 	var stderr boundedBuffer
 	stderr = newBoundedBuffer(outputLimit)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
 	waitCh, err := startManagedCommand(cmd)
 	if err != nil {
 		return nil, err
 	}
+	outputDone := make(chan struct{})
+	go func() {
+		var readers sync.WaitGroup
+		readers.Add(2)
+		go func() { defer readers.Done(); _, _ = io.Copy(&stdout, stdoutPipe) }()
+		go func() { defer readers.Done(); _, _ = io.Copy(&stderr, stderrPipe) }()
+		readers.Wait()
+		close(outputDone)
+	}()
 	select {
 	case result := <-waitCh:
+		<-outputDone
 		if result.err != nil || !result.status.Exited() || result.status.ExitStatus() != 0 {
 			return nil, fmt.Errorf("exit status %d: %s", result.status.ExitStatus(), stderr.String())
 		}
 	case <-ctx.Done():
 		_ = terminateProcessGroupAndWait(cmd.Process.Pid, waitCh, processTerminationGrace)
+		<-outputDone
 		return nil, ctx.Err()
 	}
 	if stdout.truncated {
