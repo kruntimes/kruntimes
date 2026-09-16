@@ -11,6 +11,27 @@ make test
 Covers Go packages outside integration and E2E tests. Also runs generation,
 formatting, vet, and protobuf generation prerequisites.
 
+### Caller-managed tool and cache paths
+
+Build tools and downloads do not require a writable container root filesystem.
+Set standard environment variables to direct them to a writable workspace; the
+Makefile passes `GOBIN` and `TMPDIR` to every tool bootstrap, while Go and uv
+honor their own cache variables.
+
+```bash
+export GOBIN="$PWD/.tools/bin"
+export TMPDIR="$PWD/.tmp"
+export GOPATH="$PWD/.go"
+export GOCACHE="$PWD/.cache/go-build"
+export GOMODCACHE="$PWD/.cache/go-mod"
+export UV_CACHE_DIR="$PWD/.cache/uv"
+mkdir -p "$GOBIN" "$TMPDIR"
+make test
+```
+
+This also applies to `make proto`, `make test-integration`, `make lint`, and
+the security targets.
+
 ## Integration Tests
 
 ```bash
