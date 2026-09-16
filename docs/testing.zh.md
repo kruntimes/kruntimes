@@ -13,6 +13,25 @@ make test
 覆盖集成测试和 E2E 测试之外的 Go 包。同时运行生成、格式化、vet 和 protobuf 生成先行
 检查。
 
+### 调用方管理的工具与缓存路径
+
+构建工具和下载内容不要求容器根文件系统可写。可通过标准环境变量将它们定向到可写的
+workspace：Makefile 会将 `GOBIN` 和 `TMPDIR` 传递给每个工具安装步骤，Go 和 uv 则遵循
+各自的缓存环境变量。
+
+```bash
+export GOBIN="$PWD/.tools/bin"
+export TMPDIR="$PWD/.tmp"
+export GOPATH="$PWD/.go"
+export GOCACHE="$PWD/.cache/go-build"
+export GOMODCACHE="$PWD/.cache/go-mod"
+export UV_CACHE_DIR="$PWD/.cache/uv"
+mkdir -p "$GOBIN" "$TMPDIR"
+make test
+```
+
+这同样适用于 `make proto`、`make test-integration`、`make lint` 和安全检查目标。
+
 ## 集成测试
 
 ```bash

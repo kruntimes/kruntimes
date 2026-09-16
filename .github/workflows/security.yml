@@ -49,10 +49,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Install gitleaks
-        run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
       - name: Run gitleaks
-        run: gitleaks git --redact --exit-code 1
+        run: make test-secrets
 
   govulncheck:
     name: govulncheck

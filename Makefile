@@ -31,12 +31,17 @@ HUGO_PORT ?= 1313
 # NAMESPACE for helm deploy
 NAMESPACE ?= default
 
-# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
-ifeq (,$(shell go env GOBIN))
-GOBIN=$(shell go env GOPATH)/bin
-else
-GOBIN=$(shell go env GOBIN)
+# Local tool and temporary paths are caller-configurable. This matters for CI
+# jobs and Runtime Pods that use a read-only container root filesystem. Go
+# already honors GOPATH, GOCACHE, and GOMODCACHE from the environment; export
+# GOBIN and TMPDIR as well so Makefile-installed tools and downloaded archives
+# use the same caller-selected locations.
+GOBIN ?= $(shell go env GOBIN)
+ifeq ($(strip $(GOBIN)),)
+GOBIN := $(shell go env GOPATH)/bin
 endif
+TMPDIR ?= /tmp
+export GOBIN TMPDIR
 
 # CONTAINER_TOOL defines the container tool to be used
 CONTAINER_TOOL ?= docker
@@ -407,66 +412,72 @@ proto: protoc protoc-gen-go protoc-gen-go-grpc ## Generate gRPC code from proto 
 
 ##@ Tools
 
+.PHONY: tool-bin-dir
+tool-bin-dir: ## Create the caller-configured local tool directory.
+	@mkdir -p "$(GOBIN)"
+
 CONTROLLER_GEN = $(GOBIN)/controller-gen
 .PHONY: controller-gen
-controller-gen: ## Download controller-gen locally if not already installed.
+controller-gen: tool-bin-dir ## Download controller-gen locally if not already installed.
 	@if ! test -x $(CONTROLLER_GEN) || ! $(CONTROLLER_GEN) --version | grep -q "$(CONTROLLER_GEN_VERSION)"; then \
 		go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION); \
 	fi
 
 SETUP_ENVTEST = $(GOBIN)/setup-envtest
 .PHONY: setup-envtest
-setup-envtest: ## Download setup-envtest locally if not already installed.
+setup-envtest: tool-bin-dir ## Download setup-envtest locally if not already installed.
 	@if ! test -x $(SETUP_ENVTEST) || ! $(SETUP_ENVTEST) version | grep -q "$(SETUP_ENVTEST_VERSION)"; then \
 		go install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION); \
 	fi
 
 GOLANGCI_LINT = $(GOBIN)/golangci-lint
 .PHONY: golangci-lint
-golangci-lint: ## Install golangci-lint if not present.
+golangci-lint: tool-bin-dir ## Install golangci-lint if not present.
 	@if ! test -x $(GOLANGCI_LINT) || ! $(GOLANGCI_LINT) --version | grep -q "$(GOLANGCI_LINT_VERSION)"; then \
 		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
 	fi
 
 GOVULNCHECK = $(GOBIN)/govulncheck
 .PHONY: govulncheck-tool
-govulncheck-tool: ## Install govulncheck if not present.
+govulncheck-tool: tool-bin-dir ## Install govulncheck if not present.
 	@if ! test -x $(GOVULNCHECK) || ! $(GOVULNCHECK) -version | grep -q "$(GOVULNCHECK_VERSION)"; then \
 		go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION); \
 	fi
 
 .PHONY: gitleaks
-gitleaks: ## Install the pinned gitleaks version if not present.
+gitleaks: tool-bin-dir ## Install the pinned gitleaks version if not present.
 	@if ! test -x $(GITLEAKS) || ! go version -m $(GITLEAKS) | awk '$$1 == "mod" && $$2 == "github.com/zricethezav/gitleaks/v8" && $$3 == "$(GITLEAKS_VERSION)" { found = 1 } END { exit !found }'; then \
 		go install github.com/zricethezav/gitleaks/v8@$(GITLEAKS_VERSION); \
 	fi
 
 .PHONY: protoc
-protoc: ## Install protoc compiler if not present.
+protoc: tool-bin-dir ## Install protoc compiler if not present.
 	@if ! test -x $(PROTOC) || ! $(PROTOC) --version | grep -q "libprotoc $(PROTOC_VERSION)"; then \
-		wget -q -O /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOC_VERSION)/protoc-$(PROTOC_VERSION)-$(PROTOC_ARCH).zip && \
-		python3 -c "import zipfile,sys;zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" /tmp/protoc.zip /tmp/protoc-install && \
-		cp /tmp/protoc-install/bin/protoc $(PROTOC) && chmod +x $(PROTOC) && \
-		rm -rf /tmp/protoc.zip /tmp/protoc-install; \
+		tmp_parent="$${TMPDIR:-/tmp}"; \
+		mkdir -p "$$tmp_parent" && \
+		tmp_dir="$$(mktemp -d "$$tmp_parent/protoc.XXXXXX")" && \
+		trap 'rm -rf "$$tmp_dir"' EXIT && \
+		wget -q -O "$$tmp_dir/protoc.zip" https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOC_VERSION)/protoc-$(PROTOC_VERSION)-$(PROTOC_ARCH).zip && \
+		python3 -c "import zipfile,sys;zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$$tmp_dir/protoc.zip" "$$tmp_dir/install" && \
+		cp "$$tmp_dir/install/bin/protoc" $(PROTOC) && chmod +x $(PROTOC); \
 	fi
 
 .PHONY: protoc-gen-go
-protoc-gen-go: ## Install protoc-gen-go if not present.
+protoc-gen-go: tool-bin-dir ## Install protoc-gen-go if not present.
 	@if ! test -x $(PROTOC_GEN_GO) || test "$$($(PROTOC_GEN_GO) --version | awk '{print $$NF}' | sed 's/^v//')" != "$(patsubst v%,%,$(PROTOC_GEN_GO_VERSION))"; then \
 		go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION); \
 	fi
 
 .PHONY: protoc-gen-go-grpc
-protoc-gen-go-grpc: ## Install protoc-gen-go-grpc if not present.
+protoc-gen-go-grpc: tool-bin-dir ## Install protoc-gen-go-grpc if not present.
 	@if ! test -x $(PROTOC_GEN_GO_GRPC) || test "$$($(PROTOC_GEN_GO_GRPC) --version | awk '{print $$NF}' | sed 's/^v//')" != "$(patsubst v%,%,$(PROTOC_GEN_GO_GRPC_VERSION))"; then \
 		go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION); \
 	fi
 
 UV = $(GOBIN)/uv
 .PHONY: uv
-uv: ## Install uv locally if not present.
+uv: tool-bin-dir ## Install uv locally if not present.
 	@if ! test -x "$(UV)" || ! "$(UV)" --version | grep -q "uv $(UV_VERSION)"; then \
-		mkdir -p "$(GOBIN)"; \
 		installer=$$(mktemp); \
 		trap 'rm -f "$$installer"' 0; \
 		curl -LsSf https://astral.sh/uv/$(UV_VERSION)/install.sh -o "$$installer"; \
@@ -475,7 +486,7 @@ uv: ## Install uv locally if not present.
 
 HUGO = $(GOBIN)/hugo
 .PHONY: hugo-tool
-hugo-tool: ## Install Hugo locally if not present.
+hugo-tool: tool-bin-dir ## Install Hugo locally if not present.
 	@if ! test -x "$(HUGO)" || ! "$(HUGO)" version | grep -q "$(HUGO_VERSION)"; then \
 		go install github.com/gohugoio/hugo@$(HUGO_VERSION); \
 	fi
