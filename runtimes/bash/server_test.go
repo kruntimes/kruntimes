@@ -761,6 +761,28 @@ func TestExecuteShellCArgs(t *testing.T) {
 	}
 }
 
+func TestExecuteEnvironmentOverridesRuntimeEnvironment(t *testing.T) {
+	client, cleanup := startTestServer(t)
+	defer cleanup()
+
+	_, err := client.Execute(context.Background(), &pb.ExecuteRequest{
+		Id:   "environment-override",
+		Args: []string{"sh", "-c", `printf '%s' "$PATH"`},
+		Env:  map[string]string{"PATH": "/tool-cache/bin"},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	response := waitForTerminalStatus(t, client, "environment-override")
+	if response.State != pb.ExecutionState_EXECUTION_STATE_SUCCEEDED {
+		t.Fatalf("state = %v, want succeeded: stderr=%s error=%s", response.State, response.Stderr, response.ErrorMessage)
+	}
+	if response.Stdout != "/tool-cache/bin" {
+		t.Fatalf("PATH = %q, want %q", response.Stdout, "/tool-cache/bin")
+	}
+}
+
 func TestExecute_InlineSource(t *testing.T) {
 	client, cleanup := startTestServer(t)
 	defer cleanup()

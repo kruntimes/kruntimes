@@ -689,11 +689,15 @@ func (r *WorkflowRunReconciler) createOrReuseStepRun(ctx context.Context, resour
 	if err != nil {
 		return nil, &workflowStepValidationError{err: err}
 	}
+	inheritedEnv, err := workflowStepEnvironment(workflowRun.Status.Jobs[target.jobName], target)
+	if err != nil {
+		return nil, &workflowStepValidationError{err: fmt.Errorf("read environment outputs: %w", err)}
+	}
 	artifactInputs, err := resolveWorkflowArtifactInputs(resolved.Artifacts, workflowRun.Status.Jobs)
 	if err != nil {
 		return nil, &workflowStepValidationError{err: err}
 	}
-	run = buildStepRun(workflowRun, target.jobName, step.Name, actionStepName, job, resolved, artifactInputs, workflowStepLabels(workflowRun, target.jobName, step.Name, actionStepName))
+	run = buildStepRun(workflowRun, target.jobName, step.Name, actionStepName, job, resolved, inheritedEnv, artifactInputs, workflowStepLabels(workflowRun, target.jobName, step.Name, actionStepName))
 	if err := controllerutil.SetControllerReference(workflowRun, run, r.Scheme); err != nil {
 		return nil, fmt.Errorf("set workflowrun owner reference on run %s/%s: %w", run.Namespace, run.Name, err)
 	}
@@ -841,7 +845,7 @@ func workflowRunJobOutputContext(statuses map[string]v1alpha1.JobStatus) *resolv
 	jobs := make(map[string]map[string]string, len(statuses))
 	for name, status := range statuses {
 		if status.Phase == v1alpha1.JobSucceeded && len(status.Outputs) > 0 {
-			jobs[name] = status.Outputs
+			jobs[name] = publicWorkflowOutputs(status.Outputs)
 		}
 	}
 	return &resolveContext{jobs: jobs}
@@ -856,7 +860,7 @@ func workflowRunStepContext(statuses map[string]v1alpha1.JobStatus, jobName stri
 	}
 	for _, step := range status.Steps {
 		if step.Phase == v1alpha1.StepSucceeded && len(step.Outputs) > 0 {
-			ctx.steps[step.Name] = step.Outputs
+			ctx.steps[step.Name] = publicWorkflowOutputs(step.Outputs)
 		}
 	}
 	return ctx
@@ -1156,7 +1160,7 @@ func resolveJobOutputs(job v1alpha1.JobSpec, status v1alpha1.JobStatus) (map[str
 	steps := make(map[string]map[string]string, len(status.Steps))
 	for _, step := range status.Steps {
 		if len(step.Outputs) > 0 {
-			steps[step.Name] = step.Outputs
+			steps[step.Name] = publicWorkflowOutputs(step.Outputs)
 		}
 	}
 	outputNames := make([]string, 0, len(job.Outputs))
@@ -1252,6 +1256,12 @@ func projectChildRunStatus(workflowRun *v1alpha1.WorkflowRun, run *v1alpha1.Run)
 	}
 	step := workflowStepStatus(&jobStatus, run.Labels[v1alpha1.WorkflowStepLabel])
 	if step == nil {
+		return
+	}
+	if _, err := workflowEnvironmentOutputs(run.Status.Outputs); err != nil {
+		step.Phase = v1alpha1.StepFailed
+		workflowRun.Status.Message = fmt.Sprintf("read environment outputs for step %q in job %q: %v", step.Name, jobName, err)
+		workflowRun.Status.Jobs[jobName] = jobStatus
 		return
 	}
 	if actionStepName := run.Labels[v1alpha1.WorkflowActionStepLabel]; actionStepName != "" {
@@ -1357,6 +1367,16 @@ func deriveActionCallStatus(snapshot *workflowExecutionSnapshot, jobName string,
 		status.Phase = v1alpha1.StepFailed
 		return fmt.Sprintf("resolve Action outputs for step %q in job %q: %v", spec.Name, jobName, err)
 	}
+	for _, actionStep := range status.ActionSteps {
+		if actionStep.Phase != v1alpha1.StepSucceeded {
+			continue
+		}
+		for key, value := range actionStep.Outputs {
+			if strings.HasPrefix(key, v1alpha1.WorkflowEnvironmentOutputPrefix) {
+				outputs[key] = value
+			}
+		}
+	}
 	status.Phase = v1alpha1.StepSucceeded
 	status.Outputs = outputs
 	return ""
@@ -1393,7 +1413,7 @@ func resolveActionOutputs(spec v1alpha1.ActionSpec, actionSteps []v1alpha1.Actio
 	steps := make(map[string]map[string]string, len(actionSteps))
 	for _, step := range actionSteps {
 		if step.Phase == v1alpha1.StepSucceeded && len(step.Outputs) > 0 {
-			steps[step.Name] = step.Outputs
+			steps[step.Name] = publicWorkflowOutputs(step.Outputs)
 		}
 	}
 	outputCtx := &resolveContext{inputs: inputs, steps: steps, jobs: ctx.jobs}
@@ -1425,16 +1445,23 @@ func terminalRunStepPhase(phase v1alpha1.RunPhase) (v1alpha1.StepPhase, bool) {
 	}
 }
 
-func buildStepRun(workflowRun *v1alpha1.WorkflowRun, jobName, stepName, actionStepName string, job v1alpha1.JobSpec, step v1alpha1.StepSpec, artifactInputs []v1alpha1.ArtifactInput, labels map[string]string) *v1alpha1.Run {
+func buildStepRun(workflowRun *v1alpha1.WorkflowRun, jobName, stepName, actionStepName string, job v1alpha1.JobSpec, step v1alpha1.StepSpec, inheritedEnv map[string]string, artifactInputs []v1alpha1.ArtifactInput, labels map[string]string) *v1alpha1.Run {
 	inline := step.Run
-	env := make([]corev1.EnvVar, 0, len(step.Env))
-	envNames := make([]string, 0, len(step.Env))
-	for name := range step.Env {
+	environment := maps.Clone(inheritedEnv)
+	if environment == nil {
+		environment = make(map[string]string, len(step.Env))
+	}
+	for name, value := range step.Env {
+		environment[name] = value
+	}
+	env := make([]corev1.EnvVar, 0, len(environment))
+	envNames := make([]string, 0, len(environment))
+	for name := range environment {
 		envNames = append(envNames, name)
 	}
 	sort.Strings(envNames)
 	for _, name := range envNames {
-		env = append(env, corev1.EnvVar{Name: name, Value: step.Env[name]})
+		env = append(env, corev1.EnvVar{Name: name, Value: environment[name]})
 	}
 	return &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{

@@ -2486,6 +2486,43 @@ func TestWorkflowRunExecutesActionAndProjectsOutputs(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunSharesToolCacheAndEnvironmentBetweenSteps(t *testing.T) {
+	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
+
+	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	workflowRun := &v1alpha1.WorkflowRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-tool-cache-" + nameSuffix, Namespace: testNamespace},
+		Spec: v1alpha1.WorkflowRunSpec{Jobs: map[string]v1alpha1.JobSpec{
+			"build": {
+				RunsOn: "bash",
+				Steps: []v1alpha1.StepSpec{
+					{
+						Name: "install-tool",
+						Run:  "\"$KRUNTIME_TOOL_CACHE/bin/kruntime-cache\" ensure e2e/tool -- sh -ceu 'printf cache-hit > \"$KRUNTIME_CACHE_STAGING/tool\"'\nprintf 'kruntimes.io/env/E2E_TOOL=%s\\n' \"$KRUNTIME_TOOL_CACHE/e2e/tool/tool\" >> \"$KRUNTIME_OUTPUTS\"",
+					},
+					{
+						Name: "use-tool",
+						Run:  `test "$(cat "$E2E_TOOL")" = cache-hit`,
+					},
+				},
+			},
+		}},
+	}
+	if err := k8sClient.Create(context.Background(), workflowRun); err != nil {
+		t.Fatalf("create WorkflowRun with tool cache: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
+
+	waitForWorkflowRunPhase(t, workflowRun, 45*time.Second, v1alpha1.WorkflowSucceeded)
+	steps := workflowRun.Status.Jobs["build"].Steps
+	if len(steps) != 2 || steps[0].Phase != v1alpha1.StepSucceeded || steps[1].Phase != v1alpha1.StepSucceeded {
+		t.Fatalf("tool-cache workflow steps = %#v, want two succeeded steps", steps)
+	}
+	if _, found := steps[0].Outputs[v1alpha1.WorkflowEnvironmentOutputPrefix+"E2E_TOOL"]; !found {
+		t.Fatalf("install-tool outputs = %#v, want reserved E2E_TOOL output", steps[0].Outputs)
+	}
+}
+
 func TestWorkflowRunFailsWhenActionChildRunFails(t *testing.T) {
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 

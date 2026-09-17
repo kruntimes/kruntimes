@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	artifacts3 "github.com/kruntimes/kruntimes/internal/artifact/s3"
 	"github.com/kruntimes/kruntimes/internal/healthcheck"
 	"github.com/kruntimes/kruntimes/internal/runtimed"
+	"github.com/kruntimes/kruntimes/internal/toolcache"
 )
 
 var (
@@ -43,6 +45,13 @@ func init() {
 }
 
 func main() {
+	if filepath.Base(os.Args[0]) == "kruntime-cache" {
+		if err := toolcache.Run(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, "kruntime-cache:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	var (
 		metricsAddr         string
 		probeAddr           string
