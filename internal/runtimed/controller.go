@@ -37,6 +37,7 @@ import (
 	"github.com/kruntimes/kruntimes/internal/runstatus"
 	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
+	"github.com/kruntimes/kruntimes/internal/toolcache"
 )
 
 var workspacePath = "/workspace" //nolint:gochecknoglobals
@@ -98,14 +99,18 @@ var (
 // Controller reconciles Runs assigned to this pod.
 type Controller struct {
 	client.Client
-	PodReader         client.Reader
-	RunReader         client.Reader
-	Log               logr.Logger
-	PodName           string
-	RuntimeName       string
-	RuntimeNamespace  string
-	RuntimeEndpoint   string
-	WorkspacePath     string
+	PodReader        client.Reader
+	RunReader        client.Reader
+	Log              logr.Logger
+	PodName          string
+	RuntimeName      string
+	RuntimeNamespace string
+	RuntimeEndpoint  string
+	WorkspacePath    string
+	// CacheHelperPath is the runtimed executable copied into the shared
+	// workspace for Runtime containers to invoke as kruntime-cache. Empty uses
+	// the current executable.
+	CacheHelperPath   string
 	GatewayURL        string
 	GatewayCABundle   []byte
 	Workers           int
@@ -121,9 +126,12 @@ type Controller struct {
 	activeRuns sync.Map // uid → *activeRun
 	// activeRunsMu makes the local claim decision atomic. In particular, a
 	// Session Run must not race a normal Run into the same Runtime Pod.
-	activeRunsMu sync.Mutex
-	rlegCh       chan event.GenericEvent
-	logMu        sync.Mutex
+	activeRunsMu  sync.Mutex
+	rlegCh        chan event.GenericEvent
+	logMu         sync.Mutex
+	toolCacheOnce sync.Once
+	toolCacheRoot string
+	toolCacheErr  error
 
 	runtimeCli        pb.RuntimeClient
 	sessionCli        pb.SessionRuntimeClient
@@ -1104,6 +1112,11 @@ func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
 	if err := c.stageArtifactInputs(ctx, ar); err != nil {
 		return err
 	}
+	cacheRoot, err := c.prepareToolCache()
+	if err != nil {
+		return err
+	}
+	env[toolcache.EnvironmentVariable] = cacheRoot
 	env[artifact.OutputsEnv] = ar.outputPath
 	artifactsDir, err := c.prepareArtifactStaging(ar)
 	if err != nil {

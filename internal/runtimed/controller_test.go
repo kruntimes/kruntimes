@@ -30,6 +30,7 @@ import (
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
 	"github.com/kruntimes/kruntimes/internal/runstatus"
 	rlegpkg "github.com/kruntimes/kruntimes/internal/runtimed/rleg"
+	"github.com/kruntimes/kruntimes/internal/toolcache"
 )
 
 func TestPrepareSource_NoSource(t *testing.T) {
@@ -2552,6 +2553,7 @@ func TestRecoverActiveRunsOnceAddsRuntimeExecutions(t *testing.T) {
 }
 
 func TestStartExecutionWaitsForRuntimeReady(t *testing.T) {
+	setTestWorkspace(t)
 	runtimeClient := &fakeRuntimeClient{}
 	c := &Controller{runtimeCli: runtimeClient}
 	run := &v1alpha1.Run{
@@ -2568,6 +2570,9 @@ func TestStartExecutionWaitsForRuntimeReady(t *testing.T) {
 	}
 	if got := runtimeClient.executeRequest.Env[artifact.OutputsEnv]; got != ar.outputPath {
 		t.Fatalf("%s = %q, want %q", artifact.OutputsEnv, got, ar.outputPath)
+	}
+	if got, want := runtimeClient.executeRequest.Env[toolcache.EnvironmentVariable], toolcache.Root(workspacePath); got != want {
+		t.Fatalf("%s = %q, want %q", toolcache.EnvironmentVariable, got, want)
 	}
 }
 
@@ -2597,6 +2602,7 @@ func TestStartExecutionUsesRunLocalOutputsForReferencedWorkspace(t *testing.T) {
 }
 
 func TestStartExecutionInlineIgnoresEntrypointAndArgs(t *testing.T) {
+	setTestWorkspace(t)
 	inline := "echo inline"
 	runtimeClient := &fakeRuntimeClient{}
 	c := &Controller{runtimeCli: runtimeClient}
@@ -2629,6 +2635,7 @@ func TestStartExecutionInlineIgnoresEntrypointAndArgs(t *testing.T) {
 }
 
 func TestStartExecutionEntrypointReceivesArgs(t *testing.T) {
+	setTestWorkspace(t)
 	runtimeClient := &fakeRuntimeClient{}
 	c := &Controller{runtimeCli: runtimeClient}
 	ar := &activeRun{

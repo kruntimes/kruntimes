@@ -293,10 +293,10 @@ func (s *Server) execute(ctx context.Context, req *pb.ExecuteRequest, entry *exe
 	}
 	cmd.Dir = workDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Env = append(cmd.Env, os.Environ()...)
 	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
-	cmd.Env = append(cmd.Env, os.Environ()...)
 
 	if err := ctx.Err(); err != nil {
 		entry.complete(cancelledResult(err))

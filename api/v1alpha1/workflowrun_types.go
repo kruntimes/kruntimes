@@ -51,6 +51,11 @@ const (
 	// WorkflowActionStepLabel identifies the Action-local step that owns a
 	// child Run. It is empty for an inline WorkflowRun step.
 	WorkflowActionStepLabel = "kruntimes.io/workflow-action-step"
+	// WorkflowEnvironmentOutputPrefix reserves Run output keys that publish an
+	// environment value to later steps of the same WorkflowRun job. The suffix
+	// is a valid environment-variable name. These entries are controller state,
+	// not ordinary expression-visible step outputs.
+	WorkflowEnvironmentOutputPrefix = "kruntimes.io/env/"
 	// WorkflowOutputAnnotationPrefix identifies frozen reusable Workflow output
 	// expressions on a materialized child WorkflowRun. The suffix is the output
 	// name from the source Workflow.

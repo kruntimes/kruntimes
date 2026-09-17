@@ -401,7 +401,11 @@ func TestWorkflowRunReconcilerResolvesStepExpressionsBeforeCreatingRun(t *testin
 				"build": {
 					Phase: v1alpha1.JobRunning,
 					Steps: []v1alpha1.StepStatus{
-						{Name: "package", Phase: v1alpha1.StepSucceeded, Outputs: map[string]string{"artifact": "dist.tgz"}},
+						{Name: "package", Phase: v1alpha1.StepSucceeded, Outputs: map[string]string{
+							"artifact": "dist.tgz",
+							v1alpha1.WorkflowEnvironmentOutputPrefix + "GOROOT":   "/cache/go/1.26.0",
+							v1alpha1.WorkflowEnvironmentOutputPrefix + "REGISTRY": "inherited.example.com",
+						}},
 						{Name: "publish", Phase: v1alpha1.StepPending},
 					},
 				},
@@ -443,8 +447,12 @@ func TestWorkflowRunReconcilerResolvesStepExpressionsBeforeCreatingRun(t *testin
 	if got := run.Spec.Mode.Task.Args; !reflect.DeepEqual(got, []string{"--artifact", "dist.tgz"}) {
 		t.Fatalf("run args = %v, want resolved args", got)
 	}
-	if len(run.Spec.Env) != 1 || run.Spec.Env[0].Name != "REGISTRY" || run.Spec.Env[0].Value != "registry.example.com" {
-		t.Fatalf("run env = %#v, want resolved env", run.Spec.Env)
+	environment := make(map[string]string, len(run.Spec.Env))
+	for _, variable := range run.Spec.Env {
+		environment[variable.Name] = variable.Value
+	}
+	if want := map[string]string{"GOROOT": "/cache/go/1.26.0", "REGISTRY": "registry.example.com"}; !reflect.DeepEqual(environment, want) {
+		t.Fatalf("run env = %#v, want %#v", environment, want)
 	}
 }
 
