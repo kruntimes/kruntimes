@@ -23,6 +23,7 @@ PROTOC_VERSION ?= 29.3
 PROTOC_ARCH ?= linux-x86_64
 PROTOC_GEN_GO_VERSION ?= v1.36.11
 PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
+HELM_VERSION ?= v3.19.0
 UV_VERSION ?= 0.11.16
 HUGO_VERSION ?= v0.152.2
 HUGO_BIND ?= 127.0.0.1
@@ -252,6 +253,41 @@ e2e-gateway-bounds-run: e2e-test-required e2e-setup e2e-test ## Opt in to gatewa
 e2e-cleanup: ## Delete the kind cluster.
 	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
+##@ Demos
+
+DEMO_CI_NAMESPACE ?= $(NAMESPACE)
+DEMO_CI_KIND_CLUSTER ?= $(KIND_CLUSTER_NAME)
+ifndef DEMO_CI_IMAGE_TAG
+DEMO_CI_IMAGE_TAG := demo-$(shell date +%Y%m%d%H%M%S)
+endif
+DEMO_CI_BASH_RUNTIME_IMAGE ?= kruntimes-bash-runtime:$(DEMO_CI_IMAGE_TAG)
+DEMO_CI_RUNTIME_IMAGE ?= kruntimes-ci-runtime:$(DEMO_CI_IMAGE_TAG)
+DEMO_CI_REPOSITORY ?= https://github.com/kruntimes/kruntimes.git
+DEMO_CI_REF ?= main
+ifndef DEMO_CI_WORKFLOWRUN_NAME
+DEMO_CI_WORKFLOWRUN_NAME := kruntimes-ci-demo-$(shell date +%Y%m%d%H%M%S)
+endif
+
+.PHONY: demo-ci-run
+demo-ci-run: ## Build and run the kruntimes CI Workflow demo on the current kind cluster.
+	$(MAKE) IMG_BASH_RUNTIME=$(DEMO_CI_BASH_RUNTIME_IMAGE) docker-build-bash-runtime
+	$(CONTAINER_TOOL) build \
+		--build-arg BASE_IMAGE=$(DEMO_CI_BASH_RUNTIME_IMAGE) \
+		-t $(DEMO_CI_RUNTIME_IMAGE) \
+		demo/kruntimes-ci
+	kind load docker-image $(DEMO_CI_RUNTIME_IMAGE) --name $(DEMO_CI_KIND_CLUSTER)
+	sed 's|<registry>/kruntimes-ci-runtime:0.1.0|$(DEMO_CI_RUNTIME_IMAGE)|' \
+		demo/kruntimes-ci/runtime.yaml | kubectl apply --namespace $(DEMO_CI_NAMESPACE) -f -
+	kubectl apply --namespace $(DEMO_CI_NAMESPACE) -f demo/kruntimes-ci/actions.yaml
+	kubectl apply --namespace $(DEMO_CI_NAMESPACE) -f demo/kruntimes-ci/workflow.yaml
+	kubectl rollout status --namespace $(DEMO_CI_NAMESPACE) \
+		deployment/runtime-kruntimes-ci --timeout=180s
+	go run ./cmd/krt workflow trigger kruntimes-ci \
+		--name $(DEMO_CI_WORKFLOWRUN_NAME) \
+		--set repository=$(DEMO_CI_REPOSITORY) \
+		--set ref=$(DEMO_CI_REF) \
+		--namespace $(DEMO_CI_NAMESPACE)
+
 .PHONY: benchmark
 benchmark: E2E_IMAGE_TAG := $(E2E_RUN_IMAGE_TAG)
 benchmark: e2e-setup benchmark-run ## Run the default no-sleep hot-path benchmark against a fresh E2E environment.
@@ -363,6 +399,18 @@ docker-push: ## Push Docker images.
 	$(CONTAINER_TOOL) push $(IMG_PYTHON_RUNTIME)
 
 ##@ Helm
+
+.PHONY: helm
+helm: tool-bin-dir ## Install the pinned Helm CLI into GOBIN if it is missing.
+	@if ! test -x "$(GOBIN)/helm" || ! "$(GOBIN)/helm" version --short | grep -q "$(HELM_VERSION)"; then \
+		tmp_parent="$${TMPDIR:-/tmp}"; \
+		mkdir -p "$$tmp_parent" && \
+		tmp_dir="$$(mktemp -d "$$tmp_parent/helm.XXXXXX")" && \
+		trap 'rm -rf "$$tmp_dir"' EXIT && \
+		curl --fail --location --silent --show-error -o "$$tmp_dir/helm.tar.gz" https://get.helm.sh/helm-$(HELM_VERSION)-linux-amd64.tar.gz && \
+		tar -C "$$tmp_dir" -xzf "$$tmp_dir/helm.tar.gz" && \
+		cp "$$tmp_dir/linux-amd64/helm" "$(GOBIN)/helm" && chmod +x "$(GOBIN)/helm"; \
+	fi
 
 .PHONY: template
 template: manifests ## Render Helm chart to stdout for validation.
