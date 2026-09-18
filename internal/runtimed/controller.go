@@ -1106,6 +1106,9 @@ func (c *Controller) startExecution(ctx context.Context, ar *activeRun) error {
 	for _, e := range run.Spec.Env {
 		env[e.Name] = e.Value
 	}
+	if err := prepareWorkspaceEnvironment(run, ar.workDir, env); err != nil {
+		return err
+	}
 	if err := os.Remove(ar.outputPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("reset outputs file: %w", err)
 	}

@@ -351,6 +351,19 @@ Workflow spec 不为默认 job-local sharing model 暴露 workspace controls。�
 spec 由 controller 配置控制。常见场景下，用户不需要选择 workspace name、storage mode、
 TTL 或 cleanup policy。
 
+runtimed 还会为每个引用 `PersistentWorkspace` 的 Run 提供两个以文件系统为基础的默认环境变量：
+
+| 变量 | 值 |
+| --- | --- |
+| `HOME` | `<workspace>/.home` |
+| `TMPDIR` | `<workspace>/.tmp` |
+
+runtimed 会在启动 Runtime execution 前创建这两个目录。因此，同一个 job 的 steps 会共享 home
+和临时文件状态；不同 job 因为拥有不同 workspace，会得到不同的值。直接引用
+`PersistentWorkspace` 的 Run 也使用这些默认值；runtimed 无需依赖 Workflow 特有逻辑。它们的
+优先级高于同名的 `Run.spec.env`，从而避免代码无意间写入 image-level home 或 container-global
+temporary directory。
+
 这个形态区分了：
 
 - `checkout`、`test` 和 `package` 的 job-local workspace sharing；

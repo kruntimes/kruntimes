@@ -416,6 +416,22 @@ creates and owns the job-local `PersistentWorkspace`, and its spec is controlled
 by controller configuration. Users should not need to choose workspace names,
 storage modes, TTLs, or cleanup policies in the common case.
 
+Runtimed also provides two filesystem-backed environment defaults to every Run
+that references a `PersistentWorkspace`:
+
+| Variable | Value |
+| --- | --- |
+| `HOME` | `<workspace>/.home` |
+| `TMPDIR` | `<workspace>/.tmp` |
+
+Runtimed creates both directories before it starts the Runtime execution. Thus,
+steps in one job share their home and temporary-file state, while separate jobs
+receive separate values because they have separate workspaces. The defaults are
+also used by direct Runs that reference a `PersistentWorkspace`; runtimed does
+not need Workflow-specific behavior to provide them. They take precedence over
+same-named `Run.spec.env` entries so code cannot silently fall back to an
+image-level home or container-global temporary directory.
+
 This shape separates:
 
 - job-local workspace sharing for `checkout`, `test`, and `package`;
