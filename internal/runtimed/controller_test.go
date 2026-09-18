@@ -2601,6 +2601,80 @@ func TestStartExecutionUsesRunLocalOutputsForReferencedWorkspace(t *testing.T) {
 	}
 }
 
+func TestStartExecutionProvidesWorkflowJobHomeAndTemporaryDirectory(t *testing.T) {
+	setTestWorkspace(t)
+	runtimeClient := &fakeRuntimeClient{}
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			UID: "workflow-job-uid",
+			Labels: map[string]string{
+				v1alpha1.WorkflowRunUIDLabel: "workflow-uid",
+				v1alpha1.WorkflowJobLabel:    "build",
+			},
+		},
+		Spec: v1alpha1.RunSpec{
+			Runtime:   "bash",
+			Workspace: &v1alpha1.RunWorkspaceReference{Name: "build"},
+			Mode:      v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+			Env: []corev1.EnvVar{
+				{Name: "HOME", Value: "/image-home"},
+				{Name: "TMPDIR", Value: "/tmp"},
+			},
+		},
+	}
+	ar := newActiveRun(run, time.Time{})
+	c := &Controller{runtimeCli: runtimeClient}
+
+	if err := c.startExecution(t.Context(), ar); err != nil {
+		t.Fatalf("startExecution: %v", err)
+	}
+	for name, want := range map[string]string{
+		"HOME":   filepath.Join(ar.workDir, workspaceHomeDirectory),
+		"TMPDIR": filepath.Join(ar.workDir, workspaceTempDirectory),
+	} {
+		if got := runtimeClient.executeRequest.Env[name]; got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+		info, err := os.Stat(want)
+		if err != nil {
+			t.Errorf("stat %s directory: %v", name, err)
+			continue
+		}
+		if !info.IsDir() {
+			t.Errorf("%s = %q is not a directory", name, want)
+		}
+	}
+}
+
+func TestStartExecutionProvidesWorkspaceHomeAndTemporaryDirectoryForDirectRun(t *testing.T) {
+	setTestWorkspace(t)
+	runtimeClient := &fakeRuntimeClient{}
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{UID: "workspace-run-uid"},
+		Spec: v1alpha1.RunSpec{
+			Runtime:   "bash",
+			Workspace: &v1alpha1.RunWorkspaceReference{Name: "build"},
+			Mode:      v1alpha1.RunMode{Task: &v1alpha1.RunTaskMode{}},
+			Env: []corev1.EnvVar{
+				{Name: "HOME", Value: "/custom-home"},
+				{Name: "TMPDIR", Value: "/custom-tmp"},
+			},
+		},
+	}
+	ar := newActiveRun(run, time.Time{})
+	c := &Controller{runtimeCli: runtimeClient}
+
+	if err := c.startExecution(t.Context(), ar); err != nil {
+		t.Fatalf("startExecution: %v", err)
+	}
+	if got, want := runtimeClient.executeRequest.Env["HOME"], filepath.Join(ar.workDir, workspaceHomeDirectory); got != want {
+		t.Errorf("HOME = %q, want %q", got, want)
+	}
+	if got, want := runtimeClient.executeRequest.Env["TMPDIR"], filepath.Join(ar.workDir, workspaceTempDirectory); got != want {
+		t.Errorf("TMPDIR = %q, want %q", got, want)
+	}
+}
+
 func TestStartExecutionInlineIgnoresEntrypointAndArgs(t *testing.T) {
 	setTestWorkspace(t)
 	inline := "echo inline"
