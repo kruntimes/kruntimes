@@ -28,10 +28,6 @@
   display: block;
   margin-top: 1rem;
 }
-.phase.phase.Cancelled,
-.phase.phase.Pending {
-  background: transparent;
-}
 .sidebar-icon-shell {
   display: inline-grid;
   width: 1.5rem;
@@ -197,29 +193,44 @@
 }
 .phase {
   display: inline-flex;
-  border: 1px solid var(--line);
+  border: 1px solid var(--phase-pending-border);
   border-radius: 999px;
+  background: var(--phase-pending-bg);
+  color: var(--muted);
   padding: 0.12rem 0.45rem;
   font-size: 0.78rem;
+  font-weight: 600;
 }
 .phase.Succeeded,
 .phase.Ready,
 .phase.Healthy {
-  border-color: var(--success);
-  color: var(--success);
+  border-color: var(--phase-success-border);
+  background: var(--phase-success-bg);
+  color: var(--phase-success-text);
 }
 .phase.Failed,
 .phase.Timeout,
 .phase.Unhealthy {
-  border-color: var(--danger);
-  color: var(--danger);
+  border-color: var(--phase-danger-border);
+  background: var(--phase-danger-bg);
+  color: var(--phase-danger-text);
+}
+.phase.Running,
+.phase.Scheduled,
+.phase.Waiting {
+  border-color: var(--phase-running-border);
+  background: var(--phase-running-bg);
+  color: var(--phase-running-text);
 }
 .phase.Cancelled {
-  border-color: var(--warning);
-  color: var(--warning);
+  border-color: var(--phase-warning-border);
+  background: var(--phase-warning-bg);
+  color: var(--phase-warning-text);
 }
-.phase.Pending {
-  border-color: var(--muted);
+.phase.Pending,
+.phase.Skipped {
+  border-color: var(--phase-pending-border);
+  background: var(--phase-pending-bg);
   color: var(--muted);
 }
 @layer base {
@@ -409,7 +420,7 @@
   height: 1.35rem;
   place-items: center;
   border-radius: 999px;
-  background: #64748b;
+  background: var(--muted);
   color: white;
   font-size: 0.85rem;
   font-style: normal;
@@ -418,21 +429,23 @@
 .status-icon.Succeeded,
 .status-icon.Ready,
 .status-icon.Healthy {
-  background: #19964c;
+  background: var(--success);
 }
 .status-icon.Failed,
 .status-icon.Timeout,
 .status-icon.Unhealthy {
-  background: #cf3a4c;
+  background: var(--danger);
 }
 .status-icon.Cancelled {
-  background: #b78103;
+  background: var(--warning);
 }
 .status-icon.Skipped {
-  background: #64748b;
+  background: var(--muted);
 }
-.status-icon.Running {
-  background: #168bb0;
+.status-icon.Running,
+.status-icon.Scheduled,
+.status-icon.Waiting {
+  background: var(--running);
 }
 .log-viewer {
   max-height: 440px;
