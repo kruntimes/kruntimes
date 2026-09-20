@@ -20,6 +20,50 @@ test("resource pages share raised surfaces in both themes", async ({
       dark: "rgb(39, 47, 59)",
     },
   } as const;
+  const phaseBackgrounds = {
+    github: {
+      light: {
+        Succeeded: "rgb(218, 251, 225)",
+        Failed: "rgb(255, 235, 233)",
+        Running: "rgb(221, 244, 255)",
+        Pending: "rgb(246, 248, 250)",
+      },
+      dark: {
+        Succeeded: "rgb(13, 59, 28)",
+        Failed: "rgb(75, 11, 16)",
+        Running: "rgb(12, 45, 107)",
+        Pending: "rgb(33, 38, 45)",
+      },
+    },
+    stripe: {
+      light: {
+        Succeeded: "rgb(231, 245, 237)",
+        Failed: "rgb(251, 236, 239)",
+        Running: "rgb(232, 243, 252)",
+        Pending: "rgb(241, 244, 248)",
+      },
+      dark: {
+        Succeeded: "rgb(31, 70, 53)",
+        Failed: "rgb(82, 44, 58)",
+        Running: "rgb(24, 61, 85)",
+        Pending: "rgb(43, 52, 72)",
+      },
+    },
+    neumorphism: {
+      light: {
+        Succeeded: "rgb(220, 238, 227)",
+        Failed: "rgb(242, 221, 226)",
+        Running: "rgb(220, 236, 241)",
+        Pending: "rgb(230, 235, 240)",
+      },
+      dark: {
+        Succeeded: "rgb(41, 77, 59)",
+        Failed: "rgb(84, 47, 61)",
+        Running: "rgb(40, 73, 86)",
+        Pending: "rgb(48, 58, 72)",
+      },
+    },
+  } as const;
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const run = {
@@ -66,7 +110,7 @@ test("resource pages share raised surfaces in both themes", async ({
       "/api/namespaces/default/runs": {
         items: [
           run,
-          ...["Failed", "Cancelled", "Pending"].map((phase) => ({
+          ...["Failed", "Running", "Cancelled", "Pending"].map((phase) => ({
             ...run,
             name: phase.toLowerCase(),
             uid: phase,
@@ -121,7 +165,16 @@ test("resource pages share raised surfaces in both themes", async ({
         ],
       );
       if (path.endsWith("/runs")) {
-        await expect(page.locator(".phase")).toHaveCount(4);
+        await expect(page.locator(".phase")).toHaveCount(5);
+        for (const [phase, color] of Object.entries(
+          phaseBackgrounds[style as keyof typeof phaseBackgrounds][
+            mode as "light" | "dark"
+          ],
+        ))
+          await expect(page.locator(`.phase.${phase}`)).toHaveCSS(
+            "background-color",
+            color,
+          );
         await expect(page.locator("aside .ui-selected")).toContainText("Runs");
       }
       await expect(page.locator("aside .sidebar-icon")).toHaveCount(5);

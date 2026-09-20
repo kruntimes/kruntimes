@@ -11,6 +11,21 @@
   --success: #176744;
   --danger: #a52b43;
   --warning: #815b00;
+  --running: #096b80;
+  --phase-success-bg: #dceee3;
+  --phase-success-border: #a9d4b9;
+  --phase-success-text: #176744;
+  --phase-danger-bg: #f2dde2;
+  --phase-danger-border: #dfb1bc;
+  --phase-danger-text: #a52b43;
+  --phase-running-bg: #dcecf1;
+  --phase-running-border: #a8ccd6;
+  --phase-running-text: #096b80;
+  --phase-pending-bg: #e6ebf0;
+  --phase-pending-border: #c5cfd8;
+  --phase-warning-bg: #f1e8cf;
+  --phase-warning-border: #ddc991;
+  --phase-warning-text: #815b00;
   --raised: -6px -6px 14px var(--shadow-light), 6px 6px 14px var(--shadow-dark);
   --raised-small:
     -3px -3px 7px var(--shadow-light), 3px 3px 7px var(--shadow-dark);
@@ -36,6 +51,11 @@
   box-shadow: var(--raised-small);
   color: var(--muted);
 }
+:root[data-style="neumorphism"] .phase {
+  border: 0;
+  border-radius: var(--control-radius);
+  box-shadow: var(--inset);
+}
 :root[data-style="neumorphism"] .ui-selected .sidebar-icon-shell {
   box-shadow: var(--inset);
   color: var(--link);
@@ -55,4 +75,19 @@
   --success: #79d9a7;
   --danger: #ffa0b1;
   --warning: #f0ce77;
+  --running: #79d4e3;
+  --phase-success-bg: #294d3b;
+  --phase-success-border: #4d7f63;
+  --phase-success-text: #79d9a7;
+  --phase-danger-bg: #542f3d;
+  --phase-danger-border: #855466;
+  --phase-danger-text: #ffa0b1;
+  --phase-running-bg: #284956;
+  --phase-running-border: #4b7888;
+  --phase-running-text: #79d4e3;
+  --phase-pending-bg: #303a48;
+  --phase-pending-border: #445162;
+  --phase-warning-bg: #514728;
+  --phase-warning-border: #7b6d3d;
+  --phase-warning-text: #f0ce77;
 }
