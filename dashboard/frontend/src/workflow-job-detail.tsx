@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LogEntry, WorkflowStepStatus } from "./types";
 import { ui } from "./ui";
 import { LogViewer, StatusIcon } from "./workflow-ui";
@@ -91,32 +91,78 @@ function WorkflowStep({
   loadLogs: WorkflowJobDetailProps["loadLogs"];
   runURL: WorkflowJobDetailProps["runURL"];
 }) {
-  const [logs, setLogs] = useState<LogEntry[]>();
+  const logSources = useMemo(
+    () => [
+      ...(step.runName
+        ? [{ name: step.name, runName: step.runName, action: false }]
+        : []),
+      ...(step.actionSteps
+        ?.filter((action) => action.runName)
+        .map((action) => ({
+          name: action.name,
+          runName: action.runName!,
+          action: true,
+        })) ?? []),
+    ],
+    [step.actionSteps, step.name, step.runName],
+  );
+  const logSourceKey = logSources.map((source) => source.runName).join(",");
+  const [logsByRun, setLogsByRun] = useState<Record<string, LogEntry[]>>({});
   const [loading, setLoading] = useState(autoExpand);
   const [error, setError] = useState("");
   const details = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (autoExpand) details.current?.setAttribute("open", "");
   }, [autoExpand]);
+  const showLogs = useCallback(() => {
+    const missingSources = logSources.filter(
+      (source) => logsByRun[source.runName] === undefined,
+    );
+    if (!missingSources.length || loading) return;
+    setError("");
+    setLoading(true);
+    Promise.all(
+      missingSources.map(async (source) => ({
+        runName: source.runName,
+        entries: await loadLogs(namespace, source.runName),
+      })),
+    )
+      .then((results) =>
+        setLogsByRun((current) => ({
+          ...current,
+          ...Object.fromEntries(
+            results.map(({ runName, entries }) => [runName, entries]),
+          ),
+        })),
+      )
+      .catch((cause) => setError((cause as Error).message))
+      .finally(() => setLoading(false));
+  }, [loadLogs, loading, logSources, logsByRun, namespace]);
   useEffect(() => {
-    if (!autoExpand || !step.runName) return;
+    if (!autoExpand || !logSourceKey) return;
     let alive = true;
-    loadLogs(namespace, step.runName)
-      .then((entries) => alive && setLogs(entries))
+    Promise.all(
+      logSources.map(async (source) => ({
+        runName: source.runName,
+        entries: await loadLogs(namespace, source.runName),
+      })),
+    )
+      .then(
+        (results) =>
+          alive &&
+          setLogsByRun((current) => ({
+            ...current,
+            ...Object.fromEntries(
+              results.map(({ runName, entries }) => [runName, entries]),
+            ),
+          })),
+      )
       .catch((cause) => alive && setError((cause as Error).message))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
     };
-  }, [autoExpand, loadLogs, namespace, step.runName]);
-  const showLogs = () => {
-    if (!step.runName || loading || logs !== undefined) return;
-    setLoading(true);
-    loadLogs(namespace, step.runName)
-      .then(setLogs)
-      .catch((cause) => setError((cause as Error).message))
-      .finally(() => setLoading(false));
-  };
+  }, [autoExpand, loadLogs, logSourceKey, logSources, namespace]);
   return (
     <details
       className="step"
@@ -133,34 +179,44 @@ function WorkflowStep({
         <small>{step.phase}</small>
       </summary>
       <div className="step-body">
-        {step.runName ? (
+        {logSources.length ? (
           <>
-            <p>
-              <a href={runURL(namespace, step.runName)}>
-                Open Run {step.runName}
-              </a>
-            </p>
             {loading ? (
               <pre>Loading logs…</pre>
             ) : error ? (
               <p className="text-[var(--danger)]">{error}</p>
             ) : (
-              <LogViewer entries={logs} query={logQuery} />
+              logSources.map((source) => (
+                <div key={source.runName}>
+                  {source.action && <p>{source.name}</p>}
+                  <p>
+                    <a href={runURL(namespace, source.runName)}>
+                      Open Run {source.runName}
+                    </a>
+                  </p>
+                  <LogViewer
+                    entries={logsByRun[source.runName]}
+                    query={logQuery}
+                  />
+                </div>
+              ))
             )}
           </>
         ) : (
           <p>No Run created yet.</p>
         )}
-        {step.actionSteps?.map((action) => (
-          <p key={action.name}>
-            {action.name}:{" "}
-            {action.runName ? (
-              <a href={runURL(namespace, action.runName)}>{action.runName}</a>
-            ) : (
-              action.phase
-            )}
-          </p>
-        ))}
+        {step.actionSteps
+          ?.filter((action) => !action.runName)
+          .map((action) => (
+            <p key={action.name}>
+              {action.name}:{" "}
+              {action.runName ? (
+                <a href={runURL(namespace, action.runName)}>{action.runName}</a>
+              ) : (
+                action.phase
+              )}
+            </p>
+          ))}
       </div>
     </details>
   );

@@ -2,6 +2,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { expectTextContrast } from "./contrast";
 
+type WorkflowStepFixture = {
+  name: string;
+  phase: string;
+  runName?: string;
+  actionSteps?: Array<{ name: string; phase: string; runName?: string }>;
+};
+
 test("fresh browser defaults and invalid theme are safe", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.removeItem("kruntimes-dashboard-style");
@@ -25,7 +32,13 @@ test("fresh browser defaults and invalid theme are safe", async ({ page }) => {
   );
 });
 
-async function openWorkflow(page: Page, sharedDependencies = false) {
+async function openWorkflow(
+  page: Page,
+  sharedDependencies = false,
+  steps: WorkflowStepFixture[] = [
+    { name: "Build", phase: "Succeeded", runName: "build-run" },
+  ],
+) {
   // The Go server serves index.html for frontend routes; Vite preview only
   // supports the configured /assets/ base. Reproduce that SPA fallback here.
   await page.route(
@@ -69,9 +82,7 @@ async function openWorkflow(page: Page, sharedDependencies = false) {
               jobs: {
                 A: {
                   phase: "Succeeded",
-                  steps: [
-                    { name: "Build", phase: "Succeeded", runName: "build-run" },
-                  ],
+                  steps,
                 },
                 B: { phase: "Succeeded" },
                 C: { phase: "Succeeded" },
@@ -432,5 +443,52 @@ test("Job navigation and expanding a recessed Step loads logs", async ({
         animations: "disabled",
       });
     }
+  }
+});
+
+test("expanding Action and command steps loads each step's Run logs", async ({
+  page,
+}) => {
+  const logs = {
+    "checkout-run": "Checked out main",
+    "setup-run": "Go is ready",
+    "test-run": "Tests passed",
+  };
+  await openWorkflow(page, false, [
+    {
+      name: "Checkout",
+      phase: "Succeeded",
+      actionSteps: [
+        { name: "checkout", phase: "Succeeded", runName: "checkout-run" },
+      ],
+    },
+    {
+      name: "Setup Go",
+      phase: "Succeeded",
+      actionSteps: [
+        { name: "install", phase: "Succeeded", runName: "setup-run" },
+      ],
+    },
+    { name: "Test", phase: "Succeeded", runName: "test-run" },
+  ]);
+  await page.route("**/runs/*/logs?*", async (route) => {
+    const runName = new URL(route.request().url()).pathname.split("/").at(-2)!;
+    await route.fulfill({
+      json: {
+        items: [
+          { stream: "stdout", message: logs[runName as keyof typeof logs] },
+        ],
+      },
+    });
+  });
+  await page
+    .locator(".dag-node")
+    .filter({ has: page.locator("strong", { hasText: /^A$/ }) })
+    .click();
+
+  for (const [index, message] of Object.values(logs).entries()) {
+    const step = page.locator(".step").nth(index);
+    await step.locator("summary").click();
+    await expect(step.locator(".log-viewer")).toContainText(message);
   }
 });
