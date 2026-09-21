@@ -1,1 +1,131 @@
-@CLAUDE.md
+# AGENTS.md
+
+This file provides guidance to coding agents when working in this repository.
+
+## Commit Convention
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>[optional scope]: <description>
+```
+
+Types: `feat`, `fix`, `refactor`, `chore`, `perf`, `ci`, `ops`, `build`, `docs`, `style`, `revert`, `test`.
+
+Examples: `feat(krt): add -f flag for stdin/file input`, `fix(scheduler): handle empty phase on create`, `refactor(runtimed): use controller-runtime reconciler`.
+
+## Build & Test Commands
+
+```bash
+make build              # compile all Go binaries
+make lint               # go fmt + go vet + golangci-lint (if installed) (scheduler, controller, runtimed, bash-runtime, krt)
+make test               # unit tests (skips integration and e2e)
+make test-integration   # envtest-based integration tests (real API server)
+make test-integration-run INTEGRATION_TEST=TestName # one envtest integration test
+make e2e-test           # E2E tests against a kind cluster (requires make e2e-setup first)
+make e2e                # full E2E: kind cluster + deploy + test
+make e2e-run E2E_TEST=TestName # full E2E setup, then the matching test only
+make proto              # regenerate Go gRPC code from api/runtime/v1/runtime.proto
+make proto-python       # regenerate Python gRPC stubs (requires uv)
+make proto-python       # regenerate Python gRPC stubs (requires uv)
+make generate manifests # regenerate deepcopy + CRD YAML manifests
+make deploy             # helm install the platform chart
+make deploy-runtimes    # helm install built-in runtimes (bash, python)
+```
+
+### E2E execution
+
+`make e2e` builds fresh images, creates or updates the `kruntimes-e2e` kind
+cluster, deploys the chart, then runs `make e2e-test`. It is the normal command
+for validating a change that affects deployed components.
+
+- Run only one E2E command at a time. In particular, do not run `make e2e`
+  concurrently with `make e2e-setup` or another `make e2e`: both mutate the
+  same Helm release and can leave Helm's operation lock active.
+- For a clean environment, run `make e2e-cleanup` first, then run `make e2e`.
+  There is no `e2e-clean` target.
+- E2E can exceed an interactive command timeout. Start it in a named `tmux`
+  session, redirect output to a unique file under `/tmp`, and save the exit
+  code to a companion file. Start an independent watcher that follows the
+  test process with `tail --pid`, then writes a log summary when it exits; do
+  not use fixed-interval sleep polling or start a second run merely because
+  the caller returns before the background process completes.
+- E2E needs Docker, kind, kubectl, Helm, the local Kubernetes API, and service
+  ports. Run it with the required sandbox escalation.
+
+Run a single Go test: `go test ./internal/scheduler/... -run TestName -v`
+Run Python tests: `cd runtimes/python && uv run python -m unittest server_test -v`
+
+## Architecture
+
+kruntimes is a **two-layer scheduling system** on Kubernetes. Layer 1 (K8s) maintains pools of warm Runtime Pods. Layer 2 (application) assigns individual Runs to pods within those pools. This eliminates Pod cold-start latency for short-lived, high-concurrency workloads.
+
+All components communicate exclusively through **Run CRD status updates** — no P2P, no connection pools, no IP tracking. The Run CRD is the single source of truth.
+
+### Data flow
+
+```
+Run CRD (Pending) → Scheduler → Run (Scheduled, assignedPod)
+    → Runtimed (in assigned pod) claims Run → gRPC Execute() → Runtime Server executes
+    → Runtimed polls Status() → updates Run CRD (Succeeded/Failed)
+```
+
+### Key types
+
+- **Run CRD** (`api/v1alpha1/run_types.go`): the central state machine. Phase: Pending → Scheduled → Running → Succeeded/Failed. Spec holds runtime name, args, env, timeout. Status holds phase, assignedPod, message, timestamps. CRD group: `kruntimes.io/v1alpha1`. Short name: `rn`. Scheduler treats empty phase as equivalent to Pending (the kubebuilder default on status subresource doesn't apply on Create).
+
+- **Runtime CRD** (`api/v1alpha1/runtime_types.go`): defines a runtime pool (Pod template, port, replicas, capacity, workspace, and artifact store). The Runtime controller creates a Deployment, preserves supported Pod template customization, and injects the runtimed daemon plus a shared emptyDir `/workspace`. Pod label `runtime: <cr-name>` is used by the scheduler for pod selection.
+
+- **gRPC Runtime service** (`api/runtime/v1/runtime.proto`): `Execute / Status / List / Cancel / Forget`. The runtimed daemon calls this on `localhost:<port>` to delegate command execution. `Forget` releases terminal execution state after the Run status is persisted. Import as `pb "github.com/kruntimes/kruntimes/api/runtime/v1"`.
+
+### Controllers
+
+- **Scheduler** (`internal/scheduler/reconciler.go`): controller-runtime reconciler, watches `Run` objects. Finds matching Runtime Pods by `runtime` label **within the Run's namespace**. Uses pluggable `Strategy` interface (`internal/scheduler/strategy.go`), default `LeastLoaded` counts running Runs per pod and picks the lowest.
+
+- **Runtime Controller** (`internal/controller/runtime_controller.go`): watches `Runtime` CRs, creates/updates Deployments with the runtime container + runtimed daemon injected. Propagates `deploy.Status.ReadyReplicas` to `rt.Status.ReadyReplicas`. Uses `Owns(&appsv1.Deployment{})` so Deployment status changes trigger reconciliation.
+
+- **Runtimed** (`internal/runtimed/controller.go`): runs inside each Runtime Pod. Polls for Runs with `assignedPod == $POD_NAME && phase == Scheduled`, claims them (phase→Running), prepares source code on the shared `/workspace` volume (inline dump to `script`, git clone), then calls runtime gRPC `Execute()` with `working_dir` pointing to the prepared code. Polls `Status()`, updates Run CRD. Uses a worker semaphore for concurrency control. Connects to runtime via `--runtime-endpoint` flag.
+
+### Deployment
+
+Platform chart (`charts/kruntimes/`): deploys CRDs, RBAC, scheduler Deployment, controller Deployment. Runtimes chart (`charts/kruntimes-runtimes/`): deploys Runtime CRs (bash, python). CRD YAML in `charts/kruntimes/crds/` is auto-generated by `make manifests` and must be regenerated after changing type definitions.
+
+### Naming conventions
+
+The project went through a deliberate renaming cycle:
+- `Task` → `Run` (avoid CI/CD pipeline connotations)
+- `Agent` → `Runtimed` (avoid AI agent confusion; runtimed is like kubelet/containerd)
+- `AgentImage` → `DaemonImage` (accurately describes the runtimed daemon image)
+- `task-cli` → `run-cli` → `krt`
+- `taskcli` → `runcli` → krt command package
+- Proto `TaskRuntime` service → `Runtime`; methods `CreateTask` → `Execute`, `GetTask` → `Status`
+
+Do NOT reintroduce "Task" or "Agent" naming. The term "task" is reserved for the proto's internal gRPC concepts (e.g., `taskEntry` in bash runtime, `taskruntimes` package name).
+
+### Code generation
+
+`make proto` requires `protoc`, `protoc-gen-go`, `protoc-gen-go-grpc`. These are auto-installed by the Makefile if missing. The proto lives at `api/runtime/v1/runtime.proto` — if you change it, run `make proto` to regenerate `runtime.pb.go` and `runtime_grpc.pb.go`.
+
+`make generate` runs `controller-gen object` to produce `api/v1alpha1/zz_generated.deepcopy.go`. Types needing deepcopy must have `+kubebuilder:object:generate=true` marker.
+
+`make manifests` runs `controller-gen crd` to produce CRD YAML in `charts/kruntimes/crds/`.
+
+### Docker images
+
+All Dockerfiles use multi-stage builds: a `golang:1.26` builder stage compiles the Go binary with `CGO_ENABLED=0`, then copies it into a minimal final image (`scratch` for scheduler/controller, `ubuntu:latest` for runtimed/bash-runtime). The Python runtime uses `python:3.13-slim` as base.
+
+### Python runtime
+
+Located at `runtimes/python/`. Managed with [uv](https://docs.astral.sh/uv/) for dependency management.
+
+**Setup:**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # one-time uv install
+cd runtimes/python && uv sync                      # install deps (grpcio, grpcio-tools, protobuf)
+```
+
+**Code generation:** `make proto-python` generates gRPC stubs in `runtimes/python/pb/` from `api/runtime/v1/runtime.proto`.
+
+**Tests:** `uv run python -m unittest server_test -v`
+
+**How it works:** The runtimed daemon prepares user code in a per-Run directory on the shared `/workspace` volume (inline → dump to the `entrypoint` file, default `script`; repo → git clone), then sends `working_dir` + `entrypoint` + `handler` to the Python gRPC server. The server runs `python <working_dir>/<entrypoint>` or executes `handler(event)` in FaaS mode. The built-in Python runtime is for trusted code only; handler mode is not a security boundary.
