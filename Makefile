@@ -50,6 +50,9 @@ CONTAINER_TOOL ?= docker
 # HELM binary
 HELM ?= helm
 
+# RELEASE_TAG is the proposed v-prefixed release tag checked before tagging.
+RELEASE_TAG ?=
+
 .PHONY: all
 all: proto generate manifests build
 
@@ -115,6 +118,10 @@ GITLEAKS = $(GOBIN)/gitleaks
 .PHONY: test-secrets
 test-secrets: gitleaks ## Scan Git history for secrets using the CI configuration.
 	$(GITLEAKS) git --redact --exit-code 1
+
+.PHONY: release-check
+release-check: ## Validate chart application versions for RELEASE_TAG before creating a release tag.
+	./hack/verify-release-version.sh "$(RELEASE_TAG)"
 
 .PHONY: test-s3-integration
 test-s3-integration: ## Run S3 ArtifactStore integration tests against MinIO.

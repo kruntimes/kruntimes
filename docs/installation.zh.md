@@ -59,7 +59,7 @@ Runs、跟踪 Run status 的最直接方式。端到端 demo 会使用 `krt logs
 在 Linux 或 macOS 上安装发布的 CLI archive：
 
 ```bash
-KRUNTIMES_VERSION=0.0.3
+KRUNTIMES_VERSION=0.0.5
 OS="$(uname | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 

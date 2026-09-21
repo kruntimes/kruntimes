@@ -8,7 +8,7 @@ requirements and Helm installation details.
 Install the kruntimes control plane from the published Helm OCI chart:
 
 ```bash
-KRUNTIMES_VERSION=0.0.3
+KRUNTIMES_VERSION=0.0.5
 
 kubectl create namespace kruntimes-system
 helm upgrade --install kruntimes oci://ghcr.io/kruntimes/charts/kruntimes \
@@ -192,7 +192,7 @@ Create a small Dockerfile that extends the published Bash Runtime image:
 ```bash
 mkdir -p my-bash-runtime
 cat > my-bash-runtime/Dockerfile <<'EOF'
-ARG KRUNTIMES_VERSION=0.0.3
+ARG KRUNTIMES_VERSION=0.0.5
 FROM ghcr.io/kruntimes/bash-runtime:${KRUNTIMES_VERSION}
 
 USER 0

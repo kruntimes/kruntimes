@@ -24,7 +24,7 @@ kubectl cluster-info
 设置 Helm charts 和 images 使用的发布版本：
 
 ```bash
-KRUNTIMES_VERSION=0.0.3
+KRUNTIMES_VERSION=0.0.5
 ```
 
 每个集群安装一次 control plane：

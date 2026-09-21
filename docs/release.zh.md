@@ -88,6 +88,7 @@ GitHub release notes 应从 changelog 编写，并包含：
 打 tag 之前运行以下检查：
 
 ```bash
+make release-check RELEASE_TAG=vX.Y.Z
 make test
 make test-integration
 make test-helm
@@ -103,6 +104,19 @@ make govulncheck
 ```bash
 git status --short
 ```
+
+### GitHub Container Registry 权限
+
+首次发布前，以及每次新增 image package 时，都要在 GitHub Packages 中检查该 package
+的 **Actions access**。每个 package 必须向 `kruntimes/kruntimes` repository 授予
+**Write** 权限，或在关联该 repository 后继承权限。release workflow 已请求
+`packages: write`；因此 `denied: permission_denied: write_package` 表示缺少 package
+级权限，而不是重试 workflow 可以解决的问题。
+
+检查 release 会发布的每个 image package：`scheduler`、`controller`、`runtimed`、
+`gateway`、`runtime-log-apiserver`、`dashboard`、`bash-runtime` 与 `python-runtime`。
+从已改名 repository 迁移 package 时，先 unlink 旧 repository source，再关联
+`kruntimes/kruntimes`，然后才创建 tag。artifact 发布失败只能由新 tag supersede。
 
 ## 打 Tag
 
