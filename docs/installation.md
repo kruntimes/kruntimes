@@ -61,7 +61,7 @@ commands.
 Install a released CLI archive for Linux or macOS:
 
 ```bash
-KRUNTIMES_VERSION=0.0.3
+KRUNTIMES_VERSION=0.0.5
 OS="$(uname | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 

@@ -24,7 +24,7 @@ kubectl cluster-info
 Set the release version used by the Helm charts and images:
 
 ```bash
-KRUNTIMES_VERSION=0.0.3
+KRUNTIMES_VERSION=0.0.5
 ```
 
 Install the control plane once per cluster:

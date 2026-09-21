@@ -31,7 +31,7 @@ needs extra tools.
 Example Bash Runtime image with `jq` installed:
 
 ```dockerfile
-ARG KRUNTIMES_VERSION=0.0.3
+ARG KRUNTIMES_VERSION=0.0.5
 FROM ghcr.io/kruntimes/bash-runtime:${KRUNTIMES_VERSION}
 
 USER 0
@@ -46,7 +46,7 @@ Build and push the image to a registry the cluster can pull:
 ```bash
 CUSTOM_BASH_IMAGE=ghcr.io/example/my-bash-runtime:0.1.0
 docker build \
-  --build-arg KRUNTIMES_VERSION=0.0.3 \
+  --build-arg KRUNTIMES_VERSION=0.0.5 \
   -t "${CUSTOM_BASH_IMAGE}" \
   ./my-bash-runtime
 docker push "${CUSTOM_BASH_IMAGE}"

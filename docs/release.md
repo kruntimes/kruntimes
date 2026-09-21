@@ -95,6 +95,7 @@ experimental and may change in later minor releases.
 Run these checks before creating the tag:
 
 ```bash
+make release-check RELEASE_TAG=vX.Y.Z
 make test
 make test-integration
 make test-helm
@@ -110,6 +111,22 @@ Confirm these generated files are clean after preflight:
 ```bash
 git status --short
 ```
+
+### GitHub Container Registry access
+
+Before the first release, and whenever a new image package is added, verify the
+package's **Actions access** in GitHub Packages. Each package must grant the
+`kruntimes/kruntimes` repository **Write** access, or inherit that access after
+being linked to the repository. The release workflows already request
+`packages: write`; a `denied: permission_denied: write_package` error therefore
+means the package-level access is missing rather than that a workflow retry is
+needed.
+
+Check every image package that the release publishes: `scheduler`, `controller`,
+`runtimed`, `gateway`, `runtime-log-apiserver`, `dashboard`, `bash-runtime`, and
+`python-runtime`. When moving a package from a renamed repository, unlink its
+old repository source and link `kruntimes/kruntimes` before creating the tag.
+Artifact publication failures must be superseded by a new tag.
 
 ## Tagging
 

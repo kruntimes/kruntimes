@@ -34,23 +34,7 @@ jobs:
 
       - name: Validate chart versions
         shell: bash
-        run: |
-          set -euo pipefail
-
-          version="${RELEASE_TAG#v}"
-          semver_re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
-          for chart in charts/kruntimes charts/kruntimes-runtimes; do
-            chart_version="$(helm show chart "${chart}" | awk '$1 == "version:" { print $2 }')"
-            app_version="$(helm show chart "${chart}" | awk '$1 == "appVersion:" { gsub(/"/, "", $2); print $2 }')"
-            if [[ ! "${chart_version}" =~ ${semver_re} ]]; then
-              echo "${chart} version ${chart_version} is not valid SemVer" >&2
-              exit 1
-            fi
-            if [[ "${app_version}" != "${version}" ]]; then
-              echo "${chart} appVersion ${app_version} does not match release ${version}" >&2
-              exit 1
-            fi
-          done
+        run: ./hack/verify-release-version.sh "${RELEASE_TAG}"
 
       - name: Lint charts
         run: helm lint ./charts/kruntimes ./charts/kruntimes-runtimes
