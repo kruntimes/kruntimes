@@ -82,10 +82,12 @@ cert-manager 可以写入默认 Dashboard TLS Secret，也可以写入 operator 
 因此，使用已有 self-signed Issuer 时不需要额外的 dashboard 专用 mode。
 
 backend 不拥有代表用户读取受保护资源的 ambient authority。它只复制 in-cluster transport
-配置、清空挂载的 credential，并安装 caller bearer token。chart 默认启用极窄的 public-read：
-Dashboard ServiceAccount 只能 get/list Namespaces、Runs、Runtimes 和 WorkflowRuns，且无 token
-时 API 只暴露它们的 summary。operator 可以通过 `dashboard.publicRead.enabled=false` 禁用它。
-资源详情仍由 caller 授权。
+配置、清空挂载的 credential，并安装 caller bearer token。Dashboard ServiceAccount 只能通过
+创建 TokenReview 来验证提交的登录 token 并取得其 Kubernetes username；它绝不会使用该
+ServiceAccount identity 读取受保护用户资源。chart 默认启用极窄的 public-read：Dashboard
+ServiceAccount 只能 get/list Namespaces、Runs、Runtimes 和 WorkflowRuns，且无 token 时 API
+只暴露它们的 summary。operator 可以通过 `dashboard.publicRead.enabled=false` 禁用它。资源详情
+仍由 caller 授权。
 
 第一版应读取以下数据源：
 
@@ -127,13 +129,16 @@ dashboard 默认必须是只读的。
 
 建议的 v0.x 生产模型是 Kubernetes bearer-token login：
 
-- 用户通过 HTTPS 将 Kubernetes bearer token 输入 Dashboard。backend 以 host-only 的
-  `HttpOnly`、`Secure`、`SameSite=Strict` session cookie 返回 token，时限八小时。JavaScript
-  永远不读取或写入 token，且 token 不会写入 localStorage、sessionStorage 或 logs；
+- 用户通过 HTTPS 将 Kubernetes bearer token 输入 Dashboard。backend 在设置 host-only 的
+  `HttpOnly`、`Secure`、`SameSite=Strict` session cookie（时限八小时）前通过 Kubernetes
+  TokenReview 验证它。JavaScript 永远不读取或写入 token，且 token 不会写入 localStorage、
+  sessionStorage 或 logs；内部 session response 只暴露经过认证的 Kubernetes username，供
+  header 中的 account label 使用；
 - backend 使用该 bearer token、in-cluster API server 地址和 cluster CA 创建 request-scoped
   Kubernetes client，并用它访问受保护页面和聚合 Run logs；
 - chart 默认以权限极窄的 Dashboard ServiceAccount 提供免 token 的 namespace、Run、Runtime 和
-  WorkflowRun summary。它只有这些资源的 `get`/`list` 权限，并可以显式禁用；
+  WorkflowRun summary。它拥有这些资源的 `get`/`list` 以及 TokenReview 的 `create` 权限，
+  且可以显式禁用 public summary；
 - Kubernetes API authorization 决定受保护页面的访问。token 需要 exact
   `logs.kruntimes.io/runs/log` subresource 的 `get` 才能读取 logs；
 - v0.x 只将 artifact references 作为 Run metadata 展示，不下载或代理 artifact content。
@@ -227,14 +232,17 @@ GET /api/namespaces/{namespace}/runtimes/{name}
 GET /api/namespaces/{namespace}/workflowruns
 GET /api/namespaces/{namespace}/workflowruns/{name}
 POST /api/session
+GET /api/session
 DELETE /api/session
 ```
 
-日志 endpoint 只会通过 request-scoped Kubernetes client 读取 assigned Pod 的 `runtimed`
-container，并丢弃 `run_uid` 不匹配该 Run immutable UID 的记录。`tail` 最多返回 500 条记录；
-每个 request 最多读取 500 条最近 container lines 和 1 MiB。普通 tail response 为 JSON；当
-`follow=true` 时，endpoint 会返回过滤后的 newline-delimited JSON records，直到 caller 断开或
-Kubernetes log stream 关闭。它绝不会变成 browser-visible Pod proxy。
+session endpoints 会在创建或恢复 session 时通过 TokenReview 验证 token。它们只返回
+`authenticated` 与 Kubernetes username，绝不返回 token 本身。日志 endpoint 只将 caller token
+转发给 Kubernetes aggregated Run-log API。Kubernetes 会授权对 exact Run-log subresource 的 `get`；
+log API 会解析 assigned Pod，并按 Run immutable UID 过滤 records。`tail` 最多返回 500 条记录，
+每个 request 最多 1 MiB。普通 tail response 为 JSON；当 `follow=true` 时，endpoint 会返回过滤后的
+newline-delimited JSON records，直到 caller 断开或 aggregated log stream 关闭。它绝不会变成
+browser-visible Pod proxy。
 
 Run list endpoint 应尽量支持 server-side pagination 和过滤：
 
@@ -302,8 +310,8 @@ Dashboard 适配，并非宣称逐字符合存在冲突的原始提示词。
 frontend 使用 React 和 TypeScript，构建为与 Dashboard backend 一同打包到镜像中的静态 assets，并与内部 API 从
 同一 HTTPS origin 提供。source、backend、process entrypoint 和 image definition 都位于顶层
 `dashboard/` 目录。它没有独立 frontend Service、没有 browser-to-Kubernetes connection，并使用
-same-origin Content Security Policy。bearer token 只会保存在 HTTPS-only HttpOnly cookie；刷新可
-恢复 session，Disconnect 会清除它。
+same-origin Content Security Policy。bearer token 只会保存在 HTTPS-only HttpOnly cookie；刷新会
+重新验证 session 并恢复 Kubernetes account label，Log out 会清除它。
 
 ## 实现顺序
 

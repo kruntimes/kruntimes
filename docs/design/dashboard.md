@@ -97,12 +97,14 @@ therefore supported without a separate dashboard-specific mode.
 
 The backend has no ambient read authority for protected user requests. It
 copies only the in-cluster transport configuration, clears the mounted
-credential and installs the caller bearer token. The chart enables a
-deliberately narrow public-read mode by default: the Dashboard ServiceAccount
-may only get/list Namespaces, Runs, Runtimes, and WorkflowRuns, and the API
-exposes only their summaries without a token. Operators can disable it with
-`dashboard.publicRead.enabled=false`. Resource details and
-Runtime/WorkflowRun pages remain caller-authorized.
+credential and installs the caller bearer token. The Dashboard ServiceAccount
+may create TokenReviews solely to validate a submitted login token and obtain
+its Kubernetes username; it never uses that identity to read protected user
+resources. The chart enables a deliberately narrow public-read mode by default:
+the Dashboard ServiceAccount may only get/list Namespaces, Runs, Runtimes, and
+WorkflowRuns, and the API exposes only their summaries without a token.
+Operators can disable it with `dashboard.publicRead.enabled=false`. Resource
+details and Runtime/WorkflowRun pages remain caller-authorized.
 
 The first version should read the following sources:
 
@@ -147,15 +149,19 @@ The dashboard must be read-only by default.
 The proposed v0.x production model is Kubernetes bearer-token login:
 
 - the user enters a Kubernetes bearer token into the Dashboard over HTTPS. The
-  backend returns it in a host-only `HttpOnly`, `Secure`, `SameSite=Strict`
-  session cookie with an eight-hour lifetime. JavaScript never reads or writes
-  the token, and it is never written to localStorage, sessionStorage, or logs;
+  backend validates it through Kubernetes TokenReview before issuing a host-only
+  `HttpOnly`, `Secure`, `SameSite=Strict` session cookie with an eight-hour
+  lifetime. JavaScript never reads or writes the token, and it is never written
+  to localStorage, sessionStorage, or logs. The internal session response
+  exposes only the authenticated Kubernetes username for the header account
+  label;
 - the backend creates a request-scoped Kubernetes client with that bearer token,
   the in-cluster API server address, and the cluster CA. It uses this client
   for protected pages and aggregated Run-log access;
 - the chart's narrowly privileged Dashboard ServiceAccount supplies tokenless
-  namespace, Run, Runtime, and WorkflowRun summaries by default. It has only
-  `get`/`list` on those resources and can be disabled explicitly;
+  namespace, Run, Runtime, and WorkflowRun summaries by default. It has
+  `get`/`list` on those resources plus `create` on TokenReviews, and public
+  summaries can be disabled explicitly;
 - Kubernetes API authorization decides protected-page access. A token needs
   `get` on the exact `logs.kruntimes.io/runs/log` subresource to read logs;
 - v0.x shows artifact references as Run metadata but does not download or proxy
@@ -258,16 +264,20 @@ GET /api/namespaces/{namespace}/runtimes/{name}
 GET /api/namespaces/{namespace}/workflowruns
 GET /api/namespaces/{namespace}/workflowruns/{name}
 POST /api/session
+GET /api/session
 DELETE /api/session
 ```
 
-The log endpoint reads only the assigned Pod's `runtimed` container through the
-request-scoped Kubernetes client and discards records whose `run_uid` does not
-match the Run's immutable UID. `tail` is bounded to 500 returned records; the
-backend reads at most 500 recent container lines and 1 MiB per request. A
-normal tail response is JSON. With `follow=true`, the endpoint returns filtered
-newline-delimited JSON records until the caller disconnects or the Kubernetes
-log stream closes. It never turns into a browser-visible Pod proxy.
+The session endpoints validate the token through TokenReview when creating or
+restoring a session. They return only `authenticated` and the Kubernetes
+username, never the token itself. The log endpoint forwards the caller token
+only to the Kubernetes aggregated Run-log API. Kubernetes authorizes `get` on
+the exact Run-log subresource; the log API resolves the assigned Pod and
+filters records by the Run's immutable UID. `tail` is bounded to 500 returned
+records and 1 MiB per request. A normal tail response is JSON. With
+`follow=true`, the endpoint returns filtered newline-delimited JSON records
+until the caller disconnects or the aggregated log stream closes. It never
+turns into a browser-visible Pod proxy.
 
 The Run list endpoint should support server-side pagination and filter fields
 where practical:
@@ -358,8 +368,8 @@ The source, backend, process entrypoint, and image definition live under the
 top-level `dashboard/` directory. It has no separate frontend Service, no
 browser-to-Kubernetes connection, and a same-origin Content Security Policy.
 The bearer token is never readable by JavaScript: it is stored only in a
-host-only HTTPS HttpOnly session cookie. Reload restores the session and
-Disconnect removes it.
+host-only HTTPS HttpOnly session cookie. Reload revalidates the session and
+restores its Kubernetes account label; Log out removes it.
 
 ## Implementation Sequence
 
