@@ -197,9 +197,9 @@ Retry 语义是 at-least-once。Runtime Servers 必须让重复 `Execute` delive
 
 ## WorkflowRun Skeleton
 
-`WorkflowRun` 是 reusable workflow model 的目标 execution-instance API。当前 v0.x
-skeleton 接受 inline jobs，或 namespace-local reusable Workflow reference，但尚未实现
-执行逻辑。
+`WorkflowRun` 是 reusable workflow model 的 execution-instance API。它会执行 inline jobs、
+观察其 child Runs、将有界的 step/job outputs 投影到 status，并遵守 dependency ordering。job
+也可以调用 namespace-local reusable Workflow。
 
 创建一个 inline WorkflowRun manifest：
 

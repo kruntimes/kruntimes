@@ -203,9 +203,10 @@ Run UID. They are not copied wholesale into `status.message`.
 
 ## WorkflowRun Skeleton
 
-`WorkflowRun` is the target execution-instance API for the reusable workflow
-model. The current v0.x skeleton accepts inline jobs or a namespace-local
-reusable Workflow reference, but execution is not implemented yet.
+`WorkflowRun` is the execution-instance API for the reusable workflow model.
+It executes inline jobs, observes their child Runs, projects bounded step and
+job outputs into status, and honors dependency ordering. A job can also call a
+namespace-local reusable Workflow.
 
 Create an inline WorkflowRun manifest:
 
