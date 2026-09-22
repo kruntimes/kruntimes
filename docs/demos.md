@@ -299,6 +299,33 @@ read-only Kubernetes RBAC. It is a trusted-workload preview, not a sandbox for
 untrusted model-generated code. The complete setup and security constraints are
 in the example README.
 
+## Demo 5: kruntimes CI Workflow
+
+The [kruntimes CI Workflow](../demo/kruntimes-ci/README.md) adapts this
+repository's GitHub Actions CI into a WorkflowRun graph. It uses a local
+reusable checkout Action in every job, controller-managed job workspaces,
+parallel Go/Python/Helm validation jobs, and a join that publishes bounded
+workflow results.
+
+Runtimed provides private writable `HOME` and `TMPDIR` directories for every
+job workspace. Go is the only broadly reused dependency, so the reusable
+`setup-go` Action creates a versioned Runtime Pod-local cache entry with
+`kruntime-cache ensure` and publishes the job-local Go cache paths, `GOBIN`,
+`GOROOT`, and `PATH`. Other tools are installed job-locally in the checkout's
+`bin/` directory by their Makefile targets. Jobs therefore request only the
+tools their targets need, rather than relying on prebuilt tools in the Runtime
+image.
+Its `generated` job shows this project-local pattern: `make proto generate
+manifests` installs
+`protoc`, its Go plugins, and `controller-gen` in the checked-out workspace
+instead of the shared cache.
+
+It explicitly documents the GitHub-specific boundaries that remain external:
+event triggering, path filtering, cancellation concurrency, and Marketplace
+Actions. Its README includes the reviewed CI Runtime image requirements.
+Runtime Pods need egress to the selected source repository and the dependency
+registries used by the CI commands; the sample does not configure a proxy.
+
 ## Clean Up
 
 ```bash

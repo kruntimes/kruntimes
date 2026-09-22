@@ -1,0 +1,21 @@
+apiVersion: kruntimes.io/v1alpha1
+kind: Runtime
+metadata:
+  name: kruntimes-ci
+spec:
+  port: 9091
+  replicas: 1
+  capacity:
+    resources:
+      # One warm CI Runtime Pod can execute the independent validation jobs in
+      # parallel. Every Workflow job receives its own local workspace.
+      runs: "8"
+  template:
+    spec:
+      containers:
+        - name: runtime
+          image: kruntimes-ci-runtime
+          imagePullPolicy: IfNotPresent
+          args: [--port=9091]
+          ports:
+            - containerPort: 9091

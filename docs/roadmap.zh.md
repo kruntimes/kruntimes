@@ -248,8 +248,10 @@ controller wiring 累积不必要的冲突。
       authentication、Run authorization、workspace file-boundary enforcement、registration
       environment、structured command logs、idle/total timeout、Drain completion、SDK access，
       以及 assigned Runtime Pod loss。
-- [ ] v0.x examples：增加 LLM agent 示例和 workflow 示例，并用这些示例反推缺失的
-  产品和 API 能力。
+- [ ] v0.x examples：使用有代表性的示例反推缺失的产品和 API 能力。
+  - [ ] 调整 OpenAI tool-calling Kubernetes diagnosis agent 示例；
+  - [x] 增加可执行的 CI-style WorkflowRun 示例；
+  - [ ] 与目标用户一起使用这两个示例，并记录缺失的产品和 API 能力。
 - [x] Workflow data sharing：设计并实现由 workflow demo 反推出的 first-class cross-Run
   storage 语义。目标模型：
   - job 之间通过 ArtifactStore-backed step outputs 和 inputs 传递数据；

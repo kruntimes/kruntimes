@@ -291,6 +291,24 @@ krt logs custom-runtime-demo -n kruntimes-demo
 trusted-workload preview，不是运行不可信模型生成代码的 sandbox。完整的 setup 和安全约束见
 示例 README。
 
+## Demo 5：kruntimes CI Workflow
+
+[kruntimes CI Workflow](../demo/kruntimes-ci/README.md) 将本仓库的 GitHub Actions CI 改写为
+WorkflowRun graph。它使用本地 reusable checkout Action、controller-managed job workspace、
+每个 job 独立 checkout、并行的 Go/Python/Helm validation jobs，以及发布有界 workflow results
+的 join。
+
+每个 job workspace 的可写 `HOME` 与 `TMPDIR` 由 runtimed 提供。Go 是唯一会被广泛复用的依赖，reusable
+`setup-go` Action 通过 `kruntime-cache ensure` 创建固定版本的 Runtime Pod-local cache entry，并发布
+job-local 的 Go cache 路径、`GOBIN`、`GOROOT` 和 `PATH`。其它工具由 job 在 checkout 的 `bin/` 下通过
+对应 Makefile target 安装。这样 job 只请求其 target 所需的工具，而不是依赖 Runtime image 内预装的工具。`generated` job 通过
+`make proto generate manifests` 在 checkout 的项目目录安装
+`protoc`、其 Go plugin 和 `controller-gen`，展示不需要同 Pod Run 共享时的 job-local tool 安装方式。
+
+它明确记录仍由外部承担的 GitHub-specific boundary：event triggering、path filtering、cancellation
+concurrency 与 Marketplace Actions。README 包含经过 review 的 CI Runtime image requirements。
+Runtime Pod 必须能访问所选源码仓库以及 CI 命令使用的依赖 registry；该示例不会配置 proxy。
+
 ## 清理
 
 ```bash

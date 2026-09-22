@@ -1,0 +1,61 @@
+apiVersion: kruntimes.io/v1alpha1
+kind: Action
+metadata:
+  name: checkout-source
+spec:
+  inputs:
+    repository:
+      required: true
+    ref:
+      required: true
+  outputs:
+    commit:
+      value: ${{ steps.checkout.outputs.commit }}
+  steps:
+    - name: checkout
+      run: |
+        set -euo pipefail
+        # The job workspace already contains runtimed's private .kruntimes
+        # directory, so git clone ... . would reject it as non-empty. Initialize
+        # the current workspace as a checkout without touching that directory.
+        git init .
+        git remote remove origin 2>/dev/null || true
+        git remote add origin "${{ inputs.repository }}"
+        git fetch --depth 1 origin "${{ inputs.ref }}"
+        git checkout --force --detach FETCH_HEAD
+        commit="$(git rev-parse HEAD)"
+        printf 'commit=%s\n' "${commit}" >> "${KRUNTIME_OUTPUTS}"
+---
+apiVersion: kruntimes.io/v1alpha1
+kind: Action
+metadata:
+  name: setup-go
+spec:
+  steps:
+    - name: install
+      run: |
+        set -euo pipefail
+        go_version=1.27.0
+        tool_key="kruntimes-ci/go/v1/go-${go_version}-linux-amd64"
+        tool_root="${KRUNTIME_TOOL_CACHE}/${tool_key}"
+
+        "${KRUNTIME_TOOL_CACHE}/bin/kruntime-cache" ensure "${tool_key}" -- \
+          bash -ceu '
+            archive="${KRUNTIME_CACHE_STAGING}/go.tar.gz"
+            curl --fail --location --silent --show-error \
+              "https://go.dev/dl/go${1}.linux-amd64.tar.gz" --output "${archive}"
+            tar -C "${KRUNTIME_CACHE_STAGING}" -xzf "${archive}"
+            rm -f "${archive}"
+            test -x "${KRUNTIME_CACHE_STAGING}/go/bin/go"
+          ' bash "${go_version}"
+
+        test -x "${tool_root}/go/bin/go"
+        workspace="${PWD}"
+        mkdir -p "${workspace}/.go" "${workspace}/.cache/go-build" \
+          "${workspace}/.cache/go-mod" "${workspace}/bin"
+        printf 'kruntimes.io/env/GOPATH=%s/.go\n' "${workspace}" >> "${KRUNTIME_OUTPUTS}"
+        printf 'kruntimes.io/env/GOCACHE=%s/.cache/go-build\n' "${workspace}" >> "${KRUNTIME_OUTPUTS}"
+        printf 'kruntimes.io/env/GOMODCACHE=%s/.cache/go-mod\n' "${workspace}" >> "${KRUNTIME_OUTPUTS}"
+        printf 'kruntimes.io/env/GOBIN=%s/bin\n' "${workspace}" >> "${KRUNTIME_OUTPUTS}"
+        printf 'kruntimes.io/env/GOROOT=%s/go\n' "${tool_root}" >> "${KRUNTIME_OUTPUTS}"
+        printf 'kruntimes.io/env/PATH=%s/bin:%s/go/bin:%s\n' "${workspace}" "${tool_root}" "${PATH}" >> "${KRUNTIME_OUTPUTS}"

@@ -1,0 +1,11 @@
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  generateName: kruntimes-ci-demo-reuse-
+spec:
+  jobs:
+    ci:
+      uses: kruntimes-ci
+      with:
+        repository: https://github.com/kruntimes/kruntimes.git
+        ref: main

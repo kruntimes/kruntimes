@@ -299,8 +299,12 @@ wiring from accumulating avoidable conflicts.
       workspace file-boundary enforcement, registration environment, structured
       command logs, idle and total timeout, Drain completion, SDK access, and
       assigned Runtime Pod loss across focused unit, integration, and E2E tests.
-- [ ] v0.x examples: add LLM agent and workflow examples, then use those
-  examples to identify missing product and API capabilities.
+- [ ] v0.x examples: use representative examples to identify missing product
+  and API capabilities.
+  - [ ] refine the OpenAI tool-calling Kubernetes diagnosis agent example;
+  - [x] add an executable CI-style WorkflowRun example;
+  - [ ] use both examples with target users to identify and record missing
+    product and API capabilities.
 - [x] Workflow data sharing: design and implement first-class cross-Run storage
   semantics discovered from the workflow demo. Target model:
   - job-to-job data moves through ArtifactStore-backed step outputs and inputs;
