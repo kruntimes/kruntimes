@@ -267,7 +267,6 @@ DEMO_CI_KIND_CLUSTER ?= $(KIND_CLUSTER_NAME)
 ifndef DEMO_CI_IMAGE_TAG
 DEMO_CI_IMAGE_TAG := demo-$(shell date +%Y%m%d%H%M%S)
 endif
-DEMO_CI_BASH_RUNTIME_IMAGE ?= kruntimes-bash-runtime:$(DEMO_CI_IMAGE_TAG)
 DEMO_CI_RUNTIME_IMAGE ?= kruntimes-ci-runtime:$(DEMO_CI_IMAGE_TAG)
 DEMO_CI_REPOSITORY ?= https://github.com/kruntimes/kruntimes.git
 DEMO_CI_REF ?= main
@@ -277,13 +276,11 @@ endif
 
 .PHONY: demo-ci-run
 demo-ci-run: ## Build and run the kruntimes CI Workflow demo on the current kind cluster.
-	$(MAKE) IMG_BASH_RUNTIME=$(DEMO_CI_BASH_RUNTIME_IMAGE) docker-build-bash-runtime
 	$(CONTAINER_TOOL) build \
-		--build-arg BASE_IMAGE=$(DEMO_CI_BASH_RUNTIME_IMAGE) \
 		-t $(DEMO_CI_RUNTIME_IMAGE) \
 		demo/kruntimes-ci
 	kind load docker-image $(DEMO_CI_RUNTIME_IMAGE) --name $(DEMO_CI_KIND_CLUSTER)
-	sed 's|<registry>/kruntimes-ci-runtime:0.1.0|$(DEMO_CI_RUNTIME_IMAGE)|' \
+	sed 's|image: kruntimes-ci-runtime|image: $(DEMO_CI_RUNTIME_IMAGE)|' \
 		demo/kruntimes-ci/runtime.yaml | kubectl apply --namespace $(DEMO_CI_NAMESPACE) -f -
 	kubectl apply --namespace $(DEMO_CI_NAMESPACE) -f demo/kruntimes-ci/actions.yaml
 	kubectl apply --namespace $(DEMO_CI_NAMESPACE) -f demo/kruntimes-ci/workflow.yaml

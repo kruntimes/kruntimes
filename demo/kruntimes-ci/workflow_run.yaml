@@ -1,0 +1,99 @@
+apiVersion: kruntimes.io/v1alpha1
+kind: WorkflowRun
+metadata:
+  generateName: kruntimes-ci-demo-
+spec:
+  jobs:
+    unit:
+      runs-on: kruntimes-ci
+      steps:
+        - name: checkout
+          uses: checkout-source
+          with:
+            repository: https://github.com/kruntimes/kruntimes.git
+            ref: main
+        - name: setup-go
+          uses: setup-go
+        - name: test
+          run: |
+            make test
+    integration:
+      runs-on: kruntimes-ci
+      steps:
+        - name: checkout
+          uses: checkout-source
+          with:
+            repository: https://github.com/kruntimes/kruntimes.git
+            ref: main
+        - name: setup-go
+          uses: setup-go
+        - name: test
+          run: |
+            make test-integration
+    race:
+      runs-on: kruntimes-ci
+      steps:
+        - name: checkout
+          uses: checkout-source
+          with:
+            repository: https://github.com/kruntimes/kruntimes.git
+            ref: main
+        - name: setup-go
+          uses: setup-go
+        - name: test
+          run: |
+            CGO_ENABLED=1 make test-race
+    python-runtime:
+      runs-on: kruntimes-ci
+      steps:
+        - name: checkout
+          uses: checkout-source
+          with:
+            repository: https://github.com/kruntimes/kruntimes.git
+            ref: main
+        - name: test
+          run: |
+            export UV_CACHE_DIR="$PWD/.cache/uv"
+            mkdir -p "$UV_CACHE_DIR"
+            cd runtimes/python
+            uv sync --frozen
+            uv run --frozen python -m unittest server_test -v
+    helm:
+      runs-on: kruntimes-ci
+      steps:
+        - name: checkout
+          uses: checkout-source
+          with:
+            repository: https://github.com/kruntimes/kruntimes.git
+            ref: main
+        - name: setup-go
+          uses: setup-go
+        - name: test
+          run: |
+            make HELM="$GOBIN/helm" helm test-helm
+    generated:
+      runs-on: kruntimes-ci
+      steps:
+        - name: checkout
+          uses: checkout-source
+          with:
+            repository: https://github.com/kruntimes/kruntimes.git
+            ref: main
+        - name: setup-go
+          uses: setup-go
+        - name: verify
+          run: |
+            # This job intentionally uses a checkout-local tool directory.
+            # Make installs protoc, its Go plugins, and controller-gen into
+            # ./bin when they are missing.
+            make proto generate manifests
+            git diff --exit-code
+    summary:
+      needs: [unit, integration, race, python-runtime, helm, generated]
+      runs-on: kruntimes-ci
+      steps:
+        - name: report
+          run: |
+            printf 'result=passed\\n' >> "${KRUNTIME_OUTPUTS}"
+      outputs:
+        result: ${{ steps.report.outputs.result }}
