@@ -556,6 +556,7 @@ const (
 	SessionRuntime_RegisterSession_FullMethodName         = "/executor.v1.SessionRuntime/RegisterSession"
 	SessionRuntime_GetSessionStatus_FullMethodName        = "/executor.v1.SessionRuntime/GetSessionStatus"
 	SessionRuntime_ExecuteSessionOperation_FullMethodName = "/executor.v1.SessionRuntime/ExecuteSessionOperation"
+	SessionRuntime_StreamSessionOperation_FullMethodName  = "/executor.v1.SessionRuntime/StreamSessionOperation"
 	SessionRuntime_ReadSessionFile_FullMethodName         = "/executor.v1.SessionRuntime/ReadSessionFile"
 	SessionRuntime_ListSessionFiles_FullMethodName        = "/executor.v1.SessionRuntime/ListSessionFiles"
 	SessionRuntime_CloseSession_FullMethodName            = "/executor.v1.SessionRuntime/CloseSession"
@@ -577,6 +578,9 @@ type SessionRuntimeClient interface {
 	GetSessionStatus(ctx context.Context, in *GetSessionStatusRequest, opts ...grpc.CallOption) (*SessionStatus, error)
 	// ExecuteSessionOperation executes one mutation already admitted by runtimed.
 	ExecuteSessionOperation(ctx context.Context, in *ExecuteSessionOperationRequest, opts ...grpc.CallOption) (*ExecuteSessionOperationResponse, error)
+	// StreamSessionOperation executes one mutation and emits ordered progress and
+	// terminal events. The owner runtimed serializes the operation.
+	StreamSessionOperation(ctx context.Context, in *ExecuteSessionOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SessionOperationEvent], error)
 	// ReadSessionFile returns bounded contents of one workspace-relative file.
 	ReadSessionFile(ctx context.Context, in *ReadSessionFileRequest, opts ...grpc.CallOption) (*ReadSessionFileResponse, error)
 	// ListSessionFiles lists workspace-relative directory entries.
@@ -622,6 +626,25 @@ func (c *sessionRuntimeClient) ExecuteSessionOperation(ctx context.Context, in *
 	}
 	return out, nil
 }
+
+func (c *sessionRuntimeClient) StreamSessionOperation(ctx context.Context, in *ExecuteSessionOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SessionOperationEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &SessionRuntime_ServiceDesc.Streams[0], SessionRuntime_StreamSessionOperation_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExecuteSessionOperationRequest, SessionOperationEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SessionRuntime_StreamSessionOperationClient = grpc.ServerStreamingClient[SessionOperationEvent]
 
 func (c *sessionRuntimeClient) ReadSessionFile(ctx context.Context, in *ReadSessionFileRequest, opts ...grpc.CallOption) (*ReadSessionFileResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -669,6 +692,9 @@ type SessionRuntimeServer interface {
 	GetSessionStatus(context.Context, *GetSessionStatusRequest) (*SessionStatus, error)
 	// ExecuteSessionOperation executes one mutation already admitted by runtimed.
 	ExecuteSessionOperation(context.Context, *ExecuteSessionOperationRequest) (*ExecuteSessionOperationResponse, error)
+	// StreamSessionOperation executes one mutation and emits ordered progress and
+	// terminal events. The owner runtimed serializes the operation.
+	StreamSessionOperation(*ExecuteSessionOperationRequest, grpc.ServerStreamingServer[SessionOperationEvent]) error
 	// ReadSessionFile returns bounded contents of one workspace-relative file.
 	ReadSessionFile(context.Context, *ReadSessionFileRequest) (*ReadSessionFileResponse, error)
 	// ListSessionFiles lists workspace-relative directory entries.
@@ -693,6 +719,9 @@ func (UnimplementedSessionRuntimeServer) GetSessionStatus(context.Context, *GetS
 }
 func (UnimplementedSessionRuntimeServer) ExecuteSessionOperation(context.Context, *ExecuteSessionOperationRequest) (*ExecuteSessionOperationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExecuteSessionOperation not implemented")
+}
+func (UnimplementedSessionRuntimeServer) StreamSessionOperation(*ExecuteSessionOperationRequest, grpc.ServerStreamingServer[SessionOperationEvent]) error {
+	return status.Error(codes.Unimplemented, "method StreamSessionOperation not implemented")
 }
 func (UnimplementedSessionRuntimeServer) ReadSessionFile(context.Context, *ReadSessionFileRequest) (*ReadSessionFileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadSessionFile not implemented")
@@ -777,6 +806,17 @@ func _SessionRuntime_ExecuteSessionOperation_Handler(srv interface{}, ctx contex
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _SessionRuntime_StreamSessionOperation_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ExecuteSessionOperationRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(SessionRuntimeServer).StreamSessionOperation(m, &grpc.GenericServerStream[ExecuteSessionOperationRequest, SessionOperationEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SessionRuntime_StreamSessionOperationServer = grpc.ServerStreamingServer[SessionOperationEvent]
 
 func _SessionRuntime_ReadSessionFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReadSessionFileRequest)
@@ -864,6 +904,12 @@ var SessionRuntime_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SessionRuntime_CloseSession_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "StreamSessionOperation",
+			Handler:       _SessionRuntime_StreamSessionOperation_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "api/runtime/v1/runtime.proto",
 }

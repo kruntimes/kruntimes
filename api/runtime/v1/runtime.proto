@@ -43,6 +43,9 @@ service SessionRuntime {
     rpc GetSessionStatus(GetSessionStatusRequest) returns (SessionStatus);
     // ExecuteSessionOperation executes one mutation already admitted by runtimed.
     rpc ExecuteSessionOperation(ExecuteSessionOperationRequest) returns (ExecuteSessionOperationResponse);
+    // StreamSessionOperation executes one mutation and emits ordered progress and
+    // terminal events. The owner runtimed serializes the operation.
+    rpc StreamSessionOperation(ExecuteSessionOperationRequest) returns (stream SessionOperationEvent);
     // ReadSessionFile returns bounded contents of one workspace-relative file.
     rpc ReadSessionFile(ReadSessionFileRequest) returns (ReadSessionFileResponse);
     // ListSessionFiles lists workspace-relative directory entries.
@@ -270,6 +273,69 @@ message ExecuteSessionOperationResponse {
     // Command result when the request operation is command. It is absent for
     // successful file mutations.
     SessionCommandResult command = 1;
+}
+
+// SessionOperationEvent is one ordered event emitted while a Session operation
+// is active. Owner runtimed assigns sequence to every event before forwarding it
+// to callers.
+message SessionOperationEvent {
+    int64 sequence = 1;
+    oneof event {
+        // Accepted is emitted after runtimed has admitted the operation to its
+        // per-Session FIFO queue.
+        SessionOperationAccepted accepted = 2;
+        // Output carries one bounded stdout or stderr chunk.
+        SessionOperationOutput output = 3;
+        // Progress carries a bounded Runtime-defined status, text delta, or
+        // tool lifecycle event.
+        SessionOperationProgress progress = 4;
+        // Completed is emitted exactly once when an operation succeeds.
+        ExecuteSessionOperationResponse completed = 5;
+        // Failed is emitted exactly once after a stream has started when an
+        // operation cannot complete successfully.
+        SessionOperationFailure failed = 6;
+    }
+}
+
+message SessionOperationAccepted {}
+
+enum SessionOperationOutputStream {
+    SESSION_OPERATION_OUTPUT_STREAM_UNSPECIFIED = 0;
+    SESSION_OPERATION_OUTPUT_STREAM_STDOUT = 1;
+    SESSION_OPERATION_OUTPUT_STREAM_STDERR = 2;
+}
+
+message SessionOperationOutput {
+    SessionOperationOutputStream stream = 1;
+    bytes data = 2;
+}
+
+enum SessionOperationProgressKind {
+    SESSION_OPERATION_PROGRESS_KIND_UNSPECIFIED = 0;
+    SESSION_OPERATION_PROGRESS_KIND_STATUS = 1;
+    SESSION_OPERATION_PROGRESS_KIND_TEXT_DELTA = 2;
+    SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_STARTED = 3;
+    SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_FINISHED = 4;
+}
+
+message SessionOperationProgress {
+    SessionOperationProgressKind kind = 1;
+    // Message is human-readable, bounded progress text.
+    string message = 2;
+    // ToolCallID and ToolName identify tool lifecycle events when applicable.
+    string tool_call_id = 3;
+    string tool_name = 4;
+    // Data is a bounded JSON payload whose schema is defined by kind and the
+    // Runtime. ContentType defaults to application/json when data is present.
+    bytes data = 5;
+    string content_type = 6;
+}
+
+message SessionOperationFailure {
+    // Code is the numeric gRPC status code for the terminal error.
+    int32 code = 1;
+    // Message is safe to disclose to an authorized caller.
+    string message = 2;
 }
 
 message SessionCommandResult {

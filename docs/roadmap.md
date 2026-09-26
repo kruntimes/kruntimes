@@ -285,6 +285,9 @@ wiring from accumulating avoidable conflicts.
   - [x] add Python and Go SDKs with create/open/wait/execute/files/logs/close
     helpers, typed errors, direct in-cluster access, and local port-forward
     support;
+  - [ ] add generic [Session operation streaming](design/session-operation-streaming.md)
+    for interactive Runtime progress and terminal events, then extend it with
+    idempotent submission and resumable cursor-based replay;
   - [x] add a Kubernetes diagnosis agent example that uses a Session Run for
     multi-step scripts, files, results, and cleanup; use it to find remaining
     product gaps before calling the feature supported;

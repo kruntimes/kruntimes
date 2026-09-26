@@ -80,9 +80,10 @@ func (q *SessionOperationQueue) IdleDeadline(runUID string, timeout time.Duratio
 }
 
 type sessionOperationJob struct {
-	ctx     context.Context
-	execute func(context.Context) (*pb.ExecuteSessionOperationResponse, error)
-	result  chan sessionOperationResult
+	ctx      context.Context
+	admitted chan struct{}
+	execute  func(context.Context) (*pb.ExecuteSessionOperationResponse, error)
+	result   chan sessionOperationResult
 }
 
 type sessionOperationResult struct {
@@ -114,6 +115,18 @@ func (q *SessionOperationQueue) Execute(
 	run *v1alpha1.Run,
 	execute func(context.Context) (*pb.ExecuteSessionOperationResponse, error),
 ) (*pb.ExecuteSessionOperationResponse, error) {
+	return q.ExecuteWithAdmission(ctx, run, nil, execute)
+}
+
+// ExecuteWithAdmission is Execute with a callback that runs immediately after
+// the operation has been admitted to the Session FIFO queue. The callback runs
+// outside the queue mutex, but before this call waits for the operation result.
+func (q *SessionOperationQueue) ExecuteWithAdmission(
+	ctx context.Context,
+	run *v1alpha1.Run,
+	onAdmitted func() error,
+	execute func(context.Context) (*pb.ExecuteSessionOperationResponse, error),
+) (*pb.ExecuteSessionOperationResponse, error) {
 	if q == nil {
 		return nil, status.Error(codes.FailedPrecondition, "Session operation queue is not configured")
 	}
@@ -139,15 +152,29 @@ func (q *SessionOperationQueue) Execute(
 		q.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "session is finalizing")
 	}
+	jobCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	job := sessionOperationJob{
-		ctx:     ctx,
-		execute: execute,
-		result:  make(chan sessionOperationResult, 1),
+		ctx:      jobCtx,
+		admitted: make(chan struct{}),
+		execute:  execute,
+		result:   make(chan sessionOperationResult, 1),
 	}
 	entry.accept(time.Now())
 	select {
 	case entry.jobs <- job:
 		q.mu.Unlock()
+		var admissionErr error
+		if onAdmitted != nil {
+			admissionErr = onAdmitted()
+		}
+		if admissionErr != nil {
+			cancel()
+		}
+		close(job.admitted)
+		if admissionErr != nil {
+			return nil, admissionErr
+		}
 	default:
 		entry.complete(time.Now())
 		q.mu.Unlock()
@@ -221,6 +248,13 @@ func (q *SessionOperationQueue) limits(run *v1alpha1.Run) (string, int, time.Dur
 
 func (e *sessionOperationQueueEntry) run(timeout time.Duration) {
 	for job := range e.jobs {
+		select {
+		case <-job.admitted:
+		case <-job.ctx.Done():
+			e.deliver(job, nil, status.FromContextError(job.ctx.Err()).Err())
+			e.complete(time.Now())
+			continue
+		}
 		if e.isClosed() {
 			e.deliver(job, nil, status.Error(codes.Canceled, "session closed"))
 			e.complete(time.Now())

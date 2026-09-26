@@ -257,6 +257,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.getSessionStatus(w, r, run)
 	case len(suffix) == 1 && suffix[0] == "operations:execute" && r.Method == http.MethodPost:
 		s.executeOperation(w, r, run)
+	case len(suffix) == 1 && suffix[0] == "operations:stream" && r.Method == http.MethodPost:
+		s.streamOperation(w, r, run)
 	case len(suffix) == 1 && suffix[0] == "files" && r.Method == http.MethodGet:
 		s.listFiles(w, r, run)
 	case len(suffix) > 1 && suffix[0] == "files" && r.Method == http.MethodGet:
@@ -477,6 +479,71 @@ func (s *Server) executeOperation(w http.ResponseWriter, r *http.Request, run *v
 		return
 	}
 	s.writeJSON(w, http.StatusOK, newExecuteOperationResponse(response))
+}
+
+// streamOperation writes one complete JSON object per line and flushes it as
+// soon as the owner runtimed emits an event. net/http chooses HTTP/1.1 chunked
+// transfer encoding automatically because this handler never sets a length.
+func (s *Server) streamOperation(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	var request executeOperationRequest
+	if err := s.decodeJSON(r, &request); err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			s.writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	operation, err := request.protobuf()
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	client, closer, err := s.runtimeClient(r.Context(), run)
+	if err != nil {
+		s.writeGatewayError(w, err)
+		return
+	}
+	defer closer.Close()
+	operation.Identity = sessionIdentity(run)
+	stream, err := client.StreamSessionOperation(r.Context(), operation)
+	if err != nil {
+		s.writeGatewayError(w, err)
+		return
+	}
+
+	// Receive the first event before committing HTTP headers. Queue admission and
+	// authorization failures therefore retain the ordinary gateway HTTP status.
+	event, err := stream.Recv()
+	if err != nil {
+		if err != io.EOF {
+			s.writeGatewayError(w, err)
+			return
+		}
+		s.writeError(w, http.StatusBadGateway, "Runtime Server stream ended without an event")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.writeError(w, http.StatusInternalServerError, "gateway response streaming is unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	for {
+		if err := s.writeSessionOperationEvent(w, event); err != nil {
+			return
+		}
+		flusher.Flush()
+		event, err = stream.Recv()
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 func (s *Server) listFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
@@ -776,6 +843,113 @@ func newExecuteOperationResponse(value *pb.ExecuteSessionOperationResponse) exec
 		return executeOperationResponse{Command: &sessionCommandResultResponse{ExitCode: command.GetExitCode(), Stdout: command.GetStdout(), Stderr: command.GetStderr(), TimedOut: command.GetTimedOut()}}
 	}
 	return executeOperationResponse{}
+}
+
+type sessionOperationEventResponse struct {
+	Sequence  int64                             `json:"sequence"`
+	Type      string                            `json:"type"`
+	Output    *sessionOperationOutputResponse   `json:"output,omitempty"`
+	Progress  *sessionOperationProgressResponse `json:"progress,omitempty"`
+	Completed *executeOperationResponse         `json:"completed,omitempty"`
+	Failed    *sessionOperationFailureResponse  `json:"failed,omitempty"`
+}
+
+type sessionOperationOutputResponse struct {
+	Stream string `json:"stream"`
+	Data   []byte `json:"data,omitempty"`
+}
+
+type sessionOperationProgressResponse struct {
+	Kind        string `json:"kind"`
+	Message     string `json:"message,omitempty"`
+	ToolCallID  string `json:"toolCallID,omitempty"`
+	ToolName    string `json:"toolName,omitempty"`
+	Data        []byte `json:"data,omitempty"`
+	ContentType string `json:"contentType,omitempty"`
+}
+
+type sessionOperationFailureResponse struct {
+	Code    int32  `json:"code"`
+	Message string `json:"message"`
+}
+
+func (s *Server) writeSessionOperationEvent(w http.ResponseWriter, value *pb.SessionOperationEvent) error {
+	response, err := newSessionOperationEventResponse(value)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return err
+	}
+	if int64(len(encoded)+1) > s.maxResponseBodyBytes() {
+		return fmt.Errorf("gateway stream event exceeds configured limit")
+	}
+	_, err = w.Write(append(encoded, '\n'))
+	return err
+}
+
+func newSessionOperationEventResponse(value *pb.SessionOperationEvent) (sessionOperationEventResponse, error) {
+	if value == nil || value.GetEvent() == nil || value.GetSequence() <= 0 {
+		return sessionOperationEventResponse{}, errors.New("Runtime Server emitted an invalid Session event")
+	}
+	response := sessionOperationEventResponse{Sequence: value.GetSequence()}
+	switch {
+	case value.GetAccepted() != nil:
+		response.Type = "accepted"
+	case value.GetOutput() != nil:
+		output := value.GetOutput()
+		response.Type = "output"
+		response.Output = &sessionOperationOutputResponse{Stream: sessionOperationOutputStreamName(output.GetStream()), Data: output.GetData()}
+	case value.GetProgress() != nil:
+		progress := value.GetProgress()
+		response.Type = "progress"
+		response.Progress = &sessionOperationProgressResponse{
+			Kind:        sessionOperationProgressKindName(progress.GetKind()),
+			Message:     progress.GetMessage(),
+			ToolCallID:  progress.GetToolCallId(),
+			ToolName:    progress.GetToolName(),
+			Data:        progress.GetData(),
+			ContentType: progress.GetContentType(),
+		}
+	case value.GetCompleted() != nil:
+		response.Type = "completed"
+		completed := newExecuteOperationResponse(value.GetCompleted())
+		response.Completed = &completed
+	case value.GetFailed() != nil:
+		failed := value.GetFailed()
+		response.Type = "failed"
+		response.Failed = &sessionOperationFailureResponse{Code: failed.GetCode(), Message: failed.GetMessage()}
+	default:
+		return sessionOperationEventResponse{}, errors.New("Runtime Server emitted an unknown Session event")
+	}
+	return response, nil
+}
+
+func sessionOperationOutputStreamName(stream pb.SessionOperationOutputStream) string {
+	switch stream {
+	case pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDOUT:
+		return "stdout"
+	case pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDERR:
+		return "stderr"
+	default:
+		return "unspecified"
+	}
+}
+
+func sessionOperationProgressKindName(kind pb.SessionOperationProgressKind) string {
+	switch kind {
+	case pb.SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_STATUS:
+		return "status"
+	case pb.SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_TEXT_DELTA:
+		return "text_delta"
+	case pb.SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_STARTED:
+		return "tool_call_started"
+	case pb.SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_FINISHED:
+		return "tool_call_finished"
+	default:
+		return "unspecified"
+	}
 }
 
 type sessionCommandResultResponse struct {
