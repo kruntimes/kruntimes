@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -785,6 +786,97 @@ func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
 	waitForRunPhase(t, run, 20*time.Second, v1alpha1.RunCancelled)
 	assertCancelledRun(t, run)
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL, token, nil, http.StatusConflict)
+}
+
+func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
+	runtimeName := fmt.Sprintf("session-stream-%d", time.Now().UnixNano())
+	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-session-stream-", Namespace: testNamespace},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}},
+		},
+	}
+	if err := k8sClient.Create(t.Context(), run); err != nil {
+		t.Fatalf("create Session Run: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), run) })
+	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunReady)
+
+	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
+	token := sessionGatewayToken(t, run)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/operations:stream", strings.NewReader(`{"command":{"argv":["sh","-c","printf stream-first; sleep 2; printf stream-last"]}}`))
+	if err != nil {
+		t.Fatalf("create streaming gateway request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	started := time.Now()
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("call streaming gateway: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		contents, _ := io.ReadAll(response.Body)
+		t.Fatalf("streaming gateway status = %d: %s", response.StatusCode, contents)
+	}
+	if got := response.Header.Get("Content-Type"); got != "application/x-ndjson; charset=utf-8" {
+		t.Fatalf("streaming content type = %q", got)
+	}
+
+	reader := bufio.NewReader(response.Body)
+	seenFirstOutput := false
+	seenCompleted := false
+	lastSequence := int64(0)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read streaming gateway event: %v", err)
+		}
+		var event struct {
+			Sequence int64  `json:"sequence"`
+			Type     string `json:"type"`
+			Output   *struct {
+				Stream string `json:"stream"`
+				Data   []byte `json:"data"`
+			} `json:"output"`
+			Completed *struct {
+				Command *struct {
+					ExitCode int32  `json:"exitCode"`
+					Stdout   []byte `json:"stdout"`
+				} `json:"command"`
+			} `json:"completed"`
+		}
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatalf("decode streaming gateway event %q: %v", line, err)
+		}
+		if event.Sequence != lastSequence+1 {
+			t.Fatalf("event sequence = %d after %d", event.Sequence, lastSequence)
+		}
+		lastSequence = event.Sequence
+		if event.Type == "output" && event.Output != nil && event.Output.Stream == "stdout" && string(event.Output.Data) == "stream-first" {
+			if elapsed := time.Since(started); elapsed >= time.Second {
+				t.Fatalf("first command output arrived after %s, want it before command completion", elapsed)
+			}
+			seenFirstOutput = true
+		}
+		if event.Type == "completed" && event.Completed != nil && event.Completed.Command != nil {
+			if event.Completed.Command.ExitCode != 0 || string(event.Completed.Command.Stdout) != "stream-firststream-last" {
+				t.Fatalf("completed command = %#v", event.Completed.Command)
+			}
+			seenCompleted = true
+		}
+	}
+	if !seenFirstOutput || !seenCompleted {
+		t.Fatalf("stream did not include early output and completion: first=%t completed=%t", seenFirstOutput, seenCompleted)
+	}
 }
 
 func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {

@@ -106,6 +106,31 @@ func (s *Server) ExecuteSessionOperation(ctx context.Context, req *pb.ExecuteSes
 	return &pb.ExecuteSessionOperationResponse{}, nil
 }
 
+// StreamSessionOperation emits command output as the process writes it. The
+// owner runtimed wraps these Runtime-local events with accepted, sequence, and
+// failure events before exposing them to a gateway caller.
+func (s *Server) StreamSessionOperation(req *pb.ExecuteSessionOperationRequest, server pb.SessionRuntime_StreamSessionOperationServer) error {
+	entry, err := s.matchSession(req.GetIdentity())
+	if err != nil {
+		return err
+	}
+	if command := req.GetCommand(); command != nil {
+		result, err := s.executeSessionCommandStreaming(server.Context(), entry, command, func(stream pb.SessionOperationOutputStream, data []byte) error {
+			return server.Send(&pb.SessionOperationEvent{Event: &pb.SessionOperationEvent_Output{Output: &pb.SessionOperationOutput{Stream: stream, Data: data}}})
+		})
+		if err != nil {
+			return err
+		}
+		return server.Send(&pb.SessionOperationEvent{Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: result}}})
+	}
+
+	response, err := s.ExecuteSessionOperation(server.Context(), req)
+	if err != nil {
+		return err
+	}
+	return server.Send(&pb.SessionOperationEvent{Event: &pb.SessionOperationEvent_Completed{Completed: response}})
+}
+
 func (s *Server) executeSessionCommand(ctx context.Context, entry *sessionEntry, commandRequest *pb.SessionCommand) (*pb.SessionCommandResult, error) {
 	if (len(commandRequest.Argv) == 0) == (commandRequest.Shell == "") {
 		return nil, status.Error(codes.InvalidArgument, "exactly one of argv or shell is required")
@@ -169,6 +194,142 @@ func (s *Server) executeSessionCommand(ctx context.Context, entry *sessionEntry,
 		}
 		return nil, status.FromContextError(commandCtx.Err()).Err()
 	}
+}
+
+func (s *Server) executeSessionCommandStreaming(
+	ctx context.Context,
+	entry *sessionEntry,
+	commandRequest *pb.SessionCommand,
+	emit func(pb.SessionOperationOutputStream, []byte) error,
+) (*pb.SessionCommandResult, error) {
+	if (len(commandRequest.Argv) == 0) == (commandRequest.Shell == "") {
+		return nil, status.Error(codes.InvalidArgument, "exactly one of argv or shell is required")
+	}
+	workingDir, err := sessionPath(entry, commandRequest.WorkingDirectory, true)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	commandCtx, cancel := sessionCommandContext(ctx, commandRequest.TimeoutMillis)
+	defer cancel()
+	command := sessionCommand(commandCtx, commandRequest)
+	command.Dir = workingDir
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Stdin = bytes.NewReader(commandRequest.Stdin)
+	stdout := newBoundedBuffer(s.outputLimit)
+	stderr := newBoundedBuffer(s.outputLimit)
+	stdoutPipe, err := command.StdoutPipe()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "create stdout pipe: %v", err)
+	}
+	stderrPipe, err := command.StderrPipe()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "create stderr pipe: %v", err)
+	}
+	command.Env = sessionCommandEnv(entry.sessionEnv, commandRequest.Env)
+
+	waitCh, err := startManagedCommand(command)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "start session command: %v", err)
+	}
+	var emitMu sync.Mutex
+	outputErrors := make(chan error, 2)
+	outputDone := make(chan struct{})
+	go func() {
+		var readers sync.WaitGroup
+		readers.Add(2)
+		go func() {
+			defer readers.Done()
+			if err := copySessionOutput(&stdout, stdoutPipe, pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDOUT, emit, &emitMu); err != nil {
+				outputErrors <- err
+			}
+		}()
+		go func() {
+			defer readers.Done()
+			if err := copySessionOutput(&stderr, stderrPipe, pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDERR, emit, &emitMu); err != nil {
+				outputErrors <- err
+			}
+		}()
+		readers.Wait()
+		close(outputDone)
+	}()
+	defer entry.touch()
+
+	select {
+	case result := <-waitCh:
+		<-outputDone
+		select {
+		case outputErr := <-outputErrors:
+			return nil, outputErr
+		default:
+		}
+		return &pb.SessionCommandResult{
+			ExitCode: sessionCommandExitCode(result),
+			Stdout:   []byte(stdout.String()),
+			Stderr:   []byte(stderr.String()),
+		}, nil
+	case outputErr := <-outputErrors:
+		_ = terminateProcessGroupAndWait(command.Process.Pid, waitCh, s.sessionTerminationGrace)
+		<-outputDone
+		return nil, outputErr
+	case <-commandCtx.Done():
+		_ = terminateProcessGroupAndWait(command.Process.Pid, waitCh, s.sessionTerminationGrace)
+		<-outputDone
+		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			return &pb.SessionCommandResult{
+				ExitCode: -1,
+				Stdout:   []byte(stdout.String()),
+				Stderr:   []byte(stderr.String()),
+				TimedOut: true,
+			}, nil
+		}
+		return nil, status.FromContextError(commandCtx.Err()).Err()
+	}
+}
+
+func copySessionOutput(
+	buffer *boundedBuffer,
+	reader io.Reader,
+	stream pb.SessionOperationOutputStream,
+	emit func(pb.SessionOperationOutputStream, []byte) error,
+	emitMu *sync.Mutex,
+) error {
+	chunk := make([]byte, 32<<10)
+	for {
+		count, readErr := reader.Read(chunk)
+		if count > 0 {
+			wasTruncated := buffer.truncated
+			before := buffer.buffer.Len()
+			_, _ = buffer.Write(chunk[:count])
+			after := buffer.buffer.Len()
+			if after > before {
+				if err := emitSessionOutput(emit, emitMu, stream, chunk[:after-before]); err != nil {
+					return err
+				}
+			}
+			if !wasTruncated && buffer.truncated {
+				if err := emitSessionOutput(emit, emitMu, stream, []byte(outputTruncatedMarker)); err != nil {
+					return err
+				}
+			}
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+}
+
+func emitSessionOutput(emit func(pb.SessionOperationOutputStream, []byte) error, emitMu *sync.Mutex, stream pb.SessionOperationOutputStream, data []byte) error {
+	if len(data) == 0 || emit == nil {
+		return nil
+	}
+	copy := append([]byte(nil), data...)
+	emitMu.Lock()
+	defer emitMu.Unlock()
+	return emit(stream, copy)
 }
 
 func (s *Server) ReadSessionFile(_ context.Context, req *pb.ReadSessionFileRequest) (*pb.ReadSessionFileResponse, error) {

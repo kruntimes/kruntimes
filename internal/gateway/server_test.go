@@ -16,6 +16,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -87,6 +88,44 @@ func TestGatewayExecutesExactlyOneOperation(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"stdout":"aGVsbG8K"`) {
 		t.Fatalf("response = %s", response.Body.String())
+	}
+}
+
+func TestGatewayStreamsSessionOperationAsNDJSON(t *testing.T) {
+	run := readySessionRun()
+	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+		if request.GetIdentity().GetRunUid() != string(run.UID) {
+			t.Fatalf("identity = %#v", request.GetIdentity())
+		}
+		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
+			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{}}},
+			{Sequence: 2, Event: &pb.SessionOperationEvent_Progress{Progress: &pb.SessionOperationProgress{Kind: pb.SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_TEXT_DELTA, Message: "working"}}},
+			{Sequence: 3, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte("done\n")}}}},
+		}}, nil
+	}}
+	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:stream", strings.NewReader(`{"command":{"argv":["echo","done"]}}`))
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/x-ndjson; charset=utf-8" {
+		t.Fatalf("content type = %q", got)
+	}
+	lines := strings.Split(strings.TrimSpace(response.Body.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %#v", lines)
+	}
+	if !strings.Contains(lines[0], `"sequence":1`) || !strings.Contains(lines[0], `"type":"accepted"`) {
+		t.Fatalf("accepted event = %s", lines[0])
+	}
+	if !strings.Contains(lines[1], `"type":"progress"`) || !strings.Contains(lines[1], `"message":"working"`) {
+		t.Fatalf("progress event = %s", lines[1])
+	}
+	if !strings.Contains(lines[2], `"type":"completed"`) || !strings.Contains(lines[2], `"stdout":"ZG9uZQo="`) {
+		t.Fatalf("completed event = %s", lines[2])
 	}
 }
 
@@ -459,6 +498,7 @@ type fakeSessionRuntimeClient struct {
 	pb.SessionRuntimeClient
 	status  func(context.Context, *pb.GetSessionStatusRequest, ...grpc.CallOption) (*pb.SessionStatus, error)
 	execute func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error)
+	stream  func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error)
 	list    func(context.Context, *pb.ListSessionFilesRequest, ...grpc.CallOption) (*pb.ListSessionFilesResponse, error)
 }
 
@@ -487,9 +527,37 @@ func (c *fakeSessionRuntimeClient) ExecuteSessionOperation(ctx context.Context, 
 	return c.execute(ctx, request, options...)
 }
 
+func (c *fakeSessionRuntimeClient) StreamSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest, options ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+	if c.stream == nil {
+		return nil, status.Error(codes.Unimplemented, "StreamSessionOperation")
+	}
+	return c.stream(ctx, request, options...)
+}
+
 func (c *fakeSessionRuntimeClient) ListSessionFiles(ctx context.Context, request *pb.ListSessionFilesRequest, options ...grpc.CallOption) (*pb.ListSessionFilesResponse, error) {
 	if c.list == nil {
 		return nil, status.Error(codes.Unimplemented, "ListSessionFiles")
 	}
 	return c.list(ctx, request, options...)
 }
+
+type fakeSessionOperationStream struct {
+	events []*pb.SessionOperationEvent
+	index  int
+}
+
+func (s *fakeSessionOperationStream) Recv() (*pb.SessionOperationEvent, error) {
+	if s.index >= len(s.events) {
+		return nil, io.EOF
+	}
+	event := s.events[s.index]
+	s.index++
+	return event, nil
+}
+
+func (*fakeSessionOperationStream) Header() (metadata.MD, error) { return nil, nil }
+func (*fakeSessionOperationStream) Trailer() metadata.MD         { return nil }
+func (*fakeSessionOperationStream) CloseSend() error             { return nil }
+func (*fakeSessionOperationStream) Context() context.Context     { return context.Background() }
+func (*fakeSessionOperationStream) SendMsg(any) error            { return nil }
+func (*fakeSessionOperationStream) RecvMsg(any) error            { return io.EOF }

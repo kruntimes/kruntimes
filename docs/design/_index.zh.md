@@ -8,6 +8,7 @@
 - [Function Mode](function-mode/)
 - [Task 执行生命周期](task-execution-lifecycle/)
 - [Agent Sandbox 的 Session Mode](session-mode/)
+- [Session Operation 流式事件](session-operation-streaming/)
 - [Runtime Gateway 传输安全与传输边界](runtime-gateway-transport/)
 - [聚合 Run Log API](runtime-gateway-log-api/)
 - [Runtime 就绪状态可见性](runtime-readiness-visibility/)

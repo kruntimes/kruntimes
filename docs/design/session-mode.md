@@ -246,6 +246,7 @@ gRPC methods:
 | --- | --- |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}` | `GetSessionStatus` | return readiness and bounded session metadata |
 | `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:execute` | `ExecuteSessionOperation` | execute one command or file mutation |
+| `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream` | `StreamSessionOperation` | execute one operation and stream ordered NDJSON progress and terminal events |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files` | `ReadSessionFile`, `ListSessionFiles` | bounded workspace-relative file access |
 
 An exec request supplies exactly one of `argv` or `shell`. `argv` directly

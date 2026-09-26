@@ -50,6 +50,47 @@ func TestSessionRuntimeProxyCallsLocalRuntimeServerForOwner(t *testing.T) {
 	}
 }
 
+func TestSessionRuntimeProxyStreamsOrderedEventsForOwner(t *testing.T) {
+	run := proxySessionRun("session-run", "bash", "pod-a", "pod-a-uid")
+	reader := newSessionProxyReader(t, run)
+	local := &sessionRuntimeClient{stream: func(_ context.Context, request *pb.ExecuteSessionOperationRequest) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+		if request.GetIdentity().GetRunUid() != string(run.UID) {
+			t.Fatalf("Run UID = %q, want %q", request.GetIdentity().GetRunUid(), run.UID)
+		}
+		return &fakeSessionOperationClientStream{events: []*pb.SessionOperationEvent{
+			{Sequence: 99, Event: &pb.SessionOperationEvent_Progress{Progress: &pb.SessionOperationProgress{Kind: pb.SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_STATUS, Message: "running"}}},
+			{Sequence: 100, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte("done\n")}}}},
+		}}, nil
+	}}
+	proxy := newSessionRuntimeProxy(reader, reader, local, run.Namespace, "bash", "pod-a", "9093")
+	var output bytes.Buffer
+	proxy.logWriter = &output
+	server := &fakeSessionOperationServer{ctx: t.Context()}
+
+	err := proxy.StreamSessionOperation(&pb.ExecuteSessionOperationRequest{
+		Identity:  &pb.SessionIdentity{RunUid: string(run.UID), AssignedPodUid: "pod-a-uid"},
+		Operation: &pb.ExecuteSessionOperationRequest_Command{Command: &pb.SessionCommand{Argv: []string{"echo", "done"}}},
+	}, server)
+	if err != nil {
+		t.Fatalf("StreamSessionOperation() error = %v", err)
+	}
+	if len(server.events) != 3 {
+		t.Fatalf("events = %#v", server.events)
+	}
+	for index, event := range server.events {
+		if want := int64(index + 1); event.GetSequence() != want {
+			t.Fatalf("event %d sequence = %d, want %d", index, event.GetSequence(), want)
+		}
+	}
+	if server.events[0].GetAccepted() == nil || server.events[1].GetProgress().GetMessage() != "running" || string(server.events[2].GetCompleted().GetCommand().GetStdout()) != "done\n" {
+		t.Fatalf("events = %#v", server.events)
+	}
+	lines := decodeSessionLogLines(t, output.String())
+	if len(lines) != 2 || lines[0].Stream != "stdout" || lines[0].Message != "done" || lines[1].Stream != "audit" {
+		t.Fatalf("streaming operation logs = %#v", lines)
+	}
+}
+
 func TestSessionRuntimeProxyPreservesFilePageFields(t *testing.T) {
 	run := proxySessionRun("session-run", "bash", "pod-a", "pod-a-uid")
 	reader := newSessionProxyReader(t, run)
@@ -246,6 +287,7 @@ func newSessionProxyReader(t *testing.T, objects ...runtime.Object) client.Clien
 
 type sessionRuntimeClient struct {
 	execute func(context.Context, *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error)
+	stream  func(context.Context, *pb.ExecuteSessionOperationRequest) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error)
 	list    func(context.Context, *pb.ListSessionFilesRequest) (*pb.ListSessionFilesResponse, error)
 }
 
@@ -264,6 +306,13 @@ func (c *sessionRuntimeClient) ExecuteSessionOperation(ctx context.Context, requ
 	return c.execute(ctx, request)
 }
 
+func (c *sessionRuntimeClient) StreamSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+	if c.stream != nil {
+		return c.stream(ctx, request)
+	}
+	return nil, status.Error(codes.Unimplemented, "StreamSessionOperation")
+}
+
 func (c *sessionRuntimeClient) ReadSessionFile(context.Context, *pb.ReadSessionFileRequest, ...grpc.CallOption) (*pb.ReadSessionFileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "ReadSessionFile")
 }
@@ -278,6 +327,44 @@ func (c *sessionRuntimeClient) ListSessionFiles(ctx context.Context, request *pb
 func (c *sessionRuntimeClient) CloseSession(context.Context, *pb.CloseSessionRequest, ...grpc.CallOption) (*pb.CloseSessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "CloseSession")
 }
+
+type fakeSessionOperationClientStream struct {
+	events []*pb.SessionOperationEvent
+	index  int
+}
+
+func (s *fakeSessionOperationClientStream) Recv() (*pb.SessionOperationEvent, error) {
+	if s.index >= len(s.events) {
+		return nil, io.EOF
+	}
+	event := s.events[s.index]
+	s.index++
+	return event, nil
+}
+
+func (*fakeSessionOperationClientStream) Header() (metadata.MD, error) { return nil, nil }
+func (*fakeSessionOperationClientStream) Trailer() metadata.MD         { return nil }
+func (*fakeSessionOperationClientStream) CloseSend() error             { return nil }
+func (*fakeSessionOperationClientStream) Context() context.Context     { return context.Background() }
+func (*fakeSessionOperationClientStream) SendMsg(any) error            { return nil }
+func (*fakeSessionOperationClientStream) RecvMsg(any) error            { return io.EOF }
+
+type fakeSessionOperationServer struct {
+	ctx    context.Context
+	events []*pb.SessionOperationEvent
+}
+
+func (s *fakeSessionOperationServer) Send(event *pb.SessionOperationEvent) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+func (s *fakeSessionOperationServer) SetHeader(metadata.MD) error  { return nil }
+func (s *fakeSessionOperationServer) SendHeader(metadata.MD) error { return nil }
+func (s *fakeSessionOperationServer) SetTrailer(metadata.MD)       {}
+func (s *fakeSessionOperationServer) Context() context.Context     { return s.ctx }
+func (*fakeSessionOperationServer) SendMsg(any) error              { return nil }
+func (*fakeSessionOperationServer) RecvMsg(any) error              { return io.EOF }
 
 func TestForwardedRecognizesIncomingMarker(t *testing.T) {
 	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(sessionForwardedMetadataKey, "true"))

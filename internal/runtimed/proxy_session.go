@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -24,8 +25,9 @@ import (
 )
 
 const (
-	sessionForwardedMetadataKey = "kruntimes-session-forwarded"
-	runtimeRunIndexField        = "spec.runtime"
+	sessionForwardedMetadataKey   = "kruntimes-session-forwarded"
+	runtimeRunIndexField          = "spec.runtime"
+	maxSessionOperationEventBytes = 64 << 10
 )
 
 // sessionRuntimeProxy serves gateway-originated SessionRuntime requests on a
@@ -99,6 +101,142 @@ func (s *sessionRuntimeProxy) ExecuteSessionOperation(ctx context.Context, req *
 	})
 	s.emitSessionOperationLog(route.run, req, response, operationErr, time.Since(started))
 	return response, operationErr
+}
+
+// StreamSessionOperation forwards one ordered operation event stream. Queue
+// ownership remains with owner runtimed even when this request first reaches a
+// different Runtime Pod through the Runtime Service.
+func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.ExecuteSessionOperationRequest, server pb.SessionRuntime_StreamSessionOperationServer) error {
+	route, err := s.route(server.Context(), req.GetIdentity())
+	if err != nil {
+		return err
+	}
+	defer route.closer.Close()
+	if !route.owner {
+		stream, err := route.client.StreamSessionOperation(route.ctx, req)
+		if err != nil {
+			return err
+		}
+		return forwardSessionOperationEvents(stream, server, nil, nil)
+	}
+
+	sequence := int64(0)
+	admitted := false
+	started := time.Now()
+	var completed *pb.ExecuteSessionOperationResponse
+	_, operationErr := s.operations.ExecuteWithAdmission(route.ctx, route.run, func() error {
+		sequence++
+		if err := server.Send(sessionOperationAccepted(sequence)); err != nil {
+			return err
+		}
+		admitted = true
+		return nil
+	}, func(operationCtx context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+		stream, err := route.client.StreamSessionOperation(operationCtx, req)
+		if err != nil {
+			return nil, err
+		}
+		return nil, forwardSessionOperationEvents(stream, server, &sequence, func(response *pb.ExecuteSessionOperationResponse) {
+			completed = response
+		})
+	})
+	s.emitSessionOperationLog(route.run, req, completed, operationErr, time.Since(started))
+	if operationErr == nil {
+		return nil
+	}
+	if !admitted {
+		return operationErr
+	}
+	sequence++
+	return server.Send(sessionOperationFailure(sequence, operationErr))
+}
+
+func forwardSessionOperationEvents(
+	stream pb.SessionRuntime_StreamSessionOperationClient,
+	server pb.SessionRuntime_StreamSessionOperationServer,
+	sequence *int64,
+	onCompleted func(*pb.ExecuteSessionOperationResponse),
+) error {
+	terminal := false
+	forwardedSequence := int64(0)
+	for {
+		event, err := stream.Recv()
+		if err == io.EOF {
+			if terminal {
+				return nil
+			}
+			return status.Error(codes.Internal, "Runtime Server stream ended without a terminal event")
+		}
+		if err != nil {
+			return err
+		}
+		if event.GetEvent() == nil {
+			return status.Error(codes.InvalidArgument, "Runtime Server emitted an event without a payload")
+		}
+		if terminal {
+			return status.Error(codes.InvalidArgument, "Runtime Server emitted an event after completion")
+		}
+		if sequence == nil {
+			if event.GetSequence() != forwardedSequence+1 {
+				return status.Error(codes.InvalidArgument, "owner runtimed emitted a non-contiguous event sequence")
+			}
+			forwardedSequence = event.GetSequence()
+			if err := server.Send(event); err != nil {
+				return err
+			}
+			terminal = event.GetCompleted() != nil || event.GetFailed() != nil
+			continue
+		}
+		if err := validateRuntimeSessionOperationEvent(event); err != nil {
+			return err
+		}
+		if event.GetAccepted() != nil || event.GetFailed() != nil {
+			return status.Error(codes.InvalidArgument, "Runtime Server emitted an owner-only Session event")
+		}
+		(*sequence)++
+		event.Sequence = *sequence
+		if err := server.Send(event); err != nil {
+			return err
+		}
+		if response := event.GetCompleted(); response != nil && onCompleted != nil {
+			onCompleted(response)
+		}
+		terminal = event.GetCompleted() != nil
+	}
+}
+
+func validateRuntimeSessionOperationEvent(event *pb.SessionOperationEvent) error {
+	if proto.Size(event) > maxSessionOperationEventBytes {
+		return status.Error(codes.ResourceExhausted, "Runtime Server Session event exceeds the size limit")
+	}
+	if event.GetOutput() != nil {
+		stream := event.GetOutput().GetStream()
+		if stream != pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDOUT && stream != pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDERR {
+			return status.Error(codes.InvalidArgument, "Runtime Server Session output stream is invalid")
+		}
+	}
+	if event.GetProgress() != nil && event.GetProgress().GetKind() == pb.SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_UNSPECIFIED {
+		return status.Error(codes.InvalidArgument, "Runtime Server Session progress kind is required")
+	}
+	return nil
+}
+
+func sessionOperationAccepted(sequence int64) *pb.SessionOperationEvent {
+	return &pb.SessionOperationEvent{
+		Sequence: sequence,
+		Event:    &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{}},
+	}
+}
+
+func sessionOperationFailure(sequence int64, operationErr error) *pb.SessionOperationEvent {
+	code := status.Code(operationErr)
+	return &pb.SessionOperationEvent{
+		Sequence: sequence,
+		Event: &pb.SessionOperationEvent_Failed{Failed: &pb.SessionOperationFailure{
+			Code:    int32(code),
+			Message: status.Convert(operationErr).Message(),
+		}},
+	}
 }
 
 func (s *sessionRuntimeProxy) emitSessionOperationLog(

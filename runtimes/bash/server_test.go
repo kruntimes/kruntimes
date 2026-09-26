@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -340,6 +341,53 @@ func TestSessionRuntimeExecutesCommandsAndConfinesFiles(t *testing.T) {
 	}
 	if _, err := client.ReadSessionFile(context.Background(), &pb.ReadSessionFileRequest{Identity: identity, Path: "../outside", MaxBytes: 1}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("ReadSessionFile escaping path = %v, want InvalidArgument", err)
+	}
+}
+
+func TestSessionRuntimeStreamsCommandOutputBeforeCompletion(t *testing.T) {
+	client, workDir, cleanup := startSessionTestServer(t)
+	defer cleanup()
+	identity := &pb.SessionIdentity{RunUid: "stream-session", AssignedPodUid: "pod-a"}
+	if _, err := client.RegisterSession(context.Background(), &pb.RegisterSessionRequest{Identity: identity, WorkingDir: workDir}); err != nil {
+		t.Fatalf("RegisterSession: %v", err)
+	}
+
+	started := time.Now()
+	stream, err := client.StreamSessionOperation(context.Background(), &pb.ExecuteSessionOperationRequest{
+		Identity: identity,
+		Operation: &pb.ExecuteSessionOperationRequest_Command{Command: &pb.SessionCommand{
+			Argv: []string{"sh", "-c", "printf first; sleep 1; printf second"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("StreamSessionOperation: %v", err)
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("receive first stream event: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= 750*time.Millisecond {
+		t.Fatalf("first event arrived after %s, want output before command completion", elapsed)
+	}
+	if output := first.GetOutput(); output == nil || output.GetStream() != pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDOUT || string(output.GetData()) != "first" {
+		t.Fatalf("first event = %#v", first)
+	}
+
+	var completed *pb.ExecuteSessionOperationResponse
+	for {
+		event, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("receive stream event: %v", err)
+		}
+		if event.GetCompleted() != nil {
+			completed = event.GetCompleted()
+		}
+	}
+	if completed == nil || completed.GetCommand().GetExitCode() != 0 || string(completed.GetCommand().GetStdout()) != "firstsecond" {
+		t.Fatalf("completed event = %#v", completed)
 	}
 }
 

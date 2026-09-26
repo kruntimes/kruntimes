@@ -189,6 +189,110 @@ func (SessionState) EnumDescriptor() ([]byte, []int) {
 	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{2}
 }
 
+type SessionOperationOutputStream int32
+
+const (
+	SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_UNSPECIFIED SessionOperationOutputStream = 0
+	SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDOUT      SessionOperationOutputStream = 1
+	SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDERR      SessionOperationOutputStream = 2
+)
+
+// Enum value maps for SessionOperationOutputStream.
+var (
+	SessionOperationOutputStream_name = map[int32]string{
+		0: "SESSION_OPERATION_OUTPUT_STREAM_UNSPECIFIED",
+		1: "SESSION_OPERATION_OUTPUT_STREAM_STDOUT",
+		2: "SESSION_OPERATION_OUTPUT_STREAM_STDERR",
+	}
+	SessionOperationOutputStream_value = map[string]int32{
+		"SESSION_OPERATION_OUTPUT_STREAM_UNSPECIFIED": 0,
+		"SESSION_OPERATION_OUTPUT_STREAM_STDOUT":      1,
+		"SESSION_OPERATION_OUTPUT_STREAM_STDERR":      2,
+	}
+)
+
+func (x SessionOperationOutputStream) Enum() *SessionOperationOutputStream {
+	p := new(SessionOperationOutputStream)
+	*p = x
+	return p
+}
+
+func (x SessionOperationOutputStream) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SessionOperationOutputStream) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_runtime_v1_runtime_proto_enumTypes[3].Descriptor()
+}
+
+func (SessionOperationOutputStream) Type() protoreflect.EnumType {
+	return &file_api_runtime_v1_runtime_proto_enumTypes[3]
+}
+
+func (x SessionOperationOutputStream) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SessionOperationOutputStream.Descriptor instead.
+func (SessionOperationOutputStream) EnumDescriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{3}
+}
+
+type SessionOperationProgressKind int32
+
+const (
+	SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_UNSPECIFIED        SessionOperationProgressKind = 0
+	SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_STATUS             SessionOperationProgressKind = 1
+	SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_TEXT_DELTA         SessionOperationProgressKind = 2
+	SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_STARTED  SessionOperationProgressKind = 3
+	SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_FINISHED SessionOperationProgressKind = 4
+)
+
+// Enum value maps for SessionOperationProgressKind.
+var (
+	SessionOperationProgressKind_name = map[int32]string{
+		0: "SESSION_OPERATION_PROGRESS_KIND_UNSPECIFIED",
+		1: "SESSION_OPERATION_PROGRESS_KIND_STATUS",
+		2: "SESSION_OPERATION_PROGRESS_KIND_TEXT_DELTA",
+		3: "SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_STARTED",
+		4: "SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_FINISHED",
+	}
+	SessionOperationProgressKind_value = map[string]int32{
+		"SESSION_OPERATION_PROGRESS_KIND_UNSPECIFIED":        0,
+		"SESSION_OPERATION_PROGRESS_KIND_STATUS":             1,
+		"SESSION_OPERATION_PROGRESS_KIND_TEXT_DELTA":         2,
+		"SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_STARTED":  3,
+		"SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_FINISHED": 4,
+	}
+)
+
+func (x SessionOperationProgressKind) Enum() *SessionOperationProgressKind {
+	p := new(SessionOperationProgressKind)
+	*p = x
+	return p
+}
+
+func (x SessionOperationProgressKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SessionOperationProgressKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_runtime_v1_runtime_proto_enumTypes[4].Descriptor()
+}
+
+func (SessionOperationProgressKind) Type() protoreflect.EnumType {
+	return &file_api_runtime_v1_runtime_proto_enumTypes[4]
+}
+
+func (x SessionOperationProgressKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SessionOperationProgressKind.Descriptor instead.
+func (SessionOperationProgressKind) EnumDescriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{4}
+}
+
 type ExecuteRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1889,6 +1993,385 @@ func (x *ExecuteSessionOperationResponse) GetCommand() *SessionCommandResult {
 	return nil
 }
 
+// SessionOperationEvent is one ordered event emitted while a Session operation
+// is active. Owner runtimed assigns sequence to every event before forwarding it
+// to callers.
+type SessionOperationEvent struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Sequence int64                  `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	// Types that are valid to be assigned to Event:
+	//
+	//	*SessionOperationEvent_Accepted
+	//	*SessionOperationEvent_Output
+	//	*SessionOperationEvent_Progress
+	//	*SessionOperationEvent_Completed
+	//	*SessionOperationEvent_Failed
+	Event         isSessionOperationEvent_Event `protobuf_oneof:"event"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionOperationEvent) Reset() {
+	*x = SessionOperationEvent{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionOperationEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionOperationEvent) ProtoMessage() {}
+
+func (x *SessionOperationEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionOperationEvent.ProtoReflect.Descriptor instead.
+func (*SessionOperationEvent) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *SessionOperationEvent) GetSequence() int64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *SessionOperationEvent) GetEvent() isSessionOperationEvent_Event {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
+func (x *SessionOperationEvent) GetAccepted() *SessionOperationAccepted {
+	if x != nil {
+		if x, ok := x.Event.(*SessionOperationEvent_Accepted); ok {
+			return x.Accepted
+		}
+	}
+	return nil
+}
+
+func (x *SessionOperationEvent) GetOutput() *SessionOperationOutput {
+	if x != nil {
+		if x, ok := x.Event.(*SessionOperationEvent_Output); ok {
+			return x.Output
+		}
+	}
+	return nil
+}
+
+func (x *SessionOperationEvent) GetProgress() *SessionOperationProgress {
+	if x != nil {
+		if x, ok := x.Event.(*SessionOperationEvent_Progress); ok {
+			return x.Progress
+		}
+	}
+	return nil
+}
+
+func (x *SessionOperationEvent) GetCompleted() *ExecuteSessionOperationResponse {
+	if x != nil {
+		if x, ok := x.Event.(*SessionOperationEvent_Completed); ok {
+			return x.Completed
+		}
+	}
+	return nil
+}
+
+func (x *SessionOperationEvent) GetFailed() *SessionOperationFailure {
+	if x != nil {
+		if x, ok := x.Event.(*SessionOperationEvent_Failed); ok {
+			return x.Failed
+		}
+	}
+	return nil
+}
+
+type isSessionOperationEvent_Event interface {
+	isSessionOperationEvent_Event()
+}
+
+type SessionOperationEvent_Accepted struct {
+	// Accepted is emitted after runtimed has admitted the operation to its
+	// per-Session FIFO queue.
+	Accepted *SessionOperationAccepted `protobuf:"bytes,2,opt,name=accepted,proto3,oneof"`
+}
+
+type SessionOperationEvent_Output struct {
+	// Output carries one bounded stdout or stderr chunk.
+	Output *SessionOperationOutput `protobuf:"bytes,3,opt,name=output,proto3,oneof"`
+}
+
+type SessionOperationEvent_Progress struct {
+	// Progress carries a bounded Runtime-defined status, text delta, or
+	// tool lifecycle event.
+	Progress *SessionOperationProgress `protobuf:"bytes,4,opt,name=progress,proto3,oneof"`
+}
+
+type SessionOperationEvent_Completed struct {
+	// Completed is emitted exactly once when an operation succeeds.
+	Completed *ExecuteSessionOperationResponse `protobuf:"bytes,5,opt,name=completed,proto3,oneof"`
+}
+
+type SessionOperationEvent_Failed struct {
+	// Failed is emitted exactly once after a stream has started when an
+	// operation cannot complete successfully.
+	Failed *SessionOperationFailure `protobuf:"bytes,6,opt,name=failed,proto3,oneof"`
+}
+
+func (*SessionOperationEvent_Accepted) isSessionOperationEvent_Event() {}
+
+func (*SessionOperationEvent_Output) isSessionOperationEvent_Event() {}
+
+func (*SessionOperationEvent_Progress) isSessionOperationEvent_Event() {}
+
+func (*SessionOperationEvent_Completed) isSessionOperationEvent_Event() {}
+
+func (*SessionOperationEvent_Failed) isSessionOperationEvent_Event() {}
+
+type SessionOperationAccepted struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionOperationAccepted) Reset() {
+	*x = SessionOperationAccepted{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionOperationAccepted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionOperationAccepted) ProtoMessage() {}
+
+func (x *SessionOperationAccepted) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionOperationAccepted.ProtoReflect.Descriptor instead.
+func (*SessionOperationAccepted) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{29}
+}
+
+type SessionOperationOutput struct {
+	state         protoimpl.MessageState       `protogen:"open.v1"`
+	Stream        SessionOperationOutputStream `protobuf:"varint,1,opt,name=stream,proto3,enum=executor.v1.SessionOperationOutputStream" json:"stream,omitempty"`
+	Data          []byte                       `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionOperationOutput) Reset() {
+	*x = SessionOperationOutput{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionOperationOutput) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionOperationOutput) ProtoMessage() {}
+
+func (x *SessionOperationOutput) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionOperationOutput.ProtoReflect.Descriptor instead.
+func (*SessionOperationOutput) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *SessionOperationOutput) GetStream() SessionOperationOutputStream {
+	if x != nil {
+		return x.Stream
+	}
+	return SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_UNSPECIFIED
+}
+
+func (x *SessionOperationOutput) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type SessionOperationProgress struct {
+	state protoimpl.MessageState       `protogen:"open.v1"`
+	Kind  SessionOperationProgressKind `protobuf:"varint,1,opt,name=kind,proto3,enum=executor.v1.SessionOperationProgressKind" json:"kind,omitempty"`
+	// Message is human-readable, bounded progress text.
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// ToolCallID and ToolName identify tool lifecycle events when applicable.
+	ToolCallId string `protobuf:"bytes,3,opt,name=tool_call_id,json=toolCallId,proto3" json:"tool_call_id,omitempty"`
+	ToolName   string `protobuf:"bytes,4,opt,name=tool_name,json=toolName,proto3" json:"tool_name,omitempty"`
+	// Data is a bounded JSON payload whose schema is defined by kind and the
+	// Runtime. ContentType defaults to application/json when data is present.
+	Data          []byte `protobuf:"bytes,5,opt,name=data,proto3" json:"data,omitempty"`
+	ContentType   string `protobuf:"bytes,6,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionOperationProgress) Reset() {
+	*x = SessionOperationProgress{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionOperationProgress) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionOperationProgress) ProtoMessage() {}
+
+func (x *SessionOperationProgress) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionOperationProgress.ProtoReflect.Descriptor instead.
+func (*SessionOperationProgress) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *SessionOperationProgress) GetKind() SessionOperationProgressKind {
+	if x != nil {
+		return x.Kind
+	}
+	return SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_UNSPECIFIED
+}
+
+func (x *SessionOperationProgress) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *SessionOperationProgress) GetToolCallId() string {
+	if x != nil {
+		return x.ToolCallId
+	}
+	return ""
+}
+
+func (x *SessionOperationProgress) GetToolName() string {
+	if x != nil {
+		return x.ToolName
+	}
+	return ""
+}
+
+func (x *SessionOperationProgress) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *SessionOperationProgress) GetContentType() string {
+	if x != nil {
+		return x.ContentType
+	}
+	return ""
+}
+
+type SessionOperationFailure struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Code is the numeric gRPC status code for the terminal error.
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// Message is safe to disclose to an authorized caller.
+	Message       string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionOperationFailure) Reset() {
+	*x = SessionOperationFailure{}
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionOperationFailure) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionOperationFailure) ProtoMessage() {}
+
+func (x *SessionOperationFailure) ProtoReflect() protoreflect.Message {
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionOperationFailure.ProtoReflect.Descriptor instead.
+func (*SessionOperationFailure) Descriptor() ([]byte, []int) {
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *SessionOperationFailure) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *SessionOperationFailure) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 type SessionCommandResult struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Process exit code. A timeout uses -1.
@@ -1905,7 +2388,7 @@ type SessionCommandResult struct {
 
 func (x *SessionCommandResult) Reset() {
 	*x = SessionCommandResult{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[28]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1917,7 +2400,7 @@ func (x *SessionCommandResult) String() string {
 func (*SessionCommandResult) ProtoMessage() {}
 
 func (x *SessionCommandResult) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[28]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1930,7 +2413,7 @@ func (x *SessionCommandResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionCommandResult.ProtoReflect.Descriptor instead.
 func (*SessionCommandResult) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{28}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *SessionCommandResult) GetExitCode() int32 {
@@ -1975,7 +2458,7 @@ type ReadSessionFileRequest struct {
 
 func (x *ReadSessionFileRequest) Reset() {
 	*x = ReadSessionFileRequest{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[29]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1987,7 +2470,7 @@ func (x *ReadSessionFileRequest) String() string {
 func (*ReadSessionFileRequest) ProtoMessage() {}
 
 func (x *ReadSessionFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[29]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2000,7 +2483,7 @@ func (x *ReadSessionFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadSessionFileRequest.ProtoReflect.Descriptor instead.
 func (*ReadSessionFileRequest) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{29}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ReadSessionFileRequest) GetIdentity() *SessionIdentity {
@@ -2036,7 +2519,7 @@ type ReadSessionFileResponse struct {
 
 func (x *ReadSessionFileResponse) Reset() {
 	*x = ReadSessionFileResponse{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[30]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2048,7 +2531,7 @@ func (x *ReadSessionFileResponse) String() string {
 func (*ReadSessionFileResponse) ProtoMessage() {}
 
 func (x *ReadSessionFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[30]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2061,7 +2544,7 @@ func (x *ReadSessionFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadSessionFileResponse.ProtoReflect.Descriptor instead.
 func (*ReadSessionFileResponse) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{30}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ReadSessionFileResponse) GetContents() []byte {
@@ -2096,7 +2579,7 @@ type ListSessionFilesRequest struct {
 
 func (x *ListSessionFilesRequest) Reset() {
 	*x = ListSessionFilesRequest{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[31]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2108,7 +2591,7 @@ func (x *ListSessionFilesRequest) String() string {
 func (*ListSessionFilesRequest) ProtoMessage() {}
 
 func (x *ListSessionFilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[31]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2121,7 +2604,7 @@ func (x *ListSessionFilesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSessionFilesRequest.ProtoReflect.Descriptor instead.
 func (*ListSessionFilesRequest) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{31}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ListSessionFilesRequest) GetIdentity() *SessionIdentity {
@@ -2166,7 +2649,7 @@ type SessionFileInfo struct {
 
 func (x *SessionFileInfo) Reset() {
 	*x = SessionFileInfo{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[32]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2178,7 +2661,7 @@ func (x *SessionFileInfo) String() string {
 func (*SessionFileInfo) ProtoMessage() {}
 
 func (x *SessionFileInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[32]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2191,7 +2674,7 @@ func (x *SessionFileInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionFileInfo.ProtoReflect.Descriptor instead.
 func (*SessionFileInfo) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{32}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *SessionFileInfo) GetPath() string {
@@ -2227,7 +2710,7 @@ type ListSessionFilesResponse struct {
 
 func (x *ListSessionFilesResponse) Reset() {
 	*x = ListSessionFilesResponse{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[33]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2239,7 +2722,7 @@ func (x *ListSessionFilesResponse) String() string {
 func (*ListSessionFilesResponse) ProtoMessage() {}
 
 func (x *ListSessionFilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[33]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2252,7 +2735,7 @@ func (x *ListSessionFilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSessionFilesResponse.ProtoReflect.Descriptor instead.
 func (*ListSessionFilesResponse) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{33}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ListSessionFilesResponse) GetEntries() []*SessionFileInfo {
@@ -2283,7 +2766,7 @@ type SessionFileWrite struct {
 
 func (x *SessionFileWrite) Reset() {
 	*x = SessionFileWrite{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[34]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2295,7 +2778,7 @@ func (x *SessionFileWrite) String() string {
 func (*SessionFileWrite) ProtoMessage() {}
 
 func (x *SessionFileWrite) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[34]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2308,7 +2791,7 @@ func (x *SessionFileWrite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionFileWrite.ProtoReflect.Descriptor instead.
 func (*SessionFileWrite) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{34}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *SessionFileWrite) GetPath() string {
@@ -2342,7 +2825,7 @@ type SessionDirectoryCreate struct {
 
 func (x *SessionDirectoryCreate) Reset() {
 	*x = SessionDirectoryCreate{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[35]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2354,7 +2837,7 @@ func (x *SessionDirectoryCreate) String() string {
 func (*SessionDirectoryCreate) ProtoMessage() {}
 
 func (x *SessionDirectoryCreate) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[35]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2367,7 +2850,7 @@ func (x *SessionDirectoryCreate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionDirectoryCreate.ProtoReflect.Descriptor instead.
 func (*SessionDirectoryCreate) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{35}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *SessionDirectoryCreate) GetPath() string {
@@ -2389,7 +2872,7 @@ type SessionFileDelete struct {
 
 func (x *SessionFileDelete) Reset() {
 	*x = SessionFileDelete{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[36]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2401,7 +2884,7 @@ func (x *SessionFileDelete) String() string {
 func (*SessionFileDelete) ProtoMessage() {}
 
 func (x *SessionFileDelete) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[36]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2414,7 +2897,7 @@ func (x *SessionFileDelete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionFileDelete.ProtoReflect.Descriptor instead.
 func (*SessionFileDelete) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{36}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *SessionFileDelete) GetPath() string {
@@ -2445,7 +2928,7 @@ type SessionFileRename struct {
 
 func (x *SessionFileRename) Reset() {
 	*x = SessionFileRename{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[37]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2457,7 +2940,7 @@ func (x *SessionFileRename) String() string {
 func (*SessionFileRename) ProtoMessage() {}
 
 func (x *SessionFileRename) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[37]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2470,7 +2953,7 @@ func (x *SessionFileRename) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionFileRename.ProtoReflect.Descriptor instead.
 func (*SessionFileRename) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{37}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *SessionFileRename) GetSourcePath() string {
@@ -2504,7 +2987,7 @@ type CloseSessionRequest struct {
 
 func (x *CloseSessionRequest) Reset() {
 	*x = CloseSessionRequest{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[38]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2516,7 +2999,7 @@ func (x *CloseSessionRequest) String() string {
 func (*CloseSessionRequest) ProtoMessage() {}
 
 func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[38]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2529,7 +3012,7 @@ func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionRequest.ProtoReflect.Descriptor instead.
 func (*CloseSessionRequest) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{38}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *CloseSessionRequest) GetIdentity() *SessionIdentity {
@@ -2549,7 +3032,7 @@ type CloseSessionResponse struct {
 
 func (x *CloseSessionResponse) Reset() {
 	*x = CloseSessionResponse{}
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[39]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2561,7 +3044,7 @@ func (x *CloseSessionResponse) String() string {
 func (*CloseSessionResponse) ProtoMessage() {}
 
 func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_runtime_v1_runtime_proto_msgTypes[39]
+	mi := &file_api_runtime_v1_runtime_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2574,7 +3057,7 @@ func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionResponse.ProtoReflect.Descriptor instead.
 func (*CloseSessionResponse) Descriptor() ([]byte, []int) {
-	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{39}
+	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *CloseSessionResponse) GetIdentity() *SessionIdentity {
@@ -2717,7 +3200,30 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"^\n" +
 	"\x1fExecuteSessionOperationResponse\x12;\n" +
-	"\acommand\x18\x01 \x01(\v2!.executor.v1.SessionCommandResultR\acommand\"\x80\x01\n" +
+	"\acommand\x18\x01 \x01(\v2!.executor.v1.SessionCommandResultR\acommand\"\x93\x03\n" +
+	"\x15SessionOperationEvent\x12\x1a\n" +
+	"\bsequence\x18\x01 \x01(\x03R\bsequence\x12C\n" +
+	"\baccepted\x18\x02 \x01(\v2%.executor.v1.SessionOperationAcceptedH\x00R\baccepted\x12=\n" +
+	"\x06output\x18\x03 \x01(\v2#.executor.v1.SessionOperationOutputH\x00R\x06output\x12C\n" +
+	"\bprogress\x18\x04 \x01(\v2%.executor.v1.SessionOperationProgressH\x00R\bprogress\x12L\n" +
+	"\tcompleted\x18\x05 \x01(\v2,.executor.v1.ExecuteSessionOperationResponseH\x00R\tcompleted\x12>\n" +
+	"\x06failed\x18\x06 \x01(\v2$.executor.v1.SessionOperationFailureH\x00R\x06failedB\a\n" +
+	"\x05event\"\x1a\n" +
+	"\x18SessionOperationAccepted\"o\n" +
+	"\x16SessionOperationOutput\x12A\n" +
+	"\x06stream\x18\x01 \x01(\x0e2).executor.v1.SessionOperationOutputStreamR\x06stream\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"\xe9\x01\n" +
+	"\x18SessionOperationProgress\x12=\n" +
+	"\x04kind\x18\x01 \x01(\x0e2).executor.v1.SessionOperationProgressKindR\x04kind\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12 \n" +
+	"\ftool_call_id\x18\x03 \x01(\tR\n" +
+	"toolCallId\x12\x1b\n" +
+	"\ttool_name\x18\x04 \x01(\tR\btoolName\x12\x12\n" +
+	"\x04data\x18\x05 \x01(\fR\x04data\x12!\n" +
+	"\fcontent_type\x18\x06 \x01(\tR\vcontentType\"G\n" +
+	"\x17SessionOperationFailure\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x80\x01\n" +
 	"\x14SessionCommandResult\x12\x1b\n" +
 	"\texit_code\x18\x01 \x01(\x05R\bexitCode\x12\x16\n" +
 	"\x06stdout\x18\x02 \x01(\fR\x06stdout\x12\x16\n" +
@@ -2780,7 +3286,17 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\x13SESSION_STATE_READY\x10\x02\x12\x19\n" +
 	"\x15SESSION_STATE_CLOSING\x10\x03\x12\x18\n" +
 	"\x14SESSION_STATE_CLOSED\x10\x04\x12\x18\n" +
-	"\x14SESSION_STATE_FAILED\x10\x052\x98\x03\n" +
+	"\x14SESSION_STATE_FAILED\x10\x05*\xa7\x01\n" +
+	"\x1cSessionOperationOutputStream\x12/\n" +
+	"+SESSION_OPERATION_OUTPUT_STREAM_UNSPECIFIED\x10\x00\x12*\n" +
+	"&SESSION_OPERATION_OUTPUT_STREAM_STDOUT\x10\x01\x12*\n" +
+	"&SESSION_OPERATION_OUTPUT_STREAM_STDERR\x10\x02*\x9a\x02\n" +
+	"\x1cSessionOperationProgressKind\x12/\n" +
+	"+SESSION_OPERATION_PROGRESS_KIND_UNSPECIFIED\x10\x00\x12*\n" +
+	"&SESSION_OPERATION_PROGRESS_KIND_STATUS\x10\x01\x12.\n" +
+	"*SESSION_OPERATION_PROGRESS_KIND_TEXT_DELTA\x10\x02\x125\n" +
+	"1SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_STARTED\x10\x03\x126\n" +
+	"2SESSION_OPERATION_PROGRESS_KIND_TOOL_CALL_FINISHED\x10\x042\x98\x03\n" +
 	"\aRuntime\x12D\n" +
 	"\aExecute\x12\x1b.executor.v1.ExecuteRequest\x1a\x1c.executor.v1.ExecuteResponse\x12A\n" +
 	"\x06Status\x12\x1a.executor.v1.StatusRequest\x1a\x1b.executor.v1.StatusResponse\x12;\n" +
@@ -2792,11 +3308,12 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\x10RegisterFunction\x12$.executor.v1.RegisterFunctionRequest\x1a%.executor.v1.RegisterFunctionResponse\x12Y\n" +
 	"\x0eFunctionStatus\x12\".executor.v1.FunctionStatusRequest\x1a#.executor.v1.FunctionStatusResponse\x12Y\n" +
 	"\x0eInvokeFunction\x12\".executor.v1.InvokeFunctionRequest\x1a#.executor.v1.InvokeFunctionResponse\x12e\n" +
-	"\x12UnregisterFunction\x12&.executor.v1.UnregisterFunctionRequest\x1a'.executor.v1.UnregisterFunctionResponse2\xc4\x04\n" +
+	"\x12UnregisterFunction\x12&.executor.v1.UnregisterFunctionRequest\x1a'.executor.v1.UnregisterFunctionResponse2\xb1\x05\n" +
 	"\x0eSessionRuntime\x12R\n" +
 	"\x0fRegisterSession\x12#.executor.v1.RegisterSessionRequest\x1a\x1a.executor.v1.SessionStatus\x12T\n" +
 	"\x10GetSessionStatus\x12$.executor.v1.GetSessionStatusRequest\x1a\x1a.executor.v1.SessionStatus\x12t\n" +
-	"\x17ExecuteSessionOperation\x12+.executor.v1.ExecuteSessionOperationRequest\x1a,.executor.v1.ExecuteSessionOperationResponse\x12\\\n" +
+	"\x17ExecuteSessionOperation\x12+.executor.v1.ExecuteSessionOperationRequest\x1a,.executor.v1.ExecuteSessionOperationResponse\x12k\n" +
+	"\x16StreamSessionOperation\x12+.executor.v1.ExecuteSessionOperationRequest\x1a\".executor.v1.SessionOperationEvent0\x01\x12\\\n" +
 	"\x0fReadSessionFile\x12#.executor.v1.ReadSessionFileRequest\x1a$.executor.v1.ReadSessionFileResponse\x12_\n" +
 	"\x10ListSessionFiles\x12$.executor.v1.ListSessionFilesRequest\x1a%.executor.v1.ListSessionFilesResponse\x12S\n" +
 	"\fCloseSession\x12 .executor.v1.CloseSessionRequest\x1a!.executor.v1.CloseSessionResponseB9Z7github.com/kruntimes/kruntimes/api/runtime/v1;runtimev1b\x06proto3"
@@ -2813,128 +3330,144 @@ func file_api_runtime_v1_runtime_proto_rawDescGZIP() []byte {
 	return file_api_runtime_v1_runtime_proto_rawDescData
 }
 
-var file_api_runtime_v1_runtime_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_api_runtime_v1_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
+var file_api_runtime_v1_runtime_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_api_runtime_v1_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
 var file_api_runtime_v1_runtime_proto_goTypes = []any{
 	(ExecutionState)(0),                     // 0: executor.v1.ExecutionState
 	(FunctionRegistrationState)(0),          // 1: executor.v1.FunctionRegistrationState
 	(SessionState)(0),                       // 2: executor.v1.SessionState
-	(*ExecuteRequest)(nil),                  // 3: executor.v1.ExecuteRequest
-	(*ExecuteResponse)(nil),                 // 4: executor.v1.ExecuteResponse
-	(*StatusRequest)(nil),                   // 5: executor.v1.StatusRequest
-	(*StatusResponse)(nil),                  // 6: executor.v1.StatusResponse
-	(*ListRequest)(nil),                     // 7: executor.v1.ListRequest
-	(*ListResponse)(nil),                    // 8: executor.v1.ListResponse
-	(*CancelRequest)(nil),                   // 9: executor.v1.CancelRequest
-	(*CancelResponse)(nil),                  // 10: executor.v1.CancelResponse
-	(*ForgetRequest)(nil),                   // 11: executor.v1.ForgetRequest
-	(*ForgetResponse)(nil),                  // 12: executor.v1.ForgetResponse
-	(*HealthRequest)(nil),                   // 13: executor.v1.HealthRequest
-	(*HealthResponse)(nil),                  // 14: executor.v1.HealthResponse
-	(*FunctionRegistration)(nil),            // 15: executor.v1.FunctionRegistration
-	(*RegisterFunctionRequest)(nil),         // 16: executor.v1.RegisterFunctionRequest
-	(*RegisterFunctionResponse)(nil),        // 17: executor.v1.RegisterFunctionResponse
-	(*FunctionStatusRequest)(nil),           // 18: executor.v1.FunctionStatusRequest
-	(*FunctionStatusResponse)(nil),          // 19: executor.v1.FunctionStatusResponse
-	(*InvokeFunctionRequest)(nil),           // 20: executor.v1.InvokeFunctionRequest
-	(*InvokeFunctionResponse)(nil),          // 21: executor.v1.InvokeFunctionResponse
-	(*UnregisterFunctionRequest)(nil),       // 22: executor.v1.UnregisterFunctionRequest
-	(*UnregisterFunctionResponse)(nil),      // 23: executor.v1.UnregisterFunctionResponse
-	(*SessionIdentity)(nil),                 // 24: executor.v1.SessionIdentity
-	(*RegisterSessionRequest)(nil),          // 25: executor.v1.RegisterSessionRequest
-	(*GetSessionStatusRequest)(nil),         // 26: executor.v1.GetSessionStatusRequest
-	(*SessionStatus)(nil),                   // 27: executor.v1.SessionStatus
-	(*ExecuteSessionOperationRequest)(nil),  // 28: executor.v1.ExecuteSessionOperationRequest
-	(*SessionCommand)(nil),                  // 29: executor.v1.SessionCommand
-	(*ExecuteSessionOperationResponse)(nil), // 30: executor.v1.ExecuteSessionOperationResponse
-	(*SessionCommandResult)(nil),            // 31: executor.v1.SessionCommandResult
-	(*ReadSessionFileRequest)(nil),          // 32: executor.v1.ReadSessionFileRequest
-	(*ReadSessionFileResponse)(nil),         // 33: executor.v1.ReadSessionFileResponse
-	(*ListSessionFilesRequest)(nil),         // 34: executor.v1.ListSessionFilesRequest
-	(*SessionFileInfo)(nil),                 // 35: executor.v1.SessionFileInfo
-	(*ListSessionFilesResponse)(nil),        // 36: executor.v1.ListSessionFilesResponse
-	(*SessionFileWrite)(nil),                // 37: executor.v1.SessionFileWrite
-	(*SessionDirectoryCreate)(nil),          // 38: executor.v1.SessionDirectoryCreate
-	(*SessionFileDelete)(nil),               // 39: executor.v1.SessionFileDelete
-	(*SessionFileRename)(nil),               // 40: executor.v1.SessionFileRename
-	(*CloseSessionRequest)(nil),             // 41: executor.v1.CloseSessionRequest
-	(*CloseSessionResponse)(nil),            // 42: executor.v1.CloseSessionResponse
-	nil,                                     // 43: executor.v1.ExecuteRequest.EnvEntry
-	nil,                                     // 44: executor.v1.RegisterFunctionRequest.EnvEntry
-	nil,                                     // 45: executor.v1.InvokeFunctionResponse.OutputsEntry
-	nil,                                     // 46: executor.v1.RegisterSessionRequest.EnvEntry
-	nil,                                     // 47: executor.v1.SessionCommand.EnvEntry
+	(SessionOperationOutputStream)(0),       // 3: executor.v1.SessionOperationOutputStream
+	(SessionOperationProgressKind)(0),       // 4: executor.v1.SessionOperationProgressKind
+	(*ExecuteRequest)(nil),                  // 5: executor.v1.ExecuteRequest
+	(*ExecuteResponse)(nil),                 // 6: executor.v1.ExecuteResponse
+	(*StatusRequest)(nil),                   // 7: executor.v1.StatusRequest
+	(*StatusResponse)(nil),                  // 8: executor.v1.StatusResponse
+	(*ListRequest)(nil),                     // 9: executor.v1.ListRequest
+	(*ListResponse)(nil),                    // 10: executor.v1.ListResponse
+	(*CancelRequest)(nil),                   // 11: executor.v1.CancelRequest
+	(*CancelResponse)(nil),                  // 12: executor.v1.CancelResponse
+	(*ForgetRequest)(nil),                   // 13: executor.v1.ForgetRequest
+	(*ForgetResponse)(nil),                  // 14: executor.v1.ForgetResponse
+	(*HealthRequest)(nil),                   // 15: executor.v1.HealthRequest
+	(*HealthResponse)(nil),                  // 16: executor.v1.HealthResponse
+	(*FunctionRegistration)(nil),            // 17: executor.v1.FunctionRegistration
+	(*RegisterFunctionRequest)(nil),         // 18: executor.v1.RegisterFunctionRequest
+	(*RegisterFunctionResponse)(nil),        // 19: executor.v1.RegisterFunctionResponse
+	(*FunctionStatusRequest)(nil),           // 20: executor.v1.FunctionStatusRequest
+	(*FunctionStatusResponse)(nil),          // 21: executor.v1.FunctionStatusResponse
+	(*InvokeFunctionRequest)(nil),           // 22: executor.v1.InvokeFunctionRequest
+	(*InvokeFunctionResponse)(nil),          // 23: executor.v1.InvokeFunctionResponse
+	(*UnregisterFunctionRequest)(nil),       // 24: executor.v1.UnregisterFunctionRequest
+	(*UnregisterFunctionResponse)(nil),      // 25: executor.v1.UnregisterFunctionResponse
+	(*SessionIdentity)(nil),                 // 26: executor.v1.SessionIdentity
+	(*RegisterSessionRequest)(nil),          // 27: executor.v1.RegisterSessionRequest
+	(*GetSessionStatusRequest)(nil),         // 28: executor.v1.GetSessionStatusRequest
+	(*SessionStatus)(nil),                   // 29: executor.v1.SessionStatus
+	(*ExecuteSessionOperationRequest)(nil),  // 30: executor.v1.ExecuteSessionOperationRequest
+	(*SessionCommand)(nil),                  // 31: executor.v1.SessionCommand
+	(*ExecuteSessionOperationResponse)(nil), // 32: executor.v1.ExecuteSessionOperationResponse
+	(*SessionOperationEvent)(nil),           // 33: executor.v1.SessionOperationEvent
+	(*SessionOperationAccepted)(nil),        // 34: executor.v1.SessionOperationAccepted
+	(*SessionOperationOutput)(nil),          // 35: executor.v1.SessionOperationOutput
+	(*SessionOperationProgress)(nil),        // 36: executor.v1.SessionOperationProgress
+	(*SessionOperationFailure)(nil),         // 37: executor.v1.SessionOperationFailure
+	(*SessionCommandResult)(nil),            // 38: executor.v1.SessionCommandResult
+	(*ReadSessionFileRequest)(nil),          // 39: executor.v1.ReadSessionFileRequest
+	(*ReadSessionFileResponse)(nil),         // 40: executor.v1.ReadSessionFileResponse
+	(*ListSessionFilesRequest)(nil),         // 41: executor.v1.ListSessionFilesRequest
+	(*SessionFileInfo)(nil),                 // 42: executor.v1.SessionFileInfo
+	(*ListSessionFilesResponse)(nil),        // 43: executor.v1.ListSessionFilesResponse
+	(*SessionFileWrite)(nil),                // 44: executor.v1.SessionFileWrite
+	(*SessionDirectoryCreate)(nil),          // 45: executor.v1.SessionDirectoryCreate
+	(*SessionFileDelete)(nil),               // 46: executor.v1.SessionFileDelete
+	(*SessionFileRename)(nil),               // 47: executor.v1.SessionFileRename
+	(*CloseSessionRequest)(nil),             // 48: executor.v1.CloseSessionRequest
+	(*CloseSessionResponse)(nil),            // 49: executor.v1.CloseSessionResponse
+	nil,                                     // 50: executor.v1.ExecuteRequest.EnvEntry
+	nil,                                     // 51: executor.v1.RegisterFunctionRequest.EnvEntry
+	nil,                                     // 52: executor.v1.InvokeFunctionResponse.OutputsEntry
+	nil,                                     // 53: executor.v1.RegisterSessionRequest.EnvEntry
+	nil,                                     // 54: executor.v1.SessionCommand.EnvEntry
 }
 var file_api_runtime_v1_runtime_proto_depIdxs = []int32{
-	43, // 0: executor.v1.ExecuteRequest.env:type_name -> executor.v1.ExecuteRequest.EnvEntry
+	50, // 0: executor.v1.ExecuteRequest.env:type_name -> executor.v1.ExecuteRequest.EnvEntry
 	0,  // 1: executor.v1.StatusResponse.state:type_name -> executor.v1.ExecutionState
-	6,  // 2: executor.v1.ListResponse.entries:type_name -> executor.v1.StatusResponse
-	44, // 3: executor.v1.RegisterFunctionRequest.env:type_name -> executor.v1.RegisterFunctionRequest.EnvEntry
-	15, // 4: executor.v1.RegisterFunctionResponse.registration:type_name -> executor.v1.FunctionRegistration
+	8,  // 2: executor.v1.ListResponse.entries:type_name -> executor.v1.StatusResponse
+	51, // 3: executor.v1.RegisterFunctionRequest.env:type_name -> executor.v1.RegisterFunctionRequest.EnvEntry
+	17, // 4: executor.v1.RegisterFunctionResponse.registration:type_name -> executor.v1.FunctionRegistration
 	1,  // 5: executor.v1.RegisterFunctionResponse.state:type_name -> executor.v1.FunctionRegistrationState
-	15, // 6: executor.v1.FunctionStatusRequest.registration:type_name -> executor.v1.FunctionRegistration
-	15, // 7: executor.v1.FunctionStatusResponse.registration:type_name -> executor.v1.FunctionRegistration
+	17, // 6: executor.v1.FunctionStatusRequest.registration:type_name -> executor.v1.FunctionRegistration
+	17, // 7: executor.v1.FunctionStatusResponse.registration:type_name -> executor.v1.FunctionRegistration
 	1,  // 8: executor.v1.FunctionStatusResponse.state:type_name -> executor.v1.FunctionRegistrationState
-	15, // 9: executor.v1.InvokeFunctionRequest.registration:type_name -> executor.v1.FunctionRegistration
-	15, // 10: executor.v1.InvokeFunctionResponse.registration:type_name -> executor.v1.FunctionRegistration
-	45, // 11: executor.v1.InvokeFunctionResponse.outputs:type_name -> executor.v1.InvokeFunctionResponse.OutputsEntry
-	15, // 12: executor.v1.UnregisterFunctionRequest.registration:type_name -> executor.v1.FunctionRegistration
-	15, // 13: executor.v1.UnregisterFunctionResponse.registration:type_name -> executor.v1.FunctionRegistration
-	24, // 14: executor.v1.RegisterSessionRequest.identity:type_name -> executor.v1.SessionIdentity
-	46, // 15: executor.v1.RegisterSessionRequest.env:type_name -> executor.v1.RegisterSessionRequest.EnvEntry
-	24, // 16: executor.v1.GetSessionStatusRequest.identity:type_name -> executor.v1.SessionIdentity
-	24, // 17: executor.v1.SessionStatus.identity:type_name -> executor.v1.SessionIdentity
+	17, // 9: executor.v1.InvokeFunctionRequest.registration:type_name -> executor.v1.FunctionRegistration
+	17, // 10: executor.v1.InvokeFunctionResponse.registration:type_name -> executor.v1.FunctionRegistration
+	52, // 11: executor.v1.InvokeFunctionResponse.outputs:type_name -> executor.v1.InvokeFunctionResponse.OutputsEntry
+	17, // 12: executor.v1.UnregisterFunctionRequest.registration:type_name -> executor.v1.FunctionRegistration
+	17, // 13: executor.v1.UnregisterFunctionResponse.registration:type_name -> executor.v1.FunctionRegistration
+	26, // 14: executor.v1.RegisterSessionRequest.identity:type_name -> executor.v1.SessionIdentity
+	53, // 15: executor.v1.RegisterSessionRequest.env:type_name -> executor.v1.RegisterSessionRequest.EnvEntry
+	26, // 16: executor.v1.GetSessionStatusRequest.identity:type_name -> executor.v1.SessionIdentity
+	26, // 17: executor.v1.SessionStatus.identity:type_name -> executor.v1.SessionIdentity
 	2,  // 18: executor.v1.SessionStatus.state:type_name -> executor.v1.SessionState
-	24, // 19: executor.v1.ExecuteSessionOperationRequest.identity:type_name -> executor.v1.SessionIdentity
-	29, // 20: executor.v1.ExecuteSessionOperationRequest.command:type_name -> executor.v1.SessionCommand
-	37, // 21: executor.v1.ExecuteSessionOperationRequest.write_file:type_name -> executor.v1.SessionFileWrite
-	38, // 22: executor.v1.ExecuteSessionOperationRequest.create_directory:type_name -> executor.v1.SessionDirectoryCreate
-	39, // 23: executor.v1.ExecuteSessionOperationRequest.delete_file:type_name -> executor.v1.SessionFileDelete
-	40, // 24: executor.v1.ExecuteSessionOperationRequest.rename_file:type_name -> executor.v1.SessionFileRename
-	47, // 25: executor.v1.SessionCommand.env:type_name -> executor.v1.SessionCommand.EnvEntry
-	31, // 26: executor.v1.ExecuteSessionOperationResponse.command:type_name -> executor.v1.SessionCommandResult
-	24, // 27: executor.v1.ReadSessionFileRequest.identity:type_name -> executor.v1.SessionIdentity
-	24, // 28: executor.v1.ListSessionFilesRequest.identity:type_name -> executor.v1.SessionIdentity
-	35, // 29: executor.v1.ListSessionFilesResponse.entries:type_name -> executor.v1.SessionFileInfo
-	24, // 30: executor.v1.CloseSessionRequest.identity:type_name -> executor.v1.SessionIdentity
-	24, // 31: executor.v1.CloseSessionResponse.identity:type_name -> executor.v1.SessionIdentity
-	3,  // 32: executor.v1.Runtime.Execute:input_type -> executor.v1.ExecuteRequest
-	5,  // 33: executor.v1.Runtime.Status:input_type -> executor.v1.StatusRequest
-	7,  // 34: executor.v1.Runtime.List:input_type -> executor.v1.ListRequest
-	9,  // 35: executor.v1.Runtime.Cancel:input_type -> executor.v1.CancelRequest
-	11, // 36: executor.v1.Runtime.Forget:input_type -> executor.v1.ForgetRequest
-	13, // 37: executor.v1.Runtime.Health:input_type -> executor.v1.HealthRequest
-	16, // 38: executor.v1.FunctionRuntime.RegisterFunction:input_type -> executor.v1.RegisterFunctionRequest
-	18, // 39: executor.v1.FunctionRuntime.FunctionStatus:input_type -> executor.v1.FunctionStatusRequest
-	20, // 40: executor.v1.FunctionRuntime.InvokeFunction:input_type -> executor.v1.InvokeFunctionRequest
-	22, // 41: executor.v1.FunctionRuntime.UnregisterFunction:input_type -> executor.v1.UnregisterFunctionRequest
-	25, // 42: executor.v1.SessionRuntime.RegisterSession:input_type -> executor.v1.RegisterSessionRequest
-	26, // 43: executor.v1.SessionRuntime.GetSessionStatus:input_type -> executor.v1.GetSessionStatusRequest
-	28, // 44: executor.v1.SessionRuntime.ExecuteSessionOperation:input_type -> executor.v1.ExecuteSessionOperationRequest
-	32, // 45: executor.v1.SessionRuntime.ReadSessionFile:input_type -> executor.v1.ReadSessionFileRequest
-	34, // 46: executor.v1.SessionRuntime.ListSessionFiles:input_type -> executor.v1.ListSessionFilesRequest
-	41, // 47: executor.v1.SessionRuntime.CloseSession:input_type -> executor.v1.CloseSessionRequest
-	4,  // 48: executor.v1.Runtime.Execute:output_type -> executor.v1.ExecuteResponse
-	6,  // 49: executor.v1.Runtime.Status:output_type -> executor.v1.StatusResponse
-	8,  // 50: executor.v1.Runtime.List:output_type -> executor.v1.ListResponse
-	10, // 51: executor.v1.Runtime.Cancel:output_type -> executor.v1.CancelResponse
-	12, // 52: executor.v1.Runtime.Forget:output_type -> executor.v1.ForgetResponse
-	14, // 53: executor.v1.Runtime.Health:output_type -> executor.v1.HealthResponse
-	17, // 54: executor.v1.FunctionRuntime.RegisterFunction:output_type -> executor.v1.RegisterFunctionResponse
-	19, // 55: executor.v1.FunctionRuntime.FunctionStatus:output_type -> executor.v1.FunctionStatusResponse
-	21, // 56: executor.v1.FunctionRuntime.InvokeFunction:output_type -> executor.v1.InvokeFunctionResponse
-	23, // 57: executor.v1.FunctionRuntime.UnregisterFunction:output_type -> executor.v1.UnregisterFunctionResponse
-	27, // 58: executor.v1.SessionRuntime.RegisterSession:output_type -> executor.v1.SessionStatus
-	27, // 59: executor.v1.SessionRuntime.GetSessionStatus:output_type -> executor.v1.SessionStatus
-	30, // 60: executor.v1.SessionRuntime.ExecuteSessionOperation:output_type -> executor.v1.ExecuteSessionOperationResponse
-	33, // 61: executor.v1.SessionRuntime.ReadSessionFile:output_type -> executor.v1.ReadSessionFileResponse
-	36, // 62: executor.v1.SessionRuntime.ListSessionFiles:output_type -> executor.v1.ListSessionFilesResponse
-	42, // 63: executor.v1.SessionRuntime.CloseSession:output_type -> executor.v1.CloseSessionResponse
-	48, // [48:64] is the sub-list for method output_type
-	32, // [32:48] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	26, // 19: executor.v1.ExecuteSessionOperationRequest.identity:type_name -> executor.v1.SessionIdentity
+	31, // 20: executor.v1.ExecuteSessionOperationRequest.command:type_name -> executor.v1.SessionCommand
+	44, // 21: executor.v1.ExecuteSessionOperationRequest.write_file:type_name -> executor.v1.SessionFileWrite
+	45, // 22: executor.v1.ExecuteSessionOperationRequest.create_directory:type_name -> executor.v1.SessionDirectoryCreate
+	46, // 23: executor.v1.ExecuteSessionOperationRequest.delete_file:type_name -> executor.v1.SessionFileDelete
+	47, // 24: executor.v1.ExecuteSessionOperationRequest.rename_file:type_name -> executor.v1.SessionFileRename
+	54, // 25: executor.v1.SessionCommand.env:type_name -> executor.v1.SessionCommand.EnvEntry
+	38, // 26: executor.v1.ExecuteSessionOperationResponse.command:type_name -> executor.v1.SessionCommandResult
+	34, // 27: executor.v1.SessionOperationEvent.accepted:type_name -> executor.v1.SessionOperationAccepted
+	35, // 28: executor.v1.SessionOperationEvent.output:type_name -> executor.v1.SessionOperationOutput
+	36, // 29: executor.v1.SessionOperationEvent.progress:type_name -> executor.v1.SessionOperationProgress
+	32, // 30: executor.v1.SessionOperationEvent.completed:type_name -> executor.v1.ExecuteSessionOperationResponse
+	37, // 31: executor.v1.SessionOperationEvent.failed:type_name -> executor.v1.SessionOperationFailure
+	3,  // 32: executor.v1.SessionOperationOutput.stream:type_name -> executor.v1.SessionOperationOutputStream
+	4,  // 33: executor.v1.SessionOperationProgress.kind:type_name -> executor.v1.SessionOperationProgressKind
+	26, // 34: executor.v1.ReadSessionFileRequest.identity:type_name -> executor.v1.SessionIdentity
+	26, // 35: executor.v1.ListSessionFilesRequest.identity:type_name -> executor.v1.SessionIdentity
+	42, // 36: executor.v1.ListSessionFilesResponse.entries:type_name -> executor.v1.SessionFileInfo
+	26, // 37: executor.v1.CloseSessionRequest.identity:type_name -> executor.v1.SessionIdentity
+	26, // 38: executor.v1.CloseSessionResponse.identity:type_name -> executor.v1.SessionIdentity
+	5,  // 39: executor.v1.Runtime.Execute:input_type -> executor.v1.ExecuteRequest
+	7,  // 40: executor.v1.Runtime.Status:input_type -> executor.v1.StatusRequest
+	9,  // 41: executor.v1.Runtime.List:input_type -> executor.v1.ListRequest
+	11, // 42: executor.v1.Runtime.Cancel:input_type -> executor.v1.CancelRequest
+	13, // 43: executor.v1.Runtime.Forget:input_type -> executor.v1.ForgetRequest
+	15, // 44: executor.v1.Runtime.Health:input_type -> executor.v1.HealthRequest
+	18, // 45: executor.v1.FunctionRuntime.RegisterFunction:input_type -> executor.v1.RegisterFunctionRequest
+	20, // 46: executor.v1.FunctionRuntime.FunctionStatus:input_type -> executor.v1.FunctionStatusRequest
+	22, // 47: executor.v1.FunctionRuntime.InvokeFunction:input_type -> executor.v1.InvokeFunctionRequest
+	24, // 48: executor.v1.FunctionRuntime.UnregisterFunction:input_type -> executor.v1.UnregisterFunctionRequest
+	27, // 49: executor.v1.SessionRuntime.RegisterSession:input_type -> executor.v1.RegisterSessionRequest
+	28, // 50: executor.v1.SessionRuntime.GetSessionStatus:input_type -> executor.v1.GetSessionStatusRequest
+	30, // 51: executor.v1.SessionRuntime.ExecuteSessionOperation:input_type -> executor.v1.ExecuteSessionOperationRequest
+	30, // 52: executor.v1.SessionRuntime.StreamSessionOperation:input_type -> executor.v1.ExecuteSessionOperationRequest
+	39, // 53: executor.v1.SessionRuntime.ReadSessionFile:input_type -> executor.v1.ReadSessionFileRequest
+	41, // 54: executor.v1.SessionRuntime.ListSessionFiles:input_type -> executor.v1.ListSessionFilesRequest
+	48, // 55: executor.v1.SessionRuntime.CloseSession:input_type -> executor.v1.CloseSessionRequest
+	6,  // 56: executor.v1.Runtime.Execute:output_type -> executor.v1.ExecuteResponse
+	8,  // 57: executor.v1.Runtime.Status:output_type -> executor.v1.StatusResponse
+	10, // 58: executor.v1.Runtime.List:output_type -> executor.v1.ListResponse
+	12, // 59: executor.v1.Runtime.Cancel:output_type -> executor.v1.CancelResponse
+	14, // 60: executor.v1.Runtime.Forget:output_type -> executor.v1.ForgetResponse
+	16, // 61: executor.v1.Runtime.Health:output_type -> executor.v1.HealthResponse
+	19, // 62: executor.v1.FunctionRuntime.RegisterFunction:output_type -> executor.v1.RegisterFunctionResponse
+	21, // 63: executor.v1.FunctionRuntime.FunctionStatus:output_type -> executor.v1.FunctionStatusResponse
+	23, // 64: executor.v1.FunctionRuntime.InvokeFunction:output_type -> executor.v1.InvokeFunctionResponse
+	25, // 65: executor.v1.FunctionRuntime.UnregisterFunction:output_type -> executor.v1.UnregisterFunctionResponse
+	29, // 66: executor.v1.SessionRuntime.RegisterSession:output_type -> executor.v1.SessionStatus
+	29, // 67: executor.v1.SessionRuntime.GetSessionStatus:output_type -> executor.v1.SessionStatus
+	32, // 68: executor.v1.SessionRuntime.ExecuteSessionOperation:output_type -> executor.v1.ExecuteSessionOperationResponse
+	33, // 69: executor.v1.SessionRuntime.StreamSessionOperation:output_type -> executor.v1.SessionOperationEvent
+	40, // 70: executor.v1.SessionRuntime.ReadSessionFile:output_type -> executor.v1.ReadSessionFileResponse
+	43, // 71: executor.v1.SessionRuntime.ListSessionFiles:output_type -> executor.v1.ListSessionFilesResponse
+	49, // 72: executor.v1.SessionRuntime.CloseSession:output_type -> executor.v1.CloseSessionResponse
+	56, // [56:73] is the sub-list for method output_type
+	39, // [39:56] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_api_runtime_v1_runtime_proto_init() }
@@ -2949,13 +3482,20 @@ func file_api_runtime_v1_runtime_proto_init() {
 		(*ExecuteSessionOperationRequest_DeleteFile)(nil),
 		(*ExecuteSessionOperationRequest_RenameFile)(nil),
 	}
+	file_api_runtime_v1_runtime_proto_msgTypes[28].OneofWrappers = []any{
+		(*SessionOperationEvent_Accepted)(nil),
+		(*SessionOperationEvent_Output)(nil),
+		(*SessionOperationEvent_Progress)(nil),
+		(*SessionOperationEvent_Completed)(nil),
+		(*SessionOperationEvent_Failed)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_runtime_v1_runtime_proto_rawDesc), len(file_api_runtime_v1_runtime_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   45,
+			NumEnums:      5,
+			NumMessages:   50,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

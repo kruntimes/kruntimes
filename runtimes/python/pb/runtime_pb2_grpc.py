@@ -563,6 +563,11 @@ class SessionRuntimeStub(object):
                 request_serializer=runtime__pb2.ExecuteSessionOperationRequest.SerializeToString,
                 response_deserializer=runtime__pb2.ExecuteSessionOperationResponse.FromString,
                 _registered_method=True)
+        self.StreamSessionOperation = channel.unary_stream(
+                '/executor.v1.SessionRuntime/StreamSessionOperation',
+                request_serializer=runtime__pb2.ExecuteSessionOperationRequest.SerializeToString,
+                response_deserializer=runtime__pb2.SessionOperationEvent.FromString,
+                _registered_method=True)
         self.ReadSessionFile = channel.unary_unary(
                 '/executor.v1.SessionRuntime/ReadSessionFile',
                 request_serializer=runtime__pb2.ReadSessionFileRequest.SerializeToString,
@@ -609,6 +614,14 @@ class SessionRuntimeServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def StreamSessionOperation(self, request, context):
+        """StreamSessionOperation executes one mutation and emits ordered progress and
+        terminal events. The owner runtimed serializes the operation.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def ReadSessionFile(self, request, context):
         """ReadSessionFile returns bounded contents of one workspace-relative file.
         """
@@ -647,6 +660,11 @@ def add_SessionRuntimeServicer_to_server(servicer, server):
                     servicer.ExecuteSessionOperation,
                     request_deserializer=runtime__pb2.ExecuteSessionOperationRequest.FromString,
                     response_serializer=runtime__pb2.ExecuteSessionOperationResponse.SerializeToString,
+            ),
+            'StreamSessionOperation': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamSessionOperation,
+                    request_deserializer=runtime__pb2.ExecuteSessionOperationRequest.FromString,
+                    response_serializer=runtime__pb2.SessionOperationEvent.SerializeToString,
             ),
             'ReadSessionFile': grpc.unary_unary_rpc_method_handler(
                     servicer.ReadSessionFile,
@@ -750,6 +768,33 @@ class SessionRuntime(object):
             '/executor.v1.SessionRuntime/ExecuteSessionOperation',
             runtime__pb2.ExecuteSessionOperationRequest.SerializeToString,
             runtime__pb2.ExecuteSessionOperationResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamSessionOperation(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/executor.v1.SessionRuntime/StreamSessionOperation',
+            runtime__pb2.ExecuteSessionOperationRequest.SerializeToString,
+            runtime__pb2.SessionOperationEvent.FromString,
             options,
             channel_credentials,
             insecure,
