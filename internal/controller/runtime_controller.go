@@ -75,6 +75,7 @@ type RuntimeReconciler struct {
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=core,resources=pods/status,verbs=get;patch
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=create;get;list;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -498,6 +499,11 @@ func (r *RuntimeReconciler) buildRuntimedRole(rt *v1alpha1.Runtime) *rbacv1.Role
 				APIGroups: []string{""},
 				Resources: []string{"pods/status"},
 				Verbs:     []string{"get", "patch"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"configmaps"},
+				Verbs:     []string{"create", "get", "list", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},

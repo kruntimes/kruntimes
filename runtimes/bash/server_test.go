@@ -386,7 +386,7 @@ func TestSessionRuntimeStreamsCommandOutputBeforeCompletion(t *testing.T) {
 			completed = event.GetCompleted()
 		}
 	}
-	if completed == nil || completed.GetCommand().GetExitCode() != 0 || string(completed.GetCommand().GetStdout()) != "firstsecond" {
+	if completed == nil || completed.GetCommand().GetExitCode() != 0 || len(completed.GetCommand().GetStdout()) != 0 || len(completed.GetCommand().GetStderr()) != 0 {
 		t.Fatalf("completed event = %#v", completed)
 	}
 }

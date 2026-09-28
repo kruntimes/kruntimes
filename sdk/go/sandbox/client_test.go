@@ -54,6 +54,44 @@ func TestSandboxCreateAndExecute(t *testing.T) {
 	}
 }
 
+func TestSandboxStreamsAndResumesOperationEvents(t *testing.T) {
+	requests := 0
+	sandbox := readySandbox(t, httpDoer(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			if request.Method != http.MethodPost || request.Header.Get("Idempotency-Key") != "turn-1" || request.URL.Query().Get("after") != "" {
+				t.Fatalf("start request = %s %s headers=%v", request.Method, request.URL, request.Header)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{\"sequence\":1,\"type\":\"accepted\",\"accepted\":{\"operationID\":\"turn-1\"}}\n{\"sequence\":2,\"type\":\"completed\",\"completed\":{\"command\":{\"exitCode\":0}}}\n"))}, nil
+		}
+		if request.Method != http.MethodGet || !strings.Contains(request.URL.Path, "/operations/turn-1:stream") || request.URL.Query().Get("after") != "1" {
+			t.Fatalf("resume request = %s %s", request.Method, request.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{\"sequence\":2,\"type\":\"completed\",\"completed\":{\"command\":{\"exitCode\":0}}}\n"))}, nil
+	}))
+	stream, err := sandbox.Stream(t.Context(), Command{Argv: []string{"echo", "ok"}}, StreamOptions{IdempotencyKey: "turn-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := stream.Next()
+	if err != nil || first.Accepted == nil || first.Accepted.OperationID != "turn-1" {
+		t.Fatalf("first event = %#v, err = %v", first, err)
+	}
+	if _, err := stream.Next(); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := sandbox.Resume(t.Context(), "turn-1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event, err := resumed.Next(); err != nil || event.Sequence != 2 {
+		t.Fatalf("resumed event = %#v, err = %v", event, err)
+	}
+}
+
 func TestSandboxFileMutationsUseGatewayOperationNames(t *testing.T) {
 	operations := []string{}
 	sandbox := readySandbox(t, httpDoer(func(request *http.Request) (*http.Response, error) {

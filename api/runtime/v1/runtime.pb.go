@@ -1721,9 +1721,17 @@ type ExecuteSessionOperationRequest struct {
 	//	*ExecuteSessionOperationRequest_CreateDirectory
 	//	*ExecuteSessionOperationRequest_DeleteFile
 	//	*ExecuteSessionOperationRequest_RenameFile
-	Operation     isExecuteSessionOperationRequest_Operation `protobuf_oneof:"operation"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Operation isExecuteSessionOperationRequest_Operation `protobuf_oneof:"operation"`
+	// IdempotencyKey identifies one submitted interactive operation. It is
+	// assigned by the public gateway when the caller does not provide one.
+	// Reusing a key with different operation contents is rejected.
+	IdempotencyKey string `protobuf:"bytes,7,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	// ResumeAfterSequence requests retained events strictly after this cursor.
+	// It is only valid for StreamSessionOperation and must not be combined with
+	// a new operation payload.
+	ResumeAfterSequence int64 `protobuf:"varint,8,opt,name=resume_after_sequence,json=resumeAfterSequence,proto3" json:"resume_after_sequence,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ExecuteSessionOperationRequest) Reset() {
@@ -1813,6 +1821,20 @@ func (x *ExecuteSessionOperationRequest) GetRenameFile() *SessionFileRename {
 		}
 	}
 	return nil
+}
+
+func (x *ExecuteSessionOperationRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *ExecuteSessionOperationRequest) GetResumeAfterSequence() int64 {
+	if x != nil {
+		return x.ResumeAfterSequence
+	}
+	return 0
 }
 
 type isExecuteSessionOperationRequest_Operation interface {
@@ -2143,7 +2165,9 @@ func (*SessionOperationEvent_Completed) isSessionOperationEvent_Event() {}
 func (*SessionOperationEvent_Failed) isSessionOperationEvent_Event() {}
 
 type SessionOperationAccepted struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// OperationID is the durable opaque handle used to resume this operation.
+	OperationId   string `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2176,6 +2200,13 @@ func (x *SessionOperationAccepted) ProtoReflect() protoreflect.Message {
 // Deprecated: Use SessionOperationAccepted.ProtoReflect.Descriptor instead.
 func (*SessionOperationAccepted) Descriptor() ([]byte, []int) {
 	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *SessionOperationAccepted) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
 }
 
 type SessionOperationOutput struct {
@@ -3177,7 +3208,7 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\x05state\x18\x02 \x01(\x0e2\x19.executor.v1.SessionStateR\x05state\x125\n" +
 	"\x17last_activity_unix_nano\x18\x03 \x01(\x03R\x14lastActivityUnixNano\x12\x1f\n" +
 	"\vfatal_error\x18\x04 \x01(\tR\n" +
-	"fatalError\"\xb8\x03\n" +
+	"fatalError\"\x95\x04\n" +
 	"\x1eExecuteSessionOperationRequest\x128\n" +
 	"\bidentity\x18\x01 \x01(\v2\x1c.executor.v1.SessionIdentityR\bidentity\x127\n" +
 	"\acommand\x18\x02 \x01(\v2\x1b.executor.v1.SessionCommandH\x00R\acommand\x12>\n" +
@@ -3187,7 +3218,9 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\vdelete_file\x18\x05 \x01(\v2\x1e.executor.v1.SessionFileDeleteH\x00R\n" +
 	"deleteFile\x12A\n" +
 	"\vrename_file\x18\x06 \x01(\v2\x1e.executor.v1.SessionFileRenameH\x00R\n" +
-	"renameFileB\v\n" +
+	"renameFile\x12'\n" +
+	"\x0fidempotency_key\x18\a \x01(\tR\x0eidempotencyKey\x122\n" +
+	"\x15resume_after_sequence\x18\b \x01(\x03R\x13resumeAfterSequenceB\v\n" +
 	"\toperation\"\x94\x02\n" +
 	"\x0eSessionCommand\x12\x12\n" +
 	"\x04argv\x18\x01 \x03(\tR\x04argv\x12\x14\n" +
@@ -3208,8 +3241,9 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\bprogress\x18\x04 \x01(\v2%.executor.v1.SessionOperationProgressH\x00R\bprogress\x12L\n" +
 	"\tcompleted\x18\x05 \x01(\v2,.executor.v1.ExecuteSessionOperationResponseH\x00R\tcompleted\x12>\n" +
 	"\x06failed\x18\x06 \x01(\v2$.executor.v1.SessionOperationFailureH\x00R\x06failedB\a\n" +
-	"\x05event\"\x1a\n" +
-	"\x18SessionOperationAccepted\"o\n" +
+	"\x05event\"=\n" +
+	"\x18SessionOperationAccepted\x12!\n" +
+	"\foperation_id\x18\x01 \x01(\tR\voperationId\"o\n" +
 	"\x16SessionOperationOutput\x12A\n" +
 	"\x06stream\x18\x01 \x01(\x0e2).executor.v1.SessionOperationOutputStreamR\x06stream\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\"\xe9\x01\n" +

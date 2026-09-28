@@ -19,6 +19,7 @@ import (
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // sessionEntry is Runtime Server-local state. runtimed owns the operation
@@ -121,7 +122,13 @@ func (s *Server) StreamSessionOperation(req *pb.ExecuteSessionOperationRequest, 
 		if err != nil {
 			return err
 		}
-		return server.Send(&pb.SessionOperationEvent{Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: result}}})
+		// Output is already represented by durable output events. Keep the
+		// terminal result small enough for the operation journal; callers retain
+		// exit status and rebuild any displayed output from those events.
+		terminal := proto.Clone(result).(*pb.SessionCommandResult)
+		terminal.Stdout = nil
+		terminal.Stderr = nil
+		return server.Send(&pb.SessionOperationEvent{Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: terminal}}})
 	}
 
 	response, err := s.ExecuteSessionOperation(server.Context(), req)

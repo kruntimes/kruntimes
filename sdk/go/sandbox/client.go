@@ -299,6 +299,157 @@ type CommandResult struct {
 	TimedOut bool   `json:"timedOut,omitempty"`
 }
 
+// StreamOptions controls durable Session operation streaming. Supplying an
+// IdempotencyKey makes retries safe; the accepted event exposes the generated
+// OperationID when this field is empty.
+type StreamOptions struct {
+	IdempotencyKey string
+	AfterSequence  int64
+}
+
+// OperationEvent is one ordered event emitted by a streaming Session operation.
+type OperationEvent struct {
+	Sequence int64  `json:"sequence"`
+	Type     string `json:"type"`
+	Accepted *struct {
+		OperationID string `json:"operationID"`
+	} `json:"accepted,omitempty"`
+	Output    *OperationOutput   `json:"output,omitempty"`
+	Progress  *OperationProgress `json:"progress,omitempty"`
+	Completed *struct {
+		Command *CommandResult `json:"command,omitempty"`
+	} `json:"completed,omitempty"`
+	Failed *OperationFailure `json:"failed,omitempty"`
+}
+
+type OperationOutput struct {
+	Stream string `json:"stream"`
+	Data   []byte `json:"data,omitempty"`
+}
+type OperationProgress struct {
+	Kind        string `json:"kind"`
+	Message     string `json:"message,omitempty"`
+	ToolCallID  string `json:"toolCallID,omitempty"`
+	ToolName    string `json:"toolName,omitempty"`
+	Data        []byte `json:"data,omitempty"`
+	ContentType string `json:"contentType,omitempty"`
+}
+type OperationFailure struct {
+	Code    int32  `json:"code"`
+	Message string `json:"message"`
+}
+
+// OperationStream owns a single NDJSON response. Next returns io.EOF after a
+// terminal event; callers retain the last Sequence as the resume cursor.
+type OperationStream struct {
+	body         io.ReadCloser
+	decoder      *json.Decoder
+	lastSequence int64
+}
+
+func (s *OperationStream) Next() (OperationEvent, error) {
+	if s == nil || s.decoder == nil {
+		return OperationEvent{}, errors.New("operation stream is not configured")
+	}
+	var event OperationEvent
+	if err := s.decoder.Decode(&event); err != nil {
+		return OperationEvent{}, err
+	}
+	if event.Sequence != s.lastSequence+1 {
+		return OperationEvent{}, fmt.Errorf("operation event sequence %d follows %d", event.Sequence, s.lastSequence)
+	}
+	s.lastSequence = event.Sequence
+	return event, nil
+}
+
+func (s *OperationStream) Close() error {
+	if s == nil || s.body == nil {
+		return nil
+	}
+	return s.body.Close()
+}
+func (s *OperationStream) Cursor() int64 {
+	if s == nil {
+		return 0
+	}
+	return s.lastSequence
+}
+
+// Stream starts or reattaches to one command operation.
+func (s *Sandbox) Stream(ctx context.Context, command Command, options StreamOptions) (*OperationStream, error) {
+	endpoint, err := s.endpoint("operations:stream")
+	if err != nil {
+		return nil, err
+	}
+	if options.AfterSequence > 0 {
+		endpoint += "?after=" + strconv.FormatInt(options.AfterSequence, 10)
+	}
+	return s.openOperationStream(ctx, http.MethodPost, endpoint, map[string]any{"command": command}, options.IdempotencyKey)
+}
+
+// Resume replays retained events strictly after afterSequence without executing
+// the operation again.
+func (s *Sandbox) Resume(ctx context.Context, operationID string, afterSequence int64) (*OperationStream, error) {
+	if operationID == "" || afterSequence < 0 {
+		return nil, errors.New("operation ID and non-negative cursor are required")
+	}
+	endpoint, err := s.endpoint("operations/" + url.PathEscape(operationID) + ":stream")
+	if err != nil {
+		return nil, err
+	}
+	if afterSequence > 0 {
+		endpoint += "?after=" + strconv.FormatInt(afterSequence, 10)
+	}
+	return s.openOperationStream(ctx, http.MethodGet, endpoint, nil, "")
+}
+
+func (s *Sandbox) openOperationStream(ctx context.Context, method, endpoint string, body any, idempotencyKey string) (*OperationStream, error) {
+	var content io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("encode gateway request: %w", err)
+		}
+		content = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, content)
+	if err != nil {
+		return nil, fmt.Errorf("build gateway request: %w", err)
+	}
+	request.Header.Set("Accept", "application/x-ndjson")
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if idempotencyKey != "" {
+		request.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+	if s.client.bearerToken != "" {
+		request.Header.Set("Authorization", "Bearer "+s.client.bearerToken)
+	}
+	response, err := s.client.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("call Runtime gateway: %w", err)
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		defer response.Body.Close()
+		var gatewayError struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&gatewayError)
+		return nil, &APIError{StatusCode: response.StatusCode, Message: gatewayError.Error}
+	}
+	return &OperationStream{body: response.Body, decoder: json.NewDecoder(response.Body), lastSequence: operationStreamCursor(endpoint)}, nil
+}
+
+func operationStreamCursor(endpoint string) int64 {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return 0
+	}
+	cursor, _ := strconv.ParseInt(parsed.Query().Get("after"), 10, 64)
+	return max(cursor, 0)
+}
+
 // Execute runs exactly one command. Transport errors have unknown execution
 // outcome and are intentionally never retried by this SDK.
 func (s *Sandbox) Execute(ctx context.Context, command Command) (CommandResult, error) {

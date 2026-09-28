@@ -36,17 +36,18 @@ const (
 type sessionRuntimeProxy struct {
 	pb.UnimplementedSessionRuntimeServer
 
-	reader      client.Reader
-	podReader   client.Reader
-	local       pb.SessionRuntimeClient
-	namespace   string
-	runtimeName string
-	podName     string
-	statusPort  string
-	operations  *SessionOperationQueue
-	dialPeer    func(context.Context, string) (pb.SessionRuntimeClient, io.Closer, error)
-	logWriter   io.Writer
-	logMu       sync.Mutex
+	reader         client.Reader
+	podReader      client.Reader
+	local          pb.SessionRuntimeClient
+	namespace      string
+	runtimeName    string
+	podName        string
+	statusPort     string
+	operations     *SessionOperationQueue
+	operationStore *sessionOperationStore
+	dialPeer       func(context.Context, string) (pb.SessionRuntimeClient, io.Closer, error)
+	logWriter      io.Writer
+	logMu          sync.Mutex
 }
 
 type sessionRoute struct {
@@ -64,16 +65,17 @@ func newSessionRuntimeProxy(
 	namespace, runtimeName, podName, statusPort string,
 ) *sessionRuntimeProxy {
 	return &sessionRuntimeProxy{
-		reader:      reader,
-		podReader:   podReader,
-		local:       local,
-		namespace:   namespace,
-		runtimeName: runtimeName,
-		podName:     podName,
-		statusPort:  statusPort,
-		operations:  NewSessionOperationQueue(0, 0),
-		dialPeer:    dialSessionRuntimePeer,
-		logWriter:   os.Stdout,
+		reader:         reader,
+		podReader:      podReader,
+		local:          local,
+		namespace:      namespace,
+		runtimeName:    runtimeName,
+		podName:        podName,
+		statusPort:     statusPort,
+		operations:     NewSessionOperationQueue(0, 0),
+		operationStore: newSessionOperationStore(nil),
+		dialPeer:       dialSessionRuntimePeer,
+		logWriter:      os.Stdout,
 	}
 }
 
@@ -117,16 +119,47 @@ func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.ExecuteSessionOpera
 		if err != nil {
 			return err
 		}
-		return forwardSessionOperationEvents(stream, server, nil, nil)
+		return forwardSessionOperationEvents(stream, nil, server.Send, nil)
 	}
-
+	operationID := req.GetIdempotencyKey()
+	if operationID == "" {
+		return status.Error(codes.InvalidArgument, "session operation idempotency key is required")
+	}
+	if req.GetOperation() == nil {
+		if req.GetResumeAfterSequence() < 0 {
+			return status.Error(codes.InvalidArgument, "session operation cursor cannot be negative")
+		}
+		return s.resumeSessionOperation(route.ctx, route.run, operationID, req.GetResumeAfterSequence(), server)
+	}
+	digest, err := sessionOperationRequestDigest(req)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	persistenceCtx, cancelPersistence := sessionOperationPersistenceContext()
+	_, created, err := s.operationStore.Begin(persistenceCtx, route.run, operationID, digest)
+	cancelPersistence()
+	if err != nil {
+		return err
+	}
+	if !created {
+		return s.resumeSessionOperation(route.ctx, route.run, operationID, req.GetResumeAfterSequence(), server)
+	}
 	sequence := int64(0)
 	admitted := false
 	started := time.Now()
 	var completed *pb.ExecuteSessionOperationResponse
+	persistAndSend := func(event *pb.SessionOperationEvent) error {
+		persistenceCtx, cancelPersistence := sessionOperationPersistenceContext()
+		err := s.operationStore.Append(persistenceCtx, route.run, operationID, event)
+		cancelPersistence()
+		if err != nil {
+			return err
+		}
+		return server.Send(event)
+	}
 	_, operationErr := s.operations.ExecuteWithAdmission(route.ctx, route.run, func() error {
 		sequence++
-		if err := server.Send(sessionOperationAccepted(sequence)); err != nil {
+		if err := persistAndSend(sessionOperationAccepted(sequence, operationID)); err != nil {
 			return err
 		}
 		admitted = true
@@ -136,7 +169,7 @@ func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.ExecuteSessionOpera
 		if err != nil {
 			return nil, err
 		}
-		return nil, forwardSessionOperationEvents(stream, server, &sequence, func(response *pb.ExecuteSessionOperationResponse) {
+		return nil, forwardSessionOperationEvents(stream, &sequence, persistAndSend, func(response *pb.ExecuteSessionOperationResponse) {
 			completed = response
 		})
 	})
@@ -148,15 +181,18 @@ func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.ExecuteSessionOpera
 		return operationErr
 	}
 	sequence++
-	return server.Send(sessionOperationFailure(sequence, operationErr))
+	return persistAndSend(sessionOperationFailure(sequence, operationErr))
 }
 
 func forwardSessionOperationEvents(
 	stream pb.SessionRuntime_StreamSessionOperationClient,
-	server pb.SessionRuntime_StreamSessionOperationServer,
 	sequence *int64,
+	send func(*pb.SessionOperationEvent) error,
 	onCompleted func(*pb.ExecuteSessionOperationResponse),
 ) error {
+	if send == nil {
+		return status.Error(codes.FailedPrecondition, "session operation event sender is not configured")
+	}
 	terminal := false
 	forwardedSequence := int64(0)
 	for {
@@ -181,7 +217,7 @@ func forwardSessionOperationEvents(
 				return status.Error(codes.InvalidArgument, "owner runtimed emitted a non-contiguous event sequence")
 			}
 			forwardedSequence = event.GetSequence()
-			if err := server.Send(event); err != nil {
+			if err := send(event); err != nil {
 				return err
 			}
 			terminal = event.GetCompleted() != nil || event.GetFailed() != nil
@@ -195,13 +231,65 @@ func forwardSessionOperationEvents(
 		}
 		(*sequence)++
 		event.Sequence = *sequence
-		if err := server.Send(event); err != nil {
+		if err := send(event); err != nil {
 			return err
 		}
 		if response := event.GetCompleted(); response != nil && onCompleted != nil {
 			onCompleted(response)
 		}
 		terminal = event.GetCompleted() != nil
+	}
+}
+
+func (s *sessionRuntimeProxy) resumeSessionOperation(
+	ctx context.Context,
+	run *v1alpha1.Run,
+	operationID string,
+	afterSequence int64,
+	server pb.SessionRuntime_StreamSessionOperationServer,
+) error {
+	if afterSequence < 0 {
+		return status.Error(codes.InvalidArgument, "session operation cursor cannot be negative")
+	}
+	if !s.operationStore.Active(run, operationID) {
+		persistenceCtx, cancelPersistence := sessionOperationPersistenceContext()
+		record, err := s.operationStore.Record(persistenceCtx, run, operationID)
+		cancelPersistence()
+		if err != nil {
+			return err
+		}
+		if !record.Terminal {
+			failed := sessionOperationFailure(int64(len(record.Events)+1), status.Error(codes.Unavailable, "session operation interrupted by runtimed restart"))
+			persistenceCtx, cancelPersistence := sessionOperationPersistenceContext()
+			err := s.operationStore.Append(persistenceCtx, run, operationID, failed)
+			cancelPersistence()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	events, updates, cancel, err := s.operationStore.Subscribe(ctx, run, operationID, afterSequence)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	for _, event := range events {
+		if err := server.Send(event); err != nil {
+			return err
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return status.FromContextError(ctx.Err()).Err()
+		case event, ok := <-updates:
+			if !ok {
+				return nil
+			}
+			if err := server.Send(event); err != nil {
+				return err
+			}
+		}
 	}
 }
 
@@ -221,10 +309,10 @@ func validateRuntimeSessionOperationEvent(event *pb.SessionOperationEvent) error
 	return nil
 }
 
-func sessionOperationAccepted(sequence int64) *pb.SessionOperationEvent {
+func sessionOperationAccepted(sequence int64, operationID string) *pb.SessionOperationEvent {
 	return &pb.SessionOperationEvent{
 		Sequence: sequence,
-		Event:    &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{}},
+		Event:    &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{OperationId: operationID}},
 	}
 }
 

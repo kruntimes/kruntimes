@@ -830,6 +830,7 @@ func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
 
 	reader := bufio.NewReader(response.Body)
 	seenFirstOutput := false
+	var stdout strings.Builder
 	seenCompleted := false
 	lastSequence := int64(0)
 	for {
@@ -867,15 +868,18 @@ func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
 			}
 			seenFirstOutput = true
 		}
+		if event.Type == "output" && event.Output != nil && event.Output.Stream == "stdout" {
+			stdout.Write(event.Output.Data)
+		}
 		if event.Type == "completed" && event.Completed != nil && event.Completed.Command != nil {
-			if event.Completed.Command.ExitCode != 0 || string(event.Completed.Command.Stdout) != "stream-firststream-last" {
+			if event.Completed.Command.ExitCode != 0 || len(event.Completed.Command.Stdout) != 0 {
 				t.Fatalf("completed command = %#v", event.Completed.Command)
 			}
 			seenCompleted = true
 		}
 	}
-	if !seenFirstOutput || !seenCompleted {
-		t.Fatalf("stream did not include early output and completion: first=%t completed=%t", seenFirstOutput, seenCompleted)
+	if !seenFirstOutput || !seenCompleted || stdout.String() != "stream-firststream-last" {
+		t.Fatalf("stream did not include early output and completion: first=%t completed=%t stdout=%q", seenFirstOutput, seenCompleted, stdout.String())
 	}
 }
 

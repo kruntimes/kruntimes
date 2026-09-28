@@ -272,6 +272,7 @@ func main() {
 			ctx,
 			runtimeEndpoint,
 			statusAddr,
+			mgr.GetClient(),
 			mgr.GetAPIReader(),
 			mgr.GetCache(),
 			artifactStore,

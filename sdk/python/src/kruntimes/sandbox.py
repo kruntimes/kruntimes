@@ -10,7 +10,8 @@ import base64
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol, Sequence
+from collections.abc import Iterator
+from typing import Any, Callable, Mapping, Protocol, Sequence
 from urllib.parse import quote, urlencode, urlparse, urlunparse
 
 
@@ -35,6 +36,10 @@ class GatewayTransport(Protocol):
         self, method: str, url: str, body: bytes | None, headers: Mapping[str, str]
     ) -> "HTTPResponse": ...
 
+    def stream_request(
+        self, method: str, url: str, body: bytes | None, headers: Mapping[str, str]
+    ) -> "StreamingHTTPResponse": ...
+
 
 class LogReader(Protocol):
     """Kubernetes boundary used to read the assigned runtimed container log."""
@@ -48,6 +53,15 @@ class HTTPResponse:
 
     status_code: int
     body: bytes = b""
+
+
+@dataclass
+class StreamingHTTPResponse:
+    """One open NDJSON response owned by the caller."""
+
+    status_code: int
+    lines: Iterator[bytes]
+    close: Callable[[], None]
 
 
 class APIError(Exception):
@@ -112,6 +126,13 @@ class CommandResult:
     stdout: bytes = b""
     stderr: bytes = b""
     timed_out: bool = False
+
+
+@dataclass(frozen=True)
+class OperationEvent:
+    sequence: int
+    type: str
+    value: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -283,6 +304,52 @@ class Sandbox:
             stderr=_decode_bytes(command_response.get("stderr", "")),
             timed_out=bool(command_response.get("timedOut", False)),
         )
+
+    def stream(self, command: Command, *, idempotency_key: str = "", after_sequence: int = 0) -> Iterator[OperationEvent]:
+        endpoint = self._endpoint("operations:stream")
+        if after_sequence > 0:
+            endpoint += "?" + urlencode({"after": after_sequence})
+        headers = self._stream_headers(idempotency_key)
+        response = self._client._gateway.stream_request("POST", endpoint, json.dumps({"command": command.request_body()}).encode(), headers)
+        return self._read_operation_events(response, after_sequence)
+
+    def resume(self, operation_id: str, *, after_sequence: int = 0) -> Iterator[OperationEvent]:
+        if not operation_id or after_sequence < 0:
+            raise ValueError("operation ID and non-negative cursor are required")
+        endpoint = self._endpoint("operations/" + quote(operation_id, safe="") + ":stream")
+        if after_sequence > 0:
+            endpoint += "?" + urlencode({"after": after_sequence})
+        return self._read_operation_events(self._client._gateway.stream_request("GET", endpoint, None, self._stream_headers()), after_sequence)
+
+    def _stream_headers(self, idempotency_key: str = "") -> dict[str, str]:
+        headers = {"Accept": "application/x-ndjson"}
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        if self._client._bearer_token:
+            headers["Authorization"] = "Bearer " + self._client._bearer_token
+        return headers
+
+    def _read_operation_events(self, response: StreamingHTTPResponse, cursor: int) -> Iterator[OperationEvent]:
+        if not 200 <= response.status_code < 300:
+            response.close()
+            raise APIError(response.status_code, "stream request failed")
+        def events() -> Iterator[OperationEvent]:
+            nonlocal cursor
+            try:
+                for raw in response.lines:
+                    if not raw.strip():
+                        continue
+                    value = json.loads(raw)
+                    if not isinstance(value, Mapping):
+                        raise ValueError("operation event must be an object")
+                    sequence = int(value.get("sequence", 0))
+                    if sequence != cursor + 1:
+                        raise ValueError(f"operation event sequence {sequence} follows {cursor}")
+                    cursor = sequence
+                    yield OperationEvent(sequence, str(value.get("type", "")), value)
+            finally:
+                response.close()
+        return events()
 
     def write_file(self, path: str, contents: bytes, *, create_parents: bool = False) -> None:
         self._operation({"writeFile": {"path": path, "contents": _encode_bytes(contents), "createParents": create_parents}})

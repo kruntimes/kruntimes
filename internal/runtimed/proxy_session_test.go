@@ -68,8 +68,9 @@ func TestSessionRuntimeProxyStreamsOrderedEventsForOwner(t *testing.T) {
 	server := &fakeSessionOperationServer{ctx: t.Context()}
 
 	err := proxy.StreamSessionOperation(&pb.ExecuteSessionOperationRequest{
-		Identity:  &pb.SessionIdentity{RunUid: string(run.UID), AssignedPodUid: "pod-a-uid"},
-		Operation: &pb.ExecuteSessionOperationRequest_Command{Command: &pb.SessionCommand{Argv: []string{"echo", "done"}}},
+		Identity:       &pb.SessionIdentity{RunUid: string(run.UID), AssignedPodUid: "pod-a-uid"},
+		IdempotencyKey: "stream-test",
+		Operation:      &pb.ExecuteSessionOperationRequest_Command{Command: &pb.SessionCommand{Argv: []string{"echo", "done"}}},
 	}, server)
 	if err != nil {
 		t.Fatalf("StreamSessionOperation() error = %v", err)

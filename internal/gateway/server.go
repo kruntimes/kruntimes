@@ -4,8 +4,10 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -259,6 +261,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.executeOperation(w, r, run)
 	case len(suffix) == 1 && suffix[0] == "operations:stream" && r.Method == http.MethodPost:
 		s.streamOperation(w, r, run)
+	case len(suffix) == 2 && suffix[0] == "operations" && strings.HasSuffix(suffix[1], ":stream") && r.Method == http.MethodGet:
+		s.resumeOperation(w, r, run, strings.TrimSuffix(suffix[1], ":stream"))
 	case len(suffix) == 1 && suffix[0] == "files" && r.Method == http.MethodGet:
 		s.listFiles(w, r, run)
 	case len(suffix) > 1 && suffix[0] == "files" && r.Method == http.MethodGet:
@@ -499,6 +503,16 @@ func (s *Server) streamOperation(w http.ResponseWriter, r *http.Request, run *v1
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	operationID, err := sessionOperationID(r.Header.Get("Idempotency-Key"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	afterSequence, err := sessionOperationCursor(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	client, closer, err := s.runtimeClient(r.Context(), run)
 	if err != nil {
 		s.writeGatewayError(w, err)
@@ -506,11 +520,51 @@ func (s *Server) streamOperation(w http.ResponseWriter, r *http.Request, run *v1
 	}
 	defer closer.Close()
 	operation.Identity = sessionIdentity(run)
+	operation.IdempotencyKey = operationID
+	operation.ResumeAfterSequence = afterSequence
 	stream, err := client.StreamSessionOperation(r.Context(), operation)
 	if err != nil {
 		s.writeGatewayError(w, err)
 		return
 	}
+	s.writeSessionOperationStream(w, stream)
+}
+
+func (s *Server) resumeOperation(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run, operationID string) {
+	decoded, err := url.PathUnescape(operationID)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "operation ID is invalid")
+		return
+	}
+	operationID, err = sessionOperationID(decoded)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	afterSequence, err := sessionOperationCursor(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	client, closer, err := s.runtimeClient(r.Context(), run)
+	if err != nil {
+		s.writeGatewayError(w, err)
+		return
+	}
+	defer closer.Close()
+	stream, err := client.StreamSessionOperation(r.Context(), &pb.ExecuteSessionOperationRequest{
+		Identity:            sessionIdentity(run),
+		IdempotencyKey:      operationID,
+		ResumeAfterSequence: afterSequence,
+	})
+	if err != nil {
+		s.writeGatewayError(w, err)
+		return
+	}
+	s.writeSessionOperationStream(w, stream)
+}
+
+func (s *Server) writeSessionOperationStream(w http.ResponseWriter, stream pb.SessionRuntime_StreamSessionOperationClient) {
 
 	// Receive the first event before committing HTTP headers. Queue admission and
 	// authorization failures therefore retain the ordinary gateway HTTP status.
@@ -544,6 +598,37 @@ func (s *Server) streamOperation(w http.ResponseWriter, r *http.Request, run *v1
 			return
 		}
 	}
+}
+
+func sessionOperationID(value string) (string, error) {
+	if value == "" {
+		bytes := make([]byte, 16)
+		if _, err := rand.Read(bytes); err != nil {
+			return "", fmt.Errorf("generate session operation ID: %w", err)
+		}
+		return hex.EncodeToString(bytes), nil
+	}
+	if len(value) > 128 {
+		return "", errors.New("idempotency key exceeds 128 bytes")
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && (character < '0' || character > '9') && character != '-' && character != '_' && character != '.' {
+			return "", errors.New("idempotency key contains unsupported characters")
+		}
+	}
+	return value, nil
+}
+
+func sessionOperationCursor(r *http.Request) (int64, error) {
+	value := r.URL.Query().Get("after")
+	if value == "" {
+		return 0, nil
+	}
+	cursor, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || cursor < 0 {
+		return 0, errors.New("session operation cursor must be a non-negative integer")
+	}
+	return cursor, nil
 }
 
 func (s *Server) listFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
@@ -848,10 +933,15 @@ func newExecuteOperationResponse(value *pb.ExecuteSessionOperationResponse) exec
 type sessionOperationEventResponse struct {
 	Sequence  int64                             `json:"sequence"`
 	Type      string                            `json:"type"`
+	Accepted  *sessionOperationAcceptedResponse `json:"accepted,omitempty"`
 	Output    *sessionOperationOutputResponse   `json:"output,omitempty"`
 	Progress  *sessionOperationProgressResponse `json:"progress,omitempty"`
 	Completed *executeOperationResponse         `json:"completed,omitempty"`
 	Failed    *sessionOperationFailureResponse  `json:"failed,omitempty"`
+}
+
+type sessionOperationAcceptedResponse struct {
+	OperationID string `json:"operationID"`
 }
 
 type sessionOperationOutputResponse struct {
@@ -897,6 +987,7 @@ func newSessionOperationEventResponse(value *pb.SessionOperationEvent) (sessionO
 	switch {
 	case value.GetAccepted() != nil:
 		response.Type = "accepted"
+		response.Accepted = &sessionOperationAcceptedResponse{OperationID: value.GetAccepted().GetOperationId()}
 	case value.GetOutput() != nil:
 		output := value.GetOutput()
 		response.Type = "output"

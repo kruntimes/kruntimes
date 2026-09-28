@@ -249,6 +249,14 @@ message ExecuteSessionOperationRequest {
         // Renames one file or directory in the session workspace.
         SessionFileRename rename_file = 6;
     }
+    // IdempotencyKey identifies one submitted interactive operation. It is
+    // assigned by the public gateway when the caller does not provide one.
+    // Reusing a key with different operation contents is rejected.
+    string idempotency_key = 7;
+    // ResumeAfterSequence requests retained events strictly after this cursor.
+    // It is only valid for StreamSessionOperation and must not be combined with
+    // a new operation payload.
+    int64 resume_after_sequence = 8;
 }
 
 message SessionCommand {
@@ -297,7 +305,10 @@ message SessionOperationEvent {
     }
 }
 
-message SessionOperationAccepted {}
+message SessionOperationAccepted {
+    // OperationID is the durable opaque handle used to resume this operation.
+    string operation_id = 1;
+}
 
 enum SessionOperationOutputStream {
     SESSION_OPERATION_OUTPUT_STREAM_UNSPECIFIED = 0;
