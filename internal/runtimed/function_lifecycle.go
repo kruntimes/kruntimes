@@ -25,22 +25,22 @@ import (
 const functionRegistrationTimeout = 10 * time.Second
 
 func (c *Controller) functionEndpoint(run *v1alpha1.Run) *v1alpha1.RunEndpoint {
-	if run == nil || c.GatewayURL == "" {
+	if run == nil || c.ConsoleURL == "" {
 		return nil
 	}
 	protocol := v1alpha1.RunEndpointProtocolHTTP
-	if strings.HasPrefix(strings.ToLower(c.GatewayURL), "https://") {
+	if strings.HasPrefix(strings.ToLower(c.ConsoleURL), "https://") {
 		protocol = v1alpha1.RunEndpointProtocolHTTPS
 	}
 	endpoint := &v1alpha1.RunEndpoint{
 		Protocol: protocol,
 		URL: fmt.Sprintf(
 			"%s/v1/namespaces/%s/runtimes/%s/functions/%s:invoke",
-			strings.TrimRight(c.GatewayURL, "/"), run.Namespace, run.Spec.Runtime, run.UID,
+			strings.TrimRight(c.ConsoleURL, "/"), run.Namespace, run.Spec.Runtime, run.UID,
 		),
 	}
 	if protocol == v1alpha1.RunEndpointProtocolHTTPS {
-		endpoint.CABundle = slices.Clone(c.GatewayCABundle)
+		endpoint.CABundle = slices.Clone(c.ConsoleCABundle)
 	}
 	return endpoint
 }

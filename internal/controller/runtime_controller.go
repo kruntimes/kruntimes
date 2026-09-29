@@ -41,10 +41,10 @@ const (
 	workspacePath        = "/workspace"
 	artifactStoreVolume  = "artifact-store"
 	artifactStorePath    = "/var/lib/kruntimes/artifacts"
-	gatewayCAVolume      = "gateway-ca"
-	gatewayCAPath        = "/var/run/kruntimes/gateway-ca"
-	gatewayCAFile        = "ca.crt"
-	gatewayCAAnnotation  = "kruntimes.io/gateway-ca-bundle"
+	consoleCAVolume      = "console-ca"
+	consoleCAPath        = "/var/run/kruntimes/console-ca"
+	consoleCAFile        = "ca.crt"
+	consoleCAAnnotation  = "kruntimes.io/console-ca-bundle"
 )
 
 // RuntimeReconciler watches Runtime CRs and creates Deployments with runtimed sidecar.
@@ -55,10 +55,10 @@ type RuntimeReconciler struct {
 
 	DefaultDaemonImage         string
 	RuntimedServiceAccountName string
-	GatewayNamespace           string
-	GatewaySelectorLabels      map[string]string
-	GatewayURL                 string
-	GatewayCABundle            []byte
+	ConsoleNamespace           string
+	ConsoleSelectorLabels      map[string]string
+	ConsoleURL                 string
+	ConsoleCABundle            []byte
 	SessionMaxQueueSize        int
 	SessionMaxOperationTimeout time.Duration
 	SessionCloseTimeout        time.Duration
@@ -75,6 +75,7 @@ type RuntimeReconciler struct {
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=core,resources=pods/status,verbs=get;patch
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=create;get;list;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -318,16 +319,16 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		},
 	}
 	daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--runtime-name=%s", name))
-	if r.GatewayURL != "" {
-		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--gateway-url=%s", r.GatewayURL))
+	if r.ConsoleURL != "" {
+		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--console-url=%s", r.ConsoleURL))
 	}
-	if len(r.GatewayCABundle) > 0 {
-		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--gateway-ca-file=%s/%s", gatewayCAPath, gatewayCAFile))
-		daemonContainer.VolumeMounts = append(daemonContainer.VolumeMounts, corev1.VolumeMount{Name: gatewayCAVolume, MountPath: gatewayCAPath, ReadOnly: true})
+	if len(r.ConsoleCABundle) > 0 {
+		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--console-ca-file=%s/%s", consoleCAPath, consoleCAFile))
+		daemonContainer.VolumeMounts = append(daemonContainer.VolumeMounts, corev1.VolumeMount{Name: consoleCAVolume, MountPath: consoleCAPath, ReadOnly: true})
 		if annotations == nil {
 			annotations = make(map[string]string)
 		}
-		annotations[gatewayCAAnnotation] = string(r.GatewayCABundle)
+		annotations[consoleCAAnnotation] = string(r.ConsoleCABundle)
 	}
 	if r.SessionMaxQueueSize > 0 {
 		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--session-max-queue-size=%d", r.SessionMaxQueueSize))
@@ -344,7 +345,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 
 	volumes := make([]corev1.Volume, 0, len(template.Spec.Volumes)+2)
 	for _, volume := range template.Spec.Volumes {
-		if volume.Name != workspaceVolume && volume.Name != artifactStoreVolume && volume.Name != gatewayCAVolume {
+		if volume.Name != workspaceVolume && volume.Name != artifactStoreVolume && volume.Name != consoleCAVolume {
 			volumes = append(volumes, volume)
 		}
 	}
@@ -354,13 +355,13 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			VolumeSource: workspaceVolumeSource(rt.Spec.Workspace),
 		},
 	)
-	if len(r.GatewayCABundle) > 0 {
+	if len(r.ConsoleCABundle) > 0 {
 		volumes = append(volumes, corev1.Volume{
-			Name: gatewayCAVolume,
+			Name: consoleCAVolume,
 			VolumeSource: corev1.VolumeSource{DownwardAPI: &corev1.DownwardAPIVolumeSource{
 				Items: []corev1.DownwardAPIVolumeFile{{
-					Path:     gatewayCAFile,
-					FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.annotations['" + gatewayCAAnnotation + "']"},
+					Path:     consoleCAFile,
+					FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.annotations['" + consoleCAAnnotation + "']"},
 				}},
 			}},
 		})
@@ -501,6 +502,11 @@ func (r *RuntimeReconciler) buildRuntimedRole(rt *v1alpha1.Runtime) *rbacv1.Role
 			},
 			{
 				APIGroups: []string{""},
+				Resources: []string{"configmaps"},
+				Verbs:     []string{"create", "get", "list", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{""},
 				Resources: []string{"events"},
 				Verbs:     []string{"create", "patch"},
 			},
@@ -556,7 +562,7 @@ func (r *RuntimeReconciler) buildNetworkPolicy(rt *v1alpha1.Runtime) *networking
 		"app":        "kruntimes-" + rt.Name,
 	}
 	ingress := []networkingv1.NetworkPolicyIngressRule(nil)
-	if r.GatewayNamespace != "" {
+	if r.ConsoleNamespace != "" {
 		ingress = []networkingv1.NetworkPolicyIngressRule{
 			{
 				From: []networkingv1.NetworkPolicyPeer{{
@@ -567,9 +573,9 @@ func (r *RuntimeReconciler) buildNetworkPolicy(rt *v1alpha1.Runtime) *networking
 			{
 				From: []networkingv1.NetworkPolicyPeer{{
 					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-						"kubernetes.io/metadata.name": r.GatewayNamespace,
+						"kubernetes.io/metadata.name": r.ConsoleNamespace,
 					}},
-					PodSelector: &metav1.LabelSelector{MatchLabels: r.gatewaySelectorLabels()},
+					PodSelector: &metav1.LabelSelector{MatchLabels: r.consoleSelectorLabels()},
 				}},
 				Ports: sessionRuntimeNetworkPolicyPorts(),
 			},
@@ -593,11 +599,11 @@ func (r *RuntimeReconciler) buildNetworkPolicy(rt *v1alpha1.Runtime) *networking
 	}
 }
 
-func (r *RuntimeReconciler) gatewaySelectorLabels() map[string]string {
-	if len(r.GatewaySelectorLabels) != 0 {
-		return maps.Clone(r.GatewaySelectorLabels)
+func (r *RuntimeReconciler) consoleSelectorLabels() map[string]string {
+	if len(r.ConsoleSelectorLabels) != 0 {
+		return maps.Clone(r.ConsoleSelectorLabels)
 	}
-	return map[string]string{"app.kubernetes.io/component": "runtime-gateway"}
+	return map[string]string{"app.kubernetes.io/component": "console"}
 }
 
 func sessionRuntimeNetworkPolicyPorts() []networkingv1.NetworkPolicyPort {

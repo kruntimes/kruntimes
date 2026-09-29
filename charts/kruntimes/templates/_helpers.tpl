@@ -57,69 +57,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- printf "%s-runtimed" ((include "kruntimes.fullname" .) | trunc 54 | trimSuffix "-") }}
 {{- end }}
 
-{{- define "kruntimes.gateway.name" -}}
-{{- printf "%s-gateway" ((include "kruntimes.fullname" .) | trunc 56 | trimSuffix "-") }}
-{{- end }}
-
-{{- define "kruntimes.gateway.validateProtocols" -}}
-{{- if eq (len .Values.gateway.protocols) 0 -}}{{- fail "gateway.protocols must include http or https" -}}{{- end -}}
-{{- $seen := dict -}}
-{{- range $protocol := .Values.gateway.protocols -}}
-{{- if not (or (eq $protocol "http") (eq $protocol "https")) -}}{{- fail "gateway.protocols values must be http or https" -}}{{- end -}}
-{{- if hasKey $seen $protocol -}}{{- fail "gateway.protocols values must be distinct" -}}{{- end -}}
-{{- $_ := set $seen $protocol true -}}
-{{- end -}}
-{{- end }}
-{{- define "kruntimes.gateway.validateTransferBounds" -}}
-{{- if le (int64 .Values.gateway.maxRequestBodyBytes) 0 -}}{{- fail "gateway.maxRequestBodyBytes must be positive" -}}{{- end -}}
-{{- if le (int64 .Values.gateway.maxResponseBodyBytes) 0 -}}{{- fail "gateway.maxResponseBodyBytes must be positive" -}}{{- end -}}
-{{- if le (int64 .Values.gateway.maxHeaderBytes) 0 -}}{{- fail "gateway.maxHeaderBytes must be positive" -}}{{- end -}}
-{{- end }}
-{{- define "kruntimes.gateway.tlsSecretName" -}}
-{{- default (printf "%s-tls" (include "kruntimes.gateway.name" .)) .Values.gateway.tls.secretName -}}
-{{- end }}
-{{- define "kruntimes.gateway.ensureTLSCertificates" -}}
-{{- if not (hasKey .Values "_gatewayCertificates") -}}
-{{- $secretName := include "kruntimes.gateway.tlsSecretName" . -}}
-{{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
-{{- if $existing -}}
-{{- if not (hasKey $existing.data .Values.gateway.tls.caBundleKey) -}}{{- fail (printf "gateway TLS Secret %q must contain CA bundle key %q" $secretName .Values.gateway.tls.caBundleKey) -}}{{- end -}}
-{{- if not (hasKey $existing.data .Values.gateway.tls.certificateKey) -}}{{- fail (printf "gateway TLS Secret %q must contain certificate key %q" $secretName .Values.gateway.tls.certificateKey) -}}{{- end -}}
-{{- if not (hasKey $existing.data .Values.gateway.tls.privateKeyKey) -}}{{- fail (printf "gateway TLS Secret %q must contain private key key %q" $secretName .Values.gateway.tls.privateKeyKey) -}}{{- end -}}
-{{- $_ := set .Values "_gatewayCertificates" (dict "caCert" (index $existing.data .Values.gateway.tls.caBundleKey | b64dec) "tlsCert" (index $existing.data .Values.gateway.tls.certificateKey | b64dec) "tlsKey" (index $existing.data .Values.gateway.tls.privateKeyKey | b64dec)) -}}
-{{- else if not .Values.gateway.tls.secretName -}}
-{{- $ca := genCA (printf "%s-ca" (include "kruntimes.gateway.name" .)) 3650 -}}
-{{- $name := include "kruntimes.gateway.name" . -}}
-{{- $dns := list $name (printf "%s.%s" $name .Release.Namespace) (printf "%s.%s.svc" $name .Release.Namespace) (printf "%s.%s.svc.cluster.local" $name .Release.Namespace) -}}
-{{- $certificate := genSignedCert $name nil $dns 365 $ca -}}
-{{- $_ := set .Values "_gatewayCertificates" (dict "caCert" $ca.Cert "tlsCert" $certificate.Cert "tlsKey" $certificate.Key) -}}
-{{- else -}}
-{{- fail (printf "gateway TLS Secret %q was not found" $secretName) -}}
-{{- end -}}
-{{- end -}}
-{{- end }}
-{{- define "kruntimes.gateway.validateTLS" -}}
-{{- if has "https" .Values.gateway.protocols -}}
-{{- if not .Values.gateway.tls.certificateKey -}}
-{{- fail "gateway.tls.certificateKey is required when gateway.protocols includes https" -}}
-{{- end -}}
-{{- if not .Values.gateway.tls.privateKeyKey -}}
-{{- fail "gateway.tls.privateKeyKey is required when gateway.protocols includes https" -}}
-{{- end -}}
-{{- if .Values.gateway.tls.certManager.enabled -}}
-{{- if not .Values.gateway.tls.secretName -}}
-{{- fail "gateway.tls.secretName is required when gateway.tls.certManager.enabled is true" -}}
-{{- end -}}
-{{- if not .Values.gateway.tls.certManager.issuerRef.name -}}
-{{- fail "gateway.tls.certManager.issuerRef.name is required when gateway.tls.certManager.enabled is true" -}}
-{{- end -}}
-{{- end -}}
-{{- if and .Values.gateway.tls.clientCASecretName (not .Values.gateway.tls.clientCAKey) -}}
-{{- fail "gateway.tls.clientCAKey is required when gateway.tls.clientCASecretName is set" -}}
-{{- end -}}
-{{- end -}}
-{{- end }}
-
 {{- define "kruntimes.controller.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "kruntimes.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -130,12 +67,6 @@ app.kubernetes.io/component: controller
 app.kubernetes.io/name: {{ include "kruntimes.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: scheduler
-{{- end }}
-
-{{- define "kruntimes.gateway.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "kruntimes.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: runtime-gateway
 {{- end }}
 
 {{- define "kruntimes.controller.labels" -}}
@@ -154,12 +85,6 @@ app: kruntimes-scheduler
 {{ include "kruntimes.labels" . }}
 app.kubernetes.io/component: runtimed
 app: kruntimes-runtimed
-{{- end }}
-
-{{- define "kruntimes.gateway.labels" -}}
-{{ include "kruntimes.labels" . }}
-app.kubernetes.io/component: runtime-gateway
-app: kruntimes-runtime-gateway
 {{- end }}
 
 {{- define "kruntimes.logAPI.name" -}}
@@ -197,48 +122,54 @@ app: kruntimes-runtime-log-api
 {{- end -}}
 {{- end }}
 
-{{- define "kruntimes.dashboard.name" -}}
-{{- printf "%s-dashboard" ((include "kruntimes.fullname" .) | trunc 54 | trimSuffix "-") -}}
+{{- define "kruntimes.console.name" -}}
+{{- printf "%s-console" ((include "kruntimes.fullname" .) | trunc 56 | trimSuffix "-") -}}
 {{- end }}
 
-{{- define "kruntimes.dashboard.selectorLabels" -}}
+{{- define "kruntimes.console.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "kruntimes.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: dashboard
+app.kubernetes.io/component: console
 {{- end }}
 
-{{- define "kruntimes.dashboard.labels" -}}
+{{- define "kruntimes.console.labels" -}}
 {{ include "kruntimes.labels" . }}
-app.kubernetes.io/component: dashboard
-app: kruntimes-dashboard
+app.kubernetes.io/component: console
+app: kruntimes-console
 {{- end }}
 
-{{- define "kruntimes.dashboard.tlsSecretName" -}}
-{{- default (printf "%s-tls" (include "kruntimes.dashboard.name" .)) .Values.dashboard.tls.secretName -}}
+{{- define "kruntimes.console.tlsSecretName" -}}
+{{- default (printf "%s-tls" (include "kruntimes.console.name" .)) .Values.console.tls.secretName -}}
 {{- end }}
 
-{{- define "kruntimes.dashboard.validateTLS" -}}
-{{- if not .Values.dashboard.tls.certificateKey -}}{{- fail "dashboard.tls.certificateKey is required" -}}{{- end -}}
-{{- if not .Values.dashboard.tls.privateKeyKey -}}{{- fail "dashboard.tls.privateKeyKey is required" -}}{{- end -}}
-{{- if and .Values.dashboard.tls.selfSigned .Values.dashboard.tls.certManager.enabled -}}{{- fail "dashboard.tls.selfSigned and dashboard.tls.certManager.enabled are mutually exclusive" -}}{{- end -}}
-{{- if and (not .Values.dashboard.tls.selfSigned) (not .Values.dashboard.tls.certManager.enabled) (not .Values.dashboard.tls.secretName) -}}{{- fail "dashboard.tls.secretName is required when using an existing TLS Secret" -}}{{- end -}}
-{{- if and .Values.dashboard.tls.certManager.enabled (not .Values.dashboard.tls.certManager.issuerRef.name) -}}{{- fail "dashboard.tls.certManager.issuerRef.name is required when dashboard.tls.certManager.enabled is true" -}}{{- end -}}
+{{- define "kruntimes.console.validateTLS" -}}
+{{- if not .Values.console.tls.certificateKey -}}{{- fail "console.tls.certificateKey is required" -}}{{- end -}}
+{{- if not .Values.console.tls.privateKeyKey -}}{{- fail "console.tls.privateKeyKey is required" -}}{{- end -}}
+{{- if not .Values.console.tls.caBundleKey -}}{{- fail "console.tls.caBundleKey is required" -}}{{- end -}}
+{{- if le (int64 .Values.console.access.maxRequestBodyBytes) 0 -}}{{- fail "console.access.maxRequestBodyBytes must be positive" -}}{{- end -}}
+{{- if le (int64 .Values.console.access.maxResponseBodyBytes) 0 -}}{{- fail "console.access.maxResponseBodyBytes must be positive" -}}{{- end -}}
+{{- if le (int64 .Values.console.access.maxHeaderBytes) 0 -}}{{- fail "console.access.maxHeaderBytes must be positive" -}}{{- end -}}
+{{- if and .Values.console.tls.selfSigned .Values.console.tls.certManager.enabled -}}{{- fail "console.tls.selfSigned and console.tls.certManager.enabled are mutually exclusive" -}}{{- end -}}
+{{- if and (not .Values.console.tls.selfSigned) (not .Values.console.tls.certManager.enabled) (not .Values.console.tls.secretName) -}}{{- fail "console.tls.secretName is required when using an existing TLS Secret" -}}{{- end -}}
+{{- if and .Values.console.tls.certManager.enabled (not .Values.console.tls.certManager.issuerRef.name) -}}{{- fail "console.tls.certManager.issuerRef.name is required when console.tls.certManager.enabled is true" -}}{{- end -}}
+{{- if and .Values.console.tls.clientCASecretName (not .Values.console.tls.clientCAKey) -}}{{- fail "console.tls.clientCAKey is required when console.tls.clientCASecretName is set" -}}{{- end -}}
 {{- end }}
 
-{{- define "kruntimes.dashboard.ensureTLSCertificates" -}}
-{{- if not (hasKey .Values "_dashboardCertificates") -}}
-{{- $secretName := include "kruntimes.dashboard.tlsSecretName" . -}}
+{{- define "kruntimes.console.ensureTLSCertificates" -}}
+{{- if not (hasKey .Values "_consoleCertificates") -}}
+{{- $secretName := include "kruntimes.console.tlsSecretName" . -}}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
 {{- if $existing -}}
-{{- if not (hasKey $existing.data .Values.dashboard.tls.certificateKey) -}}{{- fail (printf "dashboard TLS Secret %q must contain certificate key %q" $secretName .Values.dashboard.tls.certificateKey) -}}{{- end -}}
-{{- if not (hasKey $existing.data .Values.dashboard.tls.privateKeyKey) -}}{{- fail (printf "dashboard TLS Secret %q must contain private key key %q" $secretName .Values.dashboard.tls.privateKeyKey) -}}{{- end -}}
-{{- $_ := set .Values "_dashboardCertificates" (dict "tlsCert" (index $existing.data .Values.dashboard.tls.certificateKey | b64dec) "tlsKey" (index $existing.data .Values.dashboard.tls.privateKeyKey | b64dec)) -}}
+{{- if not (hasKey $existing.data .Values.console.tls.caBundleKey) -}}{{- fail (printf "console TLS Secret %q must contain CA bundle key %q" $secretName .Values.console.tls.caBundleKey) -}}{{- end -}}
+{{- if not (hasKey $existing.data .Values.console.tls.certificateKey) -}}{{- fail (printf "console TLS Secret %q must contain certificate key %q" $secretName .Values.console.tls.certificateKey) -}}{{- end -}}
+{{- if not (hasKey $existing.data .Values.console.tls.privateKeyKey) -}}{{- fail (printf "console TLS Secret %q must contain private key key %q" $secretName .Values.console.tls.privateKeyKey) -}}{{- end -}}
+{{- $_ := set .Values "_consoleCertificates" (dict "caCert" (index $existing.data .Values.console.tls.caBundleKey | b64dec) "tlsCert" (index $existing.data .Values.console.tls.certificateKey | b64dec) "tlsKey" (index $existing.data .Values.console.tls.privateKeyKey | b64dec)) -}}
 {{- else -}}
-{{- $name := include "kruntimes.dashboard.name" . -}}
+{{- $name := include "kruntimes.console.name" . -}}
 {{- $dns := list $name (printf "%s.%s" $name .Release.Namespace) (printf "%s.%s.svc" $name .Release.Namespace) (printf "%s.%s.svc.cluster.local" $name .Release.Namespace) -}}
 {{- $ca := genCA (printf "%s-ca" $name) 3650 -}}
 {{- $certificate := genSignedCert $name nil $dns 365 $ca -}}
-{{- $_ := set .Values "_dashboardCertificates" (dict "tlsCert" $certificate.Cert "tlsKey" $certificate.Key) -}}
+{{- $_ := set .Values "_consoleCertificates" (dict "caCert" $ca.Cert "tlsCert" $certificate.Cert "tlsKey" $certificate.Key) -}}
 {{- end -}}
 {{- end -}}
 {{- end }}

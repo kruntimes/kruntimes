@@ -237,6 +237,9 @@ controller wiring 累积不必要的冲突。
       invalid artifact 与 Runtime Pod loss 的测试覆盖；
   - [x] 增加 Python 和 Go SDK：create/open/wait/execute/files/logs/close helpers、typed errors、
     direct in-cluster access 与 local port-forward support；
+  - [ ] 增加通用的 [Session operation 流式事件](design/session-operation-streaming.md)，用于
+    interactive Runtime 的 progress 与 terminal event；后续再扩展 idempotent submission 和可恢复的
+    cursor-based replay；
   - [x] 增加 Kubernetes diagnosis agent 示例，使用 Session Run 实现 multi-step scripts、files、
     results 和 cleanup；在 feature 被视为 supported 前用该示例发现剩余 product gaps；
   - [x] 增加 registration、ordering、timeout、cancellation、idle expiry、cleanup、authorization、

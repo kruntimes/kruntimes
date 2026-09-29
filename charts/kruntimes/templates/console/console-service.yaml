@@ -1,0 +1,17 @@
+{{- include "kruntimes.console.validateTLS" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kruntimes.console.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kruntimes.console.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "kruntimes.console.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ .Values.console.servicePort }}
+      targetPort: https
+      protocol: TCP

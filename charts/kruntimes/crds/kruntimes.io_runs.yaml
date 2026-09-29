@@ -1210,7 +1210,7 @@ spec:
                 x-kubernetes-list-type: map
               endpoint:
                 description: |-
-                  Endpoint is the stable gateway endpoint for a ready function or session
+                  Endpoint is the stable Console Runtime access endpoint for a ready function or session
                   Run. It is absent for one-shot task Runs.
                 properties:
                   caBundle:

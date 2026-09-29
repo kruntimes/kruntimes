@@ -54,6 +54,44 @@ func TestSandboxCreateAndExecute(t *testing.T) {
 	}
 }
 
+func TestSandboxStreamsAndResumesOperationEvents(t *testing.T) {
+	requests := 0
+	sandbox := readySandbox(t, httpDoer(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			if request.Method != http.MethodPost || request.Header.Get("Idempotency-Key") != "turn-1" || request.URL.Query().Get("after") != "" {
+				t.Fatalf("start request = %s %s headers=%v", request.Method, request.URL, request.Header)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{\"sequence\":1,\"type\":\"accepted\",\"accepted\":{\"operationID\":\"turn-1\"}}\n{\"sequence\":2,\"type\":\"completed\",\"completed\":{\"command\":{\"exitCode\":0}}}\n"))}, nil
+		}
+		if request.Method != http.MethodGet || !strings.Contains(request.URL.Path, "/operations/turn-1:stream") || request.URL.Query().Get("after") != "1" {
+			t.Fatalf("resume request = %s %s", request.Method, request.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{\"sequence\":2,\"type\":\"completed\",\"completed\":{\"command\":{\"exitCode\":0}}}\n"))}, nil
+	}))
+	stream, err := sandbox.Stream(t.Context(), Command{Argv: []string{"echo", "ok"}}, StreamOptions{IdempotencyKey: "turn-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := stream.Next()
+	if err != nil || first.Accepted == nil || first.Accepted.OperationID != "turn-1" {
+		t.Fatalf("first event = %#v, err = %v", first, err)
+	}
+	if _, err := stream.Next(); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := sandbox.Resume(t.Context(), "turn-1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event, err := resumed.Next(); err != nil || event.Sequence != 2 {
+		t.Fatalf("resumed event = %#v, err = %v", event, err)
+	}
+}
+
 func TestSandboxFileMutationsUseGatewayOperationNames(t *testing.T) {
 	operations := []string{}
 	sandbox := readySandbox(t, httpDoer(func(request *http.Request) (*http.Response, error) {
@@ -248,8 +286,8 @@ func TestSandboxRejectsEndpointForAnotherRun(t *testing.T) {
 	}
 }
 
-func TestGatewayPortForwardPreservesRunEndpointPath(t *testing.T) {
-	forward := &GatewayPortForward{
+func TestConsolePortForwardPreservesRunEndpointPath(t *testing.T) {
+	forward := &ConsolePortForward{
 		httpClient: httpDoer(func(request *http.Request) (*http.Response, error) {
 			if request.URL.String() != "http://127.0.0.1:19090/v1/namespaces/default/runtimes/bash/sessions/run-uid/files?maxBytes=10" {
 				t.Fatalf("forwarded URL = %q", request.URL)
@@ -269,14 +307,14 @@ func TestGatewayPortForwardPreservesRunEndpointPath(t *testing.T) {
 	response.Body.Close()
 }
 
-func TestReadyGatewayPodSelectsReadyServiceBackend(t *testing.T) {
+func TestReadyConsolePodSelectsReadyServiceBackend(t *testing.T) {
 	clientset := kubernetesfake.NewSimpleClientset(
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "platform"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "gateway"}}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "gateway-z", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "gateway-a", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "not-ready", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodPending}},
 	)
-	pod, err := readyGatewayPod(t.Context(), clientset.CoreV1(), "platform", "gateway")
+	pod, err := readyConsolePod(t.Context(), clientset.CoreV1(), "platform", "gateway")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,16 +323,16 @@ func TestReadyGatewayPodSelectsReadyServiceBackend(t *testing.T) {
 	}
 }
 
-func TestReadyGatewayBackendUsesServiceTargetPort(t *testing.T) {
+func TestReadyConsoleBackendUsesServiceTargetPort(t *testing.T) {
 	clientset := kubernetesfake.NewSimpleClientset(
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "platform"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "gateway"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(8084)}}}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
 	)
-	pod, port, err := readyGatewayBackend(t.Context(), clientset.CoreV1(), "platform", "gateway", 80)
+	pod, port, tlsEnabled, err := readyConsoleBackend(t.Context(), clientset.CoreV1(), "platform", "gateway", 80)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pod != "gateway" || port != 8084 {
-		t.Fatalf("gateway backend = %q:%d, want gateway:8084", pod, port)
+	if pod != "gateway" || port != 8084 || tlsEnabled {
+		t.Fatalf("gateway backend = %q:%d TLS=%t, want gateway:8084 TLS=false", pod, port, tlsEnabled)
 	}
 }

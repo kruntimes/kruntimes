@@ -68,74 +68,8 @@ controller:
       cpu: 500m
       memory: 256Mi
 
-gateway:
-  enabled: false
-  image: ghcr.io/kruntimes/gateway
-  imagePullPolicy: IfNotPresent
-  replicas: 2
-  protocols:
-    - http
-  httpBindAddress: ":8084"
-  httpsBindAddress: ":8444"
-  metricsBindAddress: ":8085"
-  probeBindAddress: ":8086"
-  httpServicePort: 80
-  httpsServicePort: 443
-  httpPort: 8084
-  httpsPort: 8444
-  metricsPort: 8085
-  probePort: 8086
-  authorizationCacheTTL: 30s
-  authorizationCacheCapacity: 1024
-  maxConcurrentRequests: 128
-  maxRequestBodyBytes: 1048576
-  maxResponseBodyBytes: 1048576
-  maxHeaderBytes: 1048576
-  tls:
-    # Empty selects the chart-managed <gateway-name>-tls Secret. certManager
-    # requires an explicit name and an issuer that writes this CA bundle key.
-    secretName: ""
-    certificateKey: tls.crt
-    privateKeyKey: tls.key
-    caBundleKey: ca.crt
-    # Optional Secret holding the CA that signs Kubernetes user client
-    # certificates. When set, the HTTPS Gateway accepts a verified client
-    # certificate and authorizes its CN/O with a SubjectAccessReview.
-    clientCASecretName: ""
-    clientCAKey: ca.crt
-    certManager:
-      enabled: false
-      issuerRef:
-        name: ""
-        kind: Issuer
-        group: cert-manager.io
-  podAnnotations: {}
-  podSecurityContext:
-    seccompProfile:
-      type: RuntimeDefault
-  securityContext:
-    allowPrivilegeEscalation: false
-    readOnlyRootFilesystem: true
-    runAsNonRoot: true
-    capabilities:
-      drop:
-        - ALL
-  nodeSelector: {}
-  tolerations: []
-  affinity: {}
-  topologySpreadConstraints: []
-  priorityClassName: ""
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 256Mi
-
-# The aggregated Run-log API is intentionally independent from gateway.enabled:
-# kubectl/krt and the Dashboard can use normal kubeconfig authentication even
-# when no externally reachable Runtime Gateway is installed.
+# The aggregated Run-log API is independently authenticated through Kubernetes
+# aggregation. kubectl, krt, and the Console use normal kubeconfig credentials.
 logAPI:
   enabled: true
   image: ghcr.io/kruntimes/runtime-log-apiserver
@@ -160,16 +94,15 @@ logAPI:
       cpu: 500m
       memory: 256Mi
 
-dashboard:
-  enabled: false
-  image: ghcr.io/kruntimes/dashboard
+console:
+  image: ghcr.io/kruntimes/console
   imagePullPolicy: IfNotPresent
   replicas: 2
   bindAddress: ":8443"
   servicePort: 443
   containerPort: 8443
   publicRead:
-    # When enabled, the Dashboard ServiceAccount may list namespaces, Runs,
+    # When enabled, the Console ServiceAccount may list namespaces, Runs,
     # Runtimes, and WorkflowRuns without a user token. Details require a caller
     # Kubernetes bearer token. Log access is relayed through the aggregated
     # Run-log API, so callers do not need pods/log permission.
@@ -182,6 +115,12 @@ dashboard:
     secretName: ""
     certificateKey: tls.crt
     privateKeyKey: tls.key
+    caBundleKey: ca.crt
+    # Optional Secret holding the CA that signs Kubernetes user client
+    # certificates. When set, Console accepts a verified client certificate
+    # for the Runtime access API and authorizes its CN/O with a SAR.
+    clientCASecretName: ""
+    clientCAKey: ca.crt
     selfSigned: true
     certManager:
       enabled: false
@@ -189,6 +128,13 @@ dashboard:
         name: ""
         kind: Issuer
         group: cert-manager.io
+  access:
+    authorizationCacheTTL: 30s
+    authorizationCacheCapacity: 1024
+    maxConcurrentRequests: 128
+    maxRequestBodyBytes: 1048576
+    maxResponseBodyBytes: 1048576
+    maxHeaderBytes: 1048576
   podAnnotations: {}
   podSecurityContext:
     seccompProfile:

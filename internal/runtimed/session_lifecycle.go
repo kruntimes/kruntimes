@@ -156,7 +156,7 @@ func (c *Controller) applySessionReady(ctx context.Context, ar *activeRun) (ctrl
 		Type:               runstatus.ConditionReady,
 		Status:             metav1.ConditionTrue,
 		Reason:             "SessionRegistered",
-		Message:            "session is ready for gateway operations",
+		Message:            "session is ready for Console operations",
 		LastTransitionTime: metav1.Now(),
 	})
 	if err := c.Status().Update(ctx, run); err != nil {
@@ -171,25 +171,25 @@ func (c *Controller) applySessionReady(ctx context.Context, ar *activeRun) (ctrl
 }
 
 func (c *Controller) sessionEndpoint(run *v1alpha1.Run) *v1alpha1.RunEndpoint {
-	if run == nil || c.GatewayURL == "" {
+	if run == nil || c.ConsoleURL == "" {
 		return nil
 	}
 	protocol := v1alpha1.RunEndpointProtocolHTTP
-	if strings.HasPrefix(strings.ToLower(c.GatewayURL), "https://") {
+	if strings.HasPrefix(strings.ToLower(c.ConsoleURL), "https://") {
 		protocol = v1alpha1.RunEndpointProtocolHTTPS
 	}
 	endpoint := &v1alpha1.RunEndpoint{
 		Protocol: protocol,
 		URL: fmt.Sprintf(
 			"%s/v1/namespaces/%s/runtimes/%s/sessions/%s",
-			strings.TrimRight(c.GatewayURL, "/"),
+			strings.TrimRight(c.ConsoleURL, "/"),
 			run.Namespace,
 			run.Spec.Runtime,
 			run.UID,
 		),
 	}
 	if protocol == v1alpha1.RunEndpointProtocolHTTPS {
-		endpoint.CABundle = slices.Clone(c.GatewayCABundle)
+		endpoint.CABundle = slices.Clone(c.ConsoleCABundle)
 	}
 	return endpoint
 }
@@ -249,7 +249,7 @@ func (c *Controller) closeSessionAndApplyTerminal(ctx context.Context, ar *activ
 	return c.applyTerminal(ctx, ar, phase, reason, message)
 }
 
-// beginSessionFinalization fences new gateway operations by moving the Run to
+// beginSessionFinalization fences new Console operations by moving the Run to
 // Finalizing. Owner runtimed then drains operations already accepted by its
 // local FIFO queue before closing the Runtime Server session.
 func (c *Controller) beginSessionFinalization(ctx context.Context, ar *activeRun) (ctrl.Result, error) {
@@ -306,7 +306,7 @@ func (c *Controller) reconcileFinalizing(ctx context.Context, run *v1alpha1.Run)
 // completeFinalizingSession exports the immutable final artifact directory
 // only after the local Session Runtime has stopped accepting operations.
 // Transient store errors leave the Run Finalizing so the same directory can be
-// retried without admitting further gateway work.
+// retried without admitting further Console work.
 func (c *Controller) completeFinalizingSession(ctx context.Context, ar *activeRun) (ctrl.Result, error) {
 	artifactRefs, err := c.collectArtifacts(ctx, ar)
 	if err != nil {

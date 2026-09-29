@@ -16,7 +16,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlparse, urlunparse
 from urllib.request import Request, urlopen
 
-from .sandbox import GatewayTransport, HTTPResponse, LogReader, RunClient, SandboxClient
+from .sandbox import GatewayTransport, HTTPResponse, LogReader, RunClient, SandboxClient, StreamingHTTPResponse
 
 _GROUP = "kruntimes.io"
 _VERSION = "v1alpha1"
@@ -71,6 +71,14 @@ class UrllibGatewayTransport(GatewayTransport):
                 return HTTPResponse(response.status, response.read(1 << 20))
         except HTTPError as error:
             return HTTPResponse(error.code, error.read(1 << 20))
+
+    def stream_request(self, method: str, url: str, body: bytes | None, headers: Mapping[str, str]) -> StreamingHTTPResponse:
+        request = Request(url, data=body, headers=dict(headers), method=method)
+        try:
+            response = urlopen(request)  # noqa: S310 - endpoint is derived from Run status
+            return StreamingHTTPResponse(response.status, iter(response), response.close)
+        except HTTPError as error:
+            return StreamingHTTPResponse(error.code, iter(error), error.close)
 
 
 class PortForwardGatewayTransport(GatewayTransport):
@@ -131,6 +139,12 @@ class PortForwardGatewayTransport(GatewayTransport):
         local = urlparse(self._local_url)
         local_url = urlunparse(original._replace(scheme=local.scheme, netloc=local.netloc))
         return self._upstream.request(method, local_url, body, headers)
+
+    def stream_request(self, method: str, url: str, body: bytes | None, headers: Mapping[str, str]) -> StreamingHTTPResponse:
+        if self._process is not None and self._process.poll() is not None:
+            raise RuntimeError("Runtime gateway port-forward exited")
+        original, local = urlparse(url), urlparse(self._local_url)
+        return self._upstream.stream_request(method, urlunparse(original._replace(scheme=local.scheme, netloc=local.netloc)), body, headers)
 
     def close(self) -> None:
         """Stop the scoped port-forward process, if this transport started one."""

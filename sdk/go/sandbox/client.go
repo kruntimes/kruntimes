@@ -29,7 +29,7 @@ import (
 
 const defaultPollInterval = 500 * time.Millisecond
 
-// HTTPDoer is the HTTP transport used for Runtime gateway requests.
+// HTTPDoer is the HTTP transport used for Console Runtime access requests.
 type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
@@ -48,7 +48,7 @@ type Client struct {
 	pollInterval time.Duration
 }
 
-// Config supplies the explicit Kubernetes and gateway dependencies for Client.
+// Config supplies the explicit Kubernetes and Console dependencies for Client.
 // Callers may use a Kubernetes-configured HTTP client that injects credentials
 // instead of BearerToken.
 type Config struct {
@@ -59,7 +59,7 @@ type Config struct {
 	PollInterval time.Duration
 }
 
-// New constructs a Sandbox client. Kubernetes and gateway dependencies are
+// New constructs a Sandbox client. Kubernetes and Console dependencies are
 // explicit so the same client works for in-cluster, local, and test transports.
 func New(config Config) (*Client, error) {
 	if config.Runs == nil {
@@ -94,7 +94,7 @@ func NewFromRESTConfig(config *rest.Config, options Config) (*Client, error) {
 	if options.HTTPClient == nil {
 		httpClient, err := rest.HTTPClientFor(config)
 		if err != nil {
-			return nil, fmt.Errorf("create Runtime gateway HTTP client: %w", err)
+			return nil, fmt.Errorf("create Console HTTP client: %w", err)
 		}
 		options.HTTPClient = httpClient
 	}
@@ -299,6 +299,157 @@ type CommandResult struct {
 	TimedOut bool   `json:"timedOut,omitempty"`
 }
 
+// StreamOptions controls durable Session operation streaming. Supplying an
+// IdempotencyKey makes retries safe; the accepted event exposes the generated
+// OperationID when this field is empty.
+type StreamOptions struct {
+	IdempotencyKey string
+	AfterSequence  int64
+}
+
+// OperationEvent is one ordered event emitted by a streaming Session operation.
+type OperationEvent struct {
+	Sequence int64  `json:"sequence"`
+	Type     string `json:"type"`
+	Accepted *struct {
+		OperationID string `json:"operationID"`
+	} `json:"accepted,omitempty"`
+	Output    *OperationOutput   `json:"output,omitempty"`
+	Progress  *OperationProgress `json:"progress,omitempty"`
+	Completed *struct {
+		Command *CommandResult `json:"command,omitempty"`
+	} `json:"completed,omitempty"`
+	Failed *OperationFailure `json:"failed,omitempty"`
+}
+
+type OperationOutput struct {
+	Stream string `json:"stream"`
+	Data   []byte `json:"data,omitempty"`
+}
+type OperationProgress struct {
+	Kind        string `json:"kind"`
+	Message     string `json:"message,omitempty"`
+	ToolCallID  string `json:"toolCallID,omitempty"`
+	ToolName    string `json:"toolName,omitempty"`
+	Data        []byte `json:"data,omitempty"`
+	ContentType string `json:"contentType,omitempty"`
+}
+type OperationFailure struct {
+	Code    int32  `json:"code"`
+	Message string `json:"message"`
+}
+
+// OperationStream owns a single NDJSON response. Next returns io.EOF after a
+// terminal event; callers retain the last Sequence as the resume cursor.
+type OperationStream struct {
+	body         io.ReadCloser
+	decoder      *json.Decoder
+	lastSequence int64
+}
+
+func (s *OperationStream) Next() (OperationEvent, error) {
+	if s == nil || s.decoder == nil {
+		return OperationEvent{}, errors.New("operation stream is not configured")
+	}
+	var event OperationEvent
+	if err := s.decoder.Decode(&event); err != nil {
+		return OperationEvent{}, err
+	}
+	if event.Sequence != s.lastSequence+1 {
+		return OperationEvent{}, fmt.Errorf("operation event sequence %d follows %d", event.Sequence, s.lastSequence)
+	}
+	s.lastSequence = event.Sequence
+	return event, nil
+}
+
+func (s *OperationStream) Close() error {
+	if s == nil || s.body == nil {
+		return nil
+	}
+	return s.body.Close()
+}
+func (s *OperationStream) Cursor() int64 {
+	if s == nil {
+		return 0
+	}
+	return s.lastSequence
+}
+
+// Stream starts or reattaches to one command operation.
+func (s *Sandbox) Stream(ctx context.Context, command Command, options StreamOptions) (*OperationStream, error) {
+	endpoint, err := s.endpoint("operations:stream")
+	if err != nil {
+		return nil, err
+	}
+	if options.AfterSequence > 0 {
+		endpoint += "?after=" + strconv.FormatInt(options.AfterSequence, 10)
+	}
+	return s.openOperationStream(ctx, http.MethodPost, endpoint, map[string]any{"command": command}, options.IdempotencyKey)
+}
+
+// Resume replays retained events strictly after afterSequence without executing
+// the operation again.
+func (s *Sandbox) Resume(ctx context.Context, operationID string, afterSequence int64) (*OperationStream, error) {
+	if operationID == "" || afterSequence < 0 {
+		return nil, errors.New("operation ID and non-negative cursor are required")
+	}
+	endpoint, err := s.endpoint("operations/" + url.PathEscape(operationID) + ":stream")
+	if err != nil {
+		return nil, err
+	}
+	if afterSequence > 0 {
+		endpoint += "?after=" + strconv.FormatInt(afterSequence, 10)
+	}
+	return s.openOperationStream(ctx, http.MethodGet, endpoint, nil, "")
+}
+
+func (s *Sandbox) openOperationStream(ctx context.Context, method, endpoint string, body any, idempotencyKey string) (*OperationStream, error) {
+	var content io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("encode Console request: %w", err)
+		}
+		content = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, content)
+	if err != nil {
+		return nil, fmt.Errorf("build Console request: %w", err)
+	}
+	request.Header.Set("Accept", "application/x-ndjson")
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if idempotencyKey != "" {
+		request.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+	if s.client.bearerToken != "" {
+		request.Header.Set("Authorization", "Bearer "+s.client.bearerToken)
+	}
+	response, err := s.client.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("call Console Runtime access API: %w", err)
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		defer response.Body.Close()
+		var responseError struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&responseError)
+		return nil, &APIError{StatusCode: response.StatusCode, Message: responseError.Error}
+	}
+	return &OperationStream{body: response.Body, decoder: json.NewDecoder(response.Body), lastSequence: operationStreamCursor(endpoint)}, nil
+}
+
+func operationStreamCursor(endpoint string) int64 {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return 0
+	}
+	cursor, _ := strconv.ParseInt(parsed.Query().Get("after"), 10, 64)
+	return max(cursor, 0)
+}
+
 // Execute runs exactly one command. Transport errors have unknown execution
 // outcome and are intentionally never retried by this SDK.
 func (s *Sandbox) Execute(ctx context.Context, command Command) (CommandResult, error) {
@@ -310,7 +461,7 @@ func (s *Sandbox) Execute(ctx context.Context, command Command) (CommandResult, 
 		return CommandResult{}, err
 	}
 	if response.Command == nil {
-		return CommandResult{}, errors.New("gateway response did not include a command result")
+		return CommandResult{}, errors.New("Console response did not include a command result")
 	}
 	return *response.Command, nil
 }
@@ -456,14 +607,14 @@ func (s *Sandbox) Logs(ctx context.Context) ([]LogLine, error) {
 	return lines, nil
 }
 
-// APIError reports a non-success Runtime gateway response.
+// APIError reports a non-success Console Runtime access API response.
 type APIError struct {
 	StatusCode int
 	Message    string
 }
 
 func (e *APIError) Error() string {
-	return fmt.Sprintf("Runtime gateway returned HTTP %d: %s", e.StatusCode, e.Message)
+	return fmt.Sprintf("Console Runtime access API returned HTTP %d: %s", e.StatusCode, e.Message)
 }
 
 // StateError reports an invalid Session Run lifecycle state.
@@ -503,13 +654,13 @@ func (s *Sandbox) request(ctx context.Context, method, endpoint string, body, re
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("encode gateway request: %w", err)
+			return fmt.Errorf("encode Console request: %w", err)
 		}
 		content = bytes.NewReader(encoded)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, content)
 	if err != nil {
-		return fmt.Errorf("build gateway request: %w", err)
+		return fmt.Errorf("build Console request: %w", err)
 	}
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
@@ -519,19 +670,19 @@ func (s *Sandbox) request(ctx context.Context, method, endpoint string, body, re
 	}
 	result, err := s.client.httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("call Runtime gateway: %w", err)
+		return fmt.Errorf("call Console Runtime access API: %w", err)
 	}
 	defer result.Body.Close()
 	if result.StatusCode < http.StatusOK || result.StatusCode >= http.StatusMultipleChoices {
-		var gatewayError struct {
+		var responseError struct {
 			Error string `json:"error"`
 		}
-		_ = json.NewDecoder(io.LimitReader(result.Body, 1<<20)).Decode(&gatewayError)
-		return &APIError{StatusCode: result.StatusCode, Message: gatewayError.Error}
+		_ = json.NewDecoder(io.LimitReader(result.Body, 1<<20)).Decode(&responseError)
+		return &APIError{StatusCode: result.StatusCode, Message: responseError.Error}
 	}
 	if response != nil {
 		if err := json.NewDecoder(io.LimitReader(result.Body, 1<<20)).Decode(response); err != nil {
-			return fmt.Errorf("decode gateway response: %w", err)
+			return fmt.Errorf("decode Console response: %w", err)
 		}
 	}
 	return nil

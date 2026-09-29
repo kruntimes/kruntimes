@@ -2,25 +2,21 @@ package gateway
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
@@ -87,6 +83,88 @@ func TestGatewayExecutesExactlyOneOperation(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"stdout":"aGVsbG8K"`) {
 		t.Fatalf("response = %s", response.Body.String())
+	}
+}
+
+func TestGatewayStreamsSessionOperationAsNDJSON(t *testing.T) {
+	run := readySessionRun()
+	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+		if request.GetIdentity().GetRunUid() != string(run.UID) {
+			t.Fatalf("identity = %#v", request.GetIdentity())
+		}
+		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
+			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{}}},
+			{Sequence: 2, Event: &pb.SessionOperationEvent_Progress{Progress: &pb.SessionOperationProgress{Kind: pb.SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_TEXT_DELTA, Message: "working"}}},
+			{Sequence: 3, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte("done\n")}}}},
+		}}, nil
+	}}
+	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:stream", strings.NewReader(`{"command":{"argv":["echo","done"]}}`))
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/x-ndjson; charset=utf-8" {
+		t.Fatalf("content type = %q", got)
+	}
+	lines := strings.Split(strings.TrimSpace(response.Body.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %#v", lines)
+	}
+	if !strings.Contains(lines[0], `"sequence":1`) || !strings.Contains(lines[0], `"type":"accepted"`) {
+		t.Fatalf("accepted event = %s", lines[0])
+	}
+	if !strings.Contains(lines[1], `"type":"progress"`) || !strings.Contains(lines[1], `"message":"working"`) {
+		t.Fatalf("progress event = %s", lines[1])
+	}
+	if !strings.Contains(lines[2], `"type":"completed"`) || !strings.Contains(lines[2], `"stdout":"ZG9uZQo="`) {
+		t.Fatalf("completed event = %s", lines[2])
+	}
+}
+
+func TestGatewayStreamsSessionOperationOverWebSocket(t *testing.T) {
+	run := readySessionRun()
+	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+		if got := request.GetCommand().GetArgv(); len(got) != 2 || got[0] != "echo" || got[1] != "done" {
+			t.Fatalf("command = %#v", request.GetCommand())
+		}
+		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
+			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{OperationId: "operation-1"}}},
+			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte("done\n")}}}},
+		}}, nil
+	}}
+	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+
+	endpoint := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:ws"
+	connection, response, err := websocket.DefaultDialer.Dial(endpoint, nil)
+	if err != nil {
+		if response != nil {
+			t.Fatalf("dial WebSocket: %v (status %d)", err, response.StatusCode)
+		}
+		t.Fatalf("dial WebSocket: %v", err)
+	}
+	defer connection.Close()
+	if err := connection.WriteJSON(map[string]any{"command": map[string]any{"argv": []string{"echo", "done"}}}); err != nil {
+		t.Fatalf("write operation request: %v", err)
+	}
+	connection.SetReadDeadline(time.Now().Add(time.Second))
+	var accepted sessionOperationEventResponse
+	if err := connection.ReadJSON(&accepted); err != nil {
+		t.Fatalf("read accepted event: %v", err)
+	}
+	if accepted.Type != "accepted" || accepted.Sequence != 1 || accepted.Accepted == nil || accepted.Accepted.OperationID != "operation-1" {
+		t.Fatalf("accepted event = %#v", accepted)
+	}
+	var completed sessionOperationEventResponse
+	if err := connection.ReadJSON(&completed); err != nil {
+		t.Fatalf("read completed event: %v", err)
+	}
+	if completed.Type != "completed" || completed.Sequence != 2 || completed.Completed == nil || string(completed.Completed.Command.Stdout) != "done\n" {
+		t.Fatalf("completed event = %#v", completed)
 	}
 }
 
@@ -201,6 +279,24 @@ func TestGatewayListsSessionFilesInPages(t *testing.T) {
 	}
 }
 
+func TestGatewayReadsNestedSessionFilePath(t *testing.T) {
+	run := readySessionRun()
+	client := &fakeSessionRuntimeClient{read: func(_ context.Context, request *pb.ReadSessionFileRequest, _ ...grpc.CallOption) (*pb.ReadSessionFileResponse, error) {
+		if request.GetIdentity().GetRunUid() != string(run.UID) || request.GetPath() != "artifacts/test/output.log" {
+			t.Fatalf("read request = %#v", request)
+		}
+		return &pb.ReadSessionFileResponse{Contents: []byte("done\n")}, nil
+	}}
+	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/files/artifacts/test/output.log", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestGatewayRejectsInvalidOperationShape(t *testing.T) {
 	server := testServer(t, readySessionRun(), allowAuthorizer{}, &fakeDialer{client: &fakeSessionRuntimeClient{}})
 
@@ -260,143 +356,13 @@ func TestGatewayLimitsConcurrentRequests(t *testing.T) {
 	}
 }
 
-func TestGatewayUsesConfiguredHeaderLimit(t *testing.T) {
-	server := &Server{MaxHeaderBytes: 4096}
-	if got := server.httpServer().MaxHeaderBytes; got != 4096 {
-		t.Fatalf("MaxHeaderBytes = %d, want 4096", got)
-	}
-	if got := (&Server{}).httpServer().MaxHeaderBytes; got != DefaultMaxHeaderBytes {
-		t.Fatalf("default MaxHeaderBytes = %d, want %d", got, DefaultMaxHeaderBytes)
-	}
-}
-
-func TestGatewayTLSConfigRejectsIncompleteFiles(t *testing.T) {
-	for _, server := range []*Server{
-		{TLSCertificateFile: "certificate.pem"},
-		{TLSPrivateKeyFile: "key.pem"},
-	} {
-		if _, err := server.tlsConfig(); err == nil || !strings.Contains(err.Error(), "both Runtime gateway TLS certificate and private key files are required") {
-			t.Fatalf("tlsConfig() error = %v, want incomplete TLS file error", err)
-		}
-	}
-}
-
-func TestGatewayTLSConfigRejectsInvalidCertificate(t *testing.T) {
-	directory := t.TempDir()
-	certificate := directory + "/tls.crt"
-	privateKey := directory + "/tls.key"
-	if err := os.WriteFile(certificate, []byte("not a certificate"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(privateKey, []byte("not a key"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	server := &Server{TLSCertificateFile: certificate, TLSPrivateKeyFile: privateKey}
-	if _, err := server.tlsConfig(); err == nil || !strings.Contains(err.Error(), "load Runtime gateway TLS certificate") {
-		t.Fatalf("tlsConfig() error = %v, want certificate load error", err)
-	}
-}
-
-func TestGatewayTLSConfigEnablesOptionalClientCertificateVerification(t *testing.T) {
-	certificateFile, privateKeyFile := testTLSFiles(t)
-	config, err := (&Server{
-		TLSCertificateFile: certificateFile,
-		TLSPrivateKeyFile:  privateKeyFile,
-		TLSClientCAFile:    certificateFile,
-	}).tlsConfig()
-	if err != nil {
-		t.Fatalf("tlsConfig() error = %v", err)
-	}
-	if config.ClientAuth != tls.VerifyClientCertIfGiven || config.ClientCAs == nil {
-		t.Fatalf("client TLS configuration = %#v, want optional verified client certificates", config)
-	}
-}
-
-func TestGatewayTLSConfigRejectsClientCAWithoutHTTPS(t *testing.T) {
-	if _, err := (&Server{TLSClientCAFile: "client-ca.pem"}).tlsConfig(); err == nil || !strings.Contains(err.Error(), "TLS client CA requires") {
-		t.Fatalf("tlsConfig() error = %v, want client CA HTTPS error", err)
-	}
-}
-
-func TestGatewayHTTPSNegotiatesHTTP2(t *testing.T) {
-	certificateFile, privateKeyFile := testTLSFiles(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	server := &Server{HTTPSAddress: address, TLSCertificateFile: certificateFile, TLSPrivateKeyFile: privateKeyFile}
-	result := make(chan error, 1)
-	go func() { result <- server.Start(ctx) }()
-
-	client := &http.Client{Transport: &http.Transport{ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // Test-only self-signed certificate.
-	var response *http.Response
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		response, err = client.Get("https://" + address + "/healthz")
-		if err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			cancel()
-			t.Fatalf("get Gateway health endpoint: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if response.ProtoMajor != 2 {
-		_ = response.Body.Close()
-		cancel()
-		t.Fatalf("HTTP protocol = %s, want HTTP/2", response.Proto)
-	}
-	if err := response.Body.Close(); err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	cancel()
-	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("Gateway server: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Gateway server did not stop")
-	}
-}
-
-func testTLSFiles(t *testing.T) (string, string) {
-	t.Helper()
-	seed := httptest.NewTLSServer(http.NotFoundHandler())
-	certificate := seed.TLS.Certificates[0]
-	seed.Close()
-	privateKey, err := x509.MarshalPKCS8PrivateKey(certificate.PrivateKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	directory := t.TempDir()
-	certificateFile := directory + "/tls.crt"
-	privateKeyFile := directory + "/tls.key"
-	if err := os.WriteFile(certificateFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Certificate[0]}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(privateKeyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKey}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return certificateFile, privateKeyFile
-}
-
 func testServer(t *testing.T, run *v1alpha1.Run, authorizer Authorizer, dialer SessionRuntimeDialer) *Server {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	reader := fake.NewClientBuilder().WithScheme(scheme).WithIndex(&v1alpha1.Run{}, runtimeIndexField, func(object client.Object) []string {
-		return []string{object.(*v1alpha1.Run).Spec.Runtime}
-	}).WithObjects(run).Build()
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()
 	return &Server{Runs: reader, Authorizer: authorizer, Dialer: dialer, FunctionDialer: dialer.(FunctionRuntimeDialer)}
 }
 
@@ -459,7 +425,9 @@ type fakeSessionRuntimeClient struct {
 	pb.SessionRuntimeClient
 	status  func(context.Context, *pb.GetSessionStatusRequest, ...grpc.CallOption) (*pb.SessionStatus, error)
 	execute func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error)
+	stream  func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error)
 	list    func(context.Context, *pb.ListSessionFilesRequest, ...grpc.CallOption) (*pb.ListSessionFilesResponse, error)
+	read    func(context.Context, *pb.ReadSessionFileRequest, ...grpc.CallOption) (*pb.ReadSessionFileResponse, error)
 }
 
 type fakeFunctionRuntimeClient struct {
@@ -487,9 +455,44 @@ func (c *fakeSessionRuntimeClient) ExecuteSessionOperation(ctx context.Context, 
 	return c.execute(ctx, request, options...)
 }
 
+func (c *fakeSessionRuntimeClient) StreamSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest, options ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+	if c.stream == nil {
+		return nil, status.Error(codes.Unimplemented, "StreamSessionOperation")
+	}
+	return c.stream(ctx, request, options...)
+}
+
 func (c *fakeSessionRuntimeClient) ListSessionFiles(ctx context.Context, request *pb.ListSessionFilesRequest, options ...grpc.CallOption) (*pb.ListSessionFilesResponse, error) {
 	if c.list == nil {
 		return nil, status.Error(codes.Unimplemented, "ListSessionFiles")
 	}
 	return c.list(ctx, request, options...)
 }
+
+func (c *fakeSessionRuntimeClient) ReadSessionFile(ctx context.Context, request *pb.ReadSessionFileRequest, options ...grpc.CallOption) (*pb.ReadSessionFileResponse, error) {
+	if c.read == nil {
+		return nil, status.Error(codes.Unimplemented, "ReadSessionFile")
+	}
+	return c.read(ctx, request, options...)
+}
+
+type fakeSessionOperationStream struct {
+	events []*pb.SessionOperationEvent
+	index  int
+}
+
+func (s *fakeSessionOperationStream) Recv() (*pb.SessionOperationEvent, error) {
+	if s.index >= len(s.events) {
+		return nil, io.EOF
+	}
+	event := s.events[s.index]
+	s.index++
+	return event, nil
+}
+
+func (*fakeSessionOperationStream) Header() (metadata.MD, error) { return nil, nil }
+func (*fakeSessionOperationStream) Trailer() metadata.MD         { return nil }
+func (*fakeSessionOperationStream) CloseSend() error             { return nil }
+func (*fakeSessionOperationStream) Context() context.Context     { return context.Background() }
+func (*fakeSessionOperationStream) SendMsg(any) error            { return nil }
+func (*fakeSessionOperationStream) RecvMsg(any) error            { return io.EOF }

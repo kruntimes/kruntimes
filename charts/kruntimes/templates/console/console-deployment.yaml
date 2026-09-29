@@ -1,0 +1,110 @@
+{{- include "kruntimes.console.validateTLS" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kruntimes.console.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kruntimes.console.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.console.replicas }}
+  selector:
+    matchLabels:
+      {{- include "kruntimes.console.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.console.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "kruntimes.console.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "kruntimes.console.name" . }}
+      {{- with .Values.console.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.console.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.console.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.console.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.console.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.console.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: console
+          image: {{ include "kruntimes.image" (list . .Values.console.image) }}
+          imagePullPolicy: {{ .Values.console.imagePullPolicy }}
+          {{- with .Values.console.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            - --bind-address={{ .Values.console.bindAddress }}
+            - --tls-certificate-file=/var/run/kruntimes/console-tls/{{ .Values.console.tls.certificateKey }}
+            - --tls-private-key-file=/var/run/kruntimes/console-tls/{{ .Values.console.tls.privateKeyKey }}
+            - --public-read={{ .Values.console.publicRead.enabled }}
+            - --authorization-cache-ttl={{ .Values.console.access.authorizationCacheTTL }}
+            - --authorization-cache-capacity={{ .Values.console.access.authorizationCacheCapacity }}
+            - --max-concurrent-requests={{ .Values.console.access.maxConcurrentRequests }}
+            - --max-request-body-bytes={{ int64 .Values.console.access.maxRequestBodyBytes }}
+            - --max-response-body-bytes={{ int64 .Values.console.access.maxResponseBodyBytes }}
+            - --max-header-bytes={{ int64 .Values.console.access.maxHeaderBytes }}
+            {{- if .Values.console.tls.clientCASecretName }}
+            - --tls-client-ca-file=/var/run/kruntimes/console-client-ca/{{ .Values.console.tls.clientCAKey }}
+            {{- end }}
+          ports:
+            - containerPort: {{ .Values.console.containerPort }}
+              name: https
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: https
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: https
+            initialDelaySeconds: 1
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.console.resources | nindent 12 }}
+          volumeMounts:
+            - name: console-tls
+              mountPath: /var/run/kruntimes/console-tls
+              readOnly: true
+            {{- if .Values.console.tls.clientCASecretName }}
+            - name: console-client-ca
+              mountPath: /var/run/kruntimes/console-client-ca
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: console-tls
+          secret:
+            secretName: {{ include "kruntimes.console.tlsSecretName" . }}
+        {{- if .Values.console.tls.clientCASecretName }}
+        - name: console-client-ca
+          secret:
+            secretName: {{ .Values.console.tls.clientCASecretName }}
+        {{- end }}

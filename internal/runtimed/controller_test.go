@@ -1329,7 +1329,7 @@ func TestSessionRunBecomesReadyFromReconciledRuntimeStatus(t *testing.T) {
 	c := &Controller{
 		Client:            k8sClient,
 		PodName:           "runtime-pod",
-		GatewayURL:        "http://kruntimes-gateway.platform.svc/",
+		ConsoleURL:        "http://kruntimes-console.platform.svc/",
 		sessionCli:        sessionClient,
 		ArtifactStore:     &fakeArtifactStore{},
 		ArtifactStoreSpec: artifactTestStoreSpec(),
@@ -1350,7 +1350,7 @@ func TestSessionRunBecomesReadyFromReconciledRuntimeStatus(t *testing.T) {
 	if updated.Status.Phase != v1alpha1.RunReady {
 		t.Fatalf("phase = %s, want Ready", updated.Status.Phase)
 	}
-	if updated.Status.Endpoint == nil || updated.Status.Endpoint.Protocol != v1alpha1.RunEndpointProtocolHTTP || updated.Status.Endpoint.URL != "http://kruntimes-gateway.platform.svc/v1/namespaces/default/runtimes/bash/sessions/session-uid" {
+	if updated.Status.Endpoint == nil || updated.Status.Endpoint.Protocol != v1alpha1.RunEndpointProtocolHTTP || updated.Status.Endpoint.URL != "http://kruntimes-console.platform.svc/v1/namespaces/default/runtimes/bash/sessions/session-uid" {
 		t.Fatalf("endpoint = %#v", updated.Status.Endpoint)
 	}
 	if condition := meta.FindStatusCondition(updated.Status.Conditions, runstatus.ConditionReady); condition == nil || condition.Status != metav1.ConditionTrue {
@@ -1426,7 +1426,7 @@ func TestFunctionRunBecomesReadyFromReconciledRuntimeStatus(t *testing.T) {
 		Registration: registration,
 		State:        pb.FunctionRegistrationState_FUNCTION_REGISTRATION_STATE_READY,
 	}}
-	c := &Controller{Client: k8sClient, PodName: "runtime-pod", functionCli: functionClient, GatewayURL: "https://gateway.default.svc", GatewayCABundle: []byte("test-ca")}
+	c := &Controller{Client: k8sClient, PodName: "runtime-pod", functionCli: functionClient, ConsoleURL: "https://console.default.svc", ConsoleCABundle: []byte("test-ca")}
 	ar := newActiveRun(run, time.Now())
 	ar.finishFunctionRegistration(registration, nil)
 	c.activeRuns.Store(string(run.UID), ar)
@@ -1447,7 +1447,7 @@ func TestFunctionRunBecomesReadyFromReconciledRuntimeStatus(t *testing.T) {
 	if condition := meta.FindStatusCondition(updated.Status.Conditions, runstatus.ConditionReady); condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "FunctionRegistered" {
 		t.Fatalf("Ready condition = %#v, want FunctionRegistered true", condition)
 	}
-	if endpoint := updated.Status.Endpoint; endpoint == nil || endpoint.Protocol != v1alpha1.RunEndpointProtocolHTTPS || endpoint.URL != "https://gateway.default.svc/v1/namespaces/default/runtimes/python/functions/function-uid:invoke" || string(endpoint.CABundle) != "test-ca" {
+	if endpoint := updated.Status.Endpoint; endpoint == nil || endpoint.Protocol != v1alpha1.RunEndpointProtocolHTTPS || endpoint.URL != "https://console.default.svc/v1/namespaces/default/runtimes/python/functions/function-uid:invoke" || string(endpoint.CABundle) != "test-ca" {
 		t.Fatalf("endpoint = %#v", endpoint)
 	}
 }

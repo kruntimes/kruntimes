@@ -22,6 +22,7 @@ import (
 func StartRuntimeProxyServer(
 	ctx context.Context,
 	runtimeEndpoint, addr string,
+	apiWriter client.Client,
 	apiReader, sessionReader client.Reader,
 	store artifact.Store,
 	operations *SessionOperationQueue,
@@ -67,6 +68,7 @@ func StartRuntimeProxyServer(
 	if operations != nil {
 		sessionProxy.operations = operations
 	}
+	sessionProxy.operationStore = newSessionOperationStore(apiWriter, apiReader)
 	pb.RegisterSessionRuntimeServer(srv, sessionProxy)
 	pb.RegisterFunctionRuntimeServer(srv, newFunctionRuntimeProxy(
 		sessionReader,

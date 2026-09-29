@@ -55,6 +55,38 @@ func TestSessionOperationQueueExecutesMutationsInFIFOOrder(t *testing.T) {
 	}
 }
 
+func TestSessionOperationQueueWaitsForAdmissionCallback(t *testing.T) {
+	queue := NewSessionOperationQueue(1, time.Minute)
+	run := queuedSessionRun("session-run")
+	admissionStarted := make(chan struct{})
+	releaseAdmission := make(chan struct{})
+	executionStarted := make(chan struct{})
+	done := make(chan error, 1)
+
+	go func() {
+		_, err := queue.ExecuteWithAdmission(t.Context(), run, func() error {
+			close(admissionStarted)
+			<-releaseAdmission
+			return nil
+		}, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+			close(executionStarted)
+			return &pb.ExecuteSessionOperationResponse{}, nil
+		})
+		done <- err
+	}()
+	<-admissionStarted
+	assertChannelOpen(t, executionStarted, "operation started before admission callback completed")
+	close(releaseAdmission)
+	select {
+	case <-executionStarted:
+	case <-time.After(time.Second):
+		t.Fatal("operation did not start after admission callback completed")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("ExecuteWithAdmission() error = %v", err)
+	}
+}
+
 func TestSessionOperationQueueIdleDeadlineTracksAcceptedOperations(t *testing.T) {
 	queue := NewSessionOperationQueue(1, time.Minute)
 	run := queuedSessionRun("session")

@@ -49,13 +49,13 @@ for {
 }
 ```
 
-For local development, forward only the shared Runtime gateway Service. Pass
+For local development, forward only the shared Console Service. Pass
 the returned forward as `Config.HTTPClient`; it preserves the endpoint path and
 does not expose runtimed or Runtime Server gRPC ports:
 
 ```go
-forward, err := sandbox.StartGatewayPortForward(
-    ctx, restConfig, "kruntimes-system", "kruntimes-gateway", 80,
+forward, err := sandbox.StartConsolePortForward(
+    ctx, restConfig, "kruntimes-system", "kruntimes-console", 443,
 )
 if err != nil {
     return err
@@ -73,6 +73,6 @@ the outcome.
 returns successfully only after `Cancelled`. Any other terminal phase is a
 typed `StateError` that retains the current Run.
 
-The local caller needs `get` on the target Run for gateway authorization. A
-port-forward client also needs `get` on the shared gateway Service and `get`,
-`list` on its Pods in the gateway namespace.
+The local caller needs `get` on the target Run for Console authorization. A
+port-forward client also needs `get` on the shared Console Service and `get`,
+`list` on its Pods in the Console namespace.

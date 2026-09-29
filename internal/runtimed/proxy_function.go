@@ -22,8 +22,8 @@ import (
 
 const defaultFunctionInvocationTimeout = 30 * time.Second
 
-// functionRuntimeProxy implements the gateway-facing form of FunctionRuntime.
-// Gateway requests identify a Run UID but intentionally omit the opaque
+// functionRuntimeProxy implements the Console-facing form of FunctionRuntime.
+// Console requests identify a Run UID but intentionally omit the opaque
 // registration ID; only the assigned owner resolves that local reference.
 type functionRuntimeProxy struct {
 	pb.UnimplementedFunctionRuntimeServer
@@ -129,7 +129,7 @@ func resetFunctionInvocationOutputs(path string) error {
 
 func (s *functionRuntimeProxy) functionRun(ctx context.Context, registration *pb.FunctionRegistration) (*v1alpha1.Run, error) {
 	if registration == nil || registration.GetRunUid() == "" || registration.GetRegistrationId() != "" {
-		return nil, status.Error(codes.InvalidArgument, "gateway function request requires a Run UID and no registration ID")
+		return nil, status.Error(codes.InvalidArgument, "Console function request requires a Run UID and no registration ID")
 	}
 	if s.reader == nil || s.podReader == nil || s.local == nil || s.controller == nil || s.namespace == "" || s.runtimeName == "" || s.podName == "" {
 		return nil, status.Error(codes.FailedPrecondition, "FunctionRuntime proxy is not configured")

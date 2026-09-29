@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -23,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	appsv1 "k8s.io/api/apps/v1"
@@ -62,14 +64,19 @@ const testNamespace = "default"
 
 const (
 	certManagerE2EEnabledEnv      = "KRUNTIMES_E2E_CERT_MANAGER"
-	certManagerGatewayCertificate = "kruntimes-gateway"
-	certManagerGatewayTLSSecret   = "kruntimes-gateway-cert-manager-tls"
-	gatewayBoundsE2EEnabledEnv    = "KRUNTIMES_E2E_GATEWAY_BOUNDS"
+	certManagerGatewayCertificate = "kruntimes-console"
+	certManagerGatewayTLSSecret   = "kruntimes-console-cert-manager-tls"
+	gatewayBoundsE2EEnabledEnv    = "KRUNTIMES_E2E_CONSOLE_BOUNDS"
 )
 
 var k8sClient client.Client
 var restConfig *rest.Config
 var coreClientset *kubernetes.Clientset
+
+// Console's chart-managed certificate is intentionally self-signed in the
+// ordinary E2E installation. Focused TLS coverage below validates its CA and
+// service DNS name; generic access tests only need a local port-forward.
+var gatewayInsecureHTTPClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // E2E local port-forward only.
 
 func bashRuntimeImage() string {
 	if image := os.Getenv("KRUNTIMES_BASH_RUNTIME_IMAGE"); image != "" {
@@ -787,6 +794,155 @@ func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL, token, nil, http.StatusConflict)
 }
 
+func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
+	runtimeName := fmt.Sprintf("session-stream-%d", time.Now().UnixNano())
+	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-session-stream-", Namespace: testNamespace},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}},
+		},
+	}
+	if err := k8sClient.Create(t.Context(), run); err != nil {
+		t.Fatalf("create Session Run: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), run) })
+	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunReady)
+
+	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
+	token := sessionGatewayToken(t, run)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/operations:stream", strings.NewReader(`{"command":{"argv":["sh","-c","printf stream-first; sleep 2; printf stream-last"]}}`))
+	if err != nil {
+		t.Fatalf("create streaming gateway request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := gatewayInsecureHTTPClient.Do(request)
+	if err != nil {
+		t.Fatalf("call streaming gateway: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		contents, _ := io.ReadAll(response.Body)
+		t.Fatalf("streaming gateway status = %d: %s", response.StatusCode, contents)
+	}
+	if got := response.Header.Get("Content-Type"); got != "application/x-ndjson; charset=utf-8" {
+		t.Fatalf("streaming content type = %q", got)
+	}
+
+	// Authorization and the initial HTTP response are outside the command
+	// streaming contract. Measure whether output arrives while the command is
+	// executing only after the NDJSON stream is established.
+	streamStarted := time.Now()
+	reader := bufio.NewReader(response.Body)
+	seenFirstOutput := false
+	var stdout strings.Builder
+	seenCompleted := false
+	lastSequence := int64(0)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read streaming gateway event: %v", err)
+		}
+		var event struct {
+			Sequence int64  `json:"sequence"`
+			Type     string `json:"type"`
+			Output   *struct {
+				Stream string `json:"stream"`
+				Data   []byte `json:"data"`
+			} `json:"output"`
+			Completed *struct {
+				Command *struct {
+					ExitCode int32  `json:"exitCode"`
+					Stdout   []byte `json:"stdout"`
+				} `json:"command"`
+			} `json:"completed"`
+		}
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatalf("decode streaming gateway event %q: %v", line, err)
+		}
+		if event.Sequence != lastSequence+1 {
+			t.Fatalf("event sequence = %d after %d", event.Sequence, lastSequence)
+		}
+		lastSequence = event.Sequence
+		if event.Type == "output" && event.Output != nil && event.Output.Stream == "stdout" && string(event.Output.Data) == "stream-first" {
+			if elapsed := time.Since(streamStarted); elapsed >= time.Second {
+				t.Fatalf("first command output arrived after %s, want it before command completion", elapsed)
+			}
+			seenFirstOutput = true
+		}
+		if event.Type == "output" && event.Output != nil && event.Output.Stream == "stdout" {
+			stdout.Write(event.Output.Data)
+		}
+		if event.Type == "completed" && event.Completed != nil && event.Completed.Command != nil {
+			if event.Completed.Command.ExitCode != 0 || len(event.Completed.Command.Stdout) != 0 {
+				t.Fatalf("completed command = %#v", event.Completed.Command)
+			}
+			seenCompleted = true
+		}
+	}
+	if !seenFirstOutput || !seenCompleted || stdout.String() != "stream-firststream-last" {
+		t.Fatalf("stream did not include early output and completion: first=%t completed=%t stdout=%q", seenFirstOutput, seenCompleted, stdout.String())
+	}
+
+	websocketURL := "wss" + strings.TrimPrefix(baseURL, "https") + "/operations:ws"
+	connection, websocketResponse, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).Dial(websocketURL, http.Header{"Authorization": []string{"Bearer " + token}}) //nolint:gosec // E2E local port-forward only.
+	if err != nil {
+		if websocketResponse != nil {
+			t.Fatalf("dial operation WebSocket: %v (status %d)", err, websocketResponse.StatusCode)
+		}
+		t.Fatalf("dial operation WebSocket: %v", err)
+	}
+	defer connection.Close()
+	if err := connection.WriteJSON(map[string]any{"command": map[string]any{"argv": []string{"sh", "-c", "printf websocket"}}}); err != nil {
+		t.Fatalf("write WebSocket operation: %v", err)
+	}
+	connection.SetReadDeadline(time.Now().Add(10 * time.Second))
+	websocketOutput := false
+	websocketCompleted := false
+	lastSequence = 0
+	for !websocketCompleted {
+		var event struct {
+			Sequence int64  `json:"sequence"`
+			Type     string `json:"type"`
+			Output   *struct {
+				Stream string `json:"stream"`
+				Data   []byte `json:"data"`
+			} `json:"output"`
+			Completed *struct {
+				Command *struct {
+					ExitCode int32 `json:"exitCode"`
+				} `json:"command"`
+			} `json:"completed"`
+		}
+		if err := connection.ReadJSON(&event); err != nil {
+			t.Fatalf("read WebSocket operation event: %v", err)
+		}
+		if event.Sequence != lastSequence+1 {
+			t.Fatalf("WebSocket event sequence = %d after %d", event.Sequence, lastSequence)
+		}
+		lastSequence = event.Sequence
+		if event.Type == "output" && event.Output != nil && event.Output.Stream == "stdout" && string(event.Output.Data) == "websocket" {
+			websocketOutput = true
+		}
+		if event.Type == "completed" && event.Completed != nil && event.Completed.Command != nil {
+			if event.Completed.Command.ExitCode != 0 {
+				t.Fatalf("WebSocket command exit code = %d", event.Completed.Command.ExitCode)
+			}
+			websocketCompleted = true
+		}
+	}
+	if !websocketOutput {
+		t.Fatal("WebSocket stream did not include command output")
+	}
+}
+
 func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
 	runtimeName := fmt.Sprintf("run-logs-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
@@ -1432,7 +1588,7 @@ func TestSessionGatewayEnforcesTransferBounds(t *testing.T) {
 
 	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
 	token := sessionGatewayToken(t, run)
-	portForwardClient := &http.Client{Transport: &http.Transport{Proxy: nil}}
+	portForwardClient := &http.Client{Transport: &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // E2E local port-forward only.
 	// Establish the port-forward with a response that remains below the focused
 	// response limit before exercising rejection paths.
 	_ = waitForGatewayResponseWithClient(t, portForwardClient, http.MethodGet, baseURL, token, nil, http.StatusOK)
@@ -1493,8 +1649,8 @@ func TestSessionGatewayServesCertManagerTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse cert-manager gateway TLS certificate: %v", err)
 	}
-	if !slices.Contains(leaf.DNSNames, "kruntimes-gateway.default.svc") {
-		t.Fatalf("cert-manager gateway TLS certificate DNS names = %v, want kruntimes-gateway.default.svc", leaf.DNSNames)
+	if !slices.Contains(leaf.DNSNames, "kruntimes-console.default.svc") {
+		t.Fatalf("cert-manager Console TLS certificate DNS names = %v, want kruntimes-console.default.svc", leaf.DNSNames)
 	}
 
 	runtimeName := fmt.Sprintf("session-gateway-cert-manager-tls-%d", time.Now().UnixNano())
@@ -1703,7 +1859,7 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	sdkConfig := rest.CopyConfig(restConfig)
 	sdkConfig.BearerToken = token
 	sdkConfig.BearerTokenFile = ""
-	forward, err := sandbox.StartGatewayPortForward(t.Context(), sdkConfig, testNamespace, "kruntimes-gateway", 80)
+	forward, err := sandbox.StartConsolePortForward(t.Context(), sdkConfig, testNamespace, "kruntimes-console", 443)
 	if err != nil {
 		t.Fatalf("start SDK Runtime gateway port-forward: %v", err)
 	}
@@ -2135,7 +2291,7 @@ func waitForGatewayPod(t *testing.T) *corev1.Pod {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	for {
-		pods, err := coreClientset.CoreV1().Pods(testNamespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/component=runtime-gateway"})
+		pods, err := coreClientset.CoreV1().Pods(testNamespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/component=console"})
 		if err == nil {
 			for i := range pods.Items {
 				if podReady(&pods.Items[i]) {
@@ -2170,12 +2326,12 @@ func gatewayEndpointURL(t *testing.T, pod *corev1.Pod, endpoint string) string {
 		t.Fatalf("parse gateway endpoint %q: %v", endpoint, err)
 	}
 	localPort := availableLocalPort(t)
-	closer, err := forwardPodPort(t.Context(), pod.Namespace, pod.Name, localPort, 8084)
+	closer, err := forwardPodPort(t.Context(), pod.Namespace, pod.Name, localPort, 8443)
 	if err != nil {
 		t.Fatalf("port-forward Runtime gateway: %v", err)
 	}
 	t.Cleanup(func() { _ = closer.Close() })
-	return fmt.Sprintf("http://127.0.0.1:%d%s", localPort, parsed.EscapedPath())
+	return fmt.Sprintf("https://127.0.0.1:%d%s", localPort, parsed.EscapedPath())
 }
 
 func gatewayTLSEndpointURL(t *testing.T, pod *corev1.Pod, endpoint string) string {
@@ -2185,7 +2341,7 @@ func gatewayTLSEndpointURL(t *testing.T, pod *corev1.Pod, endpoint string) strin
 		t.Fatalf("parse HTTPS gateway endpoint %q: %v", endpoint, err)
 	}
 	localPort := availableLocalPort(t)
-	closer, err := forwardPodPort(t.Context(), pod.Namespace, pod.Name, localPort, 8444)
+	closer, err := forwardPodPort(t.Context(), pod.Namespace, pod.Name, localPort, 8443)
 	if err != nil {
 		t.Fatalf("port-forward HTTPS Runtime gateway: %v", err)
 	}
@@ -2201,7 +2357,7 @@ func gatewayTLSHTTPClient(t *testing.T, namespace string, caBundle []byte) *http
 	}
 	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
 		RootCAs:    pool,
-		ServerName: fmt.Sprintf("kruntimes-gateway.%s.svc", namespace),
+		ServerName: fmt.Sprintf("kruntimes-console.%s.svc", namespace),
 	}}}
 }
 
@@ -2217,7 +2373,7 @@ func availableLocalPort(t *testing.T) int {
 
 func waitForGatewayResponse(t *testing.T, method, requestURL, token string, body []byte, expectedStatus int) []byte {
 	t.Helper()
-	return waitForGatewayResponseWithClient(t, http.DefaultClient, method, requestURL, token, body, expectedStatus)
+	return waitForGatewayResponseWithClient(t, gatewayInsecureHTTPClient, method, requestURL, token, body, expectedStatus)
 }
 
 func waitForGatewayResponseWithClient(t *testing.T, httpClient *http.Client, method, requestURL, token string, body []byte, expectedStatus int) []byte {
@@ -2280,7 +2436,7 @@ func gatewayRequest(ctx context.Context, method, requestURL, token string, body 
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
-	response, err := http.DefaultClient.Do(request)
+	response, err := gatewayInsecureHTTPClient.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("send gateway request: %w", err)
 	}

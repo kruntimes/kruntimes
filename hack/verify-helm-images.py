@@ -16,6 +16,7 @@ def main() -> int:
     expected_defaults = [
         f"image: ghcr.io/kruntimes/controller:{platform_app_version}",
         f"image: ghcr.io/kruntimes/scheduler:{platform_app_version}",
+        f"image: ghcr.io/kruntimes/console:{platform_app_version}",
         f"--default-daemon-image=ghcr.io/kruntimes/runtimed:{platform_app_version}",
         f"image: ghcr.io/kruntimes/bash-runtime:{runtimes_app_version}",
         f"image: ghcr.io/kruntimes/python-runtime:{runtimes_app_version}",
@@ -35,15 +36,13 @@ def main() -> int:
         "--set",
         "runtimed.image=repo/runtimed:dev",
         "--set",
-        "dashboard.enabled=true",
-        "--set",
-        "dashboard.image=repo/dashboard:dev",
+        "console.image=repo/console:dev",
     )
     expected_platform_overrides = [
         "image: example.com:5000/ns/scheduler:dev",
         "image: repo/controller@sha256:abc",
         "--default-daemon-image=repo/runtimed:dev",
-        "image: repo/dashboard:dev",
+        "image: repo/console:dev",
     ]
     for expected in expected_platform_overrides:
         if expected not in platform_overrides:

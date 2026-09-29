@@ -38,7 +38,7 @@ site/public/
 __pycache__/
 node_modules/
 *.tsbuildinfo
-dashboard/backend/assets/
+console/backend/assets/
 .python-version
 /krt
 /controller
