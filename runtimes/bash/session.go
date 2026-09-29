@@ -109,7 +109,7 @@ func (s *Server) ExecuteSessionOperation(ctx context.Context, req *pb.ExecuteSes
 
 // StreamSessionOperation emits command output as the process writes it. The
 // owner runtimed wraps these Runtime-local events with accepted, sequence, and
-// failure events before exposing them to a gateway caller.
+// failure events before exposing them to a Console caller.
 func (s *Server) StreamSessionOperation(req *pb.ExecuteSessionOperationRequest, server pb.SessionRuntime_StreamSessionOperationServer) error {
 	entry, err := s.matchSession(req.GetIdentity())
 	if err != nil {

@@ -59,8 +59,8 @@ func main() {
 		statusAddr          string
 		workers             int
 		runtimeName         string
-		gatewayURL          string
-		gatewayCAFile       string
+		consoleURL          string
+		consoleCAFile       string
 		artifactStoreDriver string
 		artifactStoreRoot   string
 		artifactVolumeClaim string
@@ -84,8 +84,8 @@ func main() {
 	flag.StringVar(&statusAddr, "status-addr", ":9093", "gRPC address for the status proxy (for krt logs).")
 	flag.StringVar(&runtimeEndpoint, "runtime-endpoint", "localhost:9091", "gRPC endpoint of the runtime server.")
 	flag.StringVar(&runtimeName, "runtime-name", "", "Runtime resource name served by this pod.")
-	flag.StringVar(&gatewayURL, "gateway-url", "", "Cluster-local Runtime gateway base URL for Session Run endpoints.")
-	flag.StringVar(&gatewayCAFile, "gateway-ca-file", "", "PEM trust bundle file for HTTPS Session Run endpoints.")
+	flag.StringVar(&consoleURL, "console-url", "", "Cluster-local Kruntimes Console base URL for Run endpoints.")
+	flag.StringVar(&consoleCAFile, "console-ca-file", "", "PEM trust bundle file for HTTPS Console endpoints.")
 	flag.IntVar(&workers, "workers", int(v1alpha1.RuntimeDefaultRunsCapacity), "Max concurrent run executions.")
 	flag.StringVar(&artifactStoreDriver, "artifact-store-driver", "", "Artifact store driver: filesystem or s3.")
 	flag.StringVar(&artifactStoreRoot, "artifact-store-root", "", "Filesystem artifact store root. Empty disables artifact collection.")
@@ -105,12 +105,12 @@ func main() {
 	flag.DurationVar(&sessionCloseTimeout, "session-close-timeout", 0, "Maximum time to wait for a Session Runtime to close. Non-positive uses the default.")
 	klog.InitFlags(nil)
 	flag.Parse()
-	var gatewayCABundle []byte
-	if gatewayCAFile != "" {
+	var consoleCABundle []byte
+	if consoleCAFile != "" {
 		var err error
-		gatewayCABundle, err = os.ReadFile(gatewayCAFile)
+		consoleCABundle, err = os.ReadFile(consoleCAFile)
 		if err != nil {
-			setupLog.Error(err, "read gateway CA file", "path", gatewayCAFile)
+			setupLog.Error(err, "read console CA file", "path", consoleCAFile)
 			os.Exit(1)
 		}
 	}
@@ -257,14 +257,14 @@ func main() {
 		MaxArtifactsBytes:   maxArtifactsBytes,
 		SessionOperations:   sessionOperations,
 		SessionCloseTimeout: sessionCloseTimeout,
-		GatewayURL:          gatewayURL,
-		GatewayCABundle:     gatewayCABundle,
+		ConsoleURL:          consoleURL,
+		ConsoleCABundle:     consoleCABundle,
 		Recorder:            mgr.GetEventRecorderFor("runtimed"),
 	}
 
 	// Bind the gRPC proxy before the manager can claim a Run. A Session/Function
 	// Run becomes Ready after its local registration, so starting this server in
-	// the background would otherwise expose a short window where Gateway routes
+	// the background would otherwise expose a short window where Console routes
 	// a ready Run to an unbound :9093 endpoint.
 	proxyReady := make(chan error, 1)
 	go func() {

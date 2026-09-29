@@ -68,7 +68,7 @@ func StartRuntimeProxyServer(
 	if operations != nil {
 		sessionProxy.operations = operations
 	}
-	sessionProxy.operationStore = newSessionOperationStore(apiWriter)
+	sessionProxy.operationStore = newSessionOperationStore(apiWriter, apiReader)
 	pb.RegisterSessionRuntimeServer(srv, sessionProxy)
 	pb.RegisterFunctionRuntimeServer(srv, newFunctionRuntimeProxy(
 		sessionReader,

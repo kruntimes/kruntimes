@@ -30,7 +30,7 @@ const (
 	maxSessionOperationEventBytes = 64 << 10
 )
 
-// sessionRuntimeProxy serves gateway-originated SessionRuntime requests on a
+// sessionRuntimeProxy serves Console-originated SessionRuntime requests on a
 // runtimed Pod. The owner Pod proxies accepted calls to its local Runtime
 // Server; another Pod forwards the request once to that owner.
 type sessionRuntimeProxy struct {
@@ -73,7 +73,7 @@ func newSessionRuntimeProxy(
 		podName:        podName,
 		statusPort:     statusPort,
 		operations:     NewSessionOperationQueue(0, 0),
-		operationStore: newSessionOperationStore(nil),
+		operationStore: newSessionOperationStore(nil, nil),
 		dialPeer:       dialSessionRuntimePeer,
 		logWriter:      os.Stdout,
 	}

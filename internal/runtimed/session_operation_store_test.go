@@ -24,7 +24,7 @@ func TestSessionOperationStorePersistsAndReplaysEvents(t *testing.T) {
 	}
 	apiClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	run := &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default", UID: types.UID("run-uid")}}
-	store := newSessionOperationStore(apiClient)
+	store := newSessionOperationStore(apiClient, apiClient)
 	if _, created, err := store.Begin(t.Context(), run, "turn-1", "digest"); err != nil || !created {
 		t.Fatalf("Begin() = created %t, err %v", created, err)
 	}
@@ -39,7 +39,7 @@ func TestSessionOperationStorePersistsAndReplaysEvents(t *testing.T) {
 
 	// A fresh store simulates a runtimed restart. It has no in-memory state but
 	// can still replay the durable journal exactly from a cursor.
-	restarted := newSessionOperationStore(apiClient)
+	restarted := newSessionOperationStore(apiClient, apiClient)
 	events, updates, cancel, err := restarted.Subscribe(context.Background(), run, "turn-1", 1)
 	if err != nil {
 		t.Fatalf("Subscribe() error = %v", err)
@@ -55,7 +55,7 @@ func TestSessionOperationStorePersistsAndReplaysEvents(t *testing.T) {
 
 func TestSessionOperationStoreRejectsIdempotencyKeyReuse(t *testing.T) {
 	run := &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{Namespace: "default", UID: types.UID("run-uid")}}
-	store := newSessionOperationStore(nil)
+	store := newSessionOperationStore(nil, nil)
 	if _, _, err := store.Begin(t.Context(), run, "turn", "first"); err != nil {
 		t.Fatal(err)
 	}

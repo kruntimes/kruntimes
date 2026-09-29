@@ -1,0 +1,129 @@
+{{- $runtimeMaintainerPullSecrets := list -}}
+{{- range .Values.imagePullSecrets -}}
+{{- $runtimeMaintainerPullSecrets = append $runtimeMaintainerPullSecrets .name -}}
+{{- end -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kruntimes.controller.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kruntimes.controller.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  selector:
+    matchLabels:
+      {{- include "kruntimes.controller.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.controller.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "kruntimes.controller.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "kruntimes.controller.name" . }}
+      {{- with .Values.controller.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: controller
+          image: {{ include "kruntimes.image" (list . .Values.controller.image) }}
+          imagePullPolicy: {{ .Values.controller.imagePullPolicy }}
+          {{- with .Values.controller.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            - --leader-elect={{ .Values.controller.leaderElect }}
+            - --metrics-bind-address={{ .Values.controller.metricsBindAddress }}
+            - --health-probe-bind-address={{ .Values.controller.probeBindAddress }}
+            - --webhook-port={{ .Values.controller.webhookPort }}
+            - --webhook-cert-dir={{ .Values.controller.webhookCertDir }}
+            - --webhook-controller-service-account-name={{ include "kruntimes.controller.name" . }}
+            - --webhook-controller-service-account-namespace={{ .Release.Namespace }}
+            - --default-daemon-image={{ include "kruntimes.image" (list . .Values.runtimed.image) }}
+            - --runtimed-service-account-name={{ include "kruntimes.runtimed.name" . }}
+            - --runtime-maintainer-image={{ include "kruntimes.image" (list . .Values.controller.image) }}
+            - --runtime-maintainer-image-pull-policy={{ .Values.controller.imagePullPolicy }}
+            - --session-max-queue-size={{ .Values.runtimed.session.maxQueueSize }}
+            - --session-max-operation-timeout={{ .Values.runtimed.session.maxOperationTimeout }}
+            - --session-close-timeout={{ .Values.runtimed.session.closeTimeout }}
+            - --console-namespace={{ .Release.Namespace }}
+            - --console-selector-labels=app.kubernetes.io/name={{ include "kruntimes.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=console
+            - --console-url=https://{{ include "kruntimes.console.name" . }}.{{ .Release.Namespace }}.svc
+            - --console-ca-file=/var/run/kruntimes/console-ca/ca.crt
+            {{- if $runtimeMaintainerPullSecrets }}
+            - --runtime-maintainer-image-pull-secrets={{ join "," $runtimeMaintainerPullSecrets }}
+            {{- end }}
+          ports:
+            - containerPort: {{ .Values.controller.metricsPort }}
+              name: metrics
+              protocol: TCP
+            - containerPort: {{ .Values.controller.probePort }}
+              name: probes
+              protocol: TCP
+            - containerPort: {{ .Values.controller.webhookPort }}
+              name: webhook
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+          volumeMounts:
+            - name: webhook-tls
+              mountPath: {{ .Values.controller.webhookCertDir }}
+              readOnly: true
+            - name: console-ca
+              mountPath: /var/run/kruntimes/console-ca
+              readOnly: true
+      volumes:
+        - name: webhook-tls
+          secret:
+            secretName: {{ include "kruntimes.webhook.secretName" . }}
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: console-ca
+          secret:
+            secretName: {{ include "kruntimes.console.tlsSecretName" . }}
+            items:
+              - key: {{ .Values.console.tls.caBundleKey }}
+                path: ca.crt

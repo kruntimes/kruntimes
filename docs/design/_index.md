@@ -13,6 +13,7 @@ implemented.
 - [Session Operation Streaming](session-operation-streaming/)
 - [Runtime Gateway Transport Security and Transfer Bounds](runtime-gateway-transport/)
 - [Aggregated Run Log API](runtime-gateway-log-api/)
+- [Kruntimes Console](console/)
 - [Runtime Readiness Visibility](runtime-readiness-visibility/)
 - [Function Inline Source Materialization](function-inline-source/)
 - [Function Mode Lifecycle and Invoke Dataplane](function-mode-lifecycle/)
@@ -23,4 +24,3 @@ implemented.
 - [Run Resource Accounting](run-resource-accounting/)
 - [Workflow Reuse](workflow-reuse/)
 - [Job-Level Reusable Workflow Execution](workflow-job-reuse/)
-- [Dashboard](dashboard/)

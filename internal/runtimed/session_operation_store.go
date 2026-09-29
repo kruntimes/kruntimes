@@ -39,7 +39,8 @@ const (
 // useful for direct proxy unit tests and keeps the storage behavior testable
 // without an API server.
 type sessionOperationStore struct {
-	client client.Client
+	writer client.Client
+	reader client.Reader
 
 	mu          sync.Mutex
 	memory      map[string]*storedSessionOperation
@@ -61,9 +62,13 @@ type storedSessionOperationEvent struct {
 	Value    []byte `json:"value"`
 }
 
-func newSessionOperationStore(apiClient client.Client) *sessionOperationStore {
+func newSessionOperationStore(apiWriter client.Client, apiReader client.Reader) *sessionOperationStore {
+	if apiReader == nil {
+		apiReader = apiWriter
+	}
 	return &sessionOperationStore{
-		client:      apiClient,
+		writer:      apiWriter,
+		reader:      apiReader,
 		memory:      make(map[string]*storedSessionOperation),
 		active:      make(map[string]bool),
 		subscribers: make(map[string]map[chan *pb.SessionOperationEvent]struct{}),
@@ -83,7 +88,7 @@ func (s *sessionOperationStore) Begin(ctx context.Context, run *v1alpha1.Run, op
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := sessionOperationMemoryKey(run, operationID)
-	if s.client == nil {
+	if s.writer == nil {
 		if existing := s.memory[key]; existing != nil {
 			if existing.Digest != digest {
 				return nil, false, status.Error(codes.AlreadyExists, "idempotency key was used for a different session operation")
@@ -99,7 +104,7 @@ func (s *sessionOperationStore) Begin(ctx context.Context, run *v1alpha1.Run, op
 
 	journal := &corev1.ConfigMap{}
 	journalKey := client.ObjectKey{Namespace: run.Namespace, Name: sessionOperationJournalName(run, operationID)}
-	err := s.client.Get(ctx, journalKey, journal)
+	err := s.reader.Get(ctx, journalKey, journal)
 	if err == nil {
 		record, err := decodeSessionOperationJournal(journal)
 		if err != nil {
@@ -136,7 +141,7 @@ func (s *sessionOperationStore) Begin(ctx context.Context, run *v1alpha1.Run, op
 		},
 		Data: map[string]string{sessionOperationJournalDataKey: encoded},
 	}
-	if err := s.client.Create(ctx, journal); err != nil {
+	if err := s.writer.Create(ctx, journal); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return s.beginExistingLocked(ctx, journalKey, digest)
 		}
@@ -148,7 +153,7 @@ func (s *sessionOperationStore) Begin(ctx context.Context, run *v1alpha1.Run, op
 
 func (s *sessionOperationStore) beginExistingLocked(ctx context.Context, key client.ObjectKey, digest string) (*storedSessionOperation, bool, error) {
 	journal := &corev1.ConfigMap{}
-	if err := s.client.Get(ctx, key, journal); err != nil {
+	if err := s.reader.Get(ctx, key, journal); err != nil {
 		return nil, false, status.Errorf(codes.Unavailable, "read existing session operation journal: %v", err)
 	}
 	record, err := decodeSessionOperationJournal(journal)
@@ -177,7 +182,7 @@ func (s *sessionOperationStore) Append(ctx context.Context, run *v1alpha1.Run, o
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := sessionOperationMemoryKey(run, operationID)
-	if s.client == nil {
+	if s.writer == nil {
 		record := s.memory[key]
 		if record == nil {
 			return status.Error(codes.NotFound, "session operation journal not found")
@@ -193,7 +198,7 @@ func (s *sessionOperationStore) Append(ctx context.Context, run *v1alpha1.Run, o
 	}
 	journal := &corev1.ConfigMap{}
 	journalKey := client.ObjectKey{Namespace: run.Namespace, Name: sessionOperationJournalName(run, operationID)}
-	if err := s.client.Get(ctx, journalKey, journal); err != nil {
+	if err := s.reader.Get(ctx, journalKey, journal); err != nil {
 		if apierrors.IsNotFound(err) {
 			return status.Error(codes.NotFound, "session operation journal not found")
 		}
@@ -211,7 +216,7 @@ func (s *sessionOperationStore) Append(ctx context.Context, run *v1alpha1.Run, o
 		return err
 	}
 	journal.Data[sessionOperationJournalDataKey] = stored
-	if err := s.client.Update(ctx, journal); err != nil {
+	if err := s.writer.Update(ctx, journal); err != nil {
 		return status.Errorf(codes.Unavailable, "persist session operation event: %v", err)
 	}
 	s.broadcastLocked(key, event, record.Terminal)
@@ -302,7 +307,7 @@ func (s *sessionOperationStore) readLocked(ctx context.Context, run *v1alpha1.Ru
 	if s == nil || run == nil || run.UID == "" {
 		return nil, status.Error(codes.InvalidArgument, "session operation identity is required")
 	}
-	if s.client == nil {
+	if s.writer == nil {
 		record := s.memory[sessionOperationMemoryKey(run, operationID)]
 		if record == nil {
 			return nil, status.Error(codes.NotFound, "session operation not found")
@@ -310,7 +315,7 @@ func (s *sessionOperationStore) readLocked(ctx context.Context, run *v1alpha1.Ru
 		return cloneStoredSessionOperation(record), nil
 	}
 	journal := &corev1.ConfigMap{}
-	if err := s.client.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: sessionOperationJournalName(run, operationID)}, journal); err != nil {
+	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: sessionOperationJournalName(run, operationID)}, journal); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, status.Error(codes.NotFound, "session operation not found")
 		}

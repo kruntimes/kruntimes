@@ -25,25 +25,25 @@ helm template kruntimes ./charts/kruntimes --namespace kruntimes-system
 Contributor-only Make variables and chart validation commands are documented in
 the [Development Guide](development.md) and [Testing Guide](testing.md).
 
-## Dashboard TLS
+## Console TLS
 
-The Dashboard is an opt-in component of the `kruntimes` chart and exposes
-HTTPS only. Enable it with the default chart-generated certificate for local or
-explicitly trusted deployments:
+The Console is installed with the `kruntimes` chart and exposes HTTPS only. By
+default, the chart generates a certificate suitable for local or explicitly
+trusted deployments:
 
 ```yaml
-dashboard:
-  enabled: true
+console:
+  tls:
+    selfSigned: true
 ```
 
 To mount an existing TLS Secret, select that source explicitly:
 
 ```yaml
-dashboard:
-  enabled: true
+console:
   tls:
     selfSigned: false
-    secretName: dashboard-tls
+    secretName: console-tls
 ```
 
 To have cert-manager issue the certificate, disable chart generation and
@@ -51,11 +51,10 @@ reference an existing Issuer or ClusterIssuer. The issuer may itself be a
 self-signed cert-manager issuer.
 
 ```yaml
-dashboard:
-  enabled: true
+console:
   tls:
     selfSigned: false
-    secretName: dashboard-tls
+    secretName: console-tls
     certManager:
       enabled: true
       issuerRef:
@@ -69,9 +68,10 @@ other external exposure separately.
 
 ## Aggregated Run-log API
 
-`logAPI.enabled` defaults to `true` independently of `gateway.enabled`. It
+`logAPI.enabled` defaults to `true` independently of the always-installed
+Kruntimes Console. It
 installs the `logs.kruntimes.io/v1alpha1` APIService and a dedicated backend.
-This is the default transport for `krt logs` and Dashboard: normal kubeconfig
+This is the default transport for `krt logs` and Console: normal kubeconfig
 authentication, including client certificates, is verified by the Kubernetes
 API server. The caller needs `get` on the `logs.kruntimes.io` `runs/log`
 subresource; it never needs `kruntimes.io/runs get` or `pods/log`.
@@ -86,23 +86,24 @@ logAPI:
   enabled: true
 ```
 
-Dashboard and `krt logs` always use this aggregated API. The Runtime Gateway
-continues to serve Session and Function endpoints, but does not serve Run logs.
+Console and `krt logs` always use this aggregated API. Console's embedded
+Runtime access API continues to serve Session and Function endpoints, but does
+not serve Run logs.
 
 ### Public resource lists
 
-When the Dashboard is enabled, namespace, Run, Runtime, and WorkflowRun
-*lists* are available without a token by default. This is controlled by
-`dashboard.publicRead.enabled`; set it to `false` to require a bearer token for
+Namespace, Run, Runtime, and WorkflowRun *lists* are available without a token
+by default. This is controlled by `console.publicRead.enabled`; set it to
+`false` to require a bearer token for
 every API request:
 
 ```yaml
-dashboard:
+console:
   publicRead:
     enabled: false
 ```
 
-The chart grants the Dashboard ServiceAccount only `get`/`list` on
+The chart grants the Console ServiceAccount only `get`/`list` on
 `namespaces`, `runs`, `runtimes`, and `workflowruns`. Their details require the
 caller's bearer token. Log requests require `get` on the
 `logs.kruntimes.io` `runs/log` subresource.

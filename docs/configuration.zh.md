@@ -27,35 +27,34 @@ helm template kruntimes ./charts/kruntimes --namespace kruntimes-system
 仅贡献者使用的 Make variables 和 chart validation commands 见
 [Development Guide](development.md) 和 [Testing Guide](testing.md)。
 
-## Dashboard TLS
+## Console TLS
 
-Dashboard 是 `kruntimes` chart 的 opt-in 组件，并且只暴露 HTTPS。对于本地开发或明确受信任的
-部署，以下配置会启用 chart 生成的默认 certificate：
+Console 随 `kruntimes` chart 一同安装，并且只暴露 HTTPS。对于本地开发或明确受信任的部署，
+chart 默认会生成 certificate：
 
 ```yaml
-dashboard:
-  enabled: true
+console:
+  tls:
+    selfSigned: true
 ```
 
 要挂载已有 TLS Secret，需要显式选择该来源：
 
 ```yaml
-dashboard:
-  enabled: true
+console:
   tls:
     selfSigned: false
-    secretName: dashboard-tls
+    secretName: console-tls
 ```
 
 要由 cert-manager 签发 certificate，关闭 chart 生成并引用已有 Issuer 或 ClusterIssuer。该
 issuer 本身可以是 cert-manager 的 self-signed issuer。
 
 ```yaml
-dashboard:
-  enabled: true
+console:
   tls:
     selfSigned: false
-    secretName: dashboard-tls
+    secretName: console-tls
     certManager:
       enabled: true
       issuerRef:
@@ -68,8 +67,8 @@ ingress 或其它对外暴露需要单独配置。
 
 ## 聚合 Run-log API
 
-`logAPI.enabled` 独立于 `gateway.enabled`，默认是 `true`。它安装
-`logs.kruntimes.io/v1alpha1` APIService 及独立 backend。这是 `krt logs` 和 Dashboard 的默认
+`logAPI.enabled` 独立于始终安装的 Kruntimes Console，默认是 `true`。它安装
+`logs.kruntimes.io/v1alpha1` APIService 及独立 backend。这是 `krt logs` 和 Console 的默认
 transport：普通 kubeconfig authentication（包括 client certificate）由 Kubernetes API server 验证。
 caller 只需要 `logs.kruntimes.io` `runs/log` subresource 的 `get`；不需要 `kruntimes.io/runs get` 或
 `pods/log`。
@@ -83,21 +82,21 @@ logAPI:
   enabled: true
 ```
 
-Dashboard 和 `krt logs` 始终使用该聚合 API。Runtime Gateway 继续提供 Session 和 Function
-endpoint，但不再提供 Run logs。
+Console 和 `krt logs` 始终使用该聚合 API。Console 内嵌的 Runtime access API 继续提供 Session
+和 Function endpoint，但不再提供 Run logs。
 
 ### 公开资源列表
 
-启用 Dashboard 时，namespace、Run、Runtime 和 WorkflowRun **列表**默认无需 token 即可查看。
-该行为由 `dashboard.publicRead.enabled` 控制；设置为 `false` 后，所有 API 请求都需要 bearer token：
+namespace、Run、Runtime 和 WorkflowRun **列表**默认无需 token 即可查看。该行为由
+`console.publicRead.enabled` 控制；设置为 `false` 后，所有 API 请求都需要 bearer token：
 
 ```yaml
-dashboard:
+console:
   publicRead:
     enabled: false
 ```
 
-chart 只给 Dashboard ServiceAccount 授予 `namespaces`、`runs`、`runtimes` 和 `workflowruns` 的
+chart 只给 Console ServiceAccount 授予 `namespaces`、`runs`、`runtimes` 和 `workflowruns` 的
 `get`/`list` 权限。它们的详情仍必须使用 caller 的 bearer token。日志请求需要
 `logs.kruntimes.io` `runs/log` subresource 的 `get`。
 

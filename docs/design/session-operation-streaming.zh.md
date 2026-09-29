@@ -15,14 +15,15 @@ command output、progress reporting 或 interactive agent turn。已有 unary op
 - 保留 owner runtimed 的 FIFO queue，以及既有 cancellation、authorization、assignment fencing 与
   operation timeout 语义。
 - Runtime Server 与 runtimed port 保持私有；Runtime gateway 仍是唯一公开 data-plane endpoint。
-- 使用同时适合 browser 和 CLI、并能使用 bearer authentication 的 HTTP response stream。
+- 使用同时适合 browser 和 CLI、并能使用 bearer authentication 的流式 transport。
 - 限制每个 Runtime-emitted event 的大小，且不引入无界 event buffer。
 
 ## 首次交付的非目标
 
 - Runtime Pod 丢失后的 durable event retention 或 replay。
 - client connection 取消后继续执行 operation。
-- 双向 user input 或 approval；它们需要另一个经过 admission 的 Session operation，不能作为 stream 的 reply。
+- Runtime 定义的双向 user input 或 approval。WebSocket transport 支持 client cancellation；更多消息需要单独的
+  Runtime protocol extension 与 operation admission design。
 - 将高频 event 写入 `Run.status`、Kubernetes Events 或 container logs。runtimed structured log 仍是
   audit path。
 
@@ -52,7 +53,7 @@ rpc StreamSessionOperation(ExecuteSessionOperationRequest)
 Server event stream。这样即使 gateway request 到达非 owner Runtime Pod、再单跳转发给 owner，也不会破坏
 queue mutation ordering。
 
-公开 HTTP endpoint：
+兼容的 HTTP endpoint：
 
 ```
 POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream
@@ -69,6 +70,24 @@ client 用 `fetch` 消费 `response.body` 的 `ReadableStream`，因此可以使
 bearer-token header。CLI 直接读取 JSON line。无法 authorize 或 admission 的 request 会在任何 response
 event 前使用现有 HTTP error mapping 失败。event byte 一旦写出，HTTP status 就不能安全改变；之后 terminal
 failure 用 `failed` event 表示。
+
+推荐 interactive transport 为 WebSocket：
+
+```text
+GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws
+Upgrade: websocket
+```
+
+HTTP upgrade 会在 connection 被接受前完成 authentication 和 authorization。带有 `Origin` header 的 browser
+request 必须为 same-origin；不带 `Origin` 的 native client 继续在 upgrade request 中使用 bearer token 或 client
+certificate。第一个 client text frame 与 `operations:execute` 接受的 JSON operation object 完全一致。server 为每个
+有序 `SessionOperationEvent` 发送一个 JSON text frame，representation 与 NDJSON 相同但不带结尾换行。
+`Idempotency-Key` 与可选 `after` query parameter 保持原有 HTTP 语义。operation 期间 client 可发送
+`{"type":"cancel"}` 取消 stream context。其他 client message 会关闭 connection；任意 interactive input 尚未成为
+Runtime protocol 的一部分。
+
+WebSocket upgrade 前的 error 仍是普通 HTTP error。upgrade 后的 error 将以
+`{"type":"error","error":"..."}` 发送，随后发送 WebSocket close frame；成功 upgrade 后不能再更改 HTTP status。
 
 HTTP representation 使用小写 protocol value：output 的 `stream` 为 `stdout` 或 `stderr`；progress 的
 `kind` 为 `status`、`text_delta`、`tool_call_started` 或 `tool_call_finished`。二进制 `data` field 使用标准
@@ -87,10 +106,10 @@ event 会以 resource-limit failure 结束 operation。Runtime 提供的 progres
 
 ## 兼容性与 rollout
 
-`ExecuteSessionOperation` 与 `operations:execute` 不变。built-in Runtime 初期可以对 streaming gRPC method
-返回 `Unimplemented`；gateway 会映射为明确的 capability error。interactive Runtime 通过实现该 method opt in。
-GitHub Issue Labeler Runtime 将发出 Pi text 和 tool lifecycle event；它已有的 unary `message` command 继续为
-非 streaming client 返回最终回答。
+`ExecuteSessionOperation`、`operations:execute` 与 NDJSON `operations:stream` endpoint 保持不变。built-in Runtime
+初期可以对 streaming gRPC method 返回 `Unimplemented`；gateway 会映射为明确的 capability error。interactive Runtime
+通过实现该 method opt in。GitHub Issue Labeler Runtime 将发出 Pi text 和 tool lifecycle event；它已有的 unary
+`message` command 继续为非 streaming client 返回最终回答。
 
 Go 和 Python Session SDK 将增加显式 streaming helper，而不是静默改变 `Execute` 的返回类型。Dashboard 对
 agent turn 使用 streaming endpoint 并逐步渲染 event。

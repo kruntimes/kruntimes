@@ -567,7 +567,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // SessionRuntime is an optional Runtime Server extension for stateful session
-// Runs. runtimed also implements this service for gateway traffic, forwarding
+// Runs. runtimed also implements this service for Console Runtime access traffic, forwarding
 // requests only to the assigned Pod of the same Runtime when it is not the
 // owner. runtimed owns queue admission and operation lifecycle; the Runtime
 // Server owns local workspace confinement and process execution.
@@ -681,7 +681,7 @@ func (c *sessionRuntimeClient) CloseSession(ctx context.Context, in *CloseSessio
 // for forward compatibility.
 //
 // SessionRuntime is an optional Runtime Server extension for stateful session
-// Runs. runtimed also implements this service for gateway traffic, forwarding
+// Runs. runtimed also implements this service for Console Runtime access traffic, forwarding
 // requests only to the assigned Pod of the same Runtime when it is not the
 // owner. runtimed owns queue admission and operation lifecycle; the Runtime
 // Server owns local workspace confinement and process execution.

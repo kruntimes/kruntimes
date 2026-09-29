@@ -29,7 +29,7 @@ import (
 
 const defaultPollInterval = 500 * time.Millisecond
 
-// HTTPDoer is the HTTP transport used for Runtime gateway requests.
+// HTTPDoer is the HTTP transport used for Console Runtime access requests.
 type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
@@ -48,7 +48,7 @@ type Client struct {
 	pollInterval time.Duration
 }
 
-// Config supplies the explicit Kubernetes and gateway dependencies for Client.
+// Config supplies the explicit Kubernetes and Console dependencies for Client.
 // Callers may use a Kubernetes-configured HTTP client that injects credentials
 // instead of BearerToken.
 type Config struct {
@@ -59,7 +59,7 @@ type Config struct {
 	PollInterval time.Duration
 }
 
-// New constructs a Sandbox client. Kubernetes and gateway dependencies are
+// New constructs a Sandbox client. Kubernetes and Console dependencies are
 // explicit so the same client works for in-cluster, local, and test transports.
 func New(config Config) (*Client, error) {
 	if config.Runs == nil {
@@ -94,7 +94,7 @@ func NewFromRESTConfig(config *rest.Config, options Config) (*Client, error) {
 	if options.HTTPClient == nil {
 		httpClient, err := rest.HTTPClientFor(config)
 		if err != nil {
-			return nil, fmt.Errorf("create Runtime gateway HTTP client: %w", err)
+			return nil, fmt.Errorf("create Console HTTP client: %w", err)
 		}
 		options.HTTPClient = httpClient
 	}
@@ -408,13 +408,13 @@ func (s *Sandbox) openOperationStream(ctx context.Context, method, endpoint stri
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("encode gateway request: %w", err)
+			return nil, fmt.Errorf("encode Console request: %w", err)
 		}
 		content = bytes.NewReader(encoded)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, content)
 	if err != nil {
-		return nil, fmt.Errorf("build gateway request: %w", err)
+		return nil, fmt.Errorf("build Console request: %w", err)
 	}
 	request.Header.Set("Accept", "application/x-ndjson")
 	if body != nil {
@@ -428,15 +428,15 @@ func (s *Sandbox) openOperationStream(ctx context.Context, method, endpoint stri
 	}
 	response, err := s.client.httpClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("call Runtime gateway: %w", err)
+		return nil, fmt.Errorf("call Console Runtime access API: %w", err)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		defer response.Body.Close()
-		var gatewayError struct {
+		var responseError struct {
 			Error string `json:"error"`
 		}
-		_ = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&gatewayError)
-		return nil, &APIError{StatusCode: response.StatusCode, Message: gatewayError.Error}
+		_ = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&responseError)
+		return nil, &APIError{StatusCode: response.StatusCode, Message: responseError.Error}
 	}
 	return &OperationStream{body: response.Body, decoder: json.NewDecoder(response.Body), lastSequence: operationStreamCursor(endpoint)}, nil
 }
@@ -461,7 +461,7 @@ func (s *Sandbox) Execute(ctx context.Context, command Command) (CommandResult, 
 		return CommandResult{}, err
 	}
 	if response.Command == nil {
-		return CommandResult{}, errors.New("gateway response did not include a command result")
+		return CommandResult{}, errors.New("Console response did not include a command result")
 	}
 	return *response.Command, nil
 }
@@ -607,14 +607,14 @@ func (s *Sandbox) Logs(ctx context.Context) ([]LogLine, error) {
 	return lines, nil
 }
 
-// APIError reports a non-success Runtime gateway response.
+// APIError reports a non-success Console Runtime access API response.
 type APIError struct {
 	StatusCode int
 	Message    string
 }
 
 func (e *APIError) Error() string {
-	return fmt.Sprintf("Runtime gateway returned HTTP %d: %s", e.StatusCode, e.Message)
+	return fmt.Sprintf("Console Runtime access API returned HTTP %d: %s", e.StatusCode, e.Message)
 }
 
 // StateError reports an invalid Session Run lifecycle state.
@@ -654,13 +654,13 @@ func (s *Sandbox) request(ctx context.Context, method, endpoint string, body, re
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("encode gateway request: %w", err)
+			return fmt.Errorf("encode Console request: %w", err)
 		}
 		content = bytes.NewReader(encoded)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, content)
 	if err != nil {
-		return fmt.Errorf("build gateway request: %w", err)
+		return fmt.Errorf("build Console request: %w", err)
 	}
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
@@ -670,19 +670,19 @@ func (s *Sandbox) request(ctx context.Context, method, endpoint string, body, re
 	}
 	result, err := s.client.httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("call Runtime gateway: %w", err)
+		return fmt.Errorf("call Console Runtime access API: %w", err)
 	}
 	defer result.Body.Close()
 	if result.StatusCode < http.StatusOK || result.StatusCode >= http.StatusMultipleChoices {
-		var gatewayError struct {
+		var responseError struct {
 			Error string `json:"error"`
 		}
-		_ = json.NewDecoder(io.LimitReader(result.Body, 1<<20)).Decode(&gatewayError)
-		return &APIError{StatusCode: result.StatusCode, Message: gatewayError.Error}
+		_ = json.NewDecoder(io.LimitReader(result.Body, 1<<20)).Decode(&responseError)
+		return &APIError{StatusCode: result.StatusCode, Message: responseError.Error}
 	}
 	if response != nil {
 		if err := json.NewDecoder(io.LimitReader(result.Body, 1<<20)).Decode(response); err != nil {
-			return fmt.Errorf("decode gateway response: %w", err)
+			return fmt.Errorf("decode Console response: %w", err)
 		}
 	}
 	return nil

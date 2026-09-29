@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -21,10 +22,10 @@ import (
 	"k8s.io/client-go/transport/spdy"
 )
 
-// GatewayPortForward forwards Runtime gateway HTTP requests through one local
+// ConsolePortForward forwards Console Runtime access HTTP requests through one local
 // Kubernetes Pod port-forward. It changes only the endpoint scheme and host;
 // the Run-owned path, query, and HTTP headers are preserved.
-type GatewayPortForward struct {
+type ConsolePortForward struct {
 	httpClient HTTPDoer
 	localURL   *url.URL
 	stop       chan struct{}
@@ -34,30 +35,30 @@ type GatewayPortForward struct {
 	closeOnce  sync.Once
 }
 
-// StartGatewayPortForward starts a local port-forward to one Ready Pod behind
-// the shared Runtime gateway Service. The returned value implements HTTPDoer
+// StartConsolePortForward starts a local port-forward to one Ready Pod behind
+// the shared Console Service. The returned value implements HTTPDoer
 // and can be passed as Config.HTTPClient to NewFromRESTConfig.
-func StartGatewayPortForward(ctx context.Context, config *rest.Config, namespace, service string, servicePort int) (*GatewayPortForward, error) {
+func StartConsolePortForward(ctx context.Context, config *rest.Config, namespace, service string, servicePort int) (*ConsolePortForward, error) {
 	if config == nil {
 		return nil, errors.New("Kubernetes REST config is required")
 	}
 	if namespace == "" || service == "" {
-		return nil, errors.New("gateway namespace and service are required")
+		return nil, errors.New("Console namespace and service are required")
 	}
 	if servicePort <= 0 || servicePort > 65535 {
-		return nil, fmt.Errorf("invalid gateway service port %d", servicePort)
+		return nil, fmt.Errorf("invalid Console service port %d", servicePort)
 	}
 	pods, err := corev1client.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("create Kubernetes Pod client: %w", err)
 	}
-	podName, targetPort, err := readyGatewayBackend(ctx, pods, namespace, service, servicePort)
+	podName, targetPort, tlsEnabled, err := readyConsoleBackend(ctx, pods, namespace, service, servicePort)
 	if err != nil {
 		return nil, err
 	}
-	httpClient, err := rest.HTTPClientFor(config)
+	httpClient, err := consolePortForwardHTTPClient(config, tlsEnabled)
 	if err != nil {
-		return nil, fmt.Errorf("create Runtime gateway HTTP client: %w", err)
+		return nil, err
 	}
 	transport, upgrader, err := spdy.RoundTripperFor(config)
 	if err != nil {
@@ -73,9 +74,9 @@ func StartGatewayPortForward(ctx context.Context, config *rest.Config, namespace
 	ready := make(chan struct{})
 	forwarder, err := portforward.NewOnAddresses(dialer, []string{"127.0.0.1"}, []string{"0:" + strconv.Itoa(targetPort)}, stop, ready, io.Discard, io.Discard)
 	if err != nil {
-		return nil, fmt.Errorf("create Runtime gateway port-forward: %w", err)
+		return nil, fmt.Errorf("create Console port-forward: %w", err)
 	}
-	forward := &GatewayPortForward{httpClient: httpClient, stop: stop, done: make(chan struct{})}
+	forward := &ConsolePortForward{httpClient: httpClient, stop: stop, done: make(chan struct{})}
 	go func() {
 		defer close(forward.done)
 		forward.setError(forwarder.ForwardPorts())
@@ -86,31 +87,59 @@ func StartGatewayPortForward(ctx context.Context, config *rest.Config, namespace
 		return nil, ctx.Err()
 	case <-ready:
 	case <-forward.done:
-		return nil, fmt.Errorf("start Runtime gateway port-forward: %w", forward.Error())
+		return nil, fmt.Errorf("start Console port-forward: %w", forward.Error())
 	}
 	ports, err := forwarder.GetPorts()
 	if err != nil || len(ports) != 1 {
 		forward.Close()
 		if err != nil {
-			return nil, fmt.Errorf("get Runtime gateway local port: %w", err)
+			return nil, fmt.Errorf("get Console local port: %w", err)
 		}
-		return nil, errors.New("Runtime gateway port-forward did not expose one local port")
+		return nil, errors.New("Console port-forward did not expose one local port")
 	}
-	forward.localURL = &url.URL{Scheme: "http", Host: "127.0.0.1:" + strconv.Itoa(int(ports[0].Local))}
+	scheme := "http"
+	if tlsEnabled {
+		scheme = "https"
+	}
+	forward.localURL = &url.URL{Scheme: scheme, Host: "127.0.0.1:" + strconv.Itoa(int(ports[0].Local))}
 	return forward, nil
 }
 
+func consolePortForwardHTTPClient(config *rest.Config, tlsEnabled bool) (*http.Client, error) {
+	if !tlsEnabled {
+		httpClient, err := rest.HTTPClientFor(config)
+		if err != nil {
+			return nil, fmt.Errorf("create Console HTTP client: %w", err)
+		}
+		return httpClient, nil
+	}
+	// The target is a local Kubernetes port-forward to a Pod selected through
+	// the authenticated API. Console certificates name the in-cluster Service,
+	// not 127.0.0.1, so normal hostname verification cannot apply here. Keep the
+	// remainder of the REST configuration intact: its transport injects the
+	// caller's Kubernetes credentials into Console access requests.
+	forwardConfig := rest.CopyConfig(config)
+	forwardConfig.TLSClientConfig.Insecure = true //nolint:gosec // Kubernetes-authenticated local port-forward only.
+	forwardConfig.TLSClientConfig.CAData = nil
+	forwardConfig.TLSClientConfig.CAFile = ""
+	httpClient, err := rest.HTTPClientFor(forwardConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create Console HTTPS client: %w", err)
+	}
+	return httpClient, nil
+}
+
 // Do implements HTTPDoer. It fails after the local port-forward exits.
-func (f *GatewayPortForward) Do(request *http.Request) (*http.Response, error) {
+func (f *ConsolePortForward) Do(request *http.Request) (*http.Response, error) {
 	if f == nil || f.httpClient == nil || f.localURL == nil {
-		return nil, errors.New("Runtime gateway port-forward is not ready")
+		return nil, errors.New("Console port-forward is not ready")
 	}
 	select {
 	case <-f.done:
 		if err := f.Error(); err != nil {
-			return nil, fmt.Errorf("Runtime gateway port-forward: %w", err)
+			return nil, fmt.Errorf("Console port-forward: %w", err)
 		}
-		return nil, errors.New("Runtime gateway port-forward is closed")
+		return nil, errors.New("Console port-forward is closed")
 	default:
 	}
 	copy := request.Clone(request.Context())
@@ -123,7 +152,7 @@ func (f *GatewayPortForward) Do(request *http.Request) (*http.Response, error) {
 }
 
 // Close stops the local port-forward. It is safe to call more than once.
-func (f *GatewayPortForward) Close() {
+func (f *ConsolePortForward) Close() {
 	if f == nil {
 		return
 	}
@@ -132,72 +161,76 @@ func (f *GatewayPortForward) Close() {
 }
 
 // Error reports a non-nil port-forward failure after it exits.
-func (f *GatewayPortForward) Error() error {
+func (f *ConsolePortForward) Error() error {
 	if f == nil {
-		return errors.New("Runtime gateway port-forward is nil")
+		return errors.New("Console port-forward is nil")
 	}
 	f.errMu.RLock()
 	defer f.errMu.RUnlock()
 	return f.err
 }
 
-func (f *GatewayPortForward) setError(err error) {
+func (f *ConsolePortForward) setError(err error) {
 	f.errMu.Lock()
 	defer f.errMu.Unlock()
 	f.err = err
 }
 
-func readyGatewayPod(ctx context.Context, pods corev1client.CoreV1Interface, namespace, service string) (string, error) {
+func readyConsolePod(ctx context.Context, pods corev1client.CoreV1Interface, namespace, service string) (string, error) {
 	serviceObject, err := pods.Services(namespace).Get(ctx, service, metav1.GetOptions{})
 	if err != nil {
-		return "", fmt.Errorf("get Runtime gateway Service %q: %w", service, err)
+		return "", fmt.Errorf("get Console Service %q: %w", service, err)
 	}
 	if len(serviceObject.Spec.Selector) == 0 {
-		return "", fmt.Errorf("Runtime gateway Service %q has no selector", service)
+		return "", fmt.Errorf("Console Service %q has no selector", service)
 	}
-	return readyGatewayPodForService(ctx, pods, namespace, serviceObject)
+	return readyConsolePodForService(ctx, pods, namespace, serviceObject)
 }
 
-func readyGatewayBackend(ctx context.Context, pods corev1client.CoreV1Interface, namespace, service string, servicePort int) (string, int, error) {
+func readyConsoleBackend(ctx context.Context, pods corev1client.CoreV1Interface, namespace, service string, servicePort int) (string, int, bool, error) {
 	serviceObject, err := pods.Services(namespace).Get(ctx, service, metav1.GetOptions{})
 	if err != nil {
-		return "", 0, fmt.Errorf("get Runtime gateway Service %q: %w", service, err)
+		return "", 0, false, fmt.Errorf("get Console Service %q: %w", service, err)
 	}
-	pod, err := readyGatewayPodForService(ctx, pods, namespace, serviceObject)
+	pod, err := readyConsolePodForService(ctx, pods, namespace, serviceObject)
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
-	targetPort, err := gatewayTargetPort(serviceObject, servicePort)
+	servicePortDefinition, err := consoleServicePort(serviceObject, servicePort)
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
+	}
+	targetPort := servicePortDefinition.TargetPort
+	if targetPort.Type != intstr.String && targetPort.IntVal == 0 {
+		targetPort = intstr.FromInt32(servicePortDefinition.Port)
 	}
 	if targetPort.Type == intstr.String {
 		podObject, err := pods.Pods(namespace).Get(ctx, pod, metav1.GetOptions{})
 		if err != nil {
-			return "", 0, fmt.Errorf("get selected Runtime gateway Pod %q: %w", pod, err)
+			return "", 0, false, fmt.Errorf("get selected Console Pod %q: %w", pod, err)
 		}
 		port, ok := namedContainerPort(podObject, targetPort.StrVal)
 		if !ok {
-			return "", 0, fmt.Errorf("Runtime gateway Service %q targetPort %q is not declared by Pod %q", service, targetPort.StrVal, pod)
+			return "", 0, false, fmt.Errorf("Console Service %q targetPort %q is not declared by Pod %q", service, targetPort.StrVal, pod)
 		}
-		return pod, port, nil
+		return pod, port, consoleServicePortUsesTLS(servicePortDefinition), nil
 	}
 	if targetPort.IntVal <= 0 || targetPort.IntVal > 65535 {
-		return "", 0, fmt.Errorf("Runtime gateway Service %q has invalid targetPort %d", service, targetPort.IntVal)
+		return "", 0, false, fmt.Errorf("Console Service %q has invalid targetPort %d", service, targetPort.IntVal)
 	}
-	return pod, int(targetPort.IntVal), nil
+	return pod, int(targetPort.IntVal), consoleServicePortUsesTLS(servicePortDefinition), nil
 }
 
-func readyGatewayPodForService(ctx context.Context, pods corev1client.CoreV1Interface, namespace string, service *corev1.Service) (string, error) {
+func readyConsolePodForService(ctx context.Context, pods corev1client.CoreV1Interface, namespace string, service *corev1.Service) (string, error) {
 	if service == nil {
-		return "", errors.New("Runtime gateway Service is required")
+		return "", errors.New("Console Service is required")
 	}
 	if len(service.Spec.Selector) == 0 {
-		return "", fmt.Errorf("Runtime gateway Service %q has no selector", service.Name)
+		return "", fmt.Errorf("Console Service %q has no selector", service.Name)
 	}
 	list, err := pods.Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labels.Set(service.Spec.Selector).String()})
 	if err != nil {
-		return "", fmt.Errorf("list Runtime gateway Pods: %w", err)
+		return "", fmt.Errorf("list Console Pods: %w", err)
 	}
 	names := make([]string, 0, len(list.Items))
 	for i := range list.Items {
@@ -206,23 +239,27 @@ func readyGatewayPodForService(ctx context.Context, pods corev1client.CoreV1Inte
 		}
 	}
 	if len(names) == 0 {
-		return "", fmt.Errorf("Runtime gateway Service %q has no Ready Pods", service.Name)
+		return "", fmt.Errorf("Console Service %q has no Ready Pods", service.Name)
 	}
 	sort.Strings(names)
 	return names[0], nil
 }
 
-func gatewayTargetPort(service *corev1.Service, requestedPort int) (intstr.IntOrString, error) {
+func consoleServicePort(service *corev1.Service, requestedPort int) (corev1.ServicePort, error) {
+	if service == nil {
+		return corev1.ServicePort{}, errors.New("Console Service is required")
+	}
 	for _, port := range service.Spec.Ports {
 		if int(port.Port) != requestedPort {
 			continue
 		}
-		if port.TargetPort.Type == intstr.String || port.TargetPort.IntVal != 0 {
-			return port.TargetPort, nil
-		}
-		return intstr.FromInt32(port.Port), nil
+		return port, nil
 	}
-	return intstr.IntOrString{}, fmt.Errorf("Runtime gateway Service %q does not expose port %d", service.Name, requestedPort)
+	return corev1.ServicePort{}, fmt.Errorf("Console Service %q does not expose port %d", service.Name, requestedPort)
+}
+
+func consoleServicePortUsesTLS(port corev1.ServicePort) bool {
+	return strings.EqualFold(port.Name, "https") || port.Port == 443
 }
 
 func namedContainerPort(pod *corev1.Pod, name string) (int, bool) {

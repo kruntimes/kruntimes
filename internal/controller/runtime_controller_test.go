@@ -633,8 +633,8 @@ func TestBuildNetworkPolicyAllowsSessionGatewayAndRuntimePeers(t *testing.T) {
 		Spec:       v1alpha1.RuntimeSpec{Template: runtimePodTemplate("bash-runtime:latest")},
 	}
 	networkPolicy := (&RuntimeReconciler{
-		GatewayNamespace: "platform",
-		GatewaySelectorLabels: map[string]string{
+		ConsoleNamespace: "platform",
+		ConsoleSelectorLabels: map[string]string{
 			"app.kubernetes.io/instance":  "kruntimes",
 			"app.kubernetes.io/component": "runtime-gateway",
 		},
@@ -835,7 +835,7 @@ func TestBuildDeploymentOmitsUnsetS3ArtifactStoreOptions(t *testing.T) {
 	}
 }
 
-func TestBuildDeploymentAddsGatewayCABundleWithoutTemplateAnnotations(t *testing.T) {
+func TestBuildDeploymentAddsConsoleCABundleWithoutTemplateAnnotations(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
@@ -843,12 +843,12 @@ func TestBuildDeploymentAddsGatewayCABundleWithoutTemplateAnnotations(t *testing
 		},
 	}
 
-	deploy := (&RuntimeReconciler{GatewayCABundle: []byte("test-ca")}).buildDeployment(rt)
-	if got := deploy.Spec.Template.Annotations[gatewayCAAnnotation]; got != "test-ca" {
+	deploy := (&RuntimeReconciler{ConsoleCABundle: []byte("test-ca")}).buildDeployment(rt)
+	if got := deploy.Spec.Template.Annotations[consoleCAAnnotation]; got != "test-ca" {
 		t.Fatalf("gateway CA annotation = %q, want test-ca", got)
 	}
 	if !slices.ContainsFunc(deploy.Spec.Template.Spec.Volumes, func(volume corev1.Volume) bool {
-		return volume.Name == gatewayCAVolume && volume.DownwardAPI != nil
+		return volume.Name == consoleCAVolume && volume.DownwardAPI != nil
 	}) {
 		t.Fatalf("volumes = %#v, want gateway CA downward API volume", deploy.Spec.Template.Spec.Volumes)
 	}

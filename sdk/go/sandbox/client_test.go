@@ -286,8 +286,8 @@ func TestSandboxRejectsEndpointForAnotherRun(t *testing.T) {
 	}
 }
 
-func TestGatewayPortForwardPreservesRunEndpointPath(t *testing.T) {
-	forward := &GatewayPortForward{
+func TestConsolePortForwardPreservesRunEndpointPath(t *testing.T) {
+	forward := &ConsolePortForward{
 		httpClient: httpDoer(func(request *http.Request) (*http.Response, error) {
 			if request.URL.String() != "http://127.0.0.1:19090/v1/namespaces/default/runtimes/bash/sessions/run-uid/files?maxBytes=10" {
 				t.Fatalf("forwarded URL = %q", request.URL)
@@ -307,14 +307,14 @@ func TestGatewayPortForwardPreservesRunEndpointPath(t *testing.T) {
 	response.Body.Close()
 }
 
-func TestReadyGatewayPodSelectsReadyServiceBackend(t *testing.T) {
+func TestReadyConsolePodSelectsReadyServiceBackend(t *testing.T) {
 	clientset := kubernetesfake.NewSimpleClientset(
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "platform"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "gateway"}}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "gateway-z", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "gateway-a", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "not-ready", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodPending}},
 	)
-	pod, err := readyGatewayPod(t.Context(), clientset.CoreV1(), "platform", "gateway")
+	pod, err := readyConsolePod(t.Context(), clientset.CoreV1(), "platform", "gateway")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,16 +323,16 @@ func TestReadyGatewayPodSelectsReadyServiceBackend(t *testing.T) {
 	}
 }
 
-func TestReadyGatewayBackendUsesServiceTargetPort(t *testing.T) {
+func TestReadyConsoleBackendUsesServiceTargetPort(t *testing.T) {
 	clientset := kubernetesfake.NewSimpleClientset(
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "platform"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "gateway"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(8084)}}}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
 	)
-	pod, port, err := readyGatewayBackend(t.Context(), clientset.CoreV1(), "platform", "gateway", 80)
+	pod, port, tlsEnabled, err := readyConsoleBackend(t.Context(), clientset.CoreV1(), "platform", "gateway", 80)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pod != "gateway" || port != 8084 {
-		t.Fatalf("gateway backend = %q:%d, want gateway:8084", pod, port)
+	if pod != "gateway" || port != 8084 || tlsEnabled {
+		t.Fatalf("gateway backend = %q:%d TLS=%t, want gateway:8084 TLS=false", pod, port, tlsEnabled)
 	}
 }

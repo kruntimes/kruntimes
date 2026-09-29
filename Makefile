@@ -2,9 +2,8 @@
 IMG_SCHEDULER ?= kruntimes-scheduler:latest
 IMG_CONTROLLER ?= kruntimes-controller:latest
 IMG_RUNTIMED ?= kruntimes-runtimed:latest
-IMG_GATEWAY ?= kruntimes-gateway:latest
 IMG_LOG_API ?= kruntimes-runtime-log-apiserver:latest
-IMG_DASHBOARD ?= kruntimes-dashboard:latest
+IMG_CONSOLE ?= kruntimes-console:latest
 IMG_BASH_RUNTIME ?= kruntimes-bash-runtime:latest
 IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:latest
 IMG_DIAGNOSIS_RUNTIME ?= kruntimes-diagnosis-runtime:latest
@@ -143,26 +142,23 @@ E2E_RUN_IMAGE_TAG ?= e2e-$(shell date +%Y%m%d%H%M%S)
 E2E_IMG_SCHEDULER ?= kruntimes-scheduler:$(E2E_IMAGE_TAG)
 E2E_IMG_CONTROLLER ?= kruntimes-controller:$(E2E_IMAGE_TAG)
 E2E_IMG_RUNTIMED ?= kruntimes-runtimed:$(E2E_IMAGE_TAG)
-E2E_IMG_GATEWAY ?= kruntimes-gateway:$(E2E_IMAGE_TAG)
 E2E_IMG_LOG_API ?= kruntimes-runtime-log-apiserver:$(E2E_IMAGE_TAG)
-E2E_IMG_DASHBOARD ?= kruntimes-dashboard:$(E2E_IMAGE_TAG)
+E2E_IMG_CONSOLE ?= kruntimes-console:$(E2E_IMAGE_TAG)
 E2E_IMG_BASH_RUNTIME ?= kruntimes-bash-runtime:$(E2E_IMAGE_TAG)
 E2E_IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:$(E2E_IMAGE_TAG)
 E2E_IMG_DIAGNOSIS_RUNTIME ?= kruntimes-diagnosis-runtime:$(E2E_IMAGE_TAG)
 E2E_TEST ?=
 E2E_CERT_MANAGER ?= false
-E2E_GATEWAY_BOUNDS ?= false
-E2E_GATEWAY_HELM_ARGS ?=
+E2E_CONSOLE_BOUNDS ?= false
+E2E_CONSOLE_HELM_ARGS ?=
 E2E_TEST_TIMEOUT ?= 20m
 CERT_MANAGER_VERSION ?= v1.21.1
-E2E_CERT_MANAGER_GATEWAY_TLS_SECRET ?= kruntimes-gateway-cert-manager-tls
 .PHONY: e2e-setup
 e2e-setup: IMG_SCHEDULER = $(E2E_IMG_SCHEDULER)
 e2e-setup: IMG_CONTROLLER = $(E2E_IMG_CONTROLLER)
 e2e-setup: IMG_RUNTIMED = $(E2E_IMG_RUNTIMED)
-e2e-setup: IMG_GATEWAY = $(E2E_IMG_GATEWAY)
 e2e-setup: IMG_LOG_API = $(E2E_IMG_LOG_API)
-e2e-setup: IMG_DASHBOARD = $(E2E_IMG_DASHBOARD)
+e2e-setup: IMG_CONSOLE = $(E2E_IMG_CONSOLE)
 e2e-setup: IMG_BASH_RUNTIME = $(E2E_IMG_BASH_RUNTIME)
 e2e-setup: IMG_PYTHON_RUNTIME = $(E2E_IMG_PYTHON_RUNTIME)
 e2e-setup: IMG_DIAGNOSIS_RUNTIME = $(E2E_IMG_DIAGNOSIS_RUNTIME)
@@ -171,9 +167,8 @@ e2e-setup: manifests docker-build docker-build-diagnosis-runtime ## Create kind 
 	kind load docker-image $(E2E_IMG_SCHEDULER) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_CONTROLLER) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_RUNTIMED) --name $(KIND_CLUSTER_NAME)
-	kind load docker-image $(E2E_IMG_GATEWAY) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_LOG_API) --name $(KIND_CLUSTER_NAME)
-	kind load docker-image $(E2E_IMG_DASHBOARD) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image $(E2E_IMG_CONSOLE) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_BASH_RUNTIME) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_PYTHON_RUNTIME) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_DIAGNOSIS_RUNTIME) --name $(KIND_CLUSTER_NAME)
@@ -183,13 +178,9 @@ e2e-setup: manifests docker-build docker-build-diagnosis-runtime ## Create kind 
 		--set scheduler.image=$(E2E_IMG_SCHEDULER) \
 		--set controller.image=$(E2E_IMG_CONTROLLER) \
 		--set runtimed.image=$(E2E_IMG_RUNTIMED) \
-		--set gateway.enabled=true \
-		--set gateway.image=$(E2E_IMG_GATEWAY) \
 		--set logAPI.image=$(E2E_IMG_LOG_API) \
-		--set gateway.protocols[0]=http --set gateway.protocols[1]=https \
-		--set dashboard.enabled=true \
-		--set dashboard.image=$(E2E_IMG_DASHBOARD) \
-		--namespace $(NAMESPACE) --create-namespace --wait --timeout 120s $(E2E_GATEWAY_HELM_ARGS)
+		--set console.image=$(E2E_IMG_CONSOLE) \
+		--namespace $(NAMESPACE) --create-namespace --wait --timeout 120s $(E2E_CONSOLE_HELM_ARGS)
 
 KIND_CLUSTER_NAME ?= kruntimes-e2e
 e2e-setup-runtimes:
@@ -207,7 +198,7 @@ e2e-test: generate ## Run E2E tests against the kind cluster.
 	KRUNTIMES_DIAGNOSIS_RUNTIME_IMAGE=$(E2E_IMG_DIAGNOSIS_RUNTIME) \
 	KRUNTIMES_RUNTIMED_IMAGE=$(E2E_IMG_RUNTIMED) \
 	KRUNTIMES_E2E_CERT_MANAGER=$(E2E_CERT_MANAGER) \
-	KRUNTIMES_E2E_GATEWAY_BOUNDS=$(E2E_GATEWAY_BOUNDS) \
+	KRUNTIMES_E2E_CONSOLE_BOUNDS=$(E2E_CONSOLE_BOUNDS) \
 	go test ./test/e2e/... -v -count=1 -failfast -timeout $(E2E_TEST_TIMEOUT) $(if $(E2E_TEST),-run '$(E2E_TEST)')
 
 .PHONY: e2e
@@ -222,7 +213,7 @@ e2e-run: E2E_IMAGE_TAG := $(E2E_RUN_IMAGE_TAG)
 e2e-run: e2e-test-required e2e-setup e2e-test ## Set up E2E and run the tests matching E2E_TEST.
 
 .PHONY: e2e-cert-manager-setup e2e-cert-manager-run
-e2e-cert-manager-setup: e2e-setup ## Install cert-manager, deploy an issuer, and upgrade the gateway to use its Certificate.
+e2e-cert-manager-setup: e2e-setup ## Install cert-manager, deploy an issuer, and upgrade the Console certificate.
 	kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/$(CERT_MANAGER_VERSION)/cert-manager.yaml
 	kubectl wait --namespace cert-manager --for=condition=Available deployment --all --timeout=120s
 	kubectl wait --namespace cert-manager --for=condition=Ready pod -l app.kubernetes.io/component=webhook --timeout=120s
@@ -234,27 +225,26 @@ e2e-cert-manager-setup: e2e-setup ## Install cert-manager, deploy an issuer, and
 		--set scheduler.image=$(E2E_IMG_SCHEDULER) \
 		--set controller.image=$(E2E_IMG_CONTROLLER) \
 		--set runtimed.image=$(E2E_IMG_RUNTIMED) \
-		--set gateway.enabled=true \
-		--set gateway.image=$(E2E_IMG_GATEWAY) \
-		--set gateway.protocols[0]=http --set gateway.protocols[1]=https \
-		--set gateway.tls.secretName=$(E2E_CERT_MANAGER_GATEWAY_TLS_SECRET) \
-		--set gateway.tls.certManager.enabled=true \
-		--set gateway.tls.certManager.issuerRef.name=kruntimes-e2e-ca \
+		--set console.image=$(E2E_IMG_CONSOLE) \
+		--set console.tls.secretName=kruntimes-console-cert-manager-tls \
+		--set console.tls.selfSigned=false \
+		--set console.tls.certManager.enabled=true \
+		--set console.tls.certManager.issuerRef.name=kruntimes-e2e-ca \
 		--namespace $(NAMESPACE) --create-namespace --wait --timeout 120s
-	kubectl wait --namespace $(NAMESPACE) --for=condition=Ready certificate/kruntimes-gateway --timeout=120s
+	kubectl wait --namespace $(NAMESPACE) --for=condition=Ready certificate/kruntimes-console --timeout=120s
 
 e2e-cert-manager-run: E2E_IMAGE_TAG := $(E2E_RUN_IMAGE_TAG)
 e2e-cert-manager-run: E2E_CERT_MANAGER := true
 e2e-cert-manager-run: e2e-test-required e2e-cert-manager-setup e2e-test ## Opt in to cert-manager E2E. Requires E2E_TEST.
 
-.PHONY: e2e-gateway-bounds-run
-e2e-gateway-bounds-run: E2E_IMAGE_TAG := $(E2E_RUN_IMAGE_TAG)
-e2e-gateway-bounds-run: E2E_GATEWAY_BOUNDS := true
-e2e-gateway-bounds-run: E2E_GATEWAY_HELM_ARGS := --set gateway.maxRequestBodyBytes=512 --set gateway.maxResponseBodyBytes=512 --set gateway.maxHeaderBytes=262144
-e2e-gateway-bounds-run: e2e-test-required e2e-setup e2e-test ## Opt in to gateway transfer-bounds E2E. Requires E2E_TEST.
+.PHONY: e2e-console-bounds-run
+e2e-console-bounds-run: E2E_IMAGE_TAG := $(E2E_RUN_IMAGE_TAG)
+e2e-console-bounds-run: E2E_CONSOLE_BOUNDS := true
+e2e-console-bounds-run: E2E_CONSOLE_HELM_ARGS := --set console.access.maxRequestBodyBytes=512 --set console.access.maxResponseBodyBytes=512 --set console.access.maxHeaderBytes=262144
+e2e-console-bounds-run: e2e-test-required e2e-setup e2e-test ## Opt in to Console access transfer-bounds E2E. Requires E2E_TEST.
 
 # Preserve setup-before-test ordering even when make is invoked with -j.
-.NOTPARALLEL: e2e-setup e2e e2e-run e2e-cert-manager-setup e2e-cert-manager-run e2e-gateway-bounds-run
+.NOTPARALLEL: e2e-setup e2e e2e-run e2e-cert-manager-setup e2e-cert-manager-run e2e-console-bounds-run
 
 .PHONY: e2e-cleanup
 e2e-cleanup: ## Delete the kind cluster.
@@ -305,19 +295,18 @@ benchmark-run: ## Run the benchmark against the current Kubernetes context. Pass
 ##@ Build
 
 .PHONY: build
-build: generate proto dashboard-ui-build ## Build all binaries.
+build: generate proto console-ui-build ## Build all binaries.
 	go build -o bin/scheduler ./cmd/scheduler
 	go build -o bin/runtimed ./cmd/runtimed
 	go build -o bin/controller ./cmd/controller
-	go build -o bin/runtime-gateway ./cmd/runtime-gateway
 	go build -o bin/runtime-log-apiserver ./cmd/runtime-log-apiserver
-	go build -o bin/dashboard ./dashboard/cmd
+	go build -o bin/console ./console/cmd
 	go build -o bin/krt ./cmd/krt
 	go build -o bin/bash-runtime ./runtimes/bash/cmd
 
-.PHONY: dashboard-ui-build
-dashboard-ui-build: ## Build the React Dashboard frontend assets.
-	cd dashboard/frontend && npm ci && npm run build
+.PHONY: console-ui-build
+console-ui-build: ## Build the React Console frontend assets.
+	cd console/frontend && npm ci && npm run build
 
 .PHONY: build-scheduler
 build-scheduler: generate ## Build scheduler binary.
@@ -350,7 +339,7 @@ run-runtimed: generate manifests proto ## Run runtimed locally (requires kubecon
 ##@ Docker
 
 .PHONY: docker-build
-docker-build: docker-build-scheduler docker-build-controller docker-build-runtimed docker-build-gateway docker-build-log-api docker-build-dashboard docker-build-bash-runtime docker-build-python-runtime ## Build all Docker images.
+docker-build: docker-build-scheduler docker-build-controller docker-build-runtimed docker-build-log-api docker-build-console docker-build-bash-runtime docker-build-python-runtime ## Build all Docker images.
 
 .PHONY: docker-build-scheduler
 docker-build-scheduler: generate ## Build scheduler Docker image.
@@ -364,17 +353,13 @@ docker-build-controller: generate ## Build controller Docker image.
 docker-build-runtimed: generate proto ## Build runtimed Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_RUNTIMED) -f Dockerfile.runtimed .
 
-.PHONY: docker-build-gateway
-docker-build-gateway: generate proto ## Build Runtime gateway Docker image.
-	$(CONTAINER_TOOL) build -t $(IMG_GATEWAY) -f Dockerfile.gateway .
-
 .PHONY: docker-build-log-api
 docker-build-log-api: generate proto ## Build aggregated Run log API Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_LOG_API) -f Dockerfile.log-api .
 
-.PHONY: docker-build-dashboard
-docker-build-dashboard: generate ## Build Dashboard Docker image.
-	$(CONTAINER_TOOL) build -t $(IMG_DASHBOARD) -f dashboard/Dockerfile .
+.PHONY: docker-build-console
+docker-build-console: generate ## Build Kruntimes Console Docker image.
+	$(CONTAINER_TOOL) build -t $(IMG_CONSOLE) -f console/Dockerfile .
 
 .PHONY: docker-build-bash-runtime
 docker-build-bash-runtime: proto ## Build bash-runtime Docker image.
@@ -396,9 +381,8 @@ docker-push: ## Push Docker images.
 	$(CONTAINER_TOOL) push $(IMG_SCHEDULER)
 	$(CONTAINER_TOOL) push $(IMG_CONTROLLER)
 	$(CONTAINER_TOOL) push $(IMG_RUNTIMED)
-	$(CONTAINER_TOOL) push $(IMG_GATEWAY)
 	$(CONTAINER_TOOL) push $(IMG_LOG_API)
-	$(CONTAINER_TOOL) push $(IMG_DASHBOARD)
+	$(CONTAINER_TOOL) push $(IMG_CONSOLE)
 	$(CONTAINER_TOOL) push $(IMG_BASH_RUNTIME)
 	$(CONTAINER_TOOL) push $(IMG_PYTHON_RUNTIME)
 
@@ -427,7 +411,7 @@ test-helm: manifests ## Validate Helm charts and multi-release rendering.
 	$(HELM) template kruntimes-runtimes ./charts/kruntimes-runtimes --namespace default
 	./hack/verify-helm-multi-release.py
 	./hack/verify-helm-images.py
-	./hack/verify-dashboard-helm.py
+	./hack/verify-console-helm.py
 	./hack/verify-helm-multi-namespace.py
 	./hack/verify-helm-metrics.py
 	./hack/verify-helm-config-values.py

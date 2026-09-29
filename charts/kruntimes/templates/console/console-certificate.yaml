@@ -1,0 +1,21 @@
+{{- if .Values.console.tls.certManager.enabled }}
+{{- include "kruntimes.console.validateTLS" . }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "kruntimes.console.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kruntimes.console.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "kruntimes.console.tlsSecretName" . }}
+  dnsNames:
+    - {{ include "kruntimes.console.name" . }}
+    - {{ include "kruntimes.console.name" . }}.{{ .Release.Namespace }}
+    - {{ include "kruntimes.console.name" . }}.{{ .Release.Namespace }}.svc
+    - {{ include "kruntimes.console.name" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    name: {{ .Values.console.tls.certManager.issuerRef.name }}
+    kind: {{ .Values.console.tls.certManager.issuerRef.kind }}
+    group: {{ .Values.console.tls.certManager.issuerRef.group }}
+{{- end }}

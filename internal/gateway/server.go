@@ -1,26 +1,25 @@
-// Package gateway implements the Runtime Gateway HTTP entrypoint.
+// Package gateway implements the Runtime access HTTP handler embedded by the
+// Console. It owns protocol translation only; the Console owns the public
+// listener, TLS, and lifecycle.
 package gateway
 
 import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -31,7 +30,6 @@ import (
 
 const (
 	defaultRuntimeServicePort = 9093
-	runtimeIndexField         = "spec.runtime"
 
 	// DefaultMaxRequestBodyBytes is the maximum size of a gateway JSON request.
 	DefaultMaxRequestBodyBytes int64 = 1 << 20
@@ -39,7 +37,7 @@ const (
 	DefaultMaxResponseBodyBytes int64 = 1 << 20
 	// DefaultMaxHeaderBytes is the maximum size of a gateway HTTP request header.
 	DefaultMaxHeaderBytes = 1 << 20
-	// DefaultMaxConcurrentRequests is the per-gateway-Pod HTTP request limit.
+	// DefaultMaxConcurrentRequests is the per-Console-Pod HTTP request limit.
 	DefaultMaxConcurrentRequests = 128
 )
 
@@ -68,208 +66,191 @@ type Server struct {
 	Dialer         SessionRuntimeDialer
 	FunctionDialer FunctionRuntimeDialer
 	RuntimePort    int
-	HTTPAddress    string
-	HTTPSAddress   string
-	ReadTimeout    time.Duration
-	WriteTimeout   time.Duration
-
-	// TLSCertificateFile and TLSPrivateKeyFile enable TLS when both paths are
-	// configured. Supplying only one is a startup error; the gateway never
-	// silently falls back to plain HTTP.
-	TLSCertificateFile string
-	TLSPrivateKeyFile  string
-	// TLSClientCAFile optionally enables mTLS. Client certificates signed by
-	// this CA are verified and authorized with their Kubernetes CN/O identity.
-	TLSClientCAFile string
-
-	// MaxConcurrentRequests bounds requests handled by one gateway Pod. Values
+	// MaxConcurrentRequests bounds requests handled by one Console Pod. Values
 	// less than one use the default. Health checks do not consume this limit.
 	MaxConcurrentRequests int
-	// MaxRequestBodyBytes bounds gateway JSON request bodies. Values less than
+	// MaxRequestBodyBytes bounds access API JSON request bodies. Values less than
 	// one use the default.
 	MaxRequestBodyBytes int64
-	// MaxResponseBodyBytes bounds gateway-generated JSON responses. Values less
+	// MaxResponseBodyBytes bounds access API generated JSON responses. Values less
 	// than one use the default.
 	MaxResponseBodyBytes int64
 	// MaxHeaderBytes bounds HTTP request headers before routing. Values less than
 	// one use the default.
 	MaxHeaderBytes int
 	requestLimiter gatewayRequestLimiter
-}
-
-// Start implements manager.Runnable and serves the HTTP gateway until ctx ends.
-func (s *Server) Start(ctx context.Context) error {
-	httpAddress := s.HTTPAddress
-	if httpAddress == "" && s.HTTPSAddress == "" {
-		httpAddress = ":8084"
-	}
-	tlsConfig, err := s.tlsConfig()
-	if err != nil {
-		return err
-	}
-	if s.HTTPSAddress != "" && tlsConfig == nil {
-		return errors.New("Runtime gateway HTTPS address requires TLS certificate and private key files")
-	}
-	type listenerConfig struct {
-		listener net.Listener
-		tls      bool
-	}
-	listeners := make([]listenerConfig, 0, 2)
-	if httpAddress != "" {
-		listener, err := net.Listen("tcp", httpAddress)
-		if err != nil {
-			return fmt.Errorf("listen for Runtime gateway HTTP: %w", err)
-		}
-		listeners = append(listeners, listenerConfig{listener: listener})
-	}
-	if s.HTTPSAddress != "" {
-		listener, err := net.Listen("tcp", s.HTTPSAddress)
-		if err != nil {
-			for _, open := range listeners {
-				_ = open.listener.Close()
-			}
-			return fmt.Errorf("listen for Runtime gateway HTTPS: %w", err)
-		}
-		listeners = append(listeners, listenerConfig{listener: listener, tls: true})
-	}
-	servers := make([]*http.Server, 0, len(listeners))
-	results := make(chan error, len(listeners))
-	for _, configuredListener := range listeners {
-		server := s.httpServer()
-		servers = append(servers, server)
-		go func(server *http.Server, configuredListener listenerConfig) {
-			var err error
-			if configuredListener.tls {
-				// ServeTLS configures ALPN and Go's HTTP/2 support. tlsConfig
-				// already holds the loaded certificate, so empty file paths do
-				// not cause it to reload certificate material.
-				server.TLSConfig = tlsConfig
-				err = server.ServeTLS(configuredListener.listener, "", "")
-			} else {
-				err = server.Serve(configuredListener.listener)
-			}
-			if errors.Is(err, http.ErrServerClosed) {
-				err = nil
-			}
-			results <- err
-		}(server, configuredListener)
-	}
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		for _, server := range servers {
-			_ = server.Shutdown(shutdownCtx)
-		}
-		for range servers {
-			<-results
-		}
-		return nil
-	case err := <-results:
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		for _, server := range servers {
-			_ = server.Shutdown(shutdownCtx)
-		}
-		return err
-	}
-}
-
-func (s *Server) httpServer() *http.Server {
-	return &http.Server{
-		Handler:           s,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       s.ReadTimeout,
-		WriteTimeout:      s.WriteTimeout,
-		MaxHeaderBytes:    s.maxHeaderBytes(),
-	}
-}
-
-func (s *Server) tlsConfig() (*tls.Config, error) {
-	if s.TLSCertificateFile == "" && s.TLSPrivateKeyFile == "" {
-		if s.TLSClientCAFile != "" {
-			return nil, errors.New("Runtime gateway TLS client CA requires TLS certificate and private key files")
-		}
-		return nil, nil
-	}
-	if s.TLSCertificateFile == "" || s.TLSPrivateKeyFile == "" {
-		return nil, errors.New("both Runtime gateway TLS certificate and private key files are required")
-	}
-	certificate, err := tls.LoadX509KeyPair(s.TLSCertificateFile, s.TLSPrivateKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("load Runtime gateway TLS certificate: %w", err)
-	}
-	config := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}
-	if s.TLSClientCAFile == "" {
-		return config, nil
-	}
-	clientCA, err := os.ReadFile(s.TLSClientCAFile)
-	if err != nil {
-		return nil, fmt.Errorf("read Runtime gateway TLS client CA: %w", err)
-	}
-	clientCAs := x509.NewCertPool()
-	if !clientCAs.AppendCertsFromPEM(clientCA) {
-		return nil, errors.New("Runtime gateway TLS client CA contains no certificates")
-	}
-	config.ClientAuth = tls.VerifyClientCertIfGiven
-	config.ClientCAs = clientCAs
-	return config, nil
+	routesOnce     sync.Once
+	routes         http.Handler
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/healthz" {
-		if r.Method != http.MethodGet {
-			s.methodNotAllowed(w)
+	s.routesOnce.Do(s.registerRoutes)
+	s.routes.ServeHTTP(w, r)
+}
+
+func (s *Server) registerRoutes() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", s.healthz)
+	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/functions/{invocation}", s.withRequestLimit(s.handleFunctionInvoke))
+
+	withSessionRun := func(handler sessionRouteHandler) http.HandlerFunc {
+		return s.withRequestLimit(s.withSessionRun(handler))
+	}
+	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}", withSessionRun(s.handleSessionStatus))
+	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:execute", withSessionRun(s.handleSessionExecute))
+	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream", withSessionRun(s.handleSessionStream))
+	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws", withSessionRun(s.handleSessionWebSocket))
+	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations/{operation}", withSessionRun(s.handleSessionResume))
+	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files", withSessionRun(s.handleSessionListFiles))
+	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files/{path...}", withSessionRun(s.handleSessionReadFile))
+	mux.HandleFunc("/", s.endpointNotFound)
+
+	s.routes = mux
+}
+
+func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.methodNotAllowed(w)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) endpointNotFound(w http.ResponseWriter, _ *http.Request) {
+	s.writeError(w, http.StatusNotFound, "endpoint not found")
+}
+
+func (s *Server) withRequestLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requestLimiter.tryAcquire(s.maxConcurrentRequests()) {
+			s.writeError(w, http.StatusTooManyRequests, "gateway request concurrency limit reached")
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		return
+		defer s.requestLimiter.release()
+		next(w, r)
 	}
-	if !s.requestLimiter.tryAcquire(s.maxConcurrentRequests()) {
-		s.writeError(w, http.StatusTooManyRequests, "gateway request concurrency limit reached")
-		return
-	}
-	defer s.requestLimiter.release()
+}
 
-	if namespace, runtimeName, runUID, ok := functionRoute(r.URL.Path); ok {
-		s.serveFunctionInvoke(w, r, namespace, runtimeName, runUID)
-		return
+type sessionRouteHandler func(http.ResponseWriter, *http.Request, *v1alpha1.Run)
+
+func (s *Server) withSessionRun(next sessionRouteHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		run, ok := s.authorizedSessionRun(w, r)
+		if !ok {
+			return
+		}
+		next(w, r, run)
 	}
-	namespace, runtimeName, runUID, suffix, ok := sessionRoute(r.URL.Path)
+}
+
+func (s *Server) authorizedSessionRun(w http.ResponseWriter, r *http.Request) (*v1alpha1.Run, bool) {
+	namespace, runtimeName, runUID, ok := routeRunIdentity(r)
 	if !ok {
-		s.writeError(w, http.StatusNotFound, "endpoint not found")
-		return
+		s.endpointNotFound(w, r)
+		return nil, false
 	}
 	run, err := s.sessionRun(r.Context(), namespace, runtimeName, runUID)
 	if err != nil {
 		s.writeGatewayError(w, err)
-		return
+		return nil, false
 	}
 	if s.Authorizer == nil {
 		s.writeError(w, http.StatusServiceUnavailable, "gateway authorization is not configured")
-		return
+		return nil, false
 	}
 	if err := s.Authorizer.Authorize(r.Context(), r, run); err != nil {
 		s.writeGatewayError(w, err)
+		return nil, false
+	}
+	return run, true
+}
+
+func routeRunIdentity(r *http.Request) (namespace, runtimeName, runUID string, ok bool) {
+	namespace = r.PathValue("namespace")
+	runtimeName = r.PathValue("runtime")
+	runUID = r.PathValue("runUID")
+	return namespace, runtimeName, runUID, namespace != "" && runtimeName != "" && runUID != ""
+}
+
+func (s *Server) handleFunctionInvoke(w http.ResponseWriter, r *http.Request) {
+	namespace := r.PathValue("namespace")
+	runtimeName := r.PathValue("runtime")
+	runUID, found := strings.CutSuffix(r.PathValue("invocation"), ":invoke")
+	if namespace == "" || runtimeName == "" || !found || runUID == "" {
+		s.endpointNotFound(w, r)
 		return
 	}
+	s.serveFunctionInvoke(w, r, namespace, runtimeName, runUID)
+}
 
-	switch {
-	case len(suffix) == 0 && r.Method == http.MethodGet:
-		s.getSessionStatus(w, r, run)
-	case len(suffix) == 1 && suffix[0] == "operations:execute" && r.Method == http.MethodPost:
-		s.executeOperation(w, r, run)
-	case len(suffix) == 1 && suffix[0] == "operations:stream" && r.Method == http.MethodPost:
-		s.streamOperation(w, r, run)
-	case len(suffix) == 2 && suffix[0] == "operations" && strings.HasSuffix(suffix[1], ":stream") && r.Method == http.MethodGet:
-		s.resumeOperation(w, r, run, strings.TrimSuffix(suffix[1], ":stream"))
-	case len(suffix) == 1 && suffix[0] == "files" && r.Method == http.MethodGet:
-		s.listFiles(w, r, run)
-	case len(suffix) > 1 && suffix[0] == "files" && r.Method == http.MethodGet:
-		s.readFile(w, r, run, strings.Join(suffix[1:], "/"))
-	default:
+func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	if r.Method != http.MethodGet {
 		s.methodNotAllowed(w)
+		return
 	}
+	s.getSessionStatus(w, r, run)
+}
+
+func (s *Server) handleSessionExecute(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	if r.Method != http.MethodPost {
+		s.methodNotAllowed(w)
+		return
+	}
+	s.executeOperation(w, r, run)
+}
+
+func (s *Server) handleSessionStream(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	if r.Method != http.MethodPost {
+		s.methodNotAllowed(w)
+		return
+	}
+	s.streamOperation(w, r, run)
+}
+
+func (s *Server) handleSessionWebSocket(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	if r.Method != http.MethodGet {
+		s.methodNotAllowed(w)
+		return
+	}
+	if !websocket.IsWebSocketUpgrade(r) {
+		s.writeError(w, http.StatusUpgradeRequired, "WebSocket upgrade is required")
+		return
+	}
+	s.streamOperationWebSocket(w, r, run)
+}
+
+func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	if r.Method != http.MethodGet {
+		s.methodNotAllowed(w)
+		return
+	}
+	operationID, found := strings.CutSuffix(r.PathValue("operation"), ":stream")
+	if !found || operationID == "" {
+		s.endpointNotFound(w, r)
+		return
+	}
+	s.resumeOperation(w, r, run, operationID)
+}
+
+func (s *Server) handleSessionListFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	if r.Method != http.MethodGet {
+		s.methodNotAllowed(w)
+		return
+	}
+	s.listFiles(w, r, run)
+}
+
+func (s *Server) handleSessionReadFile(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	if r.Method != http.MethodGet {
+		s.methodNotAllowed(w)
+		return
+	}
+	path := r.PathValue("path")
+	if path == "" {
+		s.endpointNotFound(w, r)
+		return
+	}
+	s.readFile(w, r, run, path)
 }
 
 func (s *Server) serveFunctionInvoke(w http.ResponseWriter, r *http.Request, namespace, runtimeName, runUID string) {
@@ -339,7 +320,7 @@ func (s *Server) functionRun(ctx context.Context, namespace, runtimeName, runUID
 		return nil, status.Error(codes.FailedPrecondition, "gateway is not configured")
 	}
 	var runs v1alpha1.RunList
-	if err := s.Runs.List(ctx, &runs, client.InNamespace(namespace), client.MatchingFields{runtimeIndexField: runtimeName}); err != nil {
+	if err := s.Runs.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
 		return nil, status.Errorf(codes.Internal, "list Runtime Runs: %v", err)
 	}
 	for i := range runs.Items {
@@ -367,28 +348,6 @@ func (s *Server) functionClient(ctx context.Context, run *v1alpha1.Run) (pb.Func
 		return nil, nil, status.Errorf(codes.Unavailable, "dial Runtime Service: %v", err)
 	}
 	return client, closer, nil
-}
-
-func functionRoute(path string) (namespace, runtimeName, runUID string, ok bool) {
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) != 7 || parts[0] != "v1" || parts[1] != "namespaces" || parts[3] != "runtimes" || parts[5] != "functions" {
-		return "", "", "", false
-	}
-	var err error
-	if namespace, err = url.PathUnescape(parts[2]); err != nil || namespace == "" {
-		return "", "", "", false
-	}
-	if runtimeName, err = url.PathUnescape(parts[4]); err != nil || runtimeName == "" {
-		return "", "", "", false
-	}
-	if !strings.HasSuffix(parts[6], ":invoke") {
-		return "", "", "", false
-	}
-	runUID, err = url.PathUnescape(strings.TrimSuffix(parts[6], ":invoke"))
-	if err != nil || runUID == "" {
-		return "", "", "", false
-	}
-	return namespace, runtimeName, runUID, true
 }
 
 func (s *Server) maxConcurrentRequests() int {
@@ -528,6 +487,166 @@ func (s *Server) streamOperation(w http.ResponseWriter, r *http.Request, run *v1
 		return
 	}
 	s.writeSessionOperationStream(w, stream)
+}
+
+// streamOperationWebSocket upgrades one authorized request to a bidirectional
+// operation stream. The first client text message is the same JSON operation
+// object accepted by operations:execute. While events are flowing, the client
+// may send {"type":"cancel"} to cancel its request context.
+func (s *Server) streamOperationWebSocket(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	connection, err := sessionOperationWebSocketUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer connection.Close()
+	connection.SetReadLimit(s.maxRequestBodyBytes())
+	connection.SetReadDeadline(time.Now().Add(15 * time.Second))
+	messageType, payload, err := connection.ReadMessage()
+	if err != nil {
+		s.closeWebSocket(connection, websocket.ClosePolicyViolation, "operation request is required")
+		return
+	}
+	connection.SetReadDeadline(time.Time{})
+	if messageType != websocket.TextMessage {
+		s.closeWebSocket(connection, websocket.CloseUnsupportedData, "operation request must be JSON text")
+		return
+	}
+	operation, err := s.websocketOperation(payload)
+	if err != nil {
+		s.closeWebSocket(connection, websocket.ClosePolicyViolation, err.Error())
+		return
+	}
+	operationID, err := sessionOperationID(r.Header.Get("Idempotency-Key"))
+	if err != nil {
+		s.closeWebSocket(connection, websocket.ClosePolicyViolation, err.Error())
+		return
+	}
+	afterSequence, err := sessionOperationCursor(r)
+	if err != nil {
+		s.closeWebSocket(connection, websocket.ClosePolicyViolation, err.Error())
+		return
+	}
+
+	streamContext, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	go watchSessionOperationWebSocketControl(connection, cancel)
+
+	client, closer, err := s.runtimeClient(streamContext, run)
+	if err != nil {
+		s.writeWebSocketError(connection, err)
+		return
+	}
+	defer closer.Close()
+	operation.Identity = sessionIdentity(run)
+	operation.IdempotencyKey = operationID
+	operation.ResumeAfterSequence = afterSequence
+	stream, err := client.StreamSessionOperation(streamContext, operation)
+	if err != nil {
+		s.writeWebSocketError(connection, err)
+		return
+	}
+	s.writeSessionOperationWebSocket(connection, streamContext, stream)
+}
+
+var sessionOperationWebSocketUpgrader = websocket.Upgrader{
+	CheckOrigin: sameOriginWebSocketRequest,
+}
+
+func sameOriginWebSocketRequest(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// Non-browser clients normally omit Origin and authenticate with a bearer
+		// token or client certificate during the HTTP upgrade request.
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host == r.Host
+}
+
+func (s *Server) websocketOperation(payload []byte) (*pb.ExecuteSessionOperationRequest, error) {
+	if int64(len(payload)) > s.maxRequestBodyBytes() {
+		return nil, errRequestBodyTooLarge
+	}
+	var request executeOperationRequest
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		return nil, fmt.Errorf("decode request: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("request must contain one JSON value")
+	}
+	return request.protobuf()
+}
+
+func watchSessionOperationWebSocketControl(connection *websocket.Conn, cancel context.CancelFunc) {
+	defer cancel()
+	for {
+		messageType, payload, err := connection.ReadMessage()
+		if err != nil || messageType != websocket.TextMessage {
+			return
+		}
+		var control struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(payload, &control) != nil || control.Type != "cancel" {
+			return
+		}
+		return
+	}
+}
+
+func (s *Server) writeSessionOperationWebSocket(connection *websocket.Conn, ctx context.Context, stream pb.SessionRuntime_StreamSessionOperationClient) {
+	receivedEvent := false
+	for {
+		event, err := stream.Recv()
+		if ctx.Err() != nil {
+			s.closeWebSocket(connection, websocket.CloseNormalClosure, "")
+			return
+		}
+		if err == io.EOF {
+			if !receivedEvent {
+				s.writeWebSocketError(connection, errors.New("Runtime Server stream ended without an event"))
+				return
+			}
+			s.closeWebSocket(connection, websocket.CloseNormalClosure, "")
+			return
+		}
+		if err != nil {
+			s.writeWebSocketError(connection, err)
+			return
+		}
+		response, err := newSessionOperationEventResponse(event)
+		if err != nil {
+			s.writeWebSocketError(connection, err)
+			return
+		}
+		encoded, err := json.Marshal(response)
+		if err != nil {
+			s.writeWebSocketError(connection, fmt.Errorf("encode session event: %w", err))
+			return
+		}
+		if int64(len(encoded)) > s.maxResponseBodyBytes() {
+			s.writeWebSocketError(connection, errors.New("gateway stream event exceeds configured limit"))
+			return
+		}
+		if err := connection.WriteMessage(websocket.TextMessage, encoded); err != nil {
+			return
+		}
+		receivedEvent = true
+	}
+}
+
+func (s *Server) writeWebSocketError(connection *websocket.Conn, err error) {
+	_ = connection.WriteJSON(struct {
+		Type  string `json:"type"`
+		Error string `json:"error"`
+	}{Type: "error", Error: status.Convert(err).Message()})
+	s.closeWebSocket(connection, websocket.CloseInternalServerErr, "operation stream failed")
+}
+
+func (s *Server) closeWebSocket(connection *websocket.Conn, code int, message string) {
+	_ = connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, message), time.Now().Add(time.Second))
 }
 
 func (s *Server) resumeOperation(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run, operationID string) {
@@ -703,7 +822,7 @@ func (s *Server) sessionRun(ctx context.Context, namespace, runtimeName, runUID 
 		return nil, status.Error(codes.FailedPrecondition, "gateway is not configured")
 	}
 	var runs v1alpha1.RunList
-	if err := s.Runs.List(ctx, &runs, client.InNamespace(namespace), client.MatchingFields{runtimeIndexField: runtimeName}); err != nil {
+	if err := s.Runs.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
 		return nil, status.Errorf(codes.Internal, "list Runtime Runs: %v", err)
 	}
 	for i := range runs.Items {
@@ -733,26 +852,6 @@ func (s *Server) runtimeClient(ctx context.Context, run *v1alpha1.Run) (pb.Sessi
 		return nil, nil, status.Errorf(codes.Unavailable, "dial Runtime Service: %v", err)
 	}
 	return client, closer, nil
-}
-
-func sessionRoute(path string) (namespace, runtimeName, runUID string, suffix []string, ok bool) {
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) < 7 || parts[0] != "v1" || parts[1] != "namespaces" || parts[3] != "runtimes" || parts[5] != "sessions" {
-		return "", "", "", nil, false
-	}
-	namespace, err := url.PathUnescape(parts[2])
-	if err != nil || namespace == "" {
-		return "", "", "", nil, false
-	}
-	runtimeName, err = url.PathUnescape(parts[4])
-	if err != nil || runtimeName == "" {
-		return "", "", "", nil, false
-	}
-	runUID, err = url.PathUnescape(parts[6])
-	if err != nil || runUID == "" {
-		return "", "", "", nil, false
-	}
-	return namespace, runtimeName, runUID, parts[7:], true
 }
 
 func sessionIdentity(run *v1alpha1.Run) *pb.SessionIdentity {

@@ -11,6 +11,7 @@
 - [Session Operation 流式事件](session-operation-streaming/)
 - [Runtime Gateway 传输安全与传输边界](runtime-gateway-transport/)
 - [聚合 Run Log API](runtime-gateway-log-api/)
+- [Kruntimes Console](console/)
 - [Runtime 就绪状态可见性](runtime-readiness-visibility/)
 - [Function Inline Source 物化](function-inline-source/)
 - [Function Mode 生命周期与 Invoke Dataplane](function-mode-lifecycle/)
@@ -21,4 +22,3 @@
 - [Run 资源记账](run-resource-accounting/)
 - [Workflow Reuse](workflow-reuse/)
 - [Job-Level Reusable Workflow Execution](workflow-job-reuse/)
-- [Dashboard](dashboard/)

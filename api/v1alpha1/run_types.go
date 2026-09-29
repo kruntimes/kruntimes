@@ -37,8 +37,8 @@ const (
 type RunEndpointProtocol string
 
 const (
-	// RunEndpointProtocolHTTP identifies a plain HTTP gateway endpoint, normally
-	// the cluster-local Runtime gateway Service.
+	// RunEndpointProtocolHTTP identifies a plain HTTP Runtime access endpoint,
+	// normally the cluster-local Console Service.
 	RunEndpointProtocolHTTP RunEndpointProtocol = "HTTP"
 	// RunEndpointProtocolHTTPS identifies a TLS-terminated public endpoint.
 	RunEndpointProtocolHTTPS RunEndpointProtocol = "HTTPS"
@@ -592,7 +592,7 @@ type RunStatus struct {
 	// +kubebuilder:validation:MaxLength=253
 	AssignedPodUID string `json:"assignedPodUID,omitempty"`
 
-	// Endpoint is the stable gateway endpoint for a ready function or session
+	// Endpoint is the stable Console Runtime access endpoint for a ready function or session
 	// Run. It is absent for one-shot task Runs.
 	// +optional
 	Endpoint *RunEndpoint `json:"endpoint,omitempty"`

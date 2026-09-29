@@ -21,7 +21,7 @@ API remains supported.
   authorization, assignment fencing, and operation timeout semantics.
 - Keep Runtime Server and runtimed ports private; the Runtime gateway is the
   only public data-plane endpoint.
-- Use a browser- and CLI-friendly HTTP response stream that works with bearer
+- Use browser- and CLI-friendly streaming transports that work with bearer
   authentication.
 - Bound every Runtime-emitted event without introducing an unbounded event
   buffer.
@@ -30,8 +30,9 @@ API remains supported.
 
 - Durable event retention or replay after a Runtime Pod is lost.
 - Continuing an operation after its client connection is cancelled.
-- Bidirectional user input or approval. Those require a separately admitted
-  Session operation and are not encoded as a reply on the stream.
+- Runtime-defined bidirectional user input or approval. The WebSocket transport
+  supports client cancellation, but further messages require a separate Runtime
+  protocol extension and operation admission design.
 - Persisting high-frequency events in `Run.status`, Kubernetes Events, or
   container logs. Runtimed structured logs remain the audit path.
 
@@ -66,7 +67,7 @@ the Runtime Server event stream while its queue entry is active. This keeps the
 queue's mutation ordering intact even when a gateway request lands on a
 non-owner Runtime Pod and is forwarded once to the owner.
 
-The public HTTP endpoint is:
+The compatible HTTP endpoint is:
 
 ```
 POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream
@@ -87,6 +88,30 @@ CLI consumes JSON lines directly. A request that cannot be authorized or
 admitted fails before any response event with the existing HTTP error mapping.
 Once event bytes have been written, a terminal failure is represented by a
 `failed` event because HTTP status cannot safely change mid-stream.
+
+The preferred interactive transport is WebSocket:
+
+```text
+GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws
+Upgrade: websocket
+```
+
+The HTTP upgrade is authenticated and authorized before the connection is
+accepted. Browser requests with an `Origin` header must be same-origin; native
+clients without `Origin` continue to use bearer-token or client-certificate
+authentication in the upgrade request. The first client text frame is exactly
+the JSON operation object accepted by `operations:execute`. The server sends
+one JSON text frame for each ordered `SessionOperationEvent`, using the same
+representation as NDJSON but without a trailing newline. `Idempotency-Key` and
+the optional `after` query parameter retain their HTTP meanings. During the
+operation, a client may send `{"type":"cancel"}` to cancel its stream context.
+Other client messages close the connection; arbitrary interactive input is not
+yet part of the Runtime protocol.
+
+An error before WebSocket upgrade is an ordinary HTTP error. An error after
+upgrade is sent as `{"type":"error","error":"..."}` followed by a WebSocket
+close frame. This is necessary because an HTTP status cannot change after a
+successful upgrade.
 
 The HTTP representation uses lower-case protocol values: output `stream` is
 `stdout` or `stderr`; progress `kind` is `status`, `text_delta`,
@@ -111,12 +136,13 @@ results and each gateway JSON line.
 
 ## Compatibility and rollout
 
-`ExecuteSessionOperation` and `operations:execute` are unchanged. Built-in
-Runtimes may initially return `Unimplemented` for the streaming gRPC method;
-the gateway maps that to a clear capability error. Interactive Runtimes opt in
-by implementing the method. The GitHub Issue Labeler Runtime will emit Pi text
-and tool lifecycle events, while its existing unary `message` command continues
-to return the final answer for non-streaming clients.
+`ExecuteSessionOperation`, `operations:execute`, and the NDJSON
+`operations:stream` endpoint are unchanged. Built-in Runtimes may initially
+return `Unimplemented` for the streaming gRPC method; the gateway maps that to
+a clear capability error. Interactive Runtimes opt in by implementing the
+method. The GitHub Issue Labeler Runtime will emit Pi text and tool lifecycle
+events, while its existing unary `message` command continues to return the
+final answer for non-streaming clients.
 
 The Go and Python Session SDKs will add explicit streaming helpers rather than
 silently changing `Execute` return types. Dashboard will use the streaming

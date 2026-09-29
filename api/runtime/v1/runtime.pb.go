@@ -1723,7 +1723,7 @@ type ExecuteSessionOperationRequest struct {
 	//	*ExecuteSessionOperationRequest_RenameFile
 	Operation isExecuteSessionOperationRequest_Operation `protobuf_oneof:"operation"`
 	// IdempotencyKey identifies one submitted interactive operation. It is
-	// assigned by the public gateway when the caller does not provide one.
+	// assigned by the Console when the caller does not provide one.
 	// Reusing a key with different operation contents is rejected.
 	IdempotencyKey string `protobuf:"bytes,7,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
 	// ResumeAfterSequence requests retained events strictly after this cursor.

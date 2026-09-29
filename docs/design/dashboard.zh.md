@@ -1,4 +1,9 @@
-# Dashboard
+# 已废弃：Kruntimes Console
+
+本历史 Dashboard 设计已被统一的 [Kruntimes Console](console/) 取代。Console 同时负责 UI
+并嵌入 Runtime access handler；它默认安装，且不再存在独立 Gateway。
+
+# 历史 Dashboard 设计
 
 本文描述已接受的 v0.x 设计以及已实现的初始 Dashboard 功能。
 

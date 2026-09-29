@@ -32,7 +32,7 @@ service FunctionRuntime {
 }
 
 // SessionRuntime is an optional Runtime Server extension for stateful session
-// Runs. runtimed also implements this service for gateway traffic, forwarding
+// Runs. runtimed also implements this service for Console Runtime access traffic, forwarding
 // requests only to the assigned Pod of the same Runtime when it is not the
 // owner. runtimed owns queue admission and operation lifecycle; the Runtime
 // Server owns local workspace confinement and process execution.
@@ -250,7 +250,7 @@ message ExecuteSessionOperationRequest {
         SessionFileRename rename_file = 6;
     }
     // IdempotencyKey identifies one submitted interactive operation. It is
-    // assigned by the public gateway when the caller does not provide one.
+    // assigned by the Console when the caller does not provide one.
     // Reusing a key with different operation contents is rejected.
     string idempotency_key = 7;
     // ResumeAfterSequence requests retained events strictly after this cursor.

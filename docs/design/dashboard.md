@@ -1,4 +1,10 @@
-# Dashboard
+# Superseded: Kruntimes Console
+
+This historical Dashboard design has been superseded by the unified
+[Kruntimes Console](console/). Console owns the UI and embeds the Runtime
+access handler; it is installed by default and there is no separate Gateway.
+
+# Historical Dashboard Design
 
 This document describes the accepted v0.x design and its implemented initial
 Dashboard surface.

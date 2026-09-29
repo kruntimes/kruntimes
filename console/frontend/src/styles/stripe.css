@@ -1,0 +1,176 @@
+:root {
+  --bg: #f6f9fc;
+  --surface: #ffffff;
+  --field: #ffffff;
+  --line: #d8dee8;
+  --text: #0a2540;
+  --muted: #56657d;
+  --link: #635bff;
+  --success: #18744a;
+  --danger: #b52c48;
+  --warning: #805a06;
+  --running: #1469aa;
+  --phase-success-bg: #e7f5ed;
+  --phase-success-border: #18744a;
+  --phase-success-text: #18744a;
+  --phase-danger-bg: #fbecef;
+  --phase-danger-border: #b52c48;
+  --phase-danger-text: #b52c48;
+  --phase-running-bg: #e8f3fc;
+  --phase-running-border: #1469aa;
+  --phase-running-text: #1469aa;
+  --phase-pending-bg: #f1f4f8;
+  --phase-pending-border: #d8dee8;
+  --phase-warning-bg: #fbf3dd;
+  --phase-warning-border: #805a06;
+  --phase-warning-text: #805a06;
+  --panel-radius: 12px;
+  --control-radius: 8px;
+  --panel-shadow: 0 2px 4px rgb(0 0 0 / 4%), 0 8px 16px rgb(0 0 0 / 8%);
+  --button-shadow:
+    0 2px 4px rgb(0 0 0 / 4%), 0 4px 8px rgb(0 0 0 / 8%),
+    inset 0 1px 0 rgb(255 255 255 / 20%);
+  --field-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+  --selected-shadow: none;
+  --hover-shadow: none;
+  --component-border: 1px solid var(--line);
+  --selected-bg: #eeeafd;
+  --hover-bg: #f1f3f9;
+  --log-shadow: none;
+  --accessible-link: #554bd6;
+}
+
+/* Console adaptation: motion never moves graph nodes or data surfaces. */
+:root[data-style="stripe"] ::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+:root[data-style="stripe"] {
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  --grid-line: rgb(99 91 255 / 10%);
+}
+:root[data-style="stripe"] body {
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+:root[data-style="stripe"] .ui-button,
+:root[data-style="stripe"] .ui-nav,
+:root[data-style="stripe"] .ui-field,
+:root[data-style="stripe"] select,
+:root[data-style="stripe"] textarea {
+  transition:
+    transform 300ms ease-out,
+    box-shadow 300ms ease-out,
+    background-color 300ms ease-out,
+    color 300ms ease-out,
+    border-color 300ms ease-out;
+}
+:root[data-style="stripe"] .ui-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+:root[data-style="stripe"] .sidebar-icon-shell {
+  color: var(--muted);
+  transition: color 300ms ease-out;
+}
+:root[data-style="stripe"] .ui-selected .sidebar-icon-shell,
+:root[data-style="stripe"] .ui-nav:hover .sidebar-icon-shell {
+  color: var(--link);
+}
+:root[data-style="stripe"] .sidebar-group + .sidebar-group {
+  border-top: 1px solid rgb(99 91 255 / 20%);
+  padding-top: 1rem;
+}
+:root[data-style="stripe"] .ui-primary {
+  padding: 12px 24px;
+  font-weight: 500;
+  background: #635bff;
+  border-color: #635bff;
+  color: white;
+  box-shadow:
+    0 2px 4px rgb(99 91 255 / 20%),
+    0 4px 8px rgb(99 91 255 / 20%),
+    inset 0 1px 0 rgb(255 255 255 / 20%);
+}
+:root[data-style="stripe"] .ui-button:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+  box-shadow: inset 0 2px 4px rgb(0 0 0 / 20%);
+}
+:root[data-style="stripe"]
+  :is(.ui-field:focus-within, select:focus-visible, textarea:focus-visible) {
+  border-color: transparent;
+  outline: none;
+  box-shadow: 0 0 0 2px #635bff;
+}
+:root[data-style="stripe"] :is(h1, h2, h3) {
+  font-weight: 600;
+}
+:root[data-style="stripe"] p {
+  max-width: 75ch;
+}
+:root[data-style="stripe"] .phase {
+  border-radius: 8px;
+}
+:root[data-style="stripe"] .ui-embedded {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  margin-inline: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-style="stripe"]
+    :is(.ui-button, .ui-nav, .ui-field, select, textarea) {
+    transition: none;
+  }
+  :root[data-style="stripe"] .sidebar-icon-shell {
+    transition: none;
+  }
+  :root[data-style="stripe"] .ui-button:hover:not(:disabled),
+  :root[data-style="stripe"] .ui-button:active:not(:disabled) {
+    transform: none;
+  }
+}
+:root[data-style="stripe"][data-color-scheme="dark"] {
+  --bg: #151a25;
+  --surface: #202737;
+  --field: #1b2230;
+  --line: #43506a;
+  --text: #edf0f7;
+  --muted: #b6c2d8;
+  --link: #b5a8ff;
+  --success: #79d9a7;
+  --danger: #ffa0b1;
+  --warning: #f0ce77;
+  --running: #80e9ff;
+  --phase-success-bg: #1f4635;
+  --phase-success-border: #79d9a7;
+  --phase-success-text: #79d9a7;
+  --phase-danger-bg: #522c3a;
+  --phase-danger-border: #ffa0b1;
+  --phase-danger-text: #ffa0b1;
+  --phase-running-bg: #183d55;
+  --phase-running-border: #80e9ff;
+  --phase-running-text: #80e9ff;
+  --phase-pending-bg: #2b3448;
+  --phase-pending-border: #43506a;
+  --phase-warning-bg: #4e4224;
+  --phase-warning-border: #f0ce77;
+  --phase-warning-text: #f0ce77;
+  --selected-bg: #383054;
+  --hover-bg: #2b3448;
+  --accessible-link: #b5a8ff;
+}
+
+/* Brand purple remains exact on primary controls; text on tinted surfaces
+   needs a darker shade to meet 4.5:1 contrast. */
+:root[data-style="stripe"] a,
+:root[data-style="stripe"] .ui-selected,
+:root[data-style="stripe"] .ui-button:hover:not(.ui-primary) {
+  color: var(--accessible-link);
+}
