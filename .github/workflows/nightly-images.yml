@@ -28,12 +28,10 @@ jobs:
             dockerfile: Dockerfile.controller
           - image: runtimed
             dockerfile: Dockerfile.runtimed
-          - image: gateway
-            dockerfile: Dockerfile.gateway
           - image: runtime-log-apiserver
             dockerfile: Dockerfile.log-api
-          - image: dashboard
-            dockerfile: dashboard/Dockerfile
+          - image: console
+            dockerfile: console/Dockerfile
           - image: bash-runtime
             dockerfile: Dockerfile.bash-runtime
           - image: python-runtime
@@ -97,6 +95,14 @@ jobs:
         run: |
           while IFS= read -r tag; do
             if [[ -n "${tag}" ]]; then
-              cosign sign --yes "${tag}@${DIGEST}"
+              for attempt in 1 2 3; do
+                if cosign sign --yes "${tag}@${DIGEST}"; then
+                  break
+                fi
+                if [[ "${attempt}" == "3" ]]; then
+                  exit 1
+                fi
+                sleep "$((attempt * 5))"
+              done
             fi
           done <<< "${TAGS}"
