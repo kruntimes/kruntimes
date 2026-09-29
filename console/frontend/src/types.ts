@@ -39,6 +39,58 @@ export interface LogEntry {
   timedOut?: boolean;
   durationMilliseconds?: number;
 }
+
+export type SessionOperationRequest = {
+  command?: {
+    argv?: string[];
+    shell?: string;
+    workingDirectory?: string;
+    env?: Record<string, string>;
+    stdin?: string;
+    timeoutMillis?: number;
+  };
+  writeFile?: {
+    path: string;
+    contents: string;
+    createParents?: boolean;
+  };
+  createDirectory?: { path: string };
+  deleteFile?: { path: string; recursive?: boolean };
+  renameFile?: {
+    sourcePath: string;
+    destinationPath: string;
+    overwrite?: boolean;
+  };
+};
+
+export type SessionOperationEvent = {
+  sequence: number;
+  type: "accepted" | "output" | "progress" | "completed" | "failed";
+  accepted?: { operationId: string };
+  output?: { stream: "stdout" | "stderr"; data: string };
+  progress?: {
+    kind: "status" | "text_delta" | "tool_call_started" | "tool_call_finished";
+    message?: string;
+    toolCallID?: string;
+    toolName?: string;
+    data?: string;
+    contentType?: string;
+  };
+  completed?: {
+    command?: {
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      timedOut: boolean;
+    };
+  };
+  failed?: { code: number; message: string };
+};
+
+export type SessionOperationTransportError = {
+  type: "error";
+  error: string;
+};
 export interface RuntimeSummary {
   name: string;
   namespace: string;
