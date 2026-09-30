@@ -222,6 +222,14 @@ func TestSessionRuntimeRegisterStatusCloseAndAssignmentFencing(t *testing.T) {
 	if current.State != pb.SessionState_SESSION_STATE_READY {
 		t.Fatalf("session state = %v, want ready", current.State)
 	}
+	leaseBefore := current.LastLeaseHeartbeatUnixNano
+	if _, err := client.TouchSession(context.Background(), &pb.TouchSessionRequest{Identity: identity}); err != nil {
+		t.Fatalf("TouchSession: %v", err)
+	}
+	current, err = client.GetSessionStatus(context.Background(), &pb.GetSessionStatusRequest{Identity: identity})
+	if err != nil || current.LastLeaseHeartbeatUnixNano <= leaseBefore {
+		t.Fatalf("lease heartbeat after touch = %#v, err = %v", current, err)
+	}
 	if _, err := client.CloseSession(context.Background(), &pb.CloseSessionRequest{Identity: identity}); err != nil {
 		t.Fatalf("CloseSession: %v", err)
 	}

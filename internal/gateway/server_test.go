@@ -193,6 +193,38 @@ func TestGatewayStreamsSessionOperationOverWebSocket(t *testing.T) {
 	}
 }
 
+func TestGatewayWebSocketHeartbeatsTouchTheOwnerSession(t *testing.T) {
+	touches := make(chan *pb.TouchSessionRequest, 2)
+	client := &fakeSessionRuntimeClient{touch: func(_ context.Context, request *pb.TouchSessionRequest, _ ...grpc.CallOption) (*pb.SessionStatus, error) {
+		touches <- request
+		return &pb.SessionStatus{Identity: request.Identity, State: pb.SessionState_SESSION_STATE_READY, LastLeaseHeartbeatUnixNano: time.Now().UnixNano()}, nil
+	}}
+	server := testServer(t, readySessionRun(), allowAuthorizer{}, &fakeDialer{client: client})
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+
+	endpoint := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:ws"
+	connection, _, err := websocket.DefaultDialer.Dial(endpoint, nil)
+	if err != nil {
+		t.Fatalf("dial WebSocket: %v", err)
+	}
+	defer connection.Close()
+	if request := <-touches; request.GetIdentity().GetRunUid() != "session-uid" {
+		t.Fatalf("initial TouchSession request = %#v", request)
+	}
+	if err := connection.WriteJSON(map[string]any{"type": "heartbeat"}); err != nil {
+		t.Fatalf("write heartbeat: %v", err)
+	}
+	select {
+	case request := <-touches:
+		if request.GetIdentity().GetRunUid() != "session-uid" {
+			t.Fatalf("heartbeat TouchSession request = %#v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not touch Runtime Session")
+	}
+}
+
 func TestGatewayCancelsActiveSessionWebSocketOperation(t *testing.T) {
 	started := make(chan struct{})
 	client := &fakeSessionRuntimeClient{stream: func(ctx context.Context, _ *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
@@ -489,6 +521,7 @@ func (nopCloser) Close() error { return nil }
 type fakeSessionRuntimeClient struct {
 	pb.SessionRuntimeClient
 	status  func(context.Context, *pb.GetSessionStatusRequest, ...grpc.CallOption) (*pb.SessionStatus, error)
+	touch   func(context.Context, *pb.TouchSessionRequest, ...grpc.CallOption) (*pb.SessionStatus, error)
 	execute func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error)
 	stream  func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error)
 	list    func(context.Context, *pb.ListSessionFilesRequest, ...grpc.CallOption) (*pb.ListSessionFilesResponse, error)
@@ -512,6 +545,12 @@ func (c *fakeSessionRuntimeClient) GetSessionStatus(ctx context.Context, request
 		return nil, status.Error(codes.Unimplemented, "GetSessionStatus")
 	}
 	return c.status(ctx, request, options...)
+}
+func (c *fakeSessionRuntimeClient) TouchSession(ctx context.Context, request *pb.TouchSessionRequest, options ...grpc.CallOption) (*pb.SessionStatus, error) {
+	if c.touch == nil {
+		return &pb.SessionStatus{Identity: request.GetIdentity(), State: pb.SessionState_SESSION_STATE_READY, LastActivityUnixNano: time.Now().UnixNano()}, nil
+	}
+	return c.touch(ctx, request, options...)
 }
 func (c *fakeSessionRuntimeClient) ExecuteSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest, options ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error) {
 	if c.execute == nil {

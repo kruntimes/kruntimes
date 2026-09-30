@@ -120,6 +120,29 @@ func TestSessionOperationQueueIdleDeadlineTracksAcceptedOperations(t *testing.T)
 	}
 }
 
+func TestSessionOperationQueueLeaseDeadlineTracksHeartbeatsSeparatelyFromOperations(t *testing.T) {
+	queue := NewSessionOperationQueue(1, time.Minute)
+	run := queuedSessionRun("session")
+	start := time.Now().Add(-2 * time.Second)
+	if err := queue.Ensure(run, start); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	timeout := time.Second
+	if deadline, ok := queue.LeaseDeadline(string(run.UID), timeout); !ok || !deadline.Equal(start.Add(timeout)) {
+		t.Fatalf("initial lease deadline = %s, tracked=%t", deadline, ok)
+	}
+	heartbeat := time.Now()
+	if !queue.TouchLease(string(run.UID), heartbeat) {
+		t.Fatal("TouchLease = false, want tracked session")
+	}
+	if deadline, ok := queue.LeaseDeadline(string(run.UID), timeout); !ok || deadline.Before(heartbeat.Add(timeout-time.Millisecond)) {
+		t.Fatalf("heartbeat lease deadline = %s, tracked=%t", deadline, ok)
+	}
+	if deadline, ok := queue.IdleDeadline(string(run.UID), timeout, time.Now()); !ok || !deadline.Equal(start.Add(timeout)) {
+		t.Fatalf("idle deadline changed after lease heartbeat: %s, tracked=%t", deadline, ok)
+	}
+}
+
 func TestSessionOperationQueueRejectsWhenQueuedMutationLimitIsReached(t *testing.T) {
 	queue := NewSessionOperationQueue(8, time.Minute)
 	run := queuedSessionRun("session")

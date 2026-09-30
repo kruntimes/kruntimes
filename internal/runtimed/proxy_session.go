@@ -88,6 +88,32 @@ func (s *sessionRuntimeProxy) GetSessionStatus(ctx context.Context, req *pb.GetS
 	return route.client.GetSessionStatus(route.ctx, req)
 }
 
+// TouchSession accepts a heartbeat only through the owner runtimed. It updates
+// both owner lease state and Runtime Server state so recovery retains the
+// authoritative timestamp after a runtimed restart.
+func (s *sessionRuntimeProxy) TouchSession(ctx context.Context, req *pb.TouchSessionRequest) (*pb.SessionStatus, error) {
+	route, err := s.route(ctx, req.GetIdentity())
+	if err != nil {
+		return nil, err
+	}
+	defer route.closer.Close()
+	if !route.owner {
+		return route.client.TouchSession(route.ctx, req)
+	}
+	response, err := route.client.TouchSession(route.ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if s.operations != nil {
+		heartbeat := time.Now()
+		if response.GetLastLeaseHeartbeatUnixNano() > 0 {
+			heartbeat = time.Unix(0, response.GetLastLeaseHeartbeatUnixNano())
+		}
+		s.operations.TouchLease(string(route.run.UID), heartbeat)
+	}
+	return response, nil
+}
+
 func (s *sessionRuntimeProxy) ExecuteSessionOperation(ctx context.Context, req *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
 	route, err := s.route(ctx, req.GetIdentity())
 	if err != nil {

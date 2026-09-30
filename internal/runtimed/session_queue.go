@@ -34,10 +34,11 @@ type sessionOperationQueueEntry struct {
 	closed   bool
 	draining bool
 
-	mu           sync.Mutex
-	activeCancel context.CancelFunc
-	lastActivity time.Time
-	pending      int
+	mu                 sync.Mutex
+	activeCancel       context.CancelFunc
+	lastActivity       time.Time
+	lastLeaseHeartbeat time.Time
+	pending            int
 }
 
 // Ensure starts tracking a ready Session Run before its first operation.
@@ -58,10 +59,44 @@ func (q *SessionOperationQueue) Ensure(run *v1alpha1.Run, activity time.Time) er
 		entry.setActivity(activity)
 		return nil
 	}
-	entry := &sessionOperationQueueEntry{jobs: make(chan sessionOperationJob, queueSize), lastActivity: activity}
+	entry := &sessionOperationQueueEntry{jobs: make(chan sessionOperationJob, queueSize), lastActivity: activity, lastLeaseHeartbeat: activity}
 	q.sessions[uid] = entry
 	go entry.run(timeout)
 	return nil
+}
+
+// TouchLease records one server-observed persistent-connection heartbeat.
+// The caller is the owner runtimed proxy after it has verified Run identity.
+func (q *SessionOperationQueue) TouchLease(runUID string, heartbeat time.Time) bool {
+	if q == nil || runUID == "" {
+		return false
+	}
+	if heartbeat.IsZero() {
+		heartbeat = time.Now()
+	}
+	q.mu.Lock()
+	entry := q.sessions[runUID]
+	q.mu.Unlock()
+	if entry == nil {
+		return false
+	}
+	entry.touchLease(heartbeat)
+	return true
+}
+
+// LeaseDeadline reports when a connection-backed Session should expire if no
+// further server-observed heartbeat arrives.
+func (q *SessionOperationQueue) LeaseDeadline(runUID string, timeout time.Duration) (time.Time, bool) {
+	if q == nil || runUID == "" || timeout <= 0 {
+		return time.Time{}, false
+	}
+	q.mu.Lock()
+	entry := q.sessions[runUID]
+	q.mu.Unlock()
+	if entry == nil {
+		return time.Time{}, false
+	}
+	return entry.leaseDeadline(timeout), true
 }
 
 // IdleDeadline returns the next idle expiry for a tracked Session Run. Active
@@ -144,7 +179,8 @@ func (q *SessionOperationQueue) ExecuteWithAdmission(
 	q.mu.Lock()
 	entry := q.sessions[uid]
 	if entry == nil {
-		entry = &sessionOperationQueueEntry{jobs: make(chan sessionOperationJob, queueSize), lastActivity: time.Now()}
+		now := time.Now()
+		entry = &sessionOperationQueueEntry{jobs: make(chan sessionOperationJob, queueSize), lastActivity: now, lastLeaseHeartbeat: now}
 		q.sessions[uid] = entry
 		go entry.run(timeout)
 	}
@@ -304,6 +340,14 @@ func (e *sessionOperationQueueEntry) accept(activity time.Time) {
 	e.lastActivity = activity
 }
 
+func (e *sessionOperationQueueEntry) touchLease(heartbeat time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.lastLeaseHeartbeat.Before(heartbeat) {
+		e.lastLeaseHeartbeat = heartbeat
+	}
+}
+
 func (e *sessionOperationQueueEntry) complete(activity time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -320,6 +364,12 @@ func (e *sessionOperationQueueEntry) idleDeadline(timeout time.Duration, now tim
 		return now.Add(timeout)
 	}
 	return e.lastActivity.Add(timeout)
+}
+
+func (e *sessionOperationQueueEntry) leaseDeadline(timeout time.Duration) time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.lastLeaseHeartbeat.Add(timeout)
 }
 
 func (e *sessionOperationQueueEntry) isClosed() bool {

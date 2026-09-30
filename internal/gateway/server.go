@@ -501,13 +501,24 @@ func (s *Server) streamOperationWebSocket(w http.ResponseWriter, r *http.Request
 	connection.SetReadLimit(s.maxRequestBodyBytes())
 	connection.SetReadDeadline(time.Now().Add(15 * time.Second))
 	connection.SetReadDeadline(time.Time{})
+	if err := s.touchSession(r.Context(), run); err != nil {
+		s.writeWebSocketError(connection, err)
+		return
+	}
 	done := make(chan struct{})
 	defer close(done)
 	frames := readSessionConnectionFrames(connection, done)
 	for frame := range frames {
 		if frame.err != nil {
-			s.closeWebSocket(connection, websocket.ClosePolicyViolation, "valid send frame is required")
+			s.closeWebSocket(connection, websocket.ClosePolicyViolation, "valid Session frame is required")
 			return
+		}
+		if frame.message.Type == sessionConnectionMessageHeartbeat {
+			if err := s.touchSession(r.Context(), run); err != nil {
+				s.writeWebSocketError(connection, err)
+				return
+			}
+			continue
 		}
 		if frame.message.Type != sessionConnectionMessageSend || !s.streamSessionConnectionOperation(r.Context(), connection, frames, run, frame.message) {
 			return
@@ -544,7 +555,18 @@ func (s *Server) streamSessionConnectionOperation(parent context.Context, connec
 	for {
 		select {
 		case frame, ok := <-frames:
-			if !ok || frame.err != nil || frame.message.Type != sessionConnectionMessageCancel || frame.message.OperationID != operationID {
+			if !ok || frame.err != nil {
+				s.closeWebSocket(connection, websocket.ClosePolicyViolation, "only cancellation of the active operation is allowed")
+				return false
+			}
+			if frame.message.Type == sessionConnectionMessageHeartbeat {
+				if err := s.touchSession(ctx, run); err != nil {
+					s.writeWebSocketError(connection, err)
+					return false
+				}
+				continue
+			}
+			if frame.message.Type != sessionConnectionMessageCancel || frame.message.OperationID != operationID {
 				s.closeWebSocket(connection, websocket.ClosePolicyViolation, "only cancellation of the active operation is allowed")
 				return false
 			}
@@ -576,6 +598,16 @@ func (s *Server) streamSessionConnectionOperation(parent context.Context, connec
 			}
 		}
 	}
+}
+
+func (s *Server) touchSession(ctx context.Context, run *v1alpha1.Run) error {
+	client, closer, err := s.runtimeClient(ctx, run)
+	if err != nil {
+		return err
+	}
+	defer closer.Close()
+	_, err = client.TouchSession(ctx, &pb.TouchSessionRequest{Identity: sessionIdentity(run)})
+	return err
 }
 
 var sessionOperationWebSocketUpgrader = websocket.Upgrader{

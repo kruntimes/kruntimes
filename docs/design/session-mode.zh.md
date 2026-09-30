@@ -23,6 +23,7 @@ type RunMode struct {
 }
 
 type RunSessionMode struct {
+    LeaseTimeoutSeconds *int32 `json:"leaseTimeoutSeconds,omitempty"`
     IdleTimeoutSeconds *int32 `json:"idleTimeoutSeconds,omitempty"`
     QueueSize          *int32 `json:"queueSize,omitempty"`
     OperationTimeout   *metav1.Duration `json:"operationTimeout,omitempty"`
@@ -51,7 +52,7 @@ Runtime capacity。
 ```text
 Runtime pool -> AcquireSandbox (create Session Run) -> assigned Runtime Pod
              -> OpenSession -> Send / Receive / Cancel
-             -> Session.Close -> ReleaseSandbox (stop/delete Session Run)
+             -> Session.Close -> Release (stop/delete Session Run)
 ```
 
 `Runtime` 是可复用 pool。`AcquireSandbox` 创建唯一的 session-mode Run，并等待 scheduling 与
@@ -60,14 +61,15 @@ registration 获得 Runtime Pod capacity。其返回的 `Sandbox` 由该 Run 支
 assigned Runtime Pod。
 
 Session SDK 隐藏 HTTP、NDJSON 与 WebSocket transport。它的 data-plane operation 是 `Send`、
-`Receive`、`Cancel`；lifecycle operation 是 `OpenSession`、`Session.Close` 与 `ReleaseSandbox`。
+`Receive`、`Cancel`；lifecycle operation 是 `OpenSession`、`Session.Close` 与 `Release`。
 `OpenSession` 为已经 Ready 的 Session 建立可替换的 streaming connection，不创建也不分配 Session Run。
-`Session.Close` 只释放该 connection。`ReleaseSandbox` 才是 resource operation：它停止 Session、
+`Session.Close` 只释放该 connection。`Release` 才是 resource operation：它停止 Session、
 等待 cleanup，并删除其 Session Run。显式 immediate-release mode 可以取消 active work；默认使用
 graceful drain。
 
-除已有 idle timeout 外，Session liveness 还需要独立 lease。active connection 在打开期间维护
-heartbeat；owner runtimed 记录 server-authoritative expiry，并在 lease 到期时终止 Session。关闭
+`leaseTimeoutSeconds` 在已有 operation-idle timeout 外启用独立 connection lease。active connection
+打开期间，SDK 私下发送 heartbeat；gateway 认证后逐个转发到 owner runtimed。owner runtimed 将
+server-authoritative lease timestamp 与 command activity 分开记录，并在 lease 到期时终止 Session。关闭
 connection 不会立即 release Sandbox，caller 可在 expiry 前 reconnect；但 Runtime Pod 丢失会立即终止
 Session。terminal Session 绝不能透明地重新分配到另一个 Pod，因为其 agent context 与 workspace 都是
 Pod-local。
@@ -165,7 +167,8 @@ session 失败，v0 不承诺 checkpoint、resume 或透明迁移。
 environment map；其中的值只对该 command 覆盖已注册的值。
 
 `Run.spec.timeout` 限制整个 reservation。`idleTimeoutSeconds` 在没有 accepted mutation 或 command
-activity 后过期。Session 继续使用普通 Run 的 cancellation、deletion、TTL、authorization、endpoint
+activity 后过期；`leaseTimeoutSeconds` 在没有服务端观察到的 connection heartbeat 后过期。二者独立：
+heartbeat 不会重置 operation-idle timeout。Session 继续使用普通 Run 的 cancellation、deletion、TTL、authorization、endpoint
 和 assignment-UID fencing。注册在 `Ready` 前可以 retry，因为此时尚不存在可用的 session state；
 进入 Ready 后 assigned-Pod loss 是 terminal，client 必须创建新的 Session Run，而不能在空 workspace
 中静默继续。idle expiry 同样是 terminal：它会关闭本地 session、清理 ephemeral workspace，并记录为
@@ -279,7 +282,7 @@ gateway server 将下列 HTTP API operation 映射到 `SessionRuntime` gRPC meth
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}` | `GetSessionStatus` | 返回 readiness 与 bounded session metadata |
 | `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:execute` | `ExecuteSessionOperation` | 执行一个 command 或 file mutation |
 | `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream` | `StreamSessionOperation` | 执行一个 operation，并流式返回有序 NDJSON progress 与 terminal event |
-| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `StreamSessionOperation` | 持久 WebSocket Session connection；client 发送 `send`/`cancel` frame，server 返回有序 event frame |
+| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `TouchSession`、`StreamSessionOperation` | 持久 Session connection；认证后的打开和私有 `heartbeat` frame 会 touch lease，client 发送 `send`/`cancel` frame 并接收有序 event frame |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files` | `ReadSessionFile`、`ListSessionFiles` | 有界的 workspace-relative file access |
 
 Exec request 必须且只能提供 `argv` 或 `shell`。`argv` 直接执行程序；`shell` 显式选择 Runtime
@@ -375,12 +378,13 @@ Session support 不在 `Runtime.spec` 中声明。
 ```proto
 service SessionRuntime {
   rpc RegisterSession(RegisterSessionRequest) returns (SessionStatus);
+  rpc GetSessionStatus(GetSessionStatusRequest) returns (SessionStatus);
+  rpc TouchSession(TouchSessionRequest) returns (SessionStatus);
   rpc ExecuteSessionOperation(ExecuteSessionOperationRequest)
       returns (ExecuteSessionOperationResponse);
   rpc ReadSessionFile(ReadSessionFileRequest) returns (ReadSessionFileResponse);
   rpc ListSessionFiles(ListSessionFilesRequest) returns (ListSessionFilesResponse);
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
-  rpc GetSessionStatus(GetSessionStatusRequest) returns (SessionStatus);
 }
 ```
 
@@ -394,7 +398,8 @@ owner 时完成 queue admission 后调用本地 Runtime Server。`RegisterSessio
 immutable source inputs；同一 identity 下调用是幂等的。`ExecuteSessionOperation` 包含恰好一个 `oneof`
 payload：command、file write、directory creation、delete 或 rename。其 request context 携带 command timeout；
 cancellation 终止对应 process group。read/list RPC 是 synchronous、有界的，不进入 mutation queue。本地
-Runtime Server 不路由 request，也不分配 operation state。`CloseSession` 是幂等操作：owner runtimed 拒绝新的
+Runtime Server 不路由 request，也不分配 operation state。`TouchSession` 是幂等的，只更新独立记录的 lease
+heartbeat timestamp，绝不更新 command-idle activity。`CloseSession` 是幂等操作：owner runtimed 拒绝新的
 gateway operation 后，它清理 local state。
 
 external client 通过共享的 Runtime gateway Service 调用 HTTP，绝不直接访问 Runtime Server。gateway server
@@ -411,14 +416,16 @@ Sandbox resource，也不会绕过 gateway。
 
 | Helper | 行为 |
 | --- | --- |
-| `Create` | 使用请求的 Runtime、source、artifact inputs、environment 与 timeout settings 创建 Session Run |
+| `Runtime.AcquireSandbox` | 使用选定 Runtime、source、artifact inputs、environment 与 timeout settings 创建 Session Run；仅在 Ready 后返回 |
 | `Open` | 读取一个已有的、具名的 Session Run；绝不创建或重新注册它 |
+| `OpenSession` / `Send` / `Receive` / `Cancel` | 建立一个可替换 connection 并操作它，不暴露 wire transport |
 | `Wait` | watch 或 poll 至 `Ready` 或 terminal Run phase；返回 typed terminal 或 readiness error |
 | `Execute` | 通过 Run endpoint 发送恰好一个 command 或 file mutation；绝不隐式重试 mutation |
 | `ReadFile`、`ListFiles`、`WriteFile`、`CreateDirectory`、`DeleteFile`、`RenameFile` | 使用有界且 workspace-relative 的 gateway operations |
 | `Logs` | 读取 assigned runtimed container log，并按不可变 Run UID 过滤结构化日志行；不引入 gateway log store |
 | `Close` | 设置 `spec.termination.mode: Drain`，等待 finalization、artifact export 和 `Succeeded`；任何其他 terminal phase 都返回 typed state error |
 | `Cancel` | 设置 `spec.termination.mode: Immediate`，等待 `Cancelled`、Runtime Server close、workspace cleanup 与 capacity release；任何其他 terminal phase 都返回 typed state error |
+| `Release` | drain 并删除 backing Session Run，归还 Runtime capacity |
 
 `Open` 和每次 data-plane call 都从当前 Run status 推导 endpoint。SDK 会拒绝非 Session Run、未处于
 `Ready` 的 Run，或 endpoint Run UID 与已打开 Run 不匹配的情况。HTTP failures 以保留 status code 和

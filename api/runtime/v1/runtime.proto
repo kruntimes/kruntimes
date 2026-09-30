@@ -41,6 +41,8 @@ service SessionRuntime {
     rpc RegisterSession(RegisterSessionRequest) returns (SessionStatus);
     // GetSessionStatus returns local session state for recovery and idle checks.
     rpc GetSessionStatus(GetSessionStatusRequest) returns (SessionStatus);
+    // TouchSession records a server-observed connection heartbeat for lease recovery.
+    rpc TouchSession(TouchSessionRequest) returns (SessionStatus);
     // ExecuteSessionOperation executes one mutation already admitted by runtimed.
     rpc ExecuteSessionOperation(ExecuteSessionOperationRequest) returns (ExecuteSessionOperationResponse);
     // StreamSessionOperation executes one mutation and emits ordered progress and
@@ -220,6 +222,11 @@ message GetSessionStatusRequest {
     SessionIdentity identity = 1;
 }
 
+message TouchSessionRequest {
+    // Immutable assignment identity for the connected Session Run.
+    SessionIdentity identity = 1;
+}
+
 message SessionStatus {
     // Immutable assignment identity of the local session.
     SessionIdentity identity = 1;
@@ -229,6 +236,9 @@ message SessionStatus {
     int64 last_activity_unix_nano = 3;
     // Runtime-defined terminal error when state is SESSION_STATE_FAILED.
     string fatal_error = 4;
+    // Unix timestamp for the latest server-observed persistent-connection
+    // heartbeat. It is independent of operation activity.
+    int64 last_lease_heartbeat_unix_nano = 5;
 }
 
 // ExecuteSessionOperationRequest carries exactly one mutation. Owner runtimed

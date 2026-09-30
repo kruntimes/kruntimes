@@ -768,7 +768,7 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	role := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{Name: serviceAccount.Name, Namespace: testNamespace},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"runs"}, Verbs: []string{"create", "get", "update"}},
+			{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"runs"}, Verbs: []string{"create", "get", "update", "delete"}},
 			{APIGroups: []string{""}, Resources: []string{"services"}, Verbs: []string{"get"}},
 			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list"}},
 		},
@@ -799,57 +799,87 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Sandbox SDK client: %v", err)
 	}
-	session, err := sdk.Create(t.Context(), sandbox.CreateOptions{GenerateName: "e2e-sdk-session-", Namespace: testNamespace, Runtime: runtimeName})
+	leaseTimeout := int32(3)
+	acquired, err := sdk.Runtime(testNamespace, runtimeName).AcquireSandbox(t.Context(), sandbox.AcquireOptions{
+		GenerateName: "e2e-sdk-session-",
+		Session:      &v1alpha1.RunSessionMode{LeaseTimeoutSeconds: &leaseTimeout},
+	})
 	if err != nil {
 		t.Fatalf("create SDK Session Run: %v", err)
 	}
-	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), session.Run()) })
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), acquired.Run()) })
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	if err := session.Wait(ctx); err != nil {
-		t.Fatalf("wait for SDK Session Run: %v", err)
-	}
-	result, err := session.Execute(ctx, sandbox.Command{Argv: []string{"sh", "-c", "printf sdk-port-forward"}})
+	connection, err := acquired.OpenSession(ctx)
 	if err != nil {
-		t.Fatalf("execute SDK Session command: %v", err)
+		t.Fatalf("open SDK Session connection: %v", err)
 	}
-	if result.ExitCode != 0 || string(result.Stdout) != "sdk-port-forward" {
-		t.Fatalf("SDK Session command result = %#v, want successful sdk-port-forward output", result)
+	operationID, err := connection.Send(ctx, sandbox.Command{Argv: []string{"sh", "-c", "printf sdk-port-forward"}})
+	if err != nil {
+		t.Fatalf("send SDK Session command: %v", err)
+	}
+	var output bytes.Buffer
+	for {
+		event, err := connection.Receive(ctx)
+		if err != nil {
+			t.Fatalf("receive SDK Session event: %v", err)
+		}
+		if event.Output != nil && event.Output.Stream == "stdout" {
+			output.Write(event.Output.Data)
+		}
+		if event.Completed != nil {
+			if event.Completed.Command == nil || event.Completed.Command.ExitCode != 0 {
+				t.Fatalf("SDK Session completion = %#v, want successful command", event.Completed)
+			}
+			break
+		}
+		if event.Failed != nil {
+			t.Fatalf("SDK Session operation %s failed: %#v", operationID, event.Failed)
+		}
+	}
+	if output.String() != "sdk-port-forward" {
+		t.Fatalf("SDK Session output = %q, want sdk-port-forward", output.String())
+	}
+	// The SDK heartbeat must retain the Session Run beyond its lease interval
+	// without issuing an artificial operation.
+	time.Sleep(4 * time.Second)
+	if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(acquired.Run()), acquired.Run()); err != nil {
+		t.Fatalf("get heartbeating SDK Session Run: %v", err)
+	}
+	if acquired.Run().Status.Phase != v1alpha1.RunReady {
+		t.Fatalf("heartbeating SDK Session phase = %s, want Ready", acquired.Run().Status.Phase)
+	}
+	if err := connection.Close(); err != nil {
+		t.Fatalf("close SDK Session connection: %v", err)
 	}
 	for _, name := range []string{"alpha.txt", "beta.txt", "gamma.txt"} {
-		if err := session.WriteFile(ctx, "pages/"+name, []byte(name), true); err != nil {
+		if err := acquired.WriteFile(ctx, "pages/"+name, []byte(name), true); err != nil {
 			t.Fatalf("write SDK Session page file %q: %v", name, err)
 		}
 	}
-	page, err := session.ListFiles(ctx, sandbox.ListFilesOptions{Directory: "pages", Limit: 2})
+	page, err := acquired.ListFiles(ctx, sandbox.ListFilesOptions{Directory: "pages", Limit: 2})
 	if err != nil {
 		t.Fatalf("list first SDK Session file page: %v", err)
 	}
 	if got, want := sessionFilePaths(page.Entries), []string{"alpha.txt", "beta.txt"}; !slices.Equal(got, want) || page.NextPageToken == "" {
 		t.Fatalf("first SDK Session file page = %#v, want %#v and next token", page, want)
 	}
-	page, err = session.ListFiles(ctx, sandbox.ListFilesOptions{Directory: "pages", Limit: 2, PageToken: page.NextPageToken})
+	page, err = acquired.ListFiles(ctx, sandbox.ListFilesOptions{Directory: "pages", Limit: 2, PageToken: page.NextPageToken})
 	if err != nil {
 		t.Fatalf("list second SDK Session file page: %v", err)
 	}
 	if got, want := sessionFilePaths(page.Entries), []string{"gamma.txt"}; !slices.Equal(got, want) || page.NextPageToken != "" {
 		t.Fatalf("second SDK Session file page = %#v, want %#v and no next token", page, want)
 	}
-	if err := session.Close(ctx); err != nil {
-		t.Fatalf("close SDK Session Run: %v", err)
-	}
-	if session.Run().Status.Phase != v1alpha1.RunSucceeded {
-		t.Fatalf("SDK Close phase = %s, want Succeeded", session.Run().Status.Phase)
+	if err := acquired.Release(ctx); err != nil {
+		t.Fatalf("release SDK Session Run: %v", err)
 	}
 
-	cancelled, err := sdk.Create(t.Context(), sandbox.CreateOptions{GenerateName: "e2e-sdk-cancel-", Namespace: testNamespace, Runtime: runtimeName})
+	cancelled, err := sdk.Runtime(testNamespace, runtimeName).AcquireSandbox(ctx, sandbox.AcquireOptions{GenerateName: "e2e-sdk-cancel-"})
 	if err != nil {
 		t.Fatalf("create SDK cancellation Session Run: %v", err)
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), cancelled.Run()) })
-	if err := cancelled.Wait(ctx); err != nil {
-		t.Fatalf("wait for SDK cancellation Session Run: %v", err)
-	}
 	if err := cancelled.Cancel(ctx); err != nil {
 		t.Fatalf("cancel SDK Session Run: %v", err)
 	}
@@ -875,6 +905,49 @@ func TestSessionRunExpiresWhenIdle(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), run) })
 	waitForRunPhase(t, run, 10*time.Second, v1alpha1.RunTimeout)
+}
+
+func TestSessionRunLeaseExpiresAfterConnectionHeartbeatsStop(t *testing.T) {
+	t.Parallel()
+	runtimeName := fmt.Sprintf("session-lease-%d", time.Now().UnixNano())
+	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
+	leaseTimeout := int32(3)
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-session-lease-", Namespace: testNamespace},
+		Spec: v1alpha1.RunSpec{
+			Runtime: runtimeName,
+			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{LeaseTimeoutSeconds: &leaseTimeout}},
+		},
+	}
+	if err := k8sClient.Create(t.Context(), run); err != nil {
+		t.Fatalf("create lease Session Run: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), run) })
+	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunReady)
+
+	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
+	websocketURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/operations:ws"
+	connection, response, err := websocket.DefaultDialer.Dial(websocketURL, http.Header{"Authorization": []string{"Bearer " + sessionGatewayToken(t, run)}})
+	if err != nil {
+		if response != nil {
+			t.Fatalf("dial lease WebSocket: %v (status %d)", err, response.StatusCode)
+		}
+		t.Fatalf("dial lease WebSocket: %v", err)
+	}
+	// The authenticated upgrade is an initial server-observed heartbeat. It must
+	// keep the Run ready during one lease interval before the connection closes.
+	time.Sleep(time.Second)
+	if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), run); err != nil {
+		t.Fatalf("get heartbeat Session Run: %v", err)
+	}
+	if run.Status.Phase != v1alpha1.RunReady {
+		t.Fatalf("Session Run phase with active connection = %s, want Ready", run.Status.Phase)
+	}
+	_ = connection.Close()
+	waitForRunPhase(t, run, 15*time.Second, v1alpha1.RunTimeout)
+	if run.Status.Message != "session lease expired" {
+		t.Fatalf("lease expiry message = %q, want session lease expired", run.Status.Message)
+	}
 }
 
 func TestSessionRunExpiresWhenTotalTimeoutReached(t *testing.T) {

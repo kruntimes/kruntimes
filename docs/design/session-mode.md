@@ -25,6 +25,7 @@ type RunMode struct {
 }
 
 type RunSessionMode struct {
+    LeaseTimeoutSeconds *int32 `json:"leaseTimeoutSeconds,omitempty"`
     IdleTimeoutSeconds *int32 `json:"idleTimeoutSeconds,omitempty"`
     QueueSize          *int32 `json:"queueSize,omitempty"`
     OperationTimeout   *metav1.Duration `json:"operationTimeout,omitempty"`
@@ -56,7 +57,7 @@ The public SDK presents an agent-oriented lifecycle:
 ```text
 Runtime pool -> AcquireSandbox (create Session Run) -> assigned Runtime Pod
              -> OpenSession -> Send / Receive / Cancel
-             -> Session.Close -> ReleaseSandbox (stop/delete Session Run)
+             -> Session.Close -> Release (stop/delete Session Run)
 ```
 
 `Runtime` is the reusable pool. `AcquireSandbox` creates exactly one
@@ -67,18 +68,19 @@ exactly one Session and exactly one assigned Runtime Pod while it is active.
 
 The Session SDK hides HTTP, NDJSON, and WebSocket transports. Its data-plane
 operations are `Send`, `Receive`, and `Cancel`; its lifecycle operations are
-`OpenSession`, `Session.Close`, and `ReleaseSandbox`. `OpenSession` establishes
+`OpenSession`, `Session.Close`, and `Release`. `OpenSession` establishes
 a replaceable streaming connection to the already-ready Session; it neither
 creates nor allocates a Session Run. `Session.Close` releases only that
-connection. `ReleaseSandbox` is the resource operation: it stops the Session,
+connection. `Release` is the resource operation: it stops the Session,
 waits for cleanup, and deletes its Session Run. An explicit immediate-release
 mode may cancel active work; the default is graceful draining.
 
-Session liveness needs a distinct lease in addition to the existing idle
-timeout. The active connection maintains a heartbeat while it is open; the
-owner runtimed records the server-authoritative expiry and terminates the
-Session when the lease expires. Closing a connection does not immediately
-release the Sandbox, and a caller may reconnect before expiry. Loss of the
+`leaseTimeoutSeconds` enables a distinct connection lease in addition to the
+existing operation-idle timeout. While a Session connection is open, the SDK
+privately sends heartbeats; the gateway authenticates and forwards each one to
+owner runtimed. Owner runtimed records the server-authoritative lease timestamp
+separately from command activity and terminates the Session when it expires.
+Closing a connection does not immediately release the Sandbox, and a caller may reconnect before expiry. Loss of the
 Runtime Pod terminates the Session immediately. A terminal Session is never
 transparently reassigned to another Pod because its agent context and workspace
 are Pod-local.
@@ -192,7 +194,9 @@ session command. A command may supply its own environment map; those values
 override the registered values for that command only.
 
 `Run.spec.timeout` bounds the entire reservation. `idleTimeoutSeconds` expires
-the session after no accepted mutation or command activity. A Session Run uses
+the session after no accepted mutation or command activity; `leaseTimeoutSeconds`
+expires it after no server-observed connection heartbeat. They are independent:
+a heartbeat never resets the operation-idle timeout. A Session Run uses
 the normal Run cancellation, deletion, TTL, authorization, endpoint, and
 assignment-UID fencing rules. Registration can retry before `Ready`, when no
 usable session state exists. Once Ready, an assigned-Pod loss is terminal: the
@@ -346,7 +350,7 @@ gRPC methods:
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}` | `GetSessionStatus` | return readiness and bounded session metadata |
 | `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:execute` | `ExecuteSessionOperation` | execute one command or file mutation |
 | `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream` | `StreamSessionOperation` | execute one operation and stream ordered NDJSON progress and terminal events |
-| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `StreamSessionOperation` | persistent WebSocket Session connection; clients send `send`/`cancel` frames and the server returns ordered event frames |
+| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `TouchSession`, `StreamSessionOperation` | persistent Session connection; authenticated open and private `heartbeat` frames touch the lease, while clients send `send`/`cancel` frames and receive ordered event frames |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files` | `ReadSessionFile`, `ListSessionFiles` | bounded workspace-relative file access |
 
 An exec request supplies exactly one of `argv` or `shell`. `argv` directly
@@ -465,12 +469,13 @@ The `SessionRuntime` method set is:
 ```proto
 service SessionRuntime {
   rpc RegisterSession(RegisterSessionRequest) returns (SessionStatus);
+  rpc GetSessionStatus(GetSessionStatusRequest) returns (SessionStatus);
+  rpc TouchSession(TouchSessionRequest) returns (SessionStatus);
   rpc ExecuteSessionOperation(ExecuteSessionOperationRequest)
       returns (ExecuteSessionOperationResponse);
   rpc ReadSessionFile(ReadSessionFileRequest) returns (ReadSessionFileResponse);
   rpc ListSessionFiles(ListSessionFilesRequest) returns (ListSessionFilesResponse);
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
-  rpc GetSessionStatus(GetSessionStatusRequest) returns (SessionStatus);
 }
 ```
 
@@ -490,6 +495,8 @@ file write, directory creation, delete, or rename. Its request context carries
 the command timeout; cancellation terminates the matching process group. Read
 and list RPCs are synchronous, bounded, and do not enter the mutation queue.
 The local Runtime Server does not route requests or allocate operation state.
+`TouchSession` is idempotent and updates only the separately stored lease
+heartbeat timestamp; it must not update command-idle activity.
 `CloseSession` is idempotent and removes local state after owner runtimed has
 rejected new gateway operations.
 
@@ -509,14 +516,16 @@ Both SDKs expose the same lifecycle and operations:
 
 | Helper | Behavior |
 | --- | --- |
-| `Create` | create a Session Run from the requested Runtime, source, artifact inputs, environment, and timeout settings |
+| `Runtime.AcquireSandbox` | create a Session Run from the selected Runtime, source, artifact inputs, environment, and timeout settings; return only after it is Ready |
 | `Open` | read an existing named Session Run; it never creates or re-registers one |
+| `OpenSession` / `Send` / `Receive` / `Cancel` | establish one replaceable connection and operate it without exposing its wire transport |
 | `Wait` | watch or poll until `Ready` or a terminal Run phase; return a typed terminal or readiness error |
 | `Execute` | send exactly one command or file mutation through the Run endpoint; never retry a mutation implicitly |
 | `ReadFile`, `ListFiles`, `WriteFile`, `CreateDirectory`, `DeleteFile`, `RenameFile` | use the bounded, workspace-relative gateway operations |
 | `Logs` | read the assigned runtimed container log and filter the structured lines for the immutable Run UID; it does not introduce a gateway log store |
 | `Close` | set `spec.termination.mode: Drain` and wait for finalization, artifact export, and `Succeeded`; return a typed state error for any other terminal phase |
 | `Cancel` | set `spec.termination.mode: Immediate` and wait for `Cancelled`, Runtime Server close, workspace cleanup, and capacity release; return a typed state error for any other terminal phase |
+| `Release` | drain and delete the backing Session Run to return Runtime capacity |
 
 `Open` and every data-plane call derive the endpoint from the current Run
 status. The SDK rejects a non-Session Run, a Run that is not `Ready`, or an

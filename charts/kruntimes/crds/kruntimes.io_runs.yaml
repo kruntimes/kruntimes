@@ -704,6 +704,15 @@ spec:
                         format: int32
                         minimum: 1
                         type: integer
+                      leaseTimeoutSeconds:
+                        description: |-
+                          LeaseTimeoutSeconds is the duration after the last server-observed
+                          connection heartbeat before the session is closed. It is independent of
+                          idle operation expiry so a connected agent can retain its sandbox without
+                          issuing artificial commands.
+                        format: int32
+                        minimum: 1
+                        type: integer
                       operationTimeout:
                         description: |-
                           OperationTimeout limits one command or file-mutation operation. runtimed

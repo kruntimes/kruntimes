@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	sessionConnectionMessageSend   = "send"
-	sessionConnectionMessageCancel = "cancel"
+	sessionConnectionMessageSend      = "send"
+	sessionConnectionMessageCancel    = "cancel"
+	sessionConnectionMessageHeartbeat = "heartbeat"
 )
 
 // sessionConnectionMessage is one client frame on a persistent Session
@@ -90,6 +91,10 @@ func decodeSessionConnectionMessage(payload []byte) (sessionConnectionMessage, e
 		return sessionConnectionMessage{}, errors.New("Session connection frame must contain one JSON value")
 	}
 	switch message.Type {
+	case sessionConnectionMessageHeartbeat:
+		if message.OperationID != "" || len(message.Operation) != 0 || message.IdempotencyKey != "" {
+			return sessionConnectionMessage{}, errors.New("heartbeat frame must not include operation data")
+		}
 	case sessionConnectionMessageSend:
 		if len(message.Operation) == 0 || message.OperationID != "" {
 			return sessionConnectionMessage{}, errors.New("send frame requires operation and must not include operationID")

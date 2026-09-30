@@ -555,6 +555,7 @@ var FunctionRuntime_ServiceDesc = grpc.ServiceDesc{
 const (
 	SessionRuntime_RegisterSession_FullMethodName         = "/executor.v1.SessionRuntime/RegisterSession"
 	SessionRuntime_GetSessionStatus_FullMethodName        = "/executor.v1.SessionRuntime/GetSessionStatus"
+	SessionRuntime_TouchSession_FullMethodName            = "/executor.v1.SessionRuntime/TouchSession"
 	SessionRuntime_ExecuteSessionOperation_FullMethodName = "/executor.v1.SessionRuntime/ExecuteSessionOperation"
 	SessionRuntime_StreamSessionOperation_FullMethodName  = "/executor.v1.SessionRuntime/StreamSessionOperation"
 	SessionRuntime_ReadSessionFile_FullMethodName         = "/executor.v1.SessionRuntime/ReadSessionFile"
@@ -576,6 +577,8 @@ type SessionRuntimeClient interface {
 	RegisterSession(ctx context.Context, in *RegisterSessionRequest, opts ...grpc.CallOption) (*SessionStatus, error)
 	// GetSessionStatus returns local session state for recovery and idle checks.
 	GetSessionStatus(ctx context.Context, in *GetSessionStatusRequest, opts ...grpc.CallOption) (*SessionStatus, error)
+	// TouchSession records a server-observed connection heartbeat for lease recovery.
+	TouchSession(ctx context.Context, in *TouchSessionRequest, opts ...grpc.CallOption) (*SessionStatus, error)
 	// ExecuteSessionOperation executes one mutation already admitted by runtimed.
 	ExecuteSessionOperation(ctx context.Context, in *ExecuteSessionOperationRequest, opts ...grpc.CallOption) (*ExecuteSessionOperationResponse, error)
 	// StreamSessionOperation executes one mutation and emits ordered progress and
@@ -611,6 +614,16 @@ func (c *sessionRuntimeClient) GetSessionStatus(ctx context.Context, in *GetSess
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SessionStatus)
 	err := c.cc.Invoke(ctx, SessionRuntime_GetSessionStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionRuntimeClient) TouchSession(ctx context.Context, in *TouchSessionRequest, opts ...grpc.CallOption) (*SessionStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SessionStatus)
+	err := c.cc.Invoke(ctx, SessionRuntime_TouchSession_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -690,6 +703,8 @@ type SessionRuntimeServer interface {
 	RegisterSession(context.Context, *RegisterSessionRequest) (*SessionStatus, error)
 	// GetSessionStatus returns local session state for recovery and idle checks.
 	GetSessionStatus(context.Context, *GetSessionStatusRequest) (*SessionStatus, error)
+	// TouchSession records a server-observed connection heartbeat for lease recovery.
+	TouchSession(context.Context, *TouchSessionRequest) (*SessionStatus, error)
 	// ExecuteSessionOperation executes one mutation already admitted by runtimed.
 	ExecuteSessionOperation(context.Context, *ExecuteSessionOperationRequest) (*ExecuteSessionOperationResponse, error)
 	// StreamSessionOperation executes one mutation and emits ordered progress and
@@ -716,6 +731,9 @@ func (UnimplementedSessionRuntimeServer) RegisterSession(context.Context, *Regis
 }
 func (UnimplementedSessionRuntimeServer) GetSessionStatus(context.Context, *GetSessionStatusRequest) (*SessionStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSessionStatus not implemented")
+}
+func (UnimplementedSessionRuntimeServer) TouchSession(context.Context, *TouchSessionRequest) (*SessionStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method TouchSession not implemented")
 }
 func (UnimplementedSessionRuntimeServer) ExecuteSessionOperation(context.Context, *ExecuteSessionOperationRequest) (*ExecuteSessionOperationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExecuteSessionOperation not implemented")
@@ -785,6 +803,24 @@ func _SessionRuntime_GetSessionStatus_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SessionRuntimeServer).GetSessionStatus(ctx, req.(*GetSessionStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SessionRuntime_TouchSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TouchSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionRuntimeServer).TouchSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionRuntime_TouchSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionRuntimeServer).TouchSession(ctx, req.(*TouchSessionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -886,6 +922,10 @@ var SessionRuntime_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSessionStatus",
 			Handler:    _SessionRuntime_GetSessionStatus_Handler,
+		},
+		{
+			MethodName: "TouchSession",
+			Handler:    _SessionRuntime_TouchSession_Handler,
 		},
 		{
 			MethodName: "ExecuteSessionOperation",

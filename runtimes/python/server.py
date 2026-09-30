@@ -395,6 +395,7 @@ class PythonRuntime(
                 "env": dict(request.env),
                 "state": runtime_pb2.SESSION_STATE_READY,
                 "last_activity_unix_nano": time.time_ns(),
+                "last_lease_heartbeat_unix_nano": time.time_ns(),
             }
             self._sessions[identity.run_uid] = entry
             return self._session_status(entry)
@@ -402,6 +403,12 @@ class PythonRuntime(
     def GetSessionStatus(self, request, context):
         entry = self._match_session(request.identity, context)
         return self._session_status(entry)
+
+    def TouchSession(self, request, context):
+        entry = self._match_session(request.identity, context)
+        with self._sessions_lock:
+            self._touch_session_lease(entry)
+            return self._session_status(entry)
 
     def ExecuteSessionOperation(self, request, context):
         entry = self._match_session(request.identity, context)
@@ -763,11 +770,16 @@ class PythonRuntime(
             identity=self._clone_session_identity(entry["identity"]),
             state=entry["state"],
             last_activity_unix_nano=entry["last_activity_unix_nano"],
+            last_lease_heartbeat_unix_nano=entry["last_lease_heartbeat_unix_nano"],
         )
 
     @staticmethod
     def _touch_session(entry):
         entry["last_activity_unix_nano"] = time.time_ns()
+
+    @staticmethod
+    def _touch_session_lease(entry):
+        entry["last_lease_heartbeat_unix_nano"] = time.time_ns()
 
     @staticmethod
     def _session_file_page_request(request):

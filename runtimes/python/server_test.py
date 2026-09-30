@@ -107,6 +107,11 @@ class TestPythonRuntime(unittest.TestCase):
             runtime_pb2.GetSessionStatusRequest(identity=identity)
         )
         self.assertEqual(current.state, runtime_pb2.SESSION_STATE_READY)
+        lease_before = current.last_lease_heartbeat_unix_nano
+        current = self.session_stub.TouchSession(
+            runtime_pb2.TouchSessionRequest(identity=identity)
+        )
+        self.assertGreater(current.last_lease_heartbeat_unix_nano, lease_before)
         self.session_stub.CloseSession(runtime_pb2.CloseSessionRequest(identity=identity))
         self.session_stub.CloseSession(runtime_pb2.CloseSessionRequest(identity=identity))
         with self.assertRaises(grpc.RpcError) as ctx:

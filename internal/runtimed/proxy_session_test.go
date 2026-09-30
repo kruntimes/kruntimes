@@ -300,6 +300,10 @@ func (c *sessionRuntimeClient) GetSessionStatus(context.Context, *pb.GetSessionS
 	return nil, status.Error(codes.Unimplemented, "GetSessionStatus")
 }
 
+func (c *sessionRuntimeClient) TouchSession(context.Context, *pb.TouchSessionRequest, ...grpc.CallOption) (*pb.SessionStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "TouchSession")
+}
+
 func (c *sessionRuntimeClient) ExecuteSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error) {
 	if c.execute == nil {
 		return nil, status.Error(codes.Unimplemented, "ExecuteSessionOperation")

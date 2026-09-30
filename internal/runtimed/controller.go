@@ -654,6 +654,12 @@ func (c *Controller) reconcileReadySession(ctx context.Context, run *v1alpha1.Ru
 		}
 		requeueAfter = min(requeueAfter, time.Until(deadline))
 	}
+	if deadline, ok := c.sessionLeaseDeadline(run); ok {
+		if !now.Before(deadline) {
+			return c.closeSessionAndApplyTerminal(ctx, ar, v1alpha1.RunTimeout, runretry.ReasonTimeout, "session lease expired")
+		}
+		requeueAfter = min(requeueAfter, time.Until(deadline))
+	}
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
@@ -662,6 +668,13 @@ func (c *Controller) sessionIdleDeadline(run *v1alpha1.Run, now time.Time) (time
 		return time.Time{}, false
 	}
 	return c.SessionOperations.IdleDeadline(string(run.UID), time.Duration(*run.Spec.Mode.Session.IdleTimeoutSeconds)*time.Second, now)
+}
+
+func (c *Controller) sessionLeaseDeadline(run *v1alpha1.Run) (time.Time, bool) {
+	if c.SessionOperations == nil || run == nil || run.Spec.Mode.Session == nil || run.Spec.Mode.Session.LeaseTimeoutSeconds == nil {
+		return time.Time{}, false
+	}
+	return c.SessionOperations.LeaseDeadline(string(run.UID), time.Duration(*run.Spec.Mode.Session.LeaseTimeoutSeconds)*time.Second)
 }
 
 func (c *Controller) reconcileRunningRecovered(ctx context.Context, run *v1alpha1.Run) (ctrl.Result, error) {

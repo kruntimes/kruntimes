@@ -558,6 +558,11 @@ class SessionRuntimeStub(object):
                 request_serializer=runtime__pb2.GetSessionStatusRequest.SerializeToString,
                 response_deserializer=runtime__pb2.SessionStatus.FromString,
                 _registered_method=True)
+        self.TouchSession = channel.unary_unary(
+                '/executor.v1.SessionRuntime/TouchSession',
+                request_serializer=runtime__pb2.TouchSessionRequest.SerializeToString,
+                response_deserializer=runtime__pb2.SessionStatus.FromString,
+                _registered_method=True)
         self.ExecuteSessionOperation = channel.unary_unary(
                 '/executor.v1.SessionRuntime/ExecuteSessionOperation',
                 request_serializer=runtime__pb2.ExecuteSessionOperationRequest.SerializeToString,
@@ -602,6 +607,13 @@ class SessionRuntimeServicer(object):
 
     def GetSessionStatus(self, request, context):
         """GetSessionStatus returns local session state for recovery and idle checks.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TouchSession(self, request, context):
+        """TouchSession records a server-observed connection heartbeat for lease recovery.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -654,6 +666,11 @@ def add_SessionRuntimeServicer_to_server(servicer, server):
             'GetSessionStatus': grpc.unary_unary_rpc_method_handler(
                     servicer.GetSessionStatus,
                     request_deserializer=runtime__pb2.GetSessionStatusRequest.FromString,
+                    response_serializer=runtime__pb2.SessionStatus.SerializeToString,
+            ),
+            'TouchSession': grpc.unary_unary_rpc_method_handler(
+                    servicer.TouchSession,
+                    request_deserializer=runtime__pb2.TouchSessionRequest.FromString,
                     response_serializer=runtime__pb2.SessionStatus.SerializeToString,
             ),
             'ExecuteSessionOperation': grpc.unary_unary_rpc_method_handler(
@@ -740,6 +757,33 @@ class SessionRuntime(object):
             target,
             '/executor.v1.SessionRuntime/GetSessionStatus',
             runtime__pb2.GetSessionStatusRequest.SerializeToString,
+            runtime__pb2.SessionStatus.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TouchSession(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/executor.v1.SessionRuntime/TouchSession',
+            runtime__pb2.TouchSessionRequest.SerializeToString,
             runtime__pb2.SessionStatus.FromString,
             options,
             channel_credentials,

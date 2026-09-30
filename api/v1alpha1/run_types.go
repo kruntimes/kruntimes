@@ -334,6 +334,14 @@ type RunFunctionMode struct {
 // It is a trusted-workload preview; a Session Run holds exclusive v0 Runtime
 // capacity until it terminates.
 type RunSessionMode struct {
+	// LeaseTimeoutSeconds is the duration after the last server-observed
+	// connection heartbeat before the session is closed. It is independent of
+	// idle operation expiry so a connected agent can retain its sandbox without
+	// issuing artificial commands.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	LeaseTimeoutSeconds *int32 `json:"leaseTimeoutSeconds,omitempty"`
+
 	// IdleTimeoutSeconds is the duration after the last accepted command or file
 	// mutation before the session is closed.
 	// +optional

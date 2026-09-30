@@ -25,12 +25,13 @@ import (
 // sessionEntry is Runtime Server-local state. runtimed owns the operation
 // queue, so this entry only records the fenced workspace lifecycle.
 type sessionEntry struct {
-	mu         sync.RWMutex
-	identity   *pb.SessionIdentity
-	workDir    string
-	sessionEnv map[string]string
-	state      pb.SessionState
-	activity   time.Time
+	mu             sync.RWMutex
+	identity       *pb.SessionIdentity
+	workDir        string
+	sessionEnv     map[string]string
+	state          pb.SessionState
+	activity       time.Time
+	leaseHeartbeat time.Time
 }
 
 func (s *Server) RegisterSession(_ context.Context, registration *pb.RegisterSessionRequest) (*pb.SessionStatus, error) {
@@ -50,11 +51,12 @@ func (s *Server) RegisterSession(_ context.Context, registration *pb.RegisterSes
 	}
 
 	entry := &sessionEntry{
-		identity:   cloneSessionIdentity(identity),
-		workDir:    workingDir,
-		sessionEnv: maps.Clone(registration.Env),
-		state:      pb.SessionState_SESSION_STATE_READY,
-		activity:   time.Now(),
+		identity:       cloneSessionIdentity(identity),
+		workDir:        workingDir,
+		sessionEnv:     maps.Clone(registration.Env),
+		state:          pb.SessionState_SESSION_STATE_READY,
+		activity:       time.Now(),
+		leaseHeartbeat: time.Now(),
 	}
 	s.mu.Lock()
 	s.sessions[identity.RunUid] = entry
@@ -67,6 +69,17 @@ func (s *Server) GetSessionStatus(_ context.Context, req *pb.GetSessionStatusReq
 	if err != nil {
 		return nil, err
 	}
+	return entry.status(), nil
+}
+
+// TouchSession records a gateway-observed connection heartbeat. The timestamp
+// survives a runtimed restart through GetSessionStatus recovery.
+func (s *Server) TouchSession(_ context.Context, req *pb.TouchSessionRequest) (*pb.SessionStatus, error) {
+	entry, err := s.matchSession(req.GetIdentity())
+	if err != nil {
+		return nil, err
+	}
+	entry.touchLease()
 	return entry.status(), nil
 }
 
@@ -569,9 +582,10 @@ func (e *sessionEntry) status() *pb.SessionStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return &pb.SessionStatus{
-		Identity:             cloneSessionIdentity(e.identity),
-		State:                e.state,
-		LastActivityUnixNano: e.activity.UnixNano(),
+		Identity:                   cloneSessionIdentity(e.identity),
+		State:                      e.state,
+		LastActivityUnixNano:       e.activity.UnixNano(),
+		LastLeaseHeartbeatUnixNano: e.leaseHeartbeat.UnixNano(),
 	}
 }
 
@@ -586,6 +600,12 @@ func (e *sessionEntry) touch() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.activity = time.Now()
+}
+
+func (e *sessionEntry) touchLease() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.leaseHeartbeat = time.Now()
 }
 
 func sessionCommand(ctx context.Context, req *pb.SessionCommand) *exec.Cmd {
