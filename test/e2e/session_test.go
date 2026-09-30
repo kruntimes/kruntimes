@@ -795,7 +795,7 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 		t.Fatalf("start SDK Runtime gateway port-forward: %v", err)
 	}
 	t.Cleanup(forward.Close)
-	sdk, err := sandbox.NewFromRESTConfig(sdkConfig, sandbox.Config{HTTPClient: forward})
+	sdk, err := sandbox.NewFromRESTConfig(sdkConfig, sandbox.Config{HTTPClient: forward, SessionDialer: forward})
 	if err != nil {
 		t.Fatalf("create Sandbox SDK client: %v", err)
 	}

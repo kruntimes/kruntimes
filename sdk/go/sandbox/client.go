@@ -83,11 +83,7 @@ func New(config Config) (*Client, error) {
 	}
 	dialer := config.SessionDialer
 	if dialer == nil {
-		if forwarded, ok := config.HTTPClient.(SessionDialer); ok {
-			dialer = forwarded
-		} else {
-			dialer = defaultSessionDialer{}
-		}
+		dialer = defaultSessionDialer{}
 	}
 	return &Client{runs: config.Runs, httpClient: config.HTTPClient, sessionDialer: dialer, logReader: config.LogReader, bearerToken: config.BearerToken, pollInterval: interval}, nil
 }
