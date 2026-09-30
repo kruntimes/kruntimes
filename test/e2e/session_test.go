@@ -927,7 +927,7 @@ func TestSessionRunLeaseExpiresAfterConnectionHeartbeatsStop(t *testing.T) {
 
 	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
 	websocketURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/operations:ws"
-	connection, response, err := websocket.DefaultDialer.Dial(websocketURL, http.Header{"Authorization": []string{"Bearer " + sessionGatewayToken(t, run)}})
+	connection, response, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).Dial(websocketURL, http.Header{"Authorization": []string{"Bearer " + sessionGatewayToken(t, run)}}) //nolint:gosec // E2E local port-forward only.
 	if err != nil {
 		if response != nil {
 			t.Fatalf("dial lease WebSocket: %v (status %d)", err, response.StatusCode)
