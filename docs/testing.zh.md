@@ -97,6 +97,63 @@ make e2e
 - artifact 存储，
 - 基于真实集群的 CLI 行为。
 
+### 用例组织
+
+E2E 用例位于 `test/e2e/`，按职责拆分，而不是集中在一个数千行的文件里：
+
+| 文件 | 职责 |
+| --- | --- |
+| `main_test.go` | Kubernetes 客户端、镜像引用、功能开关 |
+| `runtime_fixture_test.go` | Runtime 池、Pod 就绪、诊断、重启 |
+| `wait_test.go` | 条件驱动的等待 |
+| `run_assert_test.go` | Run 断言与终止请求 |
+| `gateway_fixture_test.go` | Console gateway 与 log API 夹具 |
+| `artifact_fixture_test.go` | artifact 存储断言 |
+| `runtime_test.go` | Runtime 池与单次 Run 执行 |
+| `session_test.go` | Session 模式与 Console gateway |
+| `function_test.go` | Function 模式 |
+| `workflow_test.go` | Workflow、Action 与可复用 Workflow |
+| `artifact_test.go` | artifact 导出与暂存 |
+| `workspace_test.go` | PersistentWorkspace |
+| `scheduler_test.go` | 调度、容量、亲和性与取消 |
+| `diagnosis_test.go` | demo 诊断 Runtime |
+
+用例使用 `GenerateName` 或时间戳后缀创建资源，并通过 `t.Cleanup` 回收，因此不依赖其他用例的执行顺序。唯一长期存在的共享状态是两个预热 Runtime 池（`bash` 与 `python`）：第一个需要它的用例负责创建，后续用例复用，不再重复下发相同的 Runtime 更新并等待 Pod。
+
+### 并行执行
+
+不修改集群级状态的用例会调用 `t.Parallel()`，同时运行的用例数上限为 `E2E_PARALLEL`（默认 `4`）：
+
+```bash
+make e2e                        # 默认并发度
+E2E_PARALLEL=1 make e2e         # 串行，保持原有顺序
+make e2e-test E2E_PARALLEL=8    # 复用已有集群，提高并发
+```
+
+以下用例必须串行，因此有意不调用 `t.Parallel()`：
+
+- `TestWorkflowRunRecoversActionAfterControllerRestart` 会重启 controller Deployment，导致其他用例的调谐暂停。
+- `TestRuntimeReadyReplicasTracksRuntimedAvailability`、`TestRuntimedRecoversRunningRunAfterRestart` 与 `TestFunctionRunRecoversInvocationAfterRuntimedRestart` 会杀掉 Runtime Pod 中的 `runtimed` 来验证重启恢复。
+- `scheduler_test.go` 中的用例断言调度延迟、容量与唤醒顺序，并行负载会干扰测量。
+- `TestSessionGatewayServesCertManagerTLS` 在独立的 `e2e-cert-manager-run` / `e2e-console-bounds-run` 任务中运行。
+
+并行度受集群容量限制而非测试本身：每个并行用例都可能创建自己的 Runtime Pod，共享预热池以 8 个并发 Run 槽位创建，避免用例在单个 Pod 上排队；用例自有的 Runtime CR 仍使用产品默认容量。
+
+### 耗时数据
+
+`make e2e-test` 通过 `hack/e2e-timings` 运行用例，在保留原有测试日志的同时额外产出：
+
+- `e2e-timings.json`：每个用例的耗时，作为 `e2e-timings` CI artifact 上传；
+- `e2e-timings.md`：最慢用例表格，追加到 workflow run summary。
+
+耗时数据会与 `test/e2e/timings-baseline.json` 对比。相对基线同时慢至少 25% 且至少 2 秒的用例会被列为回归；该对比仅供参考（E2E 耗时依赖运行器），不会导致构建失败。可通过 `-regression-percent`、`-regression-seconds` 与 `-top` 调整阈值：
+
+```bash
+go test ./test/e2e/... -json | go run ./hack/e2e-timings -top 30 -report /tmp/e2e.json
+```
+
+在有意调整用例后，可将 CI 产出的 `e2e-timings.json` 复制覆盖 `test/e2e/timings-baseline.json` 来更新基线。
+
 ## 基准测试
 
 ```bash

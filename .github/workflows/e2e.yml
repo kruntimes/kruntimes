@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: "0 3 * * 6"
   workflow_dispatch:
+    inputs:
+      e2e_test:
+        description: Optional Go test -run regex to limit the suite
+        required: false
+        default: ""
+      e2e_parallel:
+        description: Maximum concurrently running E2E scenarios
+        required: false
+        default: "4"
 
 permissions:
   contents: read
@@ -31,7 +40,25 @@ jobs:
       - uses: helm/kind-action@v1.15.0
         with:
           cluster_name: kruntimes-e2e
-      - run: make e2e
+      - name: Run E2E
+        run: make e2e E2E_TEST="${{ inputs.e2e_test }}" E2E_PARALLEL="${{ inputs.e2e_parallel || '4' }}"
+      - name: Summarize E2E timings
+        if: always()
+        run: |
+          if [ -f e2e-timings.md ]; then
+            cat e2e-timings.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No E2E timing summary was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload E2E timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-timings
+          path: |
+            e2e-timings.json
+            e2e-timings.md
+          if-no-files-found: warn
       - name: Dump Kubernetes diagnostics
         if: failure()
         run: |

@@ -33,6 +33,8 @@ Thumbs.db
 # Temporary files
 tmp/
 .worktrees/
+e2e-timings.json
+e2e-timings.md
 site/.hugo_build.lock
 site/public/
 __pycache__/

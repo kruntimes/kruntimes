@@ -152,6 +152,17 @@ E2E_CERT_MANAGER ?= false
 E2E_CONSOLE_BOUNDS ?= false
 E2E_CONSOLE_HELM_ARGS ?=
 E2E_TEST_TIMEOUT ?= 20m
+# E2E_PARALLEL bounds how many scenarios marked with t.Parallel() run at once.
+# Set E2E_PARALLEL=1 to force the historical serial order. Tests that restart
+# the controller (or a shared Runtime pod) stay serial regardless; see
+# docs/testing.md for the constraints.
+E2E_PARALLEL ?= 4
+# Per-test duration data is emitted as a CI artifact and compared against the
+# checked-in baseline to surface regressions.
+E2E_TIMINGS_JSON ?= e2e-timings.json
+E2E_TIMINGS_MD ?= e2e-timings.md
+E2E_TIMINGS_BASELINE ?= test/e2e/timings-baseline.json
+E2E_TEST_ARGS = $(if $(E2E_TEST),-run "$(E2E_TEST)")
 CERT_MANAGER_VERSION ?= v1.21.1
 .PHONY: e2e-setup
 e2e-setup: IMG_SCHEDULER = $(E2E_IMG_SCHEDULER)
@@ -193,13 +204,18 @@ e2e-setup-runtimes:
 
 .PHONY: e2e-test
 e2e-test: generate ## Run E2E tests against the kind cluster.
-	KRUNTIMES_BASH_RUNTIME_IMAGE=$(E2E_IMG_BASH_RUNTIME) \
-	KRUNTIMES_PYTHON_RUNTIME_IMAGE=$(E2E_IMG_PYTHON_RUNTIME) \
-	KRUNTIMES_DIAGNOSIS_RUNTIME_IMAGE=$(E2E_IMG_DIAGNOSIS_RUNTIME) \
-	KRUNTIMES_RUNTIMED_IMAGE=$(E2E_IMG_RUNTIMED) \
-	KRUNTIMES_E2E_CERT_MANAGER=$(E2E_CERT_MANAGER) \
-	KRUNTIMES_E2E_CONSOLE_BOUNDS=$(E2E_CONSOLE_BOUNDS) \
-	go test ./test/e2e/... -v -count=1 -failfast -timeout $(E2E_TEST_TIMEOUT) $(if $(E2E_TEST),-run '$(E2E_TEST)')
+	@bash -o pipefail -c '\
+		KRUNTIMES_BASH_RUNTIME_IMAGE=$(E2E_IMG_BASH_RUNTIME) \
+		KRUNTIMES_PYTHON_RUNTIME_IMAGE=$(E2E_IMG_PYTHON_RUNTIME) \
+		KRUNTIMES_DIAGNOSIS_RUNTIME_IMAGE=$(E2E_IMG_DIAGNOSIS_RUNTIME) \
+		KRUNTIMES_RUNTIMED_IMAGE=$(E2E_IMG_RUNTIMED) \
+		KRUNTIMES_E2E_CERT_MANAGER=$(E2E_CERT_MANAGER) \
+		KRUNTIMES_E2E_CONSOLE_BOUNDS=$(E2E_CONSOLE_BOUNDS) \
+		go test ./test/e2e/... -json -count=1 -failfast -parallel $(E2E_PARALLEL) -timeout $(E2E_TEST_TIMEOUT) $(E2E_TEST_ARGS) \
+		| go run ./hack/e2e-timings \
+			-report $(E2E_TIMINGS_JSON) \
+			-markdown $(E2E_TIMINGS_MD) \
+			-baseline $(E2E_TIMINGS_BASELINE)'
 
 .PHONY: e2e
 e2e: E2E_IMAGE_TAG := $(E2E_RUN_IMAGE_TAG)
