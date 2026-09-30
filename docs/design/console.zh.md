@@ -43,7 +43,9 @@ accepted、output、progress 与 terminal event。协议中 JSON base64 represen
 输出会先解码再显示。
 
 Session Run 进入 `Ready` 前，该面板保持禁用。Cancel 控件会通过 WebSocket 发送
-`{"type":"cancel"}`。传输错误或连接在 terminal event 前关闭时会显示在面板内。选择
+`{"type":"cancel","operationID":"..."}`。Console client 在连接打开时发送
+`{"type":"send","operation":...}`，并在 Run 配置 lease 时，只要 connection 存在就私下发送
+heartbeat frame。关闭 connection 不会 release backing Session Run。传输错误或连接在 terminal event 前关闭时会显示在面板内。选择
 **Run again** 始终会创建新的 operation；当前 WebSocket protocol 没有按 operation ID
 恢复的 client frame。需要 resumability 的 client 可以使用现有 NDJSON stream endpoint 与
 `after` query parameter。

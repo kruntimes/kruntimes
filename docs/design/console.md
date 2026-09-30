@@ -50,7 +50,10 @@ arrive. Binary output is decoded from the protocol's JSON base64
 representation before display.
 
 The panel is disabled until the Session Run is `Ready`. Its Cancel control
-sends `{"type":"cancel"}` over the WebSocket. A transport error or an early
+sends `{"type":"cancel","operationID":"..."}` over the WebSocket. The Console client sends
+`{"type":"send","operation":...}` when it opens the connection and, when the
+Run configures a lease, private heartbeat frames for as long as that connection
+remains open. Closing it does not release the backing Session Run. A transport error or an early
 connection close is displayed in the panel. Selecting **Run again** always
 starts a new operation; the current WebSocket protocol does not provide an
 operation-ID resume frame. Clients that need resumability can use the existing

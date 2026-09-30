@@ -110,13 +110,28 @@ export class ConsoleAPI {
     runUID: string,
     request: SessionOperationRequest,
     handlers: SessionOperationSocketHandlers,
+    leaseTimeoutSeconds?: number,
   ): SessionOperationSocket {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     const endpoint = `${scheme}//${location.host}/v1/namespaces/${encodeURIComponent(namespace)}/runtimes/${encodeURIComponent(runtime)}/sessions/${encodeURIComponent(runUID)}/operations:ws`;
     const socket = new WebSocket(endpoint);
     let lastSequence = 0;
     let closed = false;
-    socket.addEventListener("open", () => socket.send(JSON.stringify(request)));
+    let operationID = "";
+    let heartbeat: number | undefined;
+    socket.addEventListener("open", () => {
+      socket.send(JSON.stringify({ type: "send", operation: request }));
+      if (leaseTimeoutSeconds && leaseTimeoutSeconds > 0) {
+        const interval = Math.min(
+          Math.max((leaseTimeoutSeconds * 1000) / 3, 100),
+          30000,
+        );
+        heartbeat = window.setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN)
+            socket.send(JSON.stringify({ type: "heartbeat" }));
+        }, interval);
+      }
+    });
     socket.addEventListener("message", (message) => {
       let value: SessionOperationEvent | SessionOperationTransportError;
       try {
@@ -131,6 +146,8 @@ export class ConsoleAPI {
         handlers.onError(value.error || "Session operation stream failed");
         return;
       }
+      if (value.type === "accepted" && value.accepted?.operationID)
+        operationID = value.accepted.operationID;
       if (
         !Number.isSafeInteger(value.sequence) ||
         value.sequence !== lastSequence + 1
@@ -148,6 +165,7 @@ export class ConsoleAPI {
       handlers.onError("Session operation WebSocket connection failed"),
     );
     socket.addEventListener("close", () => {
+      if (heartbeat !== undefined) window.clearInterval(heartbeat);
       if (!closed) {
         closed = true;
         handlers.onClose();
@@ -155,8 +173,8 @@ export class ConsoleAPI {
     });
     return {
       cancel: () => {
-        if (socket.readyState === WebSocket.OPEN)
-          socket.send(JSON.stringify({ type: "cancel" }));
+        if (socket.readyState === WebSocket.OPEN && operationID)
+          socket.send(JSON.stringify({ type: "cancel", operationID }));
       },
       close: () => socket.close(),
     };

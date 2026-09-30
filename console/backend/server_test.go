@@ -297,7 +297,7 @@ func TestServerRoutesAccessAPIWithConsoleSessionCredential(t *testing.T) {
 		writer.WriteHeader(http.StatusNoContent)
 	})
 
-	request := httptest.NewRequest(http.MethodPost, "/v1/namespaces/default/runtimes/bash/sessions/run:stream", nil)
+	request := httptest.NewRequest(http.MethodGet, "/v1/namespaces/default/runtimes/bash/sessions/run/operations:ws", nil)
 	request.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "console-token"})
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
