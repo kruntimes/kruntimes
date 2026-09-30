@@ -2,10 +2,14 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/gorilla/websocket"
+	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 )
 
 const (
@@ -20,6 +24,59 @@ type sessionConnectionMessage struct {
 	IdempotencyKey string          `json:"idempotencyKey,omitempty"`
 	Operation      json.RawMessage `json:"operation,omitempty"`
 	OperationID    string          `json:"operationID,omitempty"`
+}
+
+type sessionConnectionFrame struct {
+	message sessionConnectionMessage
+	err     error
+}
+type sessionOperationReceiveResult struct {
+	event *pb.SessionOperationEvent
+	err   error
+}
+
+func readSessionConnectionFrames(connection *websocket.Conn, done <-chan struct{}) <-chan sessionConnectionFrame {
+	frames := make(chan sessionConnectionFrame)
+	go func() {
+		defer close(frames)
+		for {
+			messageType, payload, err := connection.ReadMessage()
+			if err == nil && messageType != websocket.TextMessage {
+				err = errors.New("Session connection frames must be JSON text")
+			}
+			var message sessionConnectionMessage
+			if err == nil {
+				message, err = decodeSessionConnectionMessage(payload)
+			}
+			select {
+			case frames <- sessionConnectionFrame{message: message, err: err}:
+			case <-done:
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return frames
+}
+
+func receiveSessionOperationEvents(ctx context.Context, stream pb.SessionRuntime_StreamSessionOperationClient) <-chan sessionOperationReceiveResult {
+	events := make(chan sessionOperationReceiveResult)
+	go func() {
+		defer close(events)
+		for {
+			event, err := stream.Recv()
+			select {
+			case events <- sessionOperationReceiveResult{event: event, err: err}:
+			case <-ctx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return events
 }
 
 func decodeSessionConnectionMessage(payload []byte) (sessionConnectionMessage, error) {

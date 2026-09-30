@@ -279,7 +279,7 @@ gateway server 将下列 HTTP API operation 映射到 `SessionRuntime` gRPC meth
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}` | `GetSessionStatus` | 返回 readiness 与 bounded session metadata |
 | `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:execute` | `ExecuteSessionOperation` | 执行一个 command 或 file mutation |
 | `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream` | `StreamSessionOperation` | 执行一个 operation，并流式返回有序 NDJSON progress 与 terminal event |
-| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `StreamSessionOperation` | WebSocket operation stream；第一个 client text frame 是 execute request，server 返回有序 event frame |
+| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `StreamSessionOperation` | 持久 WebSocket Session connection；client 发送 `send`/`cancel` frame，server 返回有序 event frame |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files` | `ReadSessionFile`、`ListSessionFiles` | 有界的 workspace-relative file access |
 
 Exec request 必须且只能提供 `argv` 或 `shell`。`argv` 直接执行程序；`shell` 显式选择 Runtime

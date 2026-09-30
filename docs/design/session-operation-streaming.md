@@ -91,10 +91,10 @@ admitted fails before any response event with the existing HTTP error mapping.
 Once event bytes have been written, a terminal failure is represented by a
 `failed` event because HTTP status cannot safely change mid-stream.
 
-The Session connection's internal transport is WebSocket:
+The Session connection's internal transport is the existing operation WebSocket:
 
 ```text
-GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}:ws
+GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws
 Upgrade: websocket
 ```
 

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -126,13 +127,17 @@ func TestGatewayStreamsSessionOperationAsNDJSON(t *testing.T) {
 
 func TestGatewayStreamsSessionOperationOverWebSocket(t *testing.T) {
 	run := readySessionRun()
+	calls := 0
 	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
-		if got := request.GetCommand().GetArgv(); len(got) != 2 || got[0] != "echo" || got[1] != "done" {
+		calls++
+		if got := request.GetCommand().GetArgv(); len(got) != 2 || got[0] != "echo" || got[1] != map[int]string{1: "done", 2: "again"}[calls] {
 			t.Fatalf("command = %#v", request.GetCommand())
 		}
+		operationID := fmt.Sprintf("operation-%d", calls)
+		output := map[int]string{1: "done\n", 2: "again\n"}[calls]
 		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
-			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{OperationId: "operation-1"}}},
-			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte("done\n")}}}},
+			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{OperationId: operationID}}},
+			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte(output)}}}},
 		}}, nil
 	}}
 	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
@@ -148,8 +153,8 @@ func TestGatewayStreamsSessionOperationOverWebSocket(t *testing.T) {
 		t.Fatalf("dial WebSocket: %v", err)
 	}
 	defer connection.Close()
-	if err := connection.WriteJSON(map[string]any{"command": map[string]any{"argv": []string{"echo", "done"}}}); err != nil {
-		t.Fatalf("write operation request: %v", err)
+	if err := connection.WriteJSON(map[string]any{"type": "send", "idempotencyKey": "operation-1", "operation": map[string]any{"command": map[string]any{"argv": []string{"echo", "done"}}}}); err != nil {
+		t.Fatalf("write send frame: %v", err)
 	}
 	connection.SetReadDeadline(time.Now().Add(time.Second))
 	var accepted sessionOperationEventResponse
@@ -165,6 +170,66 @@ func TestGatewayStreamsSessionOperationOverWebSocket(t *testing.T) {
 	}
 	if completed.Type != "completed" || completed.Sequence != 2 || completed.Completed == nil || string(completed.Completed.Command.Stdout) != "done\n" {
 		t.Fatalf("completed event = %#v", completed)
+	}
+	if err := connection.WriteJSON(map[string]any{"type": "send", "idempotencyKey": "operation-2", "operation": map[string]any{"command": map[string]any{"argv": []string{"echo", "again"}}}}); err != nil {
+		t.Fatalf("write second send frame: %v", err)
+	}
+	var secondAccepted sessionOperationEventResponse
+	if err := connection.ReadJSON(&secondAccepted); err != nil {
+		t.Fatalf("read second accepted event: %v", err)
+	}
+	if secondAccepted.Type != "accepted" || secondAccepted.Accepted == nil || secondAccepted.Accepted.OperationID != "operation-2" {
+		t.Fatalf("second accepted event = %#v", secondAccepted)
+	}
+	var secondCompleted sessionOperationEventResponse
+	if err := connection.ReadJSON(&secondCompleted); err != nil {
+		t.Fatalf("read second completed event: %v", err)
+	}
+	if secondCompleted.Type != "completed" || secondCompleted.Completed == nil || string(secondCompleted.Completed.Command.Stdout) != "again\n" {
+		t.Fatalf("second completed event = %#v", secondCompleted)
+	}
+	if calls != 2 {
+		t.Fatalf("stream calls = %d, want 2", calls)
+	}
+}
+
+func TestGatewayCancelsActiveSessionWebSocketOperation(t *testing.T) {
+	started := make(chan struct{})
+	client := &fakeSessionRuntimeClient{stream: func(ctx context.Context, _ *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+		close(started)
+		return &cancelAwareSessionOperationStream{ctx: ctx}, nil
+	}}
+	server := testServer(t, readySessionRun(), allowAuthorizer{}, &fakeDialer{client: client})
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+
+	endpoint := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:ws"
+	connection, _, err := websocket.DefaultDialer.Dial(endpoint, nil)
+	if err != nil {
+		t.Fatalf("dial WebSocket: %v", err)
+	}
+	defer connection.Close()
+	if err := connection.WriteJSON(map[string]any{"type": "send", "idempotencyKey": "operation-1", "operation": map[string]any{"command": map[string]any{"argv": []string{"sleep", "1"}}}}); err != nil {
+		t.Fatalf("write send frame: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("Runtime Server stream was not started")
+	}
+	if err := connection.WriteJSON(map[string]any{"type": "cancel", "operationID": "operation-1"}); err != nil {
+		t.Fatalf("write cancel frame: %v", err)
+	}
+	connection.SetReadDeadline(time.Now().Add(time.Second))
+	var response struct {
+		Type  string `json:"type"`
+		Error string `json:"error"`
+	}
+	if err := connection.ReadJSON(&response); err != nil {
+		t.Fatalf("read cancellation error: %v", err)
+	}
+	if response.Type != "error" || response.Error == "" {
+		t.Fatalf("cancellation response = %#v", response)
 	}
 }
 
@@ -496,3 +561,16 @@ func (*fakeSessionOperationStream) CloseSend() error             { return nil }
 func (*fakeSessionOperationStream) Context() context.Context     { return context.Background() }
 func (*fakeSessionOperationStream) SendMsg(any) error            { return nil }
 func (*fakeSessionOperationStream) RecvMsg(any) error            { return io.EOF }
+
+type cancelAwareSessionOperationStream struct{ ctx context.Context }
+
+func (s *cancelAwareSessionOperationStream) Recv() (*pb.SessionOperationEvent, error) {
+	<-s.ctx.Done()
+	return nil, s.ctx.Err()
+}
+func (*cancelAwareSessionOperationStream) Header() (metadata.MD, error) { return nil, nil }
+func (*cancelAwareSessionOperationStream) Trailer() metadata.MD         { return nil }
+func (*cancelAwareSessionOperationStream) CloseSend() error             { return nil }
+func (s *cancelAwareSessionOperationStream) Context() context.Context   { return s.ctx }
+func (*cancelAwareSessionOperationStream) SendMsg(any) error            { return nil }
+func (*cancelAwareSessionOperationStream) RecvMsg(any) error            { return io.EOF }

@@ -72,10 +72,10 @@ bearer-token header。CLI 直接读取 JSON line。无法 authorize 或 admissio
 event 前使用现有 HTTP error mapping 失败。event byte 一旦写出，HTTP status 就不能安全改变；之后 terminal
 failure 用 `failed` event 表示。
 
-Session connection 的内部 transport 是 WebSocket：
+Session connection 的内部 transport 是已有的 operation WebSocket：
 
 ```text
-GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}:ws
+GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws
 Upgrade: websocket
 ```
 

@@ -489,10 +489,9 @@ func (s *Server) streamOperation(w http.ResponseWriter, r *http.Request, run *v1
 	s.writeSessionOperationStream(w, stream)
 }
 
-// streamOperationWebSocket upgrades one authorized request to a bidirectional
-// operation stream. The first client text message is the same JSON operation
-// object accepted by operations:execute. While events are flowing, the client
-// may send {"type":"cancel"} to cancel its request context.
+// streamOperationWebSocket upgrades one authorized request to a persistent
+// Session connection. It serializes send frames and accepts cancellation only
+// for the active operation.
 func (s *Server) streamOperationWebSocket(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
 	connection, err := sessionOperationWebSocketUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -501,51 +500,82 @@ func (s *Server) streamOperationWebSocket(w http.ResponseWriter, r *http.Request
 	defer connection.Close()
 	connection.SetReadLimit(s.maxRequestBodyBytes())
 	connection.SetReadDeadline(time.Now().Add(15 * time.Second))
-	messageType, payload, err := connection.ReadMessage()
-	if err != nil {
-		s.closeWebSocket(connection, websocket.ClosePolicyViolation, "operation request is required")
-		return
-	}
 	connection.SetReadDeadline(time.Time{})
-	if messageType != websocket.TextMessage {
-		s.closeWebSocket(connection, websocket.CloseUnsupportedData, "operation request must be JSON text")
-		return
+	done := make(chan struct{})
+	defer close(done)
+	frames := readSessionConnectionFrames(connection, done)
+	for frame := range frames {
+		if frame.err != nil {
+			s.closeWebSocket(connection, websocket.ClosePolicyViolation, "valid send frame is required")
+			return
+		}
+		if frame.message.Type != sessionConnectionMessageSend || !s.streamSessionConnectionOperation(r.Context(), connection, frames, run, frame.message) {
+			return
+		}
 	}
-	operation, err := s.websocketOperation(payload)
-	if err != nil {
-		s.closeWebSocket(connection, websocket.ClosePolicyViolation, err.Error())
-		return
-	}
-	operationID, err := sessionOperationID(r.Header.Get("Idempotency-Key"))
-	if err != nil {
-		s.closeWebSocket(connection, websocket.ClosePolicyViolation, err.Error())
-		return
-	}
-	afterSequence, err := sessionOperationCursor(r)
-	if err != nil {
-		s.closeWebSocket(connection, websocket.ClosePolicyViolation, err.Error())
-		return
-	}
+}
 
-	streamContext, cancel := context.WithCancel(r.Context())
+func (s *Server) streamSessionConnectionOperation(parent context.Context, connection *websocket.Conn, frames <-chan sessionConnectionFrame, run *v1alpha1.Run, message sessionConnectionMessage) bool {
+	operation, err := s.websocketOperation(message.Operation)
+	if err != nil {
+		s.closeWebSocket(connection, websocket.ClosePolicyViolation, err.Error())
+		return false
+	}
+	operationID, err := sessionOperationID(message.IdempotencyKey)
+	if err != nil {
+		s.closeWebSocket(connection, websocket.ClosePolicyViolation, err.Error())
+		return false
+	}
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	go watchSessionOperationWebSocketControl(connection, cancel)
-
-	client, closer, err := s.runtimeClient(streamContext, run)
+	client, closer, err := s.runtimeClient(ctx, run)
 	if err != nil {
 		s.writeWebSocketError(connection, err)
-		return
+		return false
 	}
 	defer closer.Close()
-	operation.Identity = sessionIdentity(run)
-	operation.IdempotencyKey = operationID
-	operation.ResumeAfterSequence = afterSequence
-	stream, err := client.StreamSessionOperation(streamContext, operation)
+	operation.Identity, operation.IdempotencyKey = sessionIdentity(run), operationID
+	stream, err := client.StreamSessionOperation(ctx, operation)
 	if err != nil {
 		s.writeWebSocketError(connection, err)
-		return
+		return false
 	}
-	s.writeSessionOperationWebSocket(connection, streamContext, stream)
+	events := receiveSessionOperationEvents(ctx, stream)
+	for {
+		select {
+		case frame, ok := <-frames:
+			if !ok || frame.err != nil || frame.message.Type != sessionConnectionMessageCancel || frame.message.OperationID != operationID {
+				s.closeWebSocket(connection, websocket.ClosePolicyViolation, "only cancellation of the active operation is allowed")
+				return false
+			}
+			cancel()
+		case result, ok := <-events:
+			if !ok || result.err == io.EOF {
+				s.writeWebSocketError(connection, errors.New("Runtime Server stream ended without a terminal event"))
+				return false
+			}
+			if result.err != nil {
+				s.writeWebSocketError(connection, result.err)
+				return false
+			}
+			response, err := newSessionOperationEventResponse(result.event)
+			if err != nil {
+				s.writeWebSocketError(connection, err)
+				return false
+			}
+			encoded, err := json.Marshal(response)
+			if err != nil || int64(len(encoded)) > s.maxResponseBodyBytes() {
+				s.writeWebSocketError(connection, errors.New("gateway stream event exceeds configured limit"))
+				return false
+			}
+			if err := connection.WriteMessage(websocket.TextMessage, encoded); err != nil {
+				return false
+			}
+			if response.Completed != nil || response.Failed != nil {
+				return true
+			}
+		}
+	}
 }
 
 var sessionOperationWebSocketUpgrader = websocket.Upgrader{
@@ -577,64 +607,6 @@ func (s *Server) websocketOperation(payload []byte) (*pb.ExecuteSessionOperation
 		return nil, errors.New("request must contain one JSON value")
 	}
 	return request.protobuf()
-}
-
-func watchSessionOperationWebSocketControl(connection *websocket.Conn, cancel context.CancelFunc) {
-	defer cancel()
-	for {
-		messageType, payload, err := connection.ReadMessage()
-		if err != nil || messageType != websocket.TextMessage {
-			return
-		}
-		var control struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal(payload, &control) != nil || control.Type != "cancel" {
-			return
-		}
-		return
-	}
-}
-
-func (s *Server) writeSessionOperationWebSocket(connection *websocket.Conn, ctx context.Context, stream pb.SessionRuntime_StreamSessionOperationClient) {
-	receivedEvent := false
-	for {
-		event, err := stream.Recv()
-		if ctx.Err() != nil {
-			s.closeWebSocket(connection, websocket.CloseNormalClosure, "")
-			return
-		}
-		if err == io.EOF {
-			if !receivedEvent {
-				s.writeWebSocketError(connection, errors.New("Runtime Server stream ended without an event"))
-				return
-			}
-			s.closeWebSocket(connection, websocket.CloseNormalClosure, "")
-			return
-		}
-		if err != nil {
-			s.writeWebSocketError(connection, err)
-			return
-		}
-		response, err := newSessionOperationEventResponse(event)
-		if err != nil {
-			s.writeWebSocketError(connection, err)
-			return
-		}
-		encoded, err := json.Marshal(response)
-		if err != nil {
-			s.writeWebSocketError(connection, fmt.Errorf("encode session event: %w", err))
-			return
-		}
-		if int64(len(encoded)) > s.maxResponseBodyBytes() {
-			s.writeWebSocketError(connection, errors.New("gateway stream event exceeds configured limit"))
-			return
-		}
-		if err := connection.WriteMessage(websocket.TextMessage, encoded); err != nil {
-			return
-		}
-		receivedEvent = true
-	}
 }
 
 func (s *Server) writeWebSocketError(connection *websocket.Conn, err error) {

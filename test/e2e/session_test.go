@@ -253,8 +253,8 @@ func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
 		t.Fatalf("dial operation WebSocket: %v", err)
 	}
 	defer connection.Close()
-	if err := connection.WriteJSON(map[string]any{"command": map[string]any{"argv": []string{"sh", "-c", "printf websocket"}}}); err != nil {
-		t.Fatalf("write WebSocket operation: %v", err)
+	if err := connection.WriteJSON(map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"sh", "-c", "printf websocket"}}}}); err != nil {
+		t.Fatalf("write WebSocket send frame: %v", err)
 	}
 	_ = connection.SetReadDeadline(time.Now().Add(10 * time.Second))
 	websocketOutput := false
