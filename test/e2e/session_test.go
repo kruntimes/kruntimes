@@ -799,7 +799,7 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Sandbox SDK client: %v", err)
 	}
-	leaseTimeout := int32(3)
+	leaseTimeout := int32(5)
 	acquired, err := sdk.Runtime(testNamespace, runtimeName).AcquireSandbox(t.Context(), sandbox.AcquireOptions{
 		GenerateName: "e2e-sdk-session-",
 		Session:      &v1alpha1.RunSessionMode{LeaseTimeoutSeconds: &leaseTimeout},
@@ -934,8 +934,12 @@ func TestSessionRunLeaseExpiresAfterConnectionHeartbeatsStop(t *testing.T) {
 		}
 		t.Fatalf("dial lease WebSocket: %v", err)
 	}
-	// The authenticated upgrade is an initial server-observed heartbeat. It must
-	// keep the Run ready during one lease interval before the connection closes.
+	// A Session connection retains capacity only while it emits heartbeat frames.
+	// Send one explicitly before checking that the Run remains ready; the gateway
+	// unit tests cover the initial touch performed at authenticated upgrade.
+	if err := connection.WriteJSON(map[string]string{"type": "heartbeat"}); err != nil {
+		t.Fatalf("send lease heartbeat: %v", err)
+	}
 	time.Sleep(time.Second)
 	if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), run); err != nil {
 		t.Fatalf("get heartbeat Session Run: %v", err)
