@@ -59,6 +59,7 @@ jobs:
             e2e-timings.json
             e2e-timings.md
           if-no-files-found: warn
+          overwrite: true
       - name: Dump Kubernetes diagnostics
         if: failure()
         run: |
