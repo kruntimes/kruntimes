@@ -393,6 +393,15 @@ func (c *Controller) reconcileScheduled(ctx context.Context, run *v1alpha1.Run) 
 		Message:            "claimed by runtimed",
 		LastTransitionTime: startedAt,
 	})
+	if run.Spec.Mode.Task != nil {
+		meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+			Type:               runstatus.ConditionRuntimeAccepted,
+			Status:             metav1.ConditionFalse,
+			Reason:             "Dispatching",
+			Message:            "waiting for Runtime Server to accept execution",
+			LastTransitionTime: startedAt,
+		})
+	}
 	if err := c.Status().Update(ctx, run); err != nil {
 		c.unclaimActiveRun(ar)
 		return ctrl.Result{}, err
@@ -687,17 +696,24 @@ func (c *Controller) reconcileRunningRecovered(ctx context.Context, run *v1alpha
 		c.addRecoveredRun(run)
 		return ctrl.Result{}, fmt.Errorf("runtime Status after runtimed restart: %w", err)
 	}
-
 	ar := c.addRecoveredRun(run)
 	switch resp.State {
 	case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
+		markRuntimeAccepted(run)
 		return c.applySuccess(ctx, ar, resp)
 	case pb.ExecutionState_EXECUTION_STATE_FAILED:
+		markRuntimeAccepted(run)
 		reason := classifyFailureReason(resp, nil)
 		msg := summarizeRuntimeFailure(resp)
 		return c.applyFailureWithOutput(ctx, ar, reason, msg, outputFromStatus(resp))
 	case pb.ExecutionState_EXECUTION_STATE_PENDING, pb.ExecutionState_EXECUTION_STATE_RUNNING:
+		changed := markRuntimeAccepted(run)
 		c.emitExecutionOutputDelta(ar, outputFromStatus(resp), false)
+		if changed && c.Client != nil {
+			if err := c.Status().Update(ctx, run); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 		return ctrl.Result{}, nil
 	default:
 		return ctrl.Result{}, nil
@@ -764,13 +780,21 @@ func (c *Controller) reconcileRunningActive(ctx context.Context, ar *activeRun) 
 
 	switch resp.State {
 	case pb.ExecutionState_EXECUTION_STATE_PENDING, pb.ExecutionState_EXECUTION_STATE_RUNNING:
+		changed := markRuntimeAccepted(ar.run)
 		c.emitExecutionOutputDelta(ar, outputFromStatus(resp), false)
 		if ar.started.CompareAndSwap(false, true) && c.rleg != nil {
 			c.rleg.AddRun(ar.run)
 		}
+		if changed && c.Client != nil {
+			if err := c.Status().Update(ctx, ar.run); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 	case pb.ExecutionState_EXECUTION_STATE_SUCCEEDED:
+		markRuntimeAccepted(ar.run)
 		return c.applySuccess(ctx, ar, resp)
 	case pb.ExecutionState_EXECUTION_STATE_FAILED:
+		markRuntimeAccepted(ar.run)
 		reason := classifyFailureReason(resp, nil)
 		msg := summarizeRuntimeFailure(resp)
 		return c.applyFailureWithOutput(ctx, ar, reason, msg, outputFromStatus(resp))
@@ -779,6 +803,26 @@ func (c *Controller) reconcileRunningActive(ctx context.Context, ar *activeRun) 
 			fmt.Sprintf("runtime Status returned unsupported execution state %s", resp.State))
 	}
 	return ctrl.Result{RequeueAfter: activeRunRequeueAfter(ar)}, nil
+}
+
+// markRuntimeAccepted records the first successful Runtime Status observation.
+// Reconcile performs the single status update for its branch before returning.
+func markRuntimeAccepted(run *v1alpha1.Run) bool {
+	if run == nil {
+		return false
+	}
+	condition := meta.FindStatusCondition(run.Status.Conditions, runstatus.ConditionRuntimeAccepted)
+	if condition != nil && condition.Status == metav1.ConditionTrue {
+		return false
+	}
+	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+		Type:               runstatus.ConditionRuntimeAccepted,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Observed",
+		Message:            "Runtime Server accepted execution",
+		LastTransitionTime: metav1.Now(),
+	})
+	return true
 }
 
 func activeRunRequeueAfter(ar *activeRun) time.Duration {
@@ -817,6 +861,11 @@ func (c *Controller) reconcileRetryBackoff(ctx context.Context, ar *activeRun) (
 	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
 		Type: "Running", Status: metav1.ConditionTrue, Reason: "Retrying", Message: "Retry after failure",
 	})
+	if run.Spec.Mode.Task != nil {
+		meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+			Type: runstatus.ConditionRuntimeAccepted, Status: metav1.ConditionFalse, Reason: "Retrying", Message: "waiting for Runtime Server to accept retry",
+		})
+	}
 	if err := c.Status().Update(ctx, run); err != nil {
 		return ctrl.Result{}, err
 	}

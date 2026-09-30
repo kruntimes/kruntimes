@@ -162,6 +162,7 @@ func TestRuntimedRecoversRunningRunAfterRestart(t *testing.T) {
 	t.Logf("Created Run %s (runtimed recovery)", run.Name)
 
 	waitForRunRunning(t, run, 30*time.Second)
+	waitForRunCondition(t, run, runstatus.ConditionRuntimeAccepted, 30*time.Second)
 
 	beforeRestart := runtimedRestartCount(t, run.Status.AssignedPod)
 	killRuntimed(t, run.Status.AssignedPod)

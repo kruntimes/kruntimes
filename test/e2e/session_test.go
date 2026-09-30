@@ -799,7 +799,7 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Sandbox SDK client: %v", err)
 	}
-	leaseTimeout := int32(5)
+	leaseTimeout := int32(3)
 	acquired, err := sdk.Runtime(testNamespace, runtimeName).AcquireSandbox(t.Context(), sandbox.AcquireOptions{
 		GenerateName: "e2e-sdk-session-",
 		Session:      &v1alpha1.RunSessionMode{LeaseTimeoutSeconds: &leaseTimeout},
@@ -911,7 +911,7 @@ func TestSessionRunLeaseExpiresAfterConnectionHeartbeatsStop(t *testing.T) {
 	t.Parallel()
 	runtimeName := fmt.Sprintf("session-lease-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
-	leaseTimeout := int32(3)
+	leaseTimeout := int32(5)
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-session-lease-", Namespace: testNamespace},
 		Spec: v1alpha1.RunSpec{

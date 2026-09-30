@@ -80,6 +80,12 @@ Runtime Pods 暴露：
 
 失败、超时和取消的终止条件已被规范化处理。
 
+对于 task Run，`Running=True` 表示 runtimed 已接管本地容量；它本身并不表示
+Runtime Server 已创建 execution。`RuntimeAccepted` condition 初始为
+`False`（reason 为 `Dispatching`），在 runtimed 收到该 execution 的 Runtime
+`Status` 响应后变为 `True`（reason 为 `Observed`）。需要区分 dispatch 与
+Runtime 中可查询 execution 的消费者应使用该 condition。
+
 ## 数据边界
 
 Kubernetes 存储紧凑的控制平面状态：
