@@ -4,6 +4,9 @@ import type {
   RunSummary,
   RuntimeDetail,
   RuntimeSummary,
+  SessionOperationEvent,
+  SessionOperationRequest,
+  SessionOperationTransportError,
   WorkflowRunDetail,
   WorkflowRunSummary,
 } from "./types";
@@ -11,6 +14,17 @@ import type {
 export type ConsoleSession = {
   authenticated: boolean;
   accountName?: string;
+};
+
+export type SessionOperationSocket = {
+  cancel(): void;
+  close(): void;
+};
+
+export type SessionOperationSocketHandlers = {
+  onEvent(event: SessionOperationEvent): void;
+  onError(message: string): void;
+  onClose(): void;
 };
 
 export class ConsoleAPI {
@@ -89,6 +103,65 @@ export class ConsoleAPI {
       ).json()) as { items: LogEntry[] }
     ).items;
   }
+
+  openSessionOperation(
+    namespace: string,
+    runtime: string,
+    runUID: string,
+    request: SessionOperationRequest,
+    handlers: SessionOperationSocketHandlers,
+  ): SessionOperationSocket {
+    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    const endpoint = `${scheme}//${location.host}/v1/namespaces/${encodeURIComponent(namespace)}/runtimes/${encodeURIComponent(runtime)}/sessions/${encodeURIComponent(runUID)}/operations:ws`;
+    const socket = new WebSocket(endpoint);
+    let lastSequence = 0;
+    let closed = false;
+    socket.addEventListener("open", () => socket.send(JSON.stringify(request)));
+    socket.addEventListener("message", (message) => {
+      let value: SessionOperationEvent | SessionOperationTransportError;
+      try {
+        value = JSON.parse(String(message.data)) as
+          SessionOperationEvent | SessionOperationTransportError;
+      } catch {
+        handlers.onError("Console received an invalid Session operation event");
+        socket.close();
+        return;
+      }
+      if (value.type === "error") {
+        handlers.onError(value.error || "Session operation stream failed");
+        return;
+      }
+      if (
+        !Number.isSafeInteger(value.sequence) ||
+        value.sequence !== lastSequence + 1
+      ) {
+        handlers.onError(
+          `Session operation event sequence ${value.sequence} follows ${lastSequence}`,
+        );
+        socket.close();
+        return;
+      }
+      lastSequence = value.sequence;
+      handlers.onEvent(value);
+    });
+    socket.addEventListener("error", () =>
+      handlers.onError("Session operation WebSocket connection failed"),
+    );
+    socket.addEventListener("close", () => {
+      if (!closed) {
+        closed = true;
+        handlers.onClose();
+      }
+    });
+    return {
+      cancel: () => {
+        if (socket.readyState === WebSocket.OPEN)
+          socket.send(JSON.stringify({ type: "cancel" }));
+      },
+      close: () => socket.close(),
+    };
+  }
+
   async followLogs(
     namespace: string,
     name: string,

@@ -15,6 +15,7 @@ import { StatusIcon } from "./workflow-ui";
 import { WorkflowDAG } from "./workflow-dag";
 import { WorkflowJobDetail } from "./workflow-job-detail";
 import { SidebarIcon } from "./sidebar-icons";
+import { SessionOperationPanel } from "./session-operation";
 
 const api = new ConsoleAPI();
 const loadRunLogs = (namespace: string, runName: string) =>
@@ -563,6 +564,9 @@ function RunPage({ namespace, name }: { namespace: string; name: string }) {
         <JSONValue value={run.spec} />
         <h2>Status</h2>
         <JSONValue value={run.status} />
+        {run.mode === "Session" && (
+          <SessionOperationPanel api={api} namespace={namespace} run={run} />
+        )}
         <div className="flex items-center justify-between">
           <h2>Logs</h2>
           <button

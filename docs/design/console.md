@@ -40,6 +40,22 @@ For `/v1/` requests made by the browser, Console injects that cookie's token
 into the internal handler; JavaScript never receives the credential. Explicit
 Authorization headers from `krt` and SDK clients take precedence.
 
+## Session operations in the browser
+
+The detail page for a ready Session Run provides a shell-command panel. It
+opens the same-origin, authenticated
+`operations:ws` connection, sends the command as its first client frame, and
+renders ordered accepted, output, progress, and terminal events as they
+arrive. Binary output is decoded from the protocol's JSON base64
+representation before display.
+
+The panel is disabled until the Session Run is `Ready`. Its Cancel control
+sends `{"type":"cancel"}` over the WebSocket. A transport error or an early
+connection close is displayed in the panel. Selecting **Run again** always
+starts a new operation; the current WebSocket protocol does not provide an
+operation-ID resume frame. Clients that need resumability can use the existing
+NDJSON stream endpoint with its `after` query parameter.
+
 ## Helm configuration
 
 Console is always installed. `console.image`, `console.replicas`,

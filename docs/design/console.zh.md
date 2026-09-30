@@ -35,6 +35,19 @@ Console 接受普通 `Authorization: Bearer ...`；配置
 将 cookie token 注入内部 handler，JavaScript 不会取得凭据。`krt` 与 SDK 显式提供的
 Authorization header 始终优先。
 
+## 浏览器中的 Session operation
+
+Ready Session Run 的详情页提供 shell command 面板。它建立同源、已认证的
+`operations:ws` 连接，将 command 作为第一个 client frame 发送，并在到达时按顺序渲染
+accepted、output、progress 与 terminal event。协议中 JSON base64 representation 的二进制
+输出会先解码再显示。
+
+Session Run 进入 `Ready` 前，该面板保持禁用。Cancel 控件会通过 WebSocket 发送
+`{"type":"cancel"}`。传输错误或连接在 terminal event 前关闭时会显示在面板内。选择
+**Run again** 始终会创建新的 operation；当前 WebSocket protocol 没有按 operation ID
+恢复的 client frame。需要 resumability 的 client 可以使用现有 NDJSON stream endpoint 与
+`after` query parameter。
+
 ## Helm 配置
 
 Console 始终安装。使用 `console.image`、`console.replicas`、`console.publicRead`、
