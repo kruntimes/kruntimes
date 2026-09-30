@@ -15,18 +15,24 @@ Runtime gateway, construct the client directly:
 
 ```python
 from kruntimes.kubernetes import from_incluster
-from kruntimes.sandbox import Command, CreateOptions
+from kruntimes.sandbox import AcquireOptions, Command
 
 client = from_incluster()
-sandbox = client.create(CreateOptions(
-    namespace="agents",
+sandbox = client.runtime("agents", "python-session").acquire_sandbox(AcquireOptions(
     name="diagnose-api",
-    runtime="python-session",
-))
-sandbox.wait(timeout_seconds=60)
-result = sandbox.execute(Command(argv=["sh", "-c", "kubectl get pods -A"]))
-print(result.stdout.decode())
-sandbox.close(timeout_seconds=30)
+), timeout_seconds=60)
+try:
+    session = sandbox.open_session()
+    try:
+        operation_id = session.send(Command(argv=["sh", "-c", "kubectl get pods -A"]))
+        while True:
+            event = session.receive()
+            if event.type in ("completed", "failed"):
+                break
+    finally:
+        session.close()
+finally:
+    sandbox.release(timeout_seconds=30)
 ```
 
 File listings are explicitly paginated. Continue while `next_page_token` is
@@ -61,17 +67,22 @@ with PortForwardGatewayTransport.start(
     service_port=80,
 ) as gateway:
     client = from_kube_config(gateway=gateway)
-    sandbox = client.open("agents", "diagnose-api")
-    sandbox.wait(timeout_seconds=60)
+    sandbox = client.open("agents", "diagnose-api")  # reconnect to an existing Run; no allocation
 ```
 
-`Execute`, file mutations, and `Close` are never retried automatically. A
+`Session.send`, file mutations, and `close()` are never retried automatically. A
 transport failure has an unknown execution outcome; refresh the Run and use
 the structured owner-runtimed logs to determine what happened.
 
-`close()` returns successfully only after the Run reaches `Succeeded`;
-`cancel()` returns successfully only after `Cancelled`. Any other terminal
-phase raises `SandboxStateError` with the current Run.
+When the `session` mapping in `AcquireOptions` sets `leaseTimeoutSeconds`, an
+open Session maintains that lease internally. Closing the connection stops
+heartbeats but does not release the Sandbox; call `release()` to return Runtime
+capacity.
+
+`release()` drains the Session Run, waits for `Succeeded`, then deletes it to
+return Runtime capacity. `close()` returns successfully only after the Run
+reaches `Succeeded`; `cancel()` returns successfully only after `Cancelled`.
+Any other terminal phase raises `SandboxStateError` with the current Run.
 
 The local caller needs `get` access to the target Run for gateway
 authorization. Starting the port-forward also needs `get` on the shared gateway

@@ -8,6 +8,7 @@ calls manage Runs, while the gateway receives the same caller identity token.
 from __future__ import annotations
 
 import socket
+import ssl
 import subprocess
 import time
 from collections.abc import Mapping
@@ -16,7 +17,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlparse, urlunparse
 from urllib.request import Request, urlopen
 
-from .sandbox import GatewayTransport, HTTPResponse, LogReader, RunClient, SandboxClient, StreamingHTTPResponse
+from .sandbox import GatewayTransport, HTTPResponse, LogReader, RunClient, SandboxClient, SessionConnection
 
 _GROUP = "kruntimes.io"
 _VERSION = "v1alpha1"
@@ -44,6 +45,9 @@ class KubernetesRunClient(RunClient):
             _GROUP, _VERSION, namespace, _PLURAL, name, dict(run)
         )
 
+    def delete(self, namespace: str, name: str) -> None:
+        self._custom_objects.delete_namespaced_custom_object(_GROUP, _VERSION, namespace, _PLURAL, name)
+
 
 class KubernetesLogReader(LogReader):
     """LogReader backed by Kubernetes CoreV1Api Pod logs."""
@@ -62,6 +66,9 @@ class KubernetesLogReader(LogReader):
 class UrllibGatewayTransport(GatewayTransport):
     """Gateway transport that uses Python's standard library HTTP client."""
 
+    def __init__(self, *, websocket_sslopt: Mapping[str, Any] | None = None) -> None:
+        self._websocket_sslopt = dict(websocket_sslopt or {})
+
     def request(
         self, method: str, url: str, body: bytes | None, headers: Mapping[str, str]
     ) -> HTTPResponse:
@@ -72,13 +79,14 @@ class UrllibGatewayTransport(GatewayTransport):
         except HTTPError as error:
             return HTTPResponse(error.code, error.read(1 << 20))
 
-    def stream_request(self, method: str, url: str, body: bytes | None, headers: Mapping[str, str]) -> StreamingHTTPResponse:
-        request = Request(url, data=body, headers=dict(headers), method=method)
+    def open_session(self, url: str, headers: Mapping[str, str], timeout_seconds: float | None) -> SessionConnection:
         try:
-            response = urlopen(request)  # noqa: S310 - endpoint is derived from Run status
-            return StreamingHTTPResponse(response.status, iter(response), response.close)
-        except HTTPError as error:
-            return StreamingHTTPResponse(error.code, iter(error), error.close)
+            import websocket
+        except ImportError as error:
+            raise ImportError("install kruntimes-sdk WebSocket dependencies") from error
+        header = [f"{name}: {value}" for name, value in headers.items()]
+        return websocket.create_connection(url, header=header, timeout=timeout_seconds, sslopt=self._websocket_sslopt)
+
 
 
 class PortForwardGatewayTransport(GatewayTransport):
@@ -140,11 +148,14 @@ class PortForwardGatewayTransport(GatewayTransport):
         local_url = urlunparse(original._replace(scheme=local.scheme, netloc=local.netloc))
         return self._upstream.request(method, local_url, body, headers)
 
-    def stream_request(self, method: str, url: str, body: bytes | None, headers: Mapping[str, str]) -> StreamingHTTPResponse:
+    def open_session(self, url: str, headers: Mapping[str, str], timeout_seconds: float | None) -> SessionConnection:
         if self._process is not None and self._process.poll() is not None:
             raise RuntimeError("Runtime gateway port-forward exited")
-        original, local = urlparse(url), urlparse(self._local_url)
-        return self._upstream.stream_request(method, urlunparse(original._replace(scheme=local.scheme, netloc=local.netloc)), body, headers)
+        original = urlparse(url)
+        local = urlparse(self._local_url)
+        scheme = "wss" if local.scheme == "https" else "ws"
+        local_url = urlunparse(original._replace(scheme=scheme, netloc=local.netloc))
+        return self._upstream.open_session(local_url, headers, timeout_seconds)
 
     def close(self) -> None:
         """Stop the scoped port-forward process, if this transport started one."""
@@ -193,11 +204,26 @@ def _from_api_client(api_client: Any, gateway: GatewayTransport | None, poll_int
         token = token[7:]
     return SandboxClient(
         KubernetesRunClient(kubernetes.client.CustomObjectsApi(api_client)),
-        gateway or UrllibGatewayTransport(),
+        gateway or UrllibGatewayTransport(websocket_sslopt=_websocket_sslopt(configuration)),
         logs=KubernetesLogReader(kubernetes.client.CoreV1Api(api_client)),
         bearer_token=token,
         poll_interval_seconds=poll_interval_seconds,
     )
+
+
+def _websocket_sslopt(configuration: Any) -> dict[str, Any]:
+    """Translate Kubernetes client TLS settings for websocket-client."""
+    options: dict[str, Any] = {}
+    if not bool(getattr(configuration, "verify_ssl", True)):
+        options["cert_reqs"] = ssl.CERT_NONE
+        options["check_hostname"] = False
+    if value := getattr(configuration, "ssl_ca_cert", None):
+        options["ca_certs"] = value
+    if value := getattr(configuration, "cert_file", None):
+        options["certfile"] = value
+    if value := getattr(configuration, "key_file", None):
+        options["keyfile"] = value
+    return options
 
 
 def _load_kubernetes() -> Any:

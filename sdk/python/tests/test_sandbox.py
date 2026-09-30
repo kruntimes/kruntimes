@@ -1,10 +1,11 @@
 import json
+import time
 import unittest
 
 from kruntimes.sandbox import (
     APIError,
     Command,
-    CreateOptions,
+    AcquireOptions,
     HTTPResponse,
     ListFilesOptions,
     SandboxClient,
@@ -17,6 +18,7 @@ class FakeRuns:
     def __init__(self, run):
         self.run = run
         self.created = None
+        self.deleted = None
 
     def create(self, namespace, run):
         self.created = (namespace, run)
@@ -32,15 +34,43 @@ class FakeRuns:
         self.run = run
         return run
 
+    def delete(self, namespace, name):
+        self.deleted = (namespace, name)
+
 
 class FakeGateway:
     def __init__(self):
         self.requests = []
         self.response = HTTPResponse(200, b"{}")
+        self.connection = None
 
     def request(self, method, url, body, headers):
         self.requests.append((method, url, body, headers))
         return self.response
+
+    def open_session(self, url, headers, timeout_seconds):
+        self.requests.append(("WS", url, timeout_seconds, headers))
+        if self.connection is None:
+            raise AssertionError("test did not configure a Session connection")
+        return self.connection
+
+
+class FakeSessionConnection:
+    def __init__(self, frames):
+        self.frames = list(frames)
+        self.sent = []
+        self.closed = False
+
+    def send(self, payload):
+        self.sent.append(json.loads(payload))
+
+    def recv(self):
+        if not self.frames:
+            raise AssertionError("unexpected Session receive")
+        return json.dumps(self.frames.pop(0))
+
+    def close(self):
+        self.closed = True
 
 
 class FakeLogs:
@@ -61,11 +91,11 @@ def ready_run():
 
 
 class SandboxTests(unittest.TestCase):
-    def test_create_sorts_environment_and_executes(self):
+    def test_acquire_sorts_environment_and_executes(self):
         runs = FakeRuns(ready_run())
         gateway = FakeGateway()
         client = SandboxClient(runs, gateway, bearer_token="token")
-        sandbox = client.create(CreateOptions(namespace="default", name="sandbox", runtime="python", env={"B": "2", "A": "1"}))
+        sandbox = client.runtime("default", "python").acquire_sandbox(AcquireOptions(name="sandbox", env={"B": "2", "A": "1"}))
         gateway.response = HTTPResponse(200, json.dumps({"command": {"exitCode": 0, "stdout": "b2s="}}).encode())
 
         result = sandbox.execute(Command(argv=["python", "-V"]))
@@ -74,6 +104,67 @@ class SandboxTests(unittest.TestCase):
         self.assertEqual(b"ok", result.stdout)
         self.assertEqual([{"name": "A", "value": "1"}, {"name": "B", "value": "2"}], runs.created[1]["spec"]["env"])
         self.assertEqual("Bearer token", gateway.requests[0][3]["Authorization"])
+
+    def test_release_deletes_closed_sandbox(self):
+        run = ready_run()
+        run["status"]["phase"] = "Succeeded"
+        runs = FakeRuns(run)
+        SandboxClient(runs, FakeGateway()).open("default", "sandbox").release()
+        self.assertEqual(("default", "sandbox"), runs.deleted)
+
+    def test_session_sends_receives_and_closes_without_releasing_sandbox(self):
+        gateway = FakeGateway()
+        connection = FakeSessionConnection([
+            {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}},
+            {"sequence": 2, "type": "output", "output": {"stdout": "b2s="}},
+            {"sequence": 3, "type": "completed", "completed": {"exitCode": 0}},
+        ])
+        gateway.connection = connection
+        runs = FakeRuns(ready_run())
+        sandbox = SandboxClient(runs, gateway, bearer_token="token").open("default", "sandbox")
+        session = sandbox.open_session(timeout_seconds=3)
+
+        operation_id = session.send(Command(argv=["echo", "ok"]), idempotency_key="operation-1")
+        output = session.receive()
+        completed = session.receive()
+        session.close()
+
+        self.assertEqual("operation-1", operation_id)
+        self.assertEqual("output", output.type)
+        self.assertEqual("completed", completed.type)
+        self.assertEqual("send", connection.sent[0]["type"])
+        self.assertEqual("operation-1", connection.sent[0]["idempotencyKey"])
+        self.assertTrue(connection.closed)
+        self.assertIsNone(runs.deleted)
+        self.assertEqual("Bearer token", gateway.requests[0][3]["Authorization"])
+        self.assertTrue(gateway.requests[0][1].startswith("wss://gateway/"))
+
+    def test_session_cancels_only_active_operation(self):
+        gateway = FakeGateway()
+        connection = FakeSessionConnection([{"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}}])
+        gateway.connection = connection
+        session = SandboxClient(FakeRuns(ready_run()), gateway).open("default", "sandbox").open_session()
+        operation_id = session.send(Command(shell="sleep 60"))
+        session.cancel(operation_id)
+
+        self.assertEqual({"type": "cancel", "operationID": "operation-1"}, connection.sent[1])
+        with self.assertRaises(RuntimeError):
+            session.cancel("operation-2")
+
+    def test_session_maintains_configured_lease_heartbeat(self):
+        gateway = FakeGateway()
+        connection = FakeSessionConnection([])
+        gateway.connection = connection
+        run = ready_run()
+        run["spec"]["mode"]["session"] = {"leaseTimeoutSeconds": 1}
+        session = SandboxClient(FakeRuns(run), gateway).open("default", "sandbox").open_session()
+        try:
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline and not connection.sent:
+                time.sleep(0.01)
+            self.assertEqual({"type": "heartbeat"}, connection.sent[0])
+        finally:
+            session.close()
 
     def test_read_file_preserves_path_for_runtime_boundary_validation(self):
         gateway = FakeGateway()
@@ -172,6 +263,16 @@ class SandboxTests(unittest.TestCase):
             "http://127.0.0.1:19090/v1/namespaces/default/runtimes/python/sessions/run-uid/files?maxBytes=10",
             gateway.requests[0][1],
         )
+
+    def test_port_forward_rewrites_websocket_endpoint(self):
+        gateway = FakeGateway()
+        gateway.connection = FakeSessionConnection([])
+        transport = PortForwardGatewayTransport(gateway, "http://127.0.0.1:19090")
+
+        connection = transport.open_session("wss://gateway/v1/namespaces/default/runtimes/python/sessions/run-uid/operations:ws", {}, 2)
+
+        self.assertIs(connection, gateway.connection)
+        self.assertEqual("ws://127.0.0.1:19090/v1/namespaces/default/runtimes/python/sessions/run-uid/operations:ws", gateway.requests[0][1])
 
 
 if __name__ == "__main__":

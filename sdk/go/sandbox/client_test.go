@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,12 +17,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
-func TestSandboxCreateAndExecute(t *testing.T) {
+func TestSandboxCreatesAndExecutes(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -40,7 +42,7 @@ func TestSandboxCreateAndExecute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sandbox, err := client.Create(t.Context(), CreateOptions{Name: "session", Namespace: "default", Runtime: "bash", Env: map[string]string{"B": "2", "A": "1"}})
+	sandbox, err := client.create(t.Context(), "default", "bash", AcquireOptions{Name: "session", Env: map[string]string{"B": "2", "A": "1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,44 +53,6 @@ func TestSandboxCreateAndExecute(t *testing.T) {
 	sandbox.run.Status = v1alpha1.RunStatus{Phase: v1alpha1.RunReady, Endpoint: &v1alpha1.RunEndpoint{URL: "http://gateway/v1/namespaces/default/runtimes/bash/sessions/run-uid"}}
 	if _, err := sandbox.Execute(context.Background(), Command{Argv: []string{"echo", "ok"}}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestSandboxStreamsAndResumesOperationEvents(t *testing.T) {
-	requests := 0
-	sandbox := readySandbox(t, httpDoer(func(request *http.Request) (*http.Response, error) {
-		requests++
-		if requests == 1 {
-			if request.Method != http.MethodPost || request.Header.Get("Idempotency-Key") != "turn-1" || request.URL.Query().Get("after") != "" {
-				t.Fatalf("start request = %s %s headers=%v", request.Method, request.URL, request.Header)
-			}
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{\"sequence\":1,\"type\":\"accepted\",\"accepted\":{\"operationID\":\"turn-1\"}}\n{\"sequence\":2,\"type\":\"completed\",\"completed\":{\"command\":{\"exitCode\":0}}}\n"))}, nil
-		}
-		if request.Method != http.MethodGet || !strings.Contains(request.URL.Path, "/operations/turn-1:stream") || request.URL.Query().Get("after") != "1" {
-			t.Fatalf("resume request = %s %s", request.Method, request.URL)
-		}
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{\"sequence\":2,\"type\":\"completed\",\"completed\":{\"command\":{\"exitCode\":0}}}\n"))}, nil
-	}))
-	stream, err := sandbox.Stream(t.Context(), Command{Argv: []string{"echo", "ok"}}, StreamOptions{IdempotencyKey: "turn-1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, err := stream.Next()
-	if err != nil || first.Accepted == nil || first.Accepted.OperationID != "turn-1" {
-		t.Fatalf("first event = %#v, err = %v", first, err)
-	}
-	if _, err := stream.Next(); err != nil {
-		t.Fatal(err)
-	}
-	if err := stream.Close(); err != nil {
-		t.Fatal(err)
-	}
-	resumed, err := sandbox.Resume(t.Context(), "turn-1", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if event, err := resumed.Next(); err != nil || event.Sequence != 2 {
-		t.Fatalf("resumed event = %#v, err = %v", event, err)
 	}
 }
 
@@ -185,6 +149,48 @@ func TestSandboxCloseRequestsDrain(t *testing.T) {
 	}
 	if got := sandbox.Run().Spec.Termination; got == nil || got.Mode != v1alpha1.RunTerminationDrain {
 		t.Fatalf("termination = %#v, want Drain", got)
+	}
+}
+
+func TestRuntimeAcquiresReadySandbox(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	runs := fake.NewClientBuilder().WithScheme(scheme).Build()
+	client, err := New(Config{Runs: runs, HTTPClient: httpDoer(func(*http.Request) (*http.Response, error) { return nil, nil }), PollInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			var list v1alpha1.RunList
+			if err := runs.List(context.Background(), &list); err == nil && len(list.Items) == 1 {
+				run := list.Items[0].DeepCopy()
+				run.Status.Phase = v1alpha1.RunReady
+				_ = runs.Update(context.Background(), run)
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	sandbox, err := client.Runtime("default", "bash").AcquireSandbox(t.Context(), AcquireOptions{Name: "session", Env: map[string]string{"A": "1"}})
+	if err != nil {
+		t.Fatalf("AcquireSandbox: %v", err)
+	}
+	if got := sandbox.Run(); got.Spec.Runtime != "bash" || got.Namespace != "default" || got.Status.Phase != v1alpha1.RunReady {
+		t.Fatalf("acquired Sandbox Run = %#v", got)
+	}
+}
+
+func TestSandboxReleaseDeletesSucceededRun(t *testing.T) {
+	sandbox := terminalSandbox(t, nil)
+	if err := sandbox.Release(t.Context()); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	run := &v1alpha1.Run{}
+	if err := sandbox.client.runs.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "session"}, run); err == nil {
+		t.Fatalf("released Run still exists: %#v", run)
 	}
 }
 
