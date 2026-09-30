@@ -18,6 +18,12 @@ import (
 
 type defaultSessionDialer struct{}
 
+const (
+	sessionFrameTypeSend      = "send"
+	sessionFrameTypeCancel    = "cancel"
+	sessionFrameTypeHeartbeat = "heartbeat"
+)
+
 func (defaultSessionDialer) DialSession(ctx context.Context, endpoint string, headers http.Header) (*websocket.Conn, *http.Response, error) {
 	return websocket.DefaultDialer.DialContext(ctx, endpoint, headers)
 }
@@ -52,6 +58,15 @@ type Session struct {
 
 	heartbeatStop chan struct{}
 	heartbeatDone chan struct{}
+}
+
+type sessionSendFrame struct {
+	Type      string                  `json:"type"`
+	Operation sessionCommandOperation `json:"operation"`
+}
+
+type sessionCommandOperation struct {
+	Command Command `json:"command"`
 }
 
 // OpenSession opens a persistent connection to this ready Sandbox. It does not
@@ -121,10 +136,7 @@ func (s *Session) Send(ctx context.Context, command Command) (string, error) {
 		return "", errors.New("Sandbox Session already has an active operation")
 	}
 	s.stateMu.Unlock()
-	payload, err := json.Marshal(struct {
-		Type      string  `json:"type"`
-		Operation Command `json:"operation"`
-	}{Type: "send", Operation: command})
+	payload, err := json.Marshal(sessionSendFrame{Type: sessionFrameTypeSend, Operation: sessionCommandOperation{Command: command}})
 	if err != nil {
 		return "", fmt.Errorf("encode Sandbox Session send: %w", err)
 	}
@@ -187,7 +199,7 @@ func (s *Session) Cancel(ctx context.Context, operationID string) error {
 	payload, err := json.Marshal(struct {
 		Type        string `json:"type"`
 		OperationID string `json:"operationID"`
-	}{Type: "cancel", OperationID: operationID})
+	}{Type: sessionFrameTypeCancel, OperationID: operationID})
 	if err != nil {
 		return fmt.Errorf("encode Sandbox Session cancellation: %w", err)
 	}
@@ -266,7 +278,7 @@ func (s *Session) writeHeartbeat() error {
 	defer s.writeMu.Unlock()
 	if err := s.connection.WriteJSON(struct {
 		Type string `json:"type"`
-	}{Type: "heartbeat"}); err != nil {
+	}{Type: sessionFrameTypeHeartbeat}); err != nil {
 		return fmt.Errorf("send Sandbox Session heartbeat: %w", err)
 	}
 	return nil

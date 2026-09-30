@@ -27,6 +27,10 @@ export type SessionOperationSocketHandlers = {
   onClose(): void;
 };
 
+const sessionFrameTypeSend = "send";
+const sessionFrameTypeCancel = "cancel";
+const sessionFrameTypeHeartbeat = "heartbeat";
+
 export class ConsoleAPI {
   private async request(
     path: string,
@@ -120,7 +124,9 @@ export class ConsoleAPI {
     let operationID = "";
     let heartbeat: number | undefined;
     socket.addEventListener("open", () => {
-      socket.send(JSON.stringify({ type: "send", operation: request }));
+      socket.send(
+        JSON.stringify({ type: sessionFrameTypeSend, operation: request }),
+      );
       if (leaseTimeoutSeconds && leaseTimeoutSeconds > 0) {
         const interval = Math.min(
           Math.max((leaseTimeoutSeconds * 1000) / 3, 100),
@@ -128,7 +134,7 @@ export class ConsoleAPI {
         );
         heartbeat = window.setInterval(() => {
           if (socket.readyState === WebSocket.OPEN)
-            socket.send(JSON.stringify({ type: "heartbeat" }));
+            socket.send(JSON.stringify({ type: sessionFrameTypeHeartbeat }));
         }, interval);
       }
     });
@@ -174,7 +180,9 @@ export class ConsoleAPI {
     return {
       cancel: () => {
         if (socket.readyState === WebSocket.OPEN && operationID)
-          socket.send(JSON.stringify({ type: "cancel", operationID }));
+          socket.send(
+            JSON.stringify({ type: sessionFrameTypeCancel, operationID }),
+          );
       },
       close: () => socket.close(),
     };

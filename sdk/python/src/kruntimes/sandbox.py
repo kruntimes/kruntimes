@@ -17,6 +17,9 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 _TERMINAL_PHASES = frozenset(("Succeeded", "Failed", "Timeout", "Cancelled"))
 _DEFAULT_POLL_INTERVAL_SECONDS = 0.5
+_SESSION_FRAME_TYPE_SEND = "send"
+_SESSION_FRAME_TYPE_CANCEL = "cancel"
+_SESSION_FRAME_TYPE_HEARTBEAT = "heartbeat"
 
 
 class RunClient(Protocol):
@@ -493,7 +496,10 @@ class Session:
             raise RuntimeError("Sandbox Session is closed")
         if self._active_operation_id:
             raise RuntimeError("Sandbox Session already has an active operation")
-        payload: dict[str, Any] = {"type": "send", "operation": command.request_body()}
+        payload: dict[str, Any] = {
+            "type": _SESSION_FRAME_TYPE_SEND,
+            "operation": {"command": command.request_body()},
+        }
         if idempotency_key:
             payload["idempotencyKey"] = idempotency_key
         self._send(payload)
@@ -520,7 +526,7 @@ class Session:
         """Request cancellation of the currently active command."""
         if self._closed or not operation_id or operation_id != self._active_operation_id:
             raise RuntimeError("Sandbox Session operation is not active")
-        self._send({"type": "cancel", "operationID": operation_id})
+        self._send({"type": _SESSION_FRAME_TYPE_CANCEL, "operationID": operation_id})
 
     def close(self) -> None:
         """Close only the connection; the backing Sandbox remains allocated."""
@@ -541,7 +547,7 @@ class Session:
             if self._closed:
                 return
             try:
-                self._send({"type": "heartbeat"})
+                self._send({"type": _SESSION_FRAME_TYPE_HEARTBEAT})
             except Exception:
                 self._closed = True
                 self._connection.close()

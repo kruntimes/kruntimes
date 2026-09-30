@@ -134,6 +134,7 @@ class SandboxTests(unittest.TestCase):
         self.assertEqual("completed", completed.type)
         self.assertEqual("send", connection.sent[0]["type"])
         self.assertEqual("operation-1", connection.sent[0]["idempotencyKey"])
+        self.assertEqual(["echo", "ok"], connection.sent[0]["operation"]["command"]["argv"])
         self.assertTrue(connection.closed)
         self.assertIsNone(runs.deleted)
         self.assertEqual("Bearer token", gateway.requests[0][3]["Authorization"])

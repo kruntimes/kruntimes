@@ -25,9 +25,12 @@ func TestSandboxSessionSendsReceivesAndCloses(t *testing.T) {
 		}
 		defer connection.Close()
 		var send struct {
-			Type string `json:"type"`
+			Type      string `json:"type"`
+			Operation struct {
+				Command Command `json:"command"`
+			} `json:"operation"`
 		}
-		if err := connection.ReadJSON(&send); err != nil || send.Type != "send" {
+		if err := connection.ReadJSON(&send); err != nil || send.Type != "send" || len(send.Operation.Command.Argv) != 2 || send.Operation.Command.Argv[0] != "echo" {
 			t.Fatalf("send frame = %#v, err = %v", send, err)
 		}
 		if err := connection.WriteJSON(map[string]any{"sequence": 1, "type": "accepted", "accepted": map[string]string{"operationID": "operation-1"}}); err != nil {
