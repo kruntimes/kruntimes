@@ -205,7 +205,7 @@ func waitForGatewayResponseWithClient(t *testing.T, httpClient *http.Client, met
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	lastResult := "no response"
+	lastResult := ""
 	for {
 		// Gateway authorization performs both a TokenReview and a
 		// SubjectAccessReview, each of which may consume its own API-server

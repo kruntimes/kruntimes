@@ -24,6 +24,7 @@ import (
 )
 
 func TestFunctionGatewayInvokesAuthorizedFunction(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("function-gateway-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, pythonRuntimeImage(), 9092, 1)
 
@@ -80,6 +81,7 @@ def handler(event):
 }
 
 func TestFunctionRunExpiresWhenIdle(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("function-idle-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, pythonRuntimeImage(), 9092, 1)
 	idleTimeout := int32(1)
@@ -107,6 +109,7 @@ func TestFunctionRunExpiresWhenIdle(t *testing.T) {
 }
 
 func TestFunctionRunCancellationReleasesRuntimeCapacity(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("function-cancel-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, pythonRuntimeImage(), 9092, 1)
 	inline := `def handler(event):
@@ -146,6 +149,7 @@ func TestFunctionRunCancellationReleasesRuntimeCapacity(t *testing.T) {
 }
 
 func TestDeletingFunctionRunReleasesRuntimeCapacity(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("function-delete-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, pythonRuntimeImage(), 9092, 1)
 	inline := `def handler(event):
@@ -182,6 +186,7 @@ func TestDeletingFunctionRunReleasesRuntimeCapacity(t *testing.T) {
 }
 
 func TestFunctionRunExpiresWhenTotalTimeoutReached(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("function-total-timeout-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, pythonRuntimeImage(), 9092, 1)
 	timeout := metav1.Duration{Duration: 5 * time.Second}
@@ -263,6 +268,7 @@ func TestFunctionRunRecoversInvocationAfterRuntimedRestart(t *testing.T) {
 }
 
 func TestFunctionRuntimeProxyForwardsToNonOwnerPod(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("function-proxy-%d", time.Now().UnixNano())
 	ensureRuntimeWithReplicasAndRunsCapacity(t, runtimeName, pythonRuntimeImage(), 9092, 2, 1)
 	waitForRuntimeReadyReplicas(t, runtimeName, 2, 60*time.Second)
@@ -363,6 +369,7 @@ func TestFunctionRuntimeProxyForwardsToNonOwnerPod(t *testing.T) {
 }
 
 func TestFunctionRunFailsWhenAssignedRuntimePodIsLost(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("function-pod-loss-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, pythonRuntimeImage(), 9092, 1)
 	inline := `def handler(event):

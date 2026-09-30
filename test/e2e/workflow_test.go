@@ -19,6 +19,7 @@ import (
 )
 
 func TestWorkflowTriggerMaterializesAndExecutesTemplate(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -75,6 +76,7 @@ func TestWorkflowTriggerMaterializesAndExecutesTemplate(t *testing.T) {
 }
 
 func TestWorkflowRunExecutesActionAndProjectsOutputs(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -140,6 +142,7 @@ func TestWorkflowRunExecutesActionAndProjectsOutputs(t *testing.T) {
 }
 
 func TestWorkflowRunSharesToolCacheAndEnvironmentBetweenSteps(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -177,6 +180,7 @@ func TestWorkflowRunSharesToolCacheAndEnvironmentBetweenSteps(t *testing.T) {
 }
 
 func TestWorkflowRunFailsWhenActionChildRunFails(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -210,6 +214,7 @@ func TestWorkflowRunFailsWhenActionChildRunFails(t *testing.T) {
 }
 
 func TestWorkflowRunCancellationPropagatesToActionChildRun(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -250,6 +255,7 @@ func TestWorkflowRunCancellationPropagatesToActionChildRun(t *testing.T) {
 }
 
 func TestWorkflowRunRejectsMissingActionWithoutChildRun(t *testing.T) {
+	t.Parallel()
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	workflowRun := &v1alpha1.WorkflowRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "e2e-action-missing-run-" + nameSuffix, Namespace: testNamespace},
@@ -316,6 +322,7 @@ func TestWorkflowRunRecoversActionAfterControllerRestart(t *testing.T) {
 }
 
 func TestWorkflowRunExecutesReusableWorkflowAndProjectsOutputs(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -363,6 +370,7 @@ func TestWorkflowRunExecutesReusableWorkflowAndProjectsOutputs(t *testing.T) {
 }
 
 func TestWorkflowRunExecutesNestedReusableWorkflows(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -423,6 +431,7 @@ func TestWorkflowRunExecutesNestedReusableWorkflows(t *testing.T) {
 }
 
 func TestWorkflowRunCancellationPropagatesToReusableWorkflow(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -451,22 +460,7 @@ func TestWorkflowRunCancellationPropagatesToReusableWorkflow(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	for {
-		time.Sleep(200 * time.Millisecond)
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
-			t.Fatalf("get workflowrun: %v", err)
-		}
-		if workflowRun.Status.Jobs["deploy"].WorkflowRunName != "" {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for reusable call to start: %#v", workflowRun.Status)
-		default:
-		}
-	}
+	waitForWorkflowChildRun(t, workflowRun, "deploy", 20*time.Second)
 	workflowRun.Spec.CancelRequested = true
 	if err := k8sClient.Update(context.Background(), workflowRun); err != nil {
 		t.Fatalf("request workflowrun cancellation: %v", err)
@@ -476,6 +470,7 @@ func TestWorkflowRunCancellationPropagatesToReusableWorkflow(t *testing.T) {
 }
 
 func TestWorkflowRunRejectsReusableWorkflowCycle(t *testing.T) {
+	t.Parallel()
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	workflowA := &v1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "e2e-cycle-a-" + nameSuffix, Namespace: testNamespace},
@@ -518,6 +513,7 @@ func TestWorkflowRunRejectsReusableWorkflowCycle(t *testing.T) {
 }
 
 func TestWorkflowRunFreezesReusableTemplateAfterChildCreation(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -557,22 +553,7 @@ func TestWorkflowRunFreezesReusableTemplateAfterChildCreation(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), workflowRun) })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	for {
-		time.Sleep(200 * time.Millisecond)
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflowRun), workflowRun); err != nil {
-			t.Fatalf("get workflowrun: %v", err)
-		}
-		if workflowRun.Status.Jobs["call"].WorkflowRunName != "" {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for reusable child creation: %#v", workflowRun.Status)
-		default:
-		}
-	}
+	waitForWorkflowChildRun(t, workflowRun, "call", 20*time.Second)
 	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(workflow), workflow); err != nil {
 		t.Fatalf("get reusable workflow: %v", err)
 	}
@@ -588,6 +569,7 @@ func TestWorkflowRunFreezesReusableTemplateAfterChildCreation(t *testing.T) {
 }
 
 func TestWorkflowRunBindsReusableTemplateWhenCallBecomesReady(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -647,6 +629,7 @@ func reusableOutputJob(run string) v1alpha1.JobSpec {
 }
 
 func TestWorkflowRunSharesJobLocalWorkspace(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	workflowRun := &v1alpha1.WorkflowRun{
@@ -704,6 +687,7 @@ func TestWorkflowRunSharesJobLocalWorkspace(t *testing.T) {
 }
 
 func TestWorkflowRunTransfersArtifactsBetweenJobs(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("workflow-artifacts-%d", time.Now().UnixNano())
 	claimName := runtimeName + "-artifacts"
 	ensureFilesystemRuntime(t, runtimeName, claimName)

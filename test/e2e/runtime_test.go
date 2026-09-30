@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ func TestRuntimeReadyReplicasTracksRuntimedAvailability(t *testing.T) {
 }
 
 func TestFullRunLifecycle(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	const stdout = "hello-not-in-run-status"
@@ -60,6 +62,7 @@ func TestFullRunLifecycle(t *testing.T) {
 }
 
 func TestRunTimeout(t *testing.T) {
+	t.Parallel()
 	runtimeName := "bash-timeout"
 	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
 
@@ -111,6 +114,7 @@ func TestRunTimeout(t *testing.T) {
 }
 
 func TestCompletedRunTTLGCDeletesFinishedRun(t *testing.T) {
+	t.Parallel()
 	runtimeName := "bash-ttl-gc"
 	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
 	ttlSeconds := int32(2)
@@ -157,23 +161,7 @@ func TestRuntimedRecoversRunningRunAfterRestart(t *testing.T) {
 	}
 	t.Logf("Created Run %s (runtimed recovery)", run.Name)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	for {
-		time.Sleep(200 * time.Millisecond)
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
-			t.Fatalf("get run: %v", err)
-		}
-		if run.Status.Phase == v1alpha1.RunRunning && run.Status.AssignedPod != "" {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for run to start, phase=%s pod=%s msg=%s",
-				run.Status.Phase, run.Status.AssignedPod, run.Status.Message)
-		default:
-		}
-	}
+	waitForRunRunning(t, run, 30*time.Second)
 
 	beforeRestart := runtimedRestartCount(t, run.Status.AssignedPod)
 	killRuntimed(t, run.Status.AssignedPod)
@@ -186,6 +174,7 @@ func TestRuntimedRecoversRunningRunAfterRestart(t *testing.T) {
 }
 
 func TestPythonInlineRun(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "python", pythonRuntimeImage(), 9092)
 
 	inline := `print("hello from python")`
@@ -209,6 +198,7 @@ func TestPythonInlineRun(t *testing.T) {
 }
 
 func TestRunInvalidOutputsDoesNotRetry(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	run := &v1alpha1.Run{
@@ -234,6 +224,7 @@ func TestRunInvalidOutputsDoesNotRetry(t *testing.T) {
 }
 
 func TestRunOversizedOutputsDoesNotRetry(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	run := &v1alpha1.Run{
@@ -261,6 +252,7 @@ func TestRunOversizedOutputsDoesNotRetry(t *testing.T) {
 }
 
 func TestRunRetry(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	// Script that fails the first 2 times, succeeds on the 3rd.
@@ -307,6 +299,7 @@ echo "succeeded on attempt $count"
 }
 
 func TestStaleRunNoRetry(t *testing.T) {
+	t.Parallel()
 	runtimeName := "bash-stale-no-retry"
 	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
 
@@ -326,23 +319,8 @@ func TestStaleRunNoRetry(t *testing.T) {
 	t.Logf("Created Run %s (stale, no retry)", run.Name)
 
 	// Wait for Run to be Running on a pod.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	for {
-		time.Sleep(200 * time.Millisecond)
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
-			t.Fatalf("get run: %v", err)
-		}
-		if run.Status.Phase == v1alpha1.RunRunning {
-			t.Logf("Run running on pod %s", run.Status.AssignedPod)
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for run to start, phase=%s", run.Status.Phase)
-		default:
-		}
-	}
+	waitForRunRunning(t, run, 30*time.Second)
+	t.Logf("Run running on pod %s", run.Status.AssignedPod)
 
 	// Delete the assigned pod.
 	podName := run.Status.AssignedPod
@@ -353,13 +331,12 @@ func TestStaleRunNoRetry(t *testing.T) {
 	t.Logf("Deleted pod %s", podName)
 
 	// Wait for stale reaper to detect and fail the Run.
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
 	var lastPhase v1alpha1.RunPhase
-	for {
-		time.Sleep(500 * time.Millisecond)
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
-			t.Fatalf("get run: %v", err)
+	waitFor(t, 60*time.Second, func() string {
+		return fmt.Sprintf("stale detection for run %s (last phase=%s)", run.Name, lastPhase)
+	}, func(ctx context.Context) (bool, error) {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			return false, err
 		}
 		if run.Status.Phase != lastPhase {
 			t.Logf("Run %s: phase=%s, attempt=%d (pod=%s)", run.Name, run.Status.Phase, run.Status.Attempt, run.Status.AssignedPod)
@@ -368,20 +345,17 @@ func TestStaleRunNoRetry(t *testing.T) {
 		switch run.Status.Phase {
 		case v1alpha1.RunFailed:
 			t.Logf("Run correctly marked Failed after pod deletion: %s", run.Status.Message)
-			return
+			return true, nil
 		case v1alpha1.RunSucceeded:
 			t.Error("expected Failed, got Succeeded")
-			return
+			return true, nil
 		}
-		select {
-		case <-ctx2.Done():
-			t.Fatalf("timed out waiting for stale detection, phase=%s", run.Status.Phase)
-		default:
-		}
-	}
+		return false, nil
+	})
 }
 
 func TestStaleRunWithRetry(t *testing.T) {
+	t.Parallel()
 	runtimeName := "bash-stale-retry"
 	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
 
@@ -405,23 +379,8 @@ func TestStaleRunWithRetry(t *testing.T) {
 	t.Logf("Created Run %s (stale, with retry)", run.Name)
 
 	// Wait for Run to be Running.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	for {
-		time.Sleep(200 * time.Millisecond)
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
-			t.Fatalf("get run: %v", err)
-		}
-		if run.Status.Phase == v1alpha1.RunRunning {
-			t.Logf("Run running on pod %s", run.Status.AssignedPod)
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for run to start, phase=%s", run.Status.Phase)
-		default:
-		}
-	}
+	waitForRunRunning(t, run, 30*time.Second)
+	t.Logf("Run running on pod %s", run.Status.AssignedPod)
 
 	// Delete the assigned pod.
 	podName := run.Status.AssignedPod
@@ -432,21 +391,16 @@ func TestStaleRunWithRetry(t *testing.T) {
 	t.Logf("Deleted pod %s", podName)
 
 	// Wait for stale reaper to reset for retry, then scheduler re-assigns.
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel2()
-	for {
-		time.Sleep(500 * time.Millisecond)
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
-			t.Fatalf("get run: %v", err)
+	waitFor(t, 90*time.Second, func() string {
+		return fmt.Sprintf("run %s to be retried (phase=%s attempt=%d)", run.Name, run.Status.Phase, run.Status.Attempt)
+	}, func(ctx context.Context) (bool, error) {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			return false, err
 		}
 		if run.Status.Phase == v1alpha1.RunRunning && run.Status.Attempt >= 1 {
 			t.Logf("Run retried on pod %s (attempt=%d)", run.Status.AssignedPod, run.Status.Attempt)
-			return
+			return true, nil
 		}
-		select {
-		case <-ctx2.Done():
-			t.Fatalf("timed out waiting for retry, phase=%s attempt=%d", run.Status.Phase, run.Status.Attempt)
-		default:
-		}
-	}
+		return false, nil
+	})
 }

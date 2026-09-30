@@ -42,6 +42,7 @@ import (
 )
 
 func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("session-gateway-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 
@@ -146,6 +147,7 @@ func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
 }
 
 func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("session-stream-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 	run := &v1alpha1.Run{
@@ -254,7 +256,7 @@ func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
 	if err := connection.WriteJSON(map[string]any{"command": map[string]any{"argv": []string{"sh", "-c", "printf websocket"}}}); err != nil {
 		t.Fatalf("write WebSocket operation: %v", err)
 	}
-	connection.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_ = connection.SetReadDeadline(time.Now().Add(10 * time.Second))
 	websocketOutput := false
 	websocketCompleted := false
 	lastSequence = 0
@@ -295,6 +297,7 @@ func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
 }
 
 func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("run-logs-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 
@@ -364,6 +367,7 @@ func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
 }
 
 func TestAggregatedRunLogAPIFollowsOneShotRunBeforeCompletion(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("live-task-logs-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 
@@ -401,6 +405,7 @@ func TestAggregatedRunLogAPIFollowsOneShotRunBeforeCompletion(t *testing.T) {
 }
 
 func TestSessionRuntimeProxyForwardsToNonOwnerPod(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("session-proxy-%d", time.Now().UnixNano())
 	ensureRuntimeWithReplicasAndRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 2, 1)
 	waitForRuntimeReadyReplicas(t, runtimeName, 2, 60*time.Second)
@@ -470,6 +475,7 @@ func TestSessionRuntimeProxyForwardsToNonOwnerPod(t *testing.T) {
 }
 
 func TestSessionGatewayServesTLS(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("session-gateway-tls-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 
@@ -504,6 +510,7 @@ func TestSessionGatewayServesTLS(t *testing.T) {
 }
 
 func TestSessionGatewayEnforcesTransferBounds(t *testing.T) {
+	t.Parallel()
 	if os.Getenv(gatewayBoundsE2EEnabledEnv) != "true" {
 		t.Skipf("set %s=true to run the gateway transfer-bounds E2E", gatewayBoundsE2EEnabledEnv)
 	}
@@ -616,6 +623,7 @@ func TestSessionGatewayServesCertManagerTLS(t *testing.T) {
 }
 
 func TestSessionGatewaySerializesMutations(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("session-fifo-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 
@@ -667,6 +675,7 @@ func TestSessionGatewaySerializesMutations(t *testing.T) {
 }
 
 func TestSessionRunCancellationTerminatesActiveGatewayCommand(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("session-cancel-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 
@@ -707,6 +716,7 @@ func TestSessionRunCancellationTerminatesActiveGatewayCommand(t *testing.T) {
 }
 
 func TestSessionRunDrainCompletesAcceptedGatewayCommand(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("session-drain-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 
@@ -750,6 +760,7 @@ func TestSessionRunDrainCompletesAcceptedGatewayCommand(t *testing.T) {
 }
 
 func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("sdk-session-gateway-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 
@@ -848,6 +859,7 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 }
 
 func TestSessionRunExpiresWhenIdle(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("session-idle-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 	idleTimeout := int32(1)
@@ -866,6 +878,7 @@ func TestSessionRunExpiresWhenIdle(t *testing.T) {
 }
 
 func TestSessionRunExpiresWhenTotalTimeoutReached(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("session-total-timeout-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 	timeout := metav1.Duration{Duration: 5 * time.Second}
@@ -890,6 +903,7 @@ func TestSessionRunExpiresWhenTotalTimeoutReached(t *testing.T) {
 }
 
 func TestSessionRunFailsWhenAssignedRuntimePodIsLost(t *testing.T) {
+	t.Parallel()
 	runtimeName := fmt.Sprintf("session-pod-loss-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 

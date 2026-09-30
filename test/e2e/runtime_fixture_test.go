@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,33 @@ import (
 	"github.com/kruntimes/kruntimes/internal/runtimepod"
 )
 
+// sharedRuntimeFixtures caches the process-wide Runtime pools that most
+// scenarios borrow ("bash" and "python"). The first scenario to need a pool
+// creates it and waits for the pod; every later scenario reuses it instead of
+// re-issuing the same spec update and pod wait. The mutex also serializes
+// concurrent first use when scenarios run in parallel.
+var sharedRuntimeFixtures sync.Map // runtime name -> *sharedRuntimeFixture
+
+type sharedRuntimeFixture struct {
+	mu   sync.Mutex
+	done bool
+}
+
+// e2eSharedRunsCapacity is the worker count the shared warm pools are created
+// with. The product default is 2 concurrent Runs per pod; scenarios that run in
+// parallel would otherwise queue behind each other on the shared pool and turn
+// a scheduling queue into a test timeout. Capacity only affects how many Runs
+// execute concurrently, not what those Runs do.
+const e2eSharedRunsCapacity int32 = 8
+
+// runtimePodReadyTimeout bounds how long a scenario waits for a Runtime pod to
+// become Ready and publish a Service endpoint.
+const runtimePodReadyTimeout = 120 * time.Second
+
+func isSharedRuntime(name string) bool {
+	return name == "bash" || name == "python"
+}
+
 func ensureRuntime(t *testing.T, name, image string, port int32) {
 	t.Helper()
 	ensureRuntimeWithRunsCapacity(t, name, image, port, 0)
@@ -39,6 +67,40 @@ func ensureRuntimeWithRunsCapacity(t *testing.T, name, image string, port int32,
 func ensureRuntimeWithReplicasAndRunsCapacity(t *testing.T, name, image string, port, replicas, runsCapacity int32) {
 	t.Helper()
 
+	if isSharedRuntime(name) {
+		if runsCapacity <= 0 {
+			runsCapacity = e2eSharedRunsCapacity
+		}
+		fixture, _ := sharedRuntimeFixtures.LoadOrStore(name, &sharedRuntimeFixture{})
+		shared := fixture.(*sharedRuntimeFixture)
+		shared.mu.Lock()
+		defer shared.mu.Unlock()
+		if shared.done {
+			// The pool already exists; still confirm the pod is serving so a
+			// scenario does not race a restart triggered by another scenario.
+			waitForRuntimePod(t, name, image, runtimedImage(), runsCapacity, "shared runtime pod")
+			return
+		}
+		if err := applyRuntime(name, image, port, replicas, runsCapacity); err != nil {
+			t.Fatalf("ensure shared runtime %s: %v", name, err)
+		}
+		waitForRuntimePod(t, name, image, runtimedImage(), runsCapacity, "runtime pods")
+		shared.done = true
+		return
+	}
+
+	if err := applyRuntime(name, image, port, replicas, runsCapacity); err != nil {
+		t.Fatalf("ensure runtime %s: %v", name, err)
+	}
+	cleanupRuntime(t, name)
+
+	waitForRuntimePod(t, name, image, runtimedImage(), runsCapacity, "runtime pods")
+}
+
+// applyRuntime creates the Runtime or, when it already exists, updates it to
+// the requested spec. It returns an error so callers that cache the result do
+// not poison later scenarios with a cached failure.
+func applyRuntime(name, image string, port, replicas, runsCapacity int32) error {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -57,12 +119,13 @@ func ensureRuntimeWithReplicasAndRunsCapacity(t *testing.T, name, image string, 
 			},
 		}
 	}
-	if err := k8sClient.Create(context.Background(), rt); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create runtime: %v", err)
-	} else if apierrors.IsAlreadyExists(err) {
+	if err := k8sClient.Create(context.Background(), rt); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("create runtime: %w", err)
+		}
 		existing := &v1alpha1.Runtime{}
 		if getErr := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(rt), existing); getErr != nil {
-			t.Fatalf("get runtime: %v", getErr)
+			return fmt.Errorf("get runtime: %w", getErr)
 		}
 		existing.Spec.Template = rt.Spec.Template
 		existing.Spec.Port = port
@@ -71,12 +134,10 @@ func ensureRuntimeWithReplicasAndRunsCapacity(t *testing.T, name, image string, 
 			existing.Spec.Capacity = rt.Spec.Capacity
 		}
 		if updateErr := k8sClient.Update(context.Background(), existing); updateErr != nil {
-			t.Fatalf("update runtime: %v", updateErr)
+			return fmt.Errorf("update runtime: %w", updateErr)
 		}
 	}
-	cleanupRuntime(t, name)
-
-	waitForRuntimePod(t, name, image, runtimedImage(), runsCapacity, "runtime pods")
+	return nil
 }
 
 func ensureFilesystemRuntime(t *testing.T, name, claimName string) {
@@ -184,18 +245,21 @@ func runtimePodName(t *testing.T, runtimeName string) string {
 
 func waitForRuntimeReadyReplicas(t *testing.T, runtimeName string, want int32, timeout time.Duration) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
 	key := client.ObjectKey{Namespace: testNamespace, Name: runtimeName}
-	for {
+	var lastReady int32
+	var lastErr error
+	waitFor(t, timeout, func() string {
+		return fmt.Sprintf("Runtime %s readyReplicas=%d (last readyReplicas=%d, err=%v)", runtimeName, want, lastReady, lastErr)
+	}, func(ctx context.Context) (bool, error) {
 		runtimeResource := &v1alpha1.Runtime{}
-		if err := k8sClient.Get(ctx, key, runtimeResource); err == nil && runtimeResource.Status.ReadyReplicas == want {
-			return
-		} else if ctx.Err() != nil {
-			t.Fatalf("wait for Runtime %s readyReplicas=%d: %v", runtimeName, want, err)
+		if err := k8sClient.Get(ctx, key, runtimeResource); err != nil {
+			lastErr = err
+			return false, err
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
+		lastErr = nil
+		lastReady = runtimeResource.Status.ReadyReplicas
+		return lastReady == want, nil
+	})
 }
 
 func isRuntimePodReady(pod *corev1.Pod, runtimeImage, daemonImage string, runsCapacity int32) bool {
@@ -231,33 +295,29 @@ func containerImage(pod *corev1.Pod, name string) string {
 
 func waitForRuntimePod(t *testing.T, name, runtimeImage, daemonImage string, runsCapacity int32, description string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
 
 	var lastErr error
-	for {
+	waitFor(t, runtimePodReadyTimeout, func() string {
+		return fmt.Sprintf("%s (Runtime %s: image=%s daemonImage=%s runsCapacity=%d, last error=%v)", description, name, runtimeImage, daemonImage, runsCapacity, lastErr)
+	}, func(ctx context.Context) (bool, error) {
 		var pods corev1.PodList
-		err := k8sClient.List(ctx, &pods,
+		if err := k8sClient.List(ctx, &pods,
 			client.InNamespace(testNamespace),
 			client.MatchingLabels{"runtime": name},
-		)
-		if err == nil {
-			for _, pod := range pods.Items {
-				if isRuntimePodReady(&pod, runtimeImage, daemonImage, runsCapacity) && runtimeServiceHasReadyEndpoint(ctx, name) {
-					return
-				}
-			}
-		} else {
+		); err != nil {
 			lastErr = err
+			return false, err
 		}
-
-		select {
-		case <-ctx.Done():
-			dumpRuntimeDiagnostics(t, name, runtimeImage, daemonImage, runsCapacity, lastErr)
-			t.Fatalf("timed out waiting for %s", description)
-		case <-time.After(2 * time.Second):
+		lastErr = nil
+		for _, pod := range pods.Items {
+			if isRuntimePodReady(&pod, runtimeImage, daemonImage, runsCapacity) && runtimeServiceHasReadyEndpoint(ctx, name) {
+				return true, nil
+			}
 		}
-	}
+		return false, nil
+	}, func() {
+		dumpRuntimeDiagnostics(t, name, runtimeImage, daemonImage, runsCapacity, lastErr)
+	})
 }
 
 // runtimeServiceHasReadyEndpoint verifies that the Runtime Service can route

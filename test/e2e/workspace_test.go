@@ -23,6 +23,7 @@ import (
 )
 
 func TestPersistentWorkspaceBindingFencesRuntimePodReplacement(t *testing.T) {
+	t.Parallel()
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	runtimeName := "workspace-binding-" + nameSuffix
 	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
@@ -94,6 +95,7 @@ func TestPersistentWorkspaceBindingFencesRuntimePodReplacement(t *testing.T) {
 }
 
 func TestPersistentWorkspaceAdmissionAuthorization(t *testing.T) {
+	t.Parallel()
 	ensureRuntime(t, "bash", bashRuntimeImage(), 9091)
 
 	ctx := context.Background()
@@ -229,6 +231,7 @@ func workflowRunOwnerReference(workflowRun *v1alpha1.WorkflowRun) metav1.OwnerRe
 }
 
 func TestPersistentWorkspaceExplicitDeletionCleansRetainedData(t *testing.T) {
+	t.Parallel()
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	runtimeName := "workspace-cleanup-" + nameSuffix
 	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)
@@ -274,6 +277,7 @@ func TestPersistentWorkspaceExplicitDeletionCleansRetainedData(t *testing.T) {
 }
 
 func TestPersistentWorkspaceTTLDeletionCleansData(t *testing.T) {
+	t.Parallel()
 	nameSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	runtimeName := "workspace-ttl-cleanup-" + nameSuffix
 	ensureRuntime(t, runtimeName, bashRuntimeImage(), 9091)

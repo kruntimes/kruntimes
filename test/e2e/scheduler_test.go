@@ -34,28 +34,18 @@ func TestSchedulerResponsiveness(t *testing.T) {
 
 	start := time.Now()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	for {
-		time.Sleep(200 * time.Millisecond)
-
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
-			t.Fatalf("get run: %v", err)
+	waitFor(t, 15*time.Second, func() string {
+		return fmt.Sprintf("scheduler to pick up run %s (phase=%s, msg=%s)", run.Name, run.Status.Phase, run.Status.Message)
+	}, func(ctx context.Context) (bool, error) {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			return false, err
 		}
-
 		if run.Status.Phase != v1alpha1.RunPending {
-			elapsed := time.Since(start)
-			t.Logf("Run scheduled in %v (phase=%s, pod=%s)", elapsed, run.Status.Phase, run.Status.AssignedPod)
-			return
+			t.Logf("Run scheduled in %v (phase=%s, pod=%s)", time.Since(start), run.Status.Phase, run.Status.AssignedPod)
+			return true, nil
 		}
-
-		select {
-		case <-ctx.Done():
-			t.Fatal("timed out waiting for scheduler to pick up run")
-		default:
-		}
-	}
+		return false, nil
+	})
 }
 
 func TestSchedulerKeepsRunPendingWithoutRuntimePod(t *testing.T) {
@@ -122,22 +112,14 @@ func TestCancelPendingRunWithoutRuntimePod(t *testing.T) {
 	}
 	t.Logf("Created Run %s (pending cancel)", run.Name)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	for {
-		time.Sleep(200 * time.Millisecond)
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
-			t.Fatalf("get run: %v", err)
+	waitFor(t, 20*time.Second, func() string {
+		return fmt.Sprintf("pending run %s with a status message (phase=%s, msg=%s)", run.Name, run.Status.Phase, run.Status.Message)
+	}, func(ctx context.Context) (bool, error) {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			return false, err
 		}
-		if run.Status.Phase == v1alpha1.RunPending && run.Status.Message != "" {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for pending run, phase=%s msg=%s", run.Status.Phase, run.Status.Message)
-		default:
-		}
-	}
+		return run.Status.Phase == v1alpha1.RunPending && run.Status.Message != "", nil
+	})
 
 	requestRunCancel(t, run)
 	waitForRunPhase(t, run, 20*time.Second, v1alpha1.RunCancelled)
@@ -167,22 +149,7 @@ func TestCancelRunningRunDoesNotRetry(t *testing.T) {
 	}
 	t.Logf("Created Run %s (running cancel)", run.Name)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	for {
-		time.Sleep(200 * time.Millisecond)
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
-			t.Fatalf("get run: %v", err)
-		}
-		if run.Status.Phase == v1alpha1.RunRunning {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for running run, phase=%s msg=%s", run.Status.Phase, run.Status.Message)
-		default:
-		}
-	}
+	waitForRunRunning(t, run, 30*time.Second)
 
 	requestRunCancel(t, run)
 	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunCancelled)
@@ -267,23 +234,15 @@ func TestSchedulerReactivatesPendingRunWhenRuntimePodBecomesReady(t *testing.T) 
 	}
 	defer func() { _ = k8sClient.Delete(context.Background(), run) }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	for {
-		time.Sleep(200 * time.Millisecond)
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(run), run); err != nil {
-			t.Fatalf("get pending run: %v", err)
+	waitFor(t, 15*time.Second, func() string {
+		return fmt.Sprintf("pending run observation for %s (phase=%s, msg=%s)", run.Name, run.Status.Phase, run.Status.Message)
+	}, func(ctx context.Context) (bool, error) {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			return false, err
 		}
-		if run.Status.Phase == v1alpha1.RunPending &&
-			strings.Contains(run.Status.Message, "waiting for available runtime pods") {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for pending run observation, phase=%s msg=%s", run.Status.Phase, run.Status.Message)
-		default:
-		}
-	}
+		return run.Status.Phase == v1alpha1.RunPending &&
+			strings.Contains(run.Status.Message, "waiting for available runtime pods"), nil
+	})
 
 	// The Runtime Pod create/ready events must reactivate this Run before the
 	// scheduler's 30-second no-capacity polling fallback.
@@ -314,22 +273,7 @@ func TestSchedulerKeepsRunPendingWhenRuntimeAtCapacity(t *testing.T) {
 	}
 	defer func() { _ = k8sClient.Delete(context.Background(), first) }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	for {
-		time.Sleep(200 * time.Millisecond)
-		if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(first), first); err != nil {
-			t.Fatalf("get first run: %v", err)
-		}
-		if first.Status.Phase == v1alpha1.RunRunning {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for first run to start, phase=%s msg=%s", first.Status.Phase, first.Status.Message)
-		default:
-		}
-	}
+	waitForRunRunning(t, first, 20*time.Second)
 
 	second := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{

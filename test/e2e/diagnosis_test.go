@@ -19,6 +19,7 @@ import (
 )
 
 func TestKubernetesDiagnosisRuntimeCanReadNamespace(t *testing.T) {
+	t.Parallel()
 	name := fmt.Sprintf("diagnosis-runtime-%d", time.Now().UnixNano())
 	serviceAccountName := "diagnosis-reader-" + fmt.Sprintf("%d", time.Now().UnixNano())
 	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: serviceAccountName, Namespace: testNamespace}}

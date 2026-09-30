@@ -20,6 +20,7 @@ import (
 )
 
 func TestFilesystemArtifacts(t *testing.T) {
+	t.Parallel()
 	runtimeName := "bash-filesystem-artifacts"
 	claimName := "e2e-filesystem-artifacts"
 	ensureFilesystemRuntime(t, runtimeName, claimName)
@@ -112,6 +113,7 @@ func TestFilesystemArtifacts(t *testing.T) {
 }
 
 func TestSessionRunExportsArtifactsOnDrain(t *testing.T) {
+	t.Parallel()
 	runtimeName := "bash-session-artifacts"
 	claimName := "e2e-session-artifacts"
 	ensureFilesystemRuntime(t, runtimeName, claimName)
@@ -169,6 +171,7 @@ func TestSessionRunExportsArtifactsOnDrain(t *testing.T) {
 }
 
 func TestRunStagesArtifactInputs(t *testing.T) {
+	t.Parallel()
 	runtimeName := "bash-artifact-inputs"
 	claimName := "e2e-artifact-inputs"
 	ensureFilesystemRuntime(t, runtimeName, claimName)
