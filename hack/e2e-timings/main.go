@@ -246,19 +246,23 @@ func writeMarkdown(path string, rep report, top int, regressions []regression) e
 
 // compareBaseline loads a previous report and returns the tests that got at
 // least regressionPercent percent and regressionSeconds seconds slower. The
-// comparison is advisory: it is reported in CI, never enforced, because E2E
-// durations depend on the runner.
+// comparison is advisory: it is reported in CI and never enforced, so a
+// missing or unreadable baseline is ignored rather than failing the run.
 func compareBaseline(path string, current report, regressionPercent, regressionSeconds float64) ([]regression, error) {
 	payload, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("read baseline: %w", err)
+		fmt.Fprintf(os.Stderr, "e2e-timings: ignoring baseline %s: %v\n", path, err)
+		return nil, nil
 	}
 	var baseline report
 	if err := json.Unmarshal(payload, &baseline); err != nil {
-		return nil, fmt.Errorf("decode baseline: %w", err)
+		// A stale or hand-edited baseline must never fail the E2E run; the
+		// comparison is advisory.
+		fmt.Fprintf(os.Stderr, "e2e-timings: ignoring baseline %s: %v\n", path, err)
+		return nil, nil
 	}
 	previous := make(map[string]float64, len(baseline.Tests))
 	for _, t := range baseline.Tests {

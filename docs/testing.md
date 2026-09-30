@@ -179,6 +179,25 @@ go test ./test/e2e/... -json | go run ./hack/e2e-timings -top 30 -report /tmp/e2
 Snapshot and commit a new baseline after an intentional suite change by copying
 the `e2e-timings.json` artifact over `test/e2e/timings-baseline.json`.
 
+### Measured improvement
+
+The numbers below come from `make e2e` runs on a GitHub-hosted runner with the
+same 65 tests (63 run, 2 environment-gated skips):
+
+| Suite | Fan-out | Test phase | `make e2e` job |
+| --- | --- | --- | --- |
+| pre-split baseline | serial | 435.1s | 13m17s |
+| condition waits + shared pools | serial (`E2E_PARALLEL=1`) | 418.0s | 13m21s |
+| condition waits + shared pools + parallel | 4 | 180.0s | 10m40s |
+
+Condition-driven waits and the shared warm pools remove about 4% of the test
+phase on their own; safe parallelism removes a further 57% relative to serial,
+for a 58.6% reduction in total test-phase wall clock. The remaining slowest
+cases are bounded by product timers rather than by the harness: the pod-loss
+and stale-Run scenarios wait for the controller's 30-second stale requeue, so
+they stay at 32-37s each regardless of scheduling. Image builds, kind cluster
+creation, and Helm deployment are unchanged and dominate the rest of the job.
+
 ## Benchmarks
 
 ```bash

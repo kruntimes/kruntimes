@@ -52,6 +52,11 @@ for validating a change that affects deployed components.
   the caller returns before the background process completes.
 - E2E needs Docker, kind, kubectl, Helm, the local Kubernetes API, and service
   ports. Run it with the required sandbox escalation.
+- Scenarios that do not mutate cluster-wide state call `t.Parallel()` and run
+  up to `E2E_PARALLEL` (default 4) at a time; use `E2E_PARALLEL=1 make e2e` for
+  the serial order. `make e2e-test` writes `e2e-timings.json` and
+  `e2e-timings.md`; see [docs/testing.md](docs/testing.md) for the serial
+  constraints and baseline workflow.
 
 Run a single Go test: `go test ./internal/scheduler/... -run TestName -v`
 Run Python tests: `cd runtimes/python && uv run python -m unittest server_test -v`

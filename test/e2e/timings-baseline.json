@@ -1,0 +1,339 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-30T14:32:12.639821503Z",
+  "packages": [
+    "github.com/kruntimes/kruntimes/test/e2e"
+  ],
+  "passed": 63,
+  "failed": 0,
+  "skipped": 2,
+  "wallClockSeconds": 179.982710071,
+  "testDurationSeconds": 438.87,
+  "tests": [
+    {
+      "name": "TestFunctionRunFailsWhenAssignedRuntimePodIsLost",
+      "status": "pass",
+      "durationSeconds": 37.1
+    },
+    {
+      "name": "TestStaleRunWithRetry",
+      "status": "pass",
+      "durationSeconds": 32.06
+    },
+    {
+      "name": "TestStaleRunNoRetry",
+      "status": "pass",
+      "durationSeconds": 32.04
+    },
+    {
+      "name": "TestSessionRunFailsWhenAssignedRuntimePodIsLost",
+      "status": "pass",
+      "durationSeconds": 31.76
+    },
+    {
+      "name": "TestRuntimedRecoversRunningRunAfterRestart",
+      "status": "pass",
+      "durationSeconds": 22.13
+    },
+    {
+      "name": "TestWorkflowRunRecoversActionAfterControllerRestart",
+      "status": "pass",
+      "durationSeconds": 19.31
+    },
+    {
+      "name": "TestSessionRunDrainCompletesAcceptedGatewayCommand",
+      "status": "pass",
+      "durationSeconds": 17.45
+    },
+    {
+      "name": "TestSchedulerKeepsRunPendingWhenRuntimeAtCapacity",
+      "status": "pass",
+      "durationSeconds": 16.45
+    },
+    {
+      "name": "TestRunStagesArtifactInputs",
+      "status": "pass",
+      "durationSeconds": 15.66
+    },
+    {
+      "name": "TestFilesystemArtifacts",
+      "status": "pass",
+      "durationSeconds": 14.23
+    },
+    {
+      "name": "TestPersistentWorkspaceTTLDeletionCleansData",
+      "status": "pass",
+      "durationSeconds": 13.17
+    },
+    {
+      "name": "TestFunctionRunExpiresWhenTotalTimeoutReached",
+      "status": "pass",
+      "durationSeconds": 11.88
+    },
+    {
+      "name": "TestAggregatedRunLogAPIFollowsOneShotRunBeforeCompletion",
+      "status": "pass",
+      "durationSeconds": 11.86
+    },
+    {
+      "name": "TestFunctionRunRecoversInvocationAfterRuntimedRestart",
+      "status": "pass",
+      "durationSeconds": 9.46
+    },
+    {
+      "name": "TestWorkflowRunTransfersArtifactsBetweenJobs",
+      "status": "pass",
+      "durationSeconds": 9.11
+    },
+    {
+      "name": "TestFunctionRuntimeProxyForwardsToNonOwnerPod",
+      "status": "pass",
+      "durationSeconds": 7.63
+    },
+    {
+      "name": "TestFunctionRunExpiresWhenIdle",
+      "status": "pass",
+      "durationSeconds": 7.61
+    },
+    {
+      "name": "TestAggregatedRunLogAPIServesAuthorizedRunLogs",
+      "status": "pass",
+      "durationSeconds": 7.42
+    },
+    {
+      "name": "TestFunctionGatewayInvokesAuthorizedFunction",
+      "status": "pass",
+      "durationSeconds": 7.34
+    },
+    {
+      "name": "TestKubernetesDiagnosisRuntimeCanReadNamespace",
+      "status": "pass",
+      "durationSeconds": 6.71
+    },
+    {
+      "name": "TestSessionRunExportsArtifactsOnDrain",
+      "status": "pass",
+      "durationSeconds": 6.58
+    },
+    {
+      "name": "TestDeletingFunctionRunReleasesRuntimeCapacity",
+      "status": "pass",
+      "durationSeconds": 6.56
+    },
+    {
+      "name": "TestSchedulerInterRunAffinityBootstrap",
+      "status": "pass",
+      "durationSeconds": 6.53
+    },
+    {
+      "name": "TestSessionRunExpiresWhenTotalTimeoutReached",
+      "status": "pass",
+      "durationSeconds": 6.52
+    },
+    {
+      "name": "TestPythonInlineRun",
+      "status": "pass",
+      "durationSeconds": 6.39
+    },
+    {
+      "name": "TestFunctionRunCancellationReleasesRuntimeCapacity",
+      "status": "pass",
+      "durationSeconds": 5.17
+    },
+    {
+      "name": "TestCancelNearCompletionHasStableTerminalPhase",
+      "status": "pass",
+      "durationSeconds": 4.67
+    },
+    {
+      "name": "TestSessionGatewayStreamsCommandOutput",
+      "status": "pass",
+      "durationSeconds": 4.59
+    },
+    {
+      "name": "TestSandboxSDKUsesGatewayServicePortForward",
+      "status": "pass",
+      "durationSeconds": 4.08
+    },
+    {
+      "name": "TestRuntimeReadyReplicasTracksRuntimedAvailability",
+      "status": "pass",
+      "durationSeconds": 3.83
+    },
+    {
+      "name": "TestPersistentWorkspaceExplicitDeletionCleansRetainedData",
+      "status": "pass",
+      "durationSeconds": 3.7
+    },
+    {
+      "name": "TestRunRetry",
+      "status": "pass",
+      "durationSeconds": 3.53
+    },
+    {
+      "name": "TestPersistentWorkspaceBindingFencesRuntimePodReplacement",
+      "status": "pass",
+      "durationSeconds": 3.44
+    },
+    {
+      "name": "TestCompletedRunTTLGCDeletesFinishedRun",
+      "status": "pass",
+      "durationSeconds": 3.28
+    },
+    {
+      "name": "TestSessionGatewaySerializesMutations",
+      "status": "pass",
+      "durationSeconds": 3.27
+    },
+    {
+      "name": "TestSessionRunExpiresWhenIdle",
+      "status": "pass",
+      "durationSeconds": 3.19
+    },
+    {
+      "name": "TestSessionGatewayServesTLS",
+      "status": "pass",
+      "durationSeconds": 2.98
+    },
+    {
+      "name": "TestRunTimeout",
+      "status": "pass",
+      "durationSeconds": 2.87
+    },
+    {
+      "name": "TestSessionRuntimeProxyForwardsToNonOwnerPod",
+      "status": "pass",
+      "durationSeconds": 2.7
+    },
+    {
+      "name": "TestWorkflowRunBindsReusableTemplateWhenCallBecomesReady",
+      "status": "pass",
+      "durationSeconds": 2.53
+    },
+    {
+      "name": "TestSessionRunCancellationTerminatesActiveGatewayCommand",
+      "status": "pass",
+      "durationSeconds": 2.29
+    },
+    {
+      "name": "TestWorkflowRunFreezesReusableTemplateAfterChildCreation",
+      "status": "pass",
+      "durationSeconds": 2.27
+    },
+    {
+      "name": "TestSessionGatewayExecutesAuthorizedOperation",
+      "status": "pass",
+      "durationSeconds": 2.22
+    },
+    {
+      "name": "TestSchedulerReactivatesPendingRunWhenRuntimePodBecomesReady",
+      "status": "pass",
+      "durationSeconds": 2.05
+    },
+    {
+      "name": "TestCancelRunningRunDoesNotRetry",
+      "status": "pass",
+      "durationSeconds": 1.85
+    },
+    {
+      "name": "TestSchedulerResponsiveness",
+      "status": "pass",
+      "durationSeconds": 1.84
+    },
+    {
+      "name": "TestWorkflowRunExecutesActionAndProjectsOutputs",
+      "status": "pass",
+      "durationSeconds": 1.31
+    },
+    {
+      "name": "TestWorkflowRunSharesToolCacheAndEnvironmentBetweenSteps",
+      "status": "pass",
+      "durationSeconds": 1.05
+    },
+    {
+      "name": "TestWorkflowRunSharesJobLocalWorkspace",
+      "status": "pass",
+      "durationSeconds": 1.04
+    },
+    {
+      "name": "TestPersistentWorkspaceAdmissionAuthorization",
+      "status": "pass",
+      "durationSeconds": 0.69
+    },
+    {
+      "name": "TestWorkflowRunExecutesNestedReusableWorkflows",
+      "status": "pass",
+      "durationSeconds": 0.66
+    },
+    {
+      "name": "TestFullRunLifecycle",
+      "status": "pass",
+      "durationSeconds": 0.62
+    },
+    {
+      "name": "TestRunInvalidOutputsDoesNotRetry",
+      "status": "pass",
+      "durationSeconds": 0.62
+    },
+    {
+      "name": "TestWorkflowTriggerMaterializesAndExecutesTemplate",
+      "status": "pass",
+      "durationSeconds": 0.46
+    },
+    {
+      "name": "TestWorkflowRunCancellationPropagatesToActionChildRun",
+      "status": "pass",
+      "durationSeconds": 0.45
+    },
+    {
+      "name": "TestRunOversizedOutputsDoesNotRetry",
+      "status": "pass",
+      "durationSeconds": 0.44
+    },
+    {
+      "name": "TestWorkflowRunCancellationPropagatesToReusableWorkflow",
+      "status": "pass",
+      "durationSeconds": 0.44
+    },
+    {
+      "name": "TestWorkflowRunFailsWhenActionChildRunFails",
+      "status": "pass",
+      "durationSeconds": 0.44
+    },
+    {
+      "name": "TestCancelPendingRunWithoutRuntimePod",
+      "status": "pass",
+      "durationSeconds": 0.42
+    },
+    {
+      "name": "TestWorkflowRunExecutesReusableWorkflowAndProjectsOutputs",
+      "status": "pass",
+      "durationSeconds": 0.24
+    },
+    {
+      "name": "TestWorkflowRunRejectsMissingActionWithoutChildRun",
+      "status": "pass",
+      "durationSeconds": 0.24
+    },
+    {
+      "name": "TestWorkflowRunRejectsReusableWorkflowCycle",
+      "status": "pass",
+      "durationSeconds": 0.23
+    },
+    {
+      "name": "TestSchedulerKeepsRunPendingWithoutRuntimePod",
+      "status": "pass",
+      "durationSeconds": 0.21
+    },
+    {
+      "name": "TestSessionGatewayEnforcesTransferBounds",
+      "status": "skip",
+      "durationSeconds": 0
+    },
+    {
+      "name": "TestSessionGatewayServesCertManagerTLS",
+      "status": "skip",
+      "durationSeconds": 0
+    }
+  ]
+}

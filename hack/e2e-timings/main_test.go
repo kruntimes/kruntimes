@@ -127,3 +127,17 @@ func TestCompareBaselineMissingFileIsNotAnError(t *testing.T) {
 		t.Fatalf("regressions = %#v, want none", regressions)
 	}
 }
+
+func TestCompareBaselineMalformedFileIsNotAnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "baseline.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	regressions, err := compareBaseline(path, report{}, 25, 2)
+	if err != nil {
+		t.Fatalf("compareBaseline: %v", err)
+	}
+	if len(regressions) != 0 {
+		t.Fatalf("regressions = %#v, want none", regressions)
+	}
+}
