@@ -2552,6 +2552,59 @@ func TestRecoverActiveRunsOnceAddsRuntimeExecutions(t *testing.T) {
 	}
 }
 
+// A Run claimed by the live reconcile loop after startup is registering its
+// execution with the Runtime Server. Startup recovery used to fail it with
+// ExecutionLost when its execution was not visible yet; it must be ignored
+// because recovery only owns Runs left behind by a previous process.
+func TestRecoverActiveRunsOnceIgnoresRunsClaimedByThisProcess(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "default")
+
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "live",
+			Namespace: "default",
+			UID:       "live-uid",
+		},
+		Spec: v1alpha1.RunSpec{Runtime: "python"},
+		Status: v1alpha1.RunStatus{
+			Phase:       v1alpha1.RunRunning,
+			AssignedPod: "pod-a",
+			StartTime:   &metav1.Time{Time: time.Now()},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Run{}).
+		WithObjects(run).
+		Build()
+	c := &Controller{
+		Client:     k8sClient,
+		PodName:    "pod-a",
+		runtimeCli: &fakeRuntimeClient{list: &pb.ListResponse{}},
+	}
+	// The live loop claimed the Run just before the recovery scan listed it.
+	c.activeRuns.Store("live-uid", c.buildActiveRun(run))
+
+	c.recoverActiveRunsOnce(t.Context())
+
+	var updated v1alpha1.Run
+	if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), &updated); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if updated.Status.Phase != v1alpha1.RunRunning {
+		t.Fatalf("phase = %s, want Running: recovery must not fail a Run already claimed by this process", updated.Status.Phase)
+	}
+	if _, ok := c.activeRuns.Load("live-uid"); !ok {
+		t.Fatal("expected the live claim to remain active")
+	}
+}
+
 func TestStartExecutionWaitsForRuntimeReady(t *testing.T) {
 	setTestWorkspace(t)
 	runtimeClient := &fakeRuntimeClient{}
