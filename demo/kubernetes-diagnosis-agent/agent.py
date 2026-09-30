@@ -9,7 +9,7 @@ from typing import Any
 
 from diagnostics import TOOL, command_for
 from kruntimes.kubernetes import PortForwardGatewayTransport, from_incluster, from_kube_config
-from kruntimes.sandbox import Command, CreateOptions
+from kruntimes.sandbox import AcquireOptions, Command
 
 _MAX_TOOL_CALLS = 8
 
@@ -44,14 +44,11 @@ def main() -> None:
 def run_diagnosis(client: Any, namespace: str, runtime: str, model: str) -> None:
     """Run a bounded tool-call loop and preserve its evidence in one session."""
     openai = _openai_client()
-    sandbox = client.create(CreateOptions(
-        namespace=namespace,
+    sandbox = client.runtime(namespace, runtime).acquire_sandbox(AcquireOptions(
         generate_name="kube-diagnose-",
-        runtime=runtime,
         session={"idleTimeoutSeconds": 300, "operationTimeout": "30s"},
-    ))
+    ), timeout_seconds=90)
     try:
-        sandbox.wait(timeout_seconds=90)
         response = openai.responses.create(
             model=model,
             tools=[TOOL],
@@ -87,7 +84,7 @@ def run_diagnosis(client: Any, namespace: str, runtime: str, model: str) -> None
         report, _ = sandbox.read_file("report.md", max_bytes=16_384)
         print(report.decode(errors="replace"))
     finally:
-        sandbox.close(timeout_seconds=30)
+        sandbox.release(timeout_seconds=30)
 
 
 def _openai_client() -> Any:
