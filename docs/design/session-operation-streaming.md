@@ -29,7 +29,9 @@ API remains supported.
 ## Non-goals for the first delivery
 
 - Durable event retention or replay after a Runtime Pod is lost.
-- Continuing an operation after its client connection is cancelled.
+- Durable operation replay after a client disconnect. A live operation may
+  continue after its connection closes, subject to its ordinary timeout and the
+  Session lease, but the disconnected client has no retained event cursor.
 - Runtime-defined bidirectional user input or approval. The WebSocket transport
   supports client cancellation, but further messages require a separate Runtime
   protocol extension and operation admission design.
@@ -89,24 +91,54 @@ admitted fails before any response event with the existing HTTP error mapping.
 Once event bytes have been written, a terminal failure is represented by a
 `failed` event because HTTP status cannot safely change mid-stream.
 
-The preferred interactive transport is WebSocket:
+The Session connection's internal transport is WebSocket:
 
 ```text
-GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws
+GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}:ws
 Upgrade: websocket
 ```
 
 The HTTP upgrade is authenticated and authorized before the connection is
 accepted. Browser requests with an `Origin` header must be same-origin; native
 clients without `Origin` continue to use bearer-token or client-certificate
-authentication in the upgrade request. The first client text frame is exactly
-the JSON operation object accepted by `operations:execute`. The server sends
-one JSON text frame for each ordered `SessionOperationEvent`, using the same
-representation as NDJSON but without a trailing newline. `Idempotency-Key` and
-the optional `after` query parameter retain their HTTP meanings. During the
-operation, a client may send `{"type":"cancel"}` to cancel its stream context.
-Other client messages close the connection; arbitrary interactive input is not
-yet part of the Runtime protocol.
+authentication in the upgrade request. Opening a connection does not submit an
+operation. The first version allows one in-flight operation per connection;
+this matches one agent turn at a time and does not invent operation
+multiplexing semantics.
+
+The SDK's `Send` writes an internal frame like this:
+
+```json
+{
+  "type": "send",
+  "idempotencyKey": "optional-client-key",
+  "operation": {
+    "command": {"shell": "classify and label issue #123"}
+  }
+}
+```
+
+The gateway forwards `operation` through the existing operation admission path.
+It returns an ordered `SessionOperationEvent` in each server text frame. The
+first `accepted` event provides the server-generated operation ID, which the
+SDK returns from `Send`; `Receive` exposes subsequent events without exposing
+frames or WebSocket details:
+
+```json
+{
+  "sequence": 1,
+  "type": "accepted",
+  "accepted": {"operationID": "op-7b7b"}
+}
+```
+
+During the operation, `Cancel(operationID)` writes the internal frame
+`{"type":"cancel","operationID":"op-7b7b"}`. The gateway rejects a
+cancellation whose ID is not the current operation. A second `send` before a
+terminal event is a connection protocol error. WebSocket ping/pong frames carry
+the SDK lease heartbeat; no application-level heartbeat message is public.
+Arbitrary interactive input or approval messages are not yet part of the
+Runtime protocol.
 
 An error before WebSocket upgrade is an ordinary HTTP error. An error after
 upgrade is sent as `{"type":"error","error":"..."}` followed by a WebSocket
@@ -118,14 +150,65 @@ The HTTP representation uses lower-case protocol values: output `stream` is
 `tool_call_started`, or `tool_call_finished`. Binary `data` fields are standard
 JSON base64 strings.
 
+## SDK session connection
+
+The SDK is an agent-sandbox API, not an HTTP transport wrapper. It exposes one
+Session connection model in both Go and Python:
+
+```text
+Runtime.AcquireSandbox (create Session Run) -> assigned Runtime Pod
+-> Sandbox.OpenSession -> Send / Receive / Cancel -> Session.Close
+-> Sandbox.Release (stop/delete Session Run)
+```
+
+`Sandbox` is the SDK object and its one Session is represented by one
+session-mode Run. `AcquireSandbox` creates that Run and waits for successful
+scheduling plus registration before returning an active Sandbox. A Sandbox
+supports exactly one Session in this version.
+
+Capacity is acquired atomically when `AcquireSandbox` creates the Run and the
+scheduler assigns it to a Runtime Pod. `OpenSession` only opens a streaming
+connection to that ready Session; it never creates a Run or changes capacity.
+
+The public data-plane vocabulary is transport-independent:
+
+| Operation | Meaning |
+| --- | --- |
+| `Send` | submit one Session operation and return its operation ID |
+| `Receive` | receive the next ordered event, including its operation ID |
+| `Cancel` | request cancellation of one submitted operation |
+| `Session.Close` | close only the streaming connection |
+| `ReleaseSandbox` | stop the Session, wait for cleanup, then delete its Session Run |
+
+The SDK does not expose `Stream`, `Resume`, `StreamWebSocket`, NDJSON, or
+WebSocket names. Internally it maintains a persistent, authenticated,
+bidirectional WebSocket connection. Client messages carry an operation request
+or cancellation; server messages carry the ordered `SessionOperationEvent` and
+its operation ID. A gateway error after upgrade is surfaced as a typed SDK
+transport error rather than as an event.
+
+SDK constructors derived from a Kubernetes REST configuration use its TLS CA
+bundle and optional client certificate/key for the connection, and apply an
+explicit bearer token when configured. A custom SDK transport must implement
+this connection boundary itself; an HTTP `RoundTripper` alone cannot upgrade a
+WebSocket. Scoped Console port-forward adapters rewrite the connection endpoint
+as they do regular HTTP endpoints and preserve caller credentials.
+
+The first version does not automatically retry or replay an operation after a
+transport failure. The operation outcome is then unknown; the caller may open a
+new connection before the Session lease expires and inspect Session state.
+Durable operation replay is separate from this live-connection contract.
+
 ## Lifecycle, cancellation, and bounds
 
-The gateway authorizes the stream exactly as it authorizes unary operations.
-It passes the HTTP request context to runtimed. Client disconnect, gateway
-shutdown, immediate Session cancellation, and the effective operation timeout
-cancel that context; runtimed cancels the local Runtime Server stream and frees
-the active queue entry. `Drain` accepts an already admitted stream and rejects
-new ones as it does today.
+The gateway authorizes the connection exactly as it authorizes unary
+operations. `Cancel`, gateway shutdown, immediate Session termination, and the
+effective operation timeout cancel an active Runtime Server operation and free
+the queue entry. Closing the SDK Session connection only detaches the event
+consumer; it does not cancel admitted work or release Session capacity. The
+owner runtimed continues to enforce the operation timeout and Session lease.
+`Drain` accepts an already admitted operation and rejects new ones as it does
+today.
 
 Runtimed limits each Runtime-emitted event. It forwards events directly rather
 than accumulating an unbounded response buffer. An over-limit or malformed
@@ -137,13 +220,14 @@ results and each gateway JSON line.
 ## Compatibility and rollout
 
 `ExecuteSessionOperation`, `operations:execute`, and the NDJSON
-`operations:stream` endpoint are unchanged. Built-in Runtimes may initially
+`operations:stream` endpoint remain available for non-SDK callers. Built-in Runtimes may initially
 return `Unimplemented` for the streaming gRPC method; the gateway maps that to
 a clear capability error. Interactive Runtimes opt in by implementing the
 method. The GitHub Issue Labeler Runtime will emit Pi text and tool lifecycle
 events, while its existing unary `message` command continues to return the
 final answer for non-streaming clients.
 
-The Go and Python Session SDKs will add explicit streaming helpers rather than
-silently changing `Execute` return types. Dashboard will use the streaming
-endpoint for agent turns and render events incrementally.
+The Go and Python Session SDKs expose `AcquireSandbox`, `OpenSession`, `Send`,
+`Receive`, `Cancel`, `Session.Close`, and `Sandbox.Release` rather than
+transport-specific streaming helpers. Console opens the Session connection for
+agent turns and renders events incrementally.

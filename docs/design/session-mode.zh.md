@@ -8,8 +8,8 @@
 agent sandbox。sandbox 需要可变 workspace、任意命令、文件操作、有序多步工作和独立 session
 lifecycle。
 
-Session mode 复用现有 `Run` 作为 lifecycle object，不增加 `Sandbox` CRD。一个 session Run
-占用预热 Runtime capacity，并在关闭、过期、失败或删除前提供同一个有状态执行环境。
+Session mode 复用现有 `Run` 作为 lifecycle object。一个 session Run 占用预热 Runtime
+capacity，并在关闭、过期、失败或删除前提供同一个有状态执行环境。
 
 ## Run API
 
@@ -43,6 +43,97 @@ termination request 一旦设置，不能删除或降级；draining Session 可�
 Session 使用已有的 `Pending -> Scheduled -> Running -> Ready` lifecycle。`Ready` 表示 owning
 runtimed 已在本地 Runtime Server 注册 session 并接受 operation；它是 active phase 并持续占用
 Runtime capacity。
+
+## SDK Sandbox 与 Session 模型
+
+公开 SDK 提供面向 agent 的 lifecycle：
+
+```text
+Runtime pool -> AcquireSandbox (create Session Run) -> assigned Runtime Pod
+             -> OpenSession -> Send / Receive / Cancel
+             -> Session.Close -> ReleaseSandbox (stop/delete Session Run)
+```
+
+`Runtime` 是可复用 pool。`AcquireSandbox` 创建唯一的 session-mode Run，并等待 scheduling 与
+registration 获得 Runtime Pod capacity。其返回的 `Sandbox` 由该 Run 支撑；Run 拥有 agent context、
+按 Run UID 隔离的 workspace 与 tool state。因此 active Sandbox 恰有一个 Session，并且恰有一个
+assigned Runtime Pod。
+
+Session SDK 隐藏 HTTP、NDJSON 与 WebSocket transport。它的 data-plane operation 是 `Send`、
+`Receive`、`Cancel`；lifecycle operation 是 `OpenSession`、`Session.Close` 与 `ReleaseSandbox`。
+`OpenSession` 为已经 Ready 的 Session 建立可替换的 streaming connection，不创建也不分配 Session Run。
+`Session.Close` 只释放该 connection。`ReleaseSandbox` 才是 resource operation：它停止 Session、
+等待 cleanup，并删除其 Session Run。显式 immediate-release mode 可以取消 active work；默认使用
+graceful drain。
+
+除已有 idle timeout 外，Session liveness 还需要独立 lease。active connection 在打开期间维护
+heartbeat；owner runtimed 记录 server-authoritative expiry，并在 lease 到期时终止 Session。关闭
+connection 不会立即 release Sandbox，caller 可在 expiry 前 reconnect；但 Runtime Pod 丢失会立即终止
+Session。terminal Session 绝不能透明地重新分配到另一个 Pod，因为其 agent context 与 workspace 都是
+Pod-local。
+
+### SDK 示例
+
+下面的 Go 示例获取一个 Runtime slot、打开 agent interaction Session、发送一个 turn，并在 connection
+关闭后释放全部 Runtime capacity：
+
+```go
+runtime := client.Runtime("default", "issue-labeler")
+
+sandbox, err := runtime.AcquireSandbox(ctx, sandbox.AcquireOptions{
+	GenerateName: "labeler-",
+})
+if err != nil {
+	return err
+}
+defer sandbox.Release(ctx)
+
+session, err := sandbox.OpenSession(ctx)
+if err != nil {
+	return err
+}
+defer session.Close()
+
+operationID, err := session.Send(ctx, sandbox.Command{
+	Shell: "classify and label issue #123",
+})
+if err != nil {
+	return err
+}
+for {
+	event, err := session.Receive(ctx)
+	if err != nil {
+		return err
+	}
+	if event.OperationID == operationID && event.Terminal() {
+		break
+	}
+}
+```
+
+等价的 Python flow 具有相同 ownership boundary。`Session.close()` 只关闭 interactive
+connection；`Sandbox.release()` 才会终止并删除其 backing Session Run：
+
+```python
+runtime = client.runtime("default", "issue-labeler")
+sandbox = runtime.acquire_sandbox(generate_name="labeler-")
+try:
+    session = sandbox.open_session()
+    try:
+        operation_id = session.send(Command(shell="classify and label issue #123"))
+        while True:
+            event = session.receive()
+            if event.operation_id == operation_id and event.terminal:
+                break
+    finally:
+        session.close()
+finally:
+    sandbox.release()
+```
+
+若要停止长时间运行的 turn 而不 release Sandbox，Go 使用
+`session.Cancel(ctx, operationID)`，Python 使用 `session.cancel(operation_id)`。caller 随后仍可接收
+该 operation 的 terminal cancellation event，并在同一 Session 上发送另一个 turn。
 
 ## Registration Reconciliation
 

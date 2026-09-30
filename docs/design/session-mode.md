@@ -9,10 +9,9 @@ and tool endpoints, but it is not an agent sandbox: an agent sandbox needs a
 mutable workspace, arbitrary commands, file operations, ordered multi-step
 work, and a session lifecycle.
 
-Session mode uses the existing `Run` lifecycle object rather than a new
-`Sandbox` CRD. A session Run reserves warm Runtime capacity and exposes one
-stateful execution environment until it is closed, expires, fails, or is
-deleted.
+Session mode uses the existing `Run` lifecycle object. A session Run reserves
+warm Runtime capacity and exposes one stateful execution environment until it
+is closed, expires, fails, or is deleted.
 
 ## Run API
 
@@ -49,6 +48,106 @@ Session Runs use the existing `Pending -> Scheduled -> Running -> Ready`
 lifecycle. `Ready` means the owning runtimed has registered a session with the
 local Runtime Server and accepts session operations. It remains active and
 holds Runtime capacity.
+
+## SDK Sandbox and Session Model
+
+The public SDK presents an agent-oriented lifecycle:
+
+```text
+Runtime pool -> AcquireSandbox (create Session Run) -> assigned Runtime Pod
+             -> OpenSession -> Send / Receive / Cancel
+             -> Session.Close -> ReleaseSandbox (stop/delete Session Run)
+```
+
+`Runtime` is the reusable pool. `AcquireSandbox` creates exactly one
+session-mode Run and waits for scheduling and registration to acquire Runtime
+Pod capacity. Its returned `Sandbox` is backed by that Run, which owns agent
+context, Run-UID-scoped workspace, and tool state. A Sandbox therefore has
+exactly one Session and exactly one assigned Runtime Pod while it is active.
+
+The Session SDK hides HTTP, NDJSON, and WebSocket transports. Its data-plane
+operations are `Send`, `Receive`, and `Cancel`; its lifecycle operations are
+`OpenSession`, `Session.Close`, and `ReleaseSandbox`. `OpenSession` establishes
+a replaceable streaming connection to the already-ready Session; it neither
+creates nor allocates a Session Run. `Session.Close` releases only that
+connection. `ReleaseSandbox` is the resource operation: it stops the Session,
+waits for cleanup, and deletes its Session Run. An explicit immediate-release
+mode may cancel active work; the default is graceful draining.
+
+Session liveness needs a distinct lease in addition to the existing idle
+timeout. The active connection maintains a heartbeat while it is open; the
+owner runtimed records the server-authoritative expiry and terminates the
+Session when the lease expires. Closing a connection does not immediately
+release the Sandbox, and a caller may reconnect before expiry. Loss of the
+Runtime Pod terminates the Session immediately. A terminal Session is never
+transparently reassigned to another Pod because its agent context and workspace
+are Pod-local.
+
+### SDK examples
+
+The following Go example acquires a Runtime slot, opens the agent interaction
+Session, sends one turn, and releases all Runtime capacity after the connection
+has closed:
+
+```go
+runtime := client.Runtime("default", "issue-labeler")
+
+sandbox, err := runtime.AcquireSandbox(ctx, sandbox.AcquireOptions{
+	GenerateName: "labeler-",
+})
+if err != nil {
+	return err
+}
+defer sandbox.Release(ctx)
+
+session, err := sandbox.OpenSession(ctx)
+if err != nil {
+	return err
+}
+defer session.Close()
+
+operationID, err := session.Send(ctx, sandbox.Command{
+	Shell: "classify and label issue #123",
+})
+if err != nil {
+	return err
+}
+for {
+	event, err := session.Receive(ctx)
+	if err != nil {
+		return err
+	}
+	if event.OperationID == operationID && event.Terminal() {
+		break
+	}
+}
+```
+
+The equivalent Python flow has the same ownership boundaries. `Session.close()`
+closes only the interactive connection; `Sandbox.release()` terminates and
+deletes the backing Session Run:
+
+```python
+runtime = client.runtime("default", "issue-labeler")
+sandbox = runtime.acquire_sandbox(generate_name="labeler-")
+try:
+    session = sandbox.open_session()
+    try:
+        operation_id = session.send(Command(shell="classify and label issue #123"))
+        while True:
+            event = session.receive()
+            if event.operation_id == operation_id and event.terminal:
+                break
+    finally:
+        session.close()
+finally:
+    sandbox.release()
+```
+
+To stop a long-running turn without releasing the Sandbox, use
+`session.Cancel(ctx, operationID)` in Go or `session.cancel(operation_id)` in
+Python. The caller may then receive the operation's terminal cancellation event
+and send another turn on the same Session.
 
 ## Registration Reconciliation
 
