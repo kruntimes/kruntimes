@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runstatus"
 )
 
 func TestRuntimeReadyReplicasTracksRuntimedAvailability(t *testing.T) {
