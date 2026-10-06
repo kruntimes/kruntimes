@@ -50,7 +50,7 @@ func TestRunWritesReportAndMarkdown(t *testing.T) {
 	markdownPath := filepath.Join(dir, "summary.md")
 	baselinePath := filepath.Join(dir, "baseline.json")
 
-	baseline := report{SchemaVersion: 1, Tests: []testResult{
+	baseline := report{SchemaVersion: 1, Parallelism: 4, WallClockSeconds: 13, TestDurationSeconds: 2.5, Tests: []testResult{
 		{Name: "TestFast", Status: "pass", DurationSeconds: 0.5},
 		{Name: "TestSlow", Status: "pass", DurationSeconds: 1.0},
 	}}
@@ -63,7 +63,7 @@ func TestRunWritesReportAndMarkdown(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := run(strings.NewReader(sampleStream), &stdout, reportPath, markdownPath, baselinePath, 2, 25, 2, false); err != nil {
+	if err := run(strings.NewReader(sampleStream), &stdout, reportPath, markdownPath, baselinePath, 4, 2, 25, 2, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -78,13 +78,19 @@ func TestRunWritesReportAndMarkdown(t *testing.T) {
 	if len(written.Tests) != 3 || written.Tests[0].Name != "TestSlow" {
 		t.Fatalf("report tests = %#v, want TestSlow first", written.Tests)
 	}
+	if written.Parallelism != 4 {
+		t.Fatalf("parallelism = %d, want 4", written.Parallelism)
+	}
 
 	summary := stdout.String()
 	if !strings.Contains(summary, "Slowest 2 tests") {
 		t.Fatalf("summary missing slowest table: %q", summary)
 	}
-	if !strings.Contains(summary, "Timing regressions against baseline") {
-		t.Fatalf("summary missing regression section: %q", summary)
+	if !strings.Contains(summary, "Baseline comparison") {
+		t.Fatalf("summary missing baseline comparison: %q", summary)
+	}
+	if !strings.Contains(summary, "per-test slowdowns") {
+		t.Fatalf("summary missing slowdown section: %q", summary)
 	}
 
 	markdown, err := os.ReadFile(markdownPath)
@@ -94,12 +100,15 @@ func TestRunWritesReportAndMarkdown(t *testing.T) {
 	if !strings.Contains(string(markdown), "| `TestSlow` | fail | 10.50s |") {
 		t.Fatalf("markdown missing table row: %s", markdown)
 	}
+	if !strings.Contains(string(markdown), "### Baseline comparison") {
+		t.Fatalf("markdown missing baseline comparison: %s", markdown)
+	}
 }
 
 func TestCompareBaselineIgnoresSmallChanges(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "baseline.json")
-	baseline := report{SchemaVersion: 1, Tests: []testResult{{Name: "TestFast", Status: "pass", DurationSeconds: 1.0}}}
+	baseline := report{SchemaVersion: 1, Parallelism: 4, WallClockSeconds: 10, TestDurationSeconds: 1.0, Tests: []testResult{{Name: "TestFast", Status: "pass", DurationSeconds: 1.0}}}
 	payload, err := json.Marshal(baseline)
 	if err != nil {
 		t.Fatal(err)
@@ -108,23 +117,42 @@ func TestCompareBaselineIgnoresSmallChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	current := report{Tests: []testResult{{Name: "TestFast", Status: "pass", DurationSeconds: 1.2}}}
-	regressions, err := compareBaseline(path, current, 25, 2)
-	if err != nil {
-		t.Fatalf("compareBaseline: %v", err)
+	current := report{Parallelism: 4, WallClockSeconds: 10.5, TestDurationSeconds: 1.2, Tests: []testResult{{Name: "TestFast", Status: "pass", DurationSeconds: 1.2}}}
+	comparison := compareBaseline(path, current, 50, 5)
+	if comparison == nil {
+		t.Fatal("comparison = nil, want a comparison")
 	}
-	if len(regressions) != 0 {
-		t.Fatalf("regressions = %#v, want none", regressions)
+	if len(comparison.Slowdowns) != 0 {
+		t.Fatalf("slowdowns = %#v, want none", comparison.Slowdowns)
+	}
+	if comparison.WallClockChange != 5 {
+		t.Fatalf("wall clock change = %v, want 5", comparison.WallClockChange)
+	}
+}
+
+func TestCompareBaselineMarksWallClockNotComparableAcrossFanOut(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "baseline.json")
+	payload, err := json.Marshal(report{SchemaVersion: 1, Parallelism: 1, WallClockSeconds: 400})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	comparison := compareBaseline(path, report{Parallelism: 4, WallClockSeconds: 180}, 50, 5)
+	if comparison == nil {
+		t.Fatal("comparison = nil, want a comparison")
+	}
+	if comparison.CurrentParallelism != 4 || comparison.BaselineParallelism != 1 {
+		t.Fatalf("parallelism = %d/%d, want 4/1", comparison.CurrentParallelism, comparison.BaselineParallelism)
 	}
 }
 
 func TestCompareBaselineMissingFileIsNotAnError(t *testing.T) {
-	regressions, err := compareBaseline(filepath.Join(t.TempDir(), "absent.json"), report{}, 25, 2)
-	if err != nil {
-		t.Fatalf("compareBaseline: %v", err)
-	}
-	if len(regressions) != 0 {
-		t.Fatalf("regressions = %#v, want none", regressions)
+	if comparison := compareBaseline(filepath.Join(t.TempDir(), "absent.json"), report{}, 25, 2); comparison != nil {
+		t.Fatalf("comparison = %#v, want nil", comparison)
 	}
 }
 
@@ -133,11 +161,7 @@ func TestCompareBaselineMalformedFileIsNotAnError(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	regressions, err := compareBaseline(path, report{}, 25, 2)
-	if err != nil {
-		t.Fatalf("compareBaseline: %v", err)
-	}
-	if len(regressions) != 0 {
-		t.Fatalf("regressions = %#v, want none", regressions)
+	if comparison := compareBaseline(path, report{}, 25, 2); comparison != nil {
+		t.Fatalf("comparison = %#v, want nil", comparison)
 	}
 }

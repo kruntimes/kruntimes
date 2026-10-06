@@ -4,6 +4,7 @@
   "packages": [
     "github.com/kruntimes/kruntimes/test/e2e"
   ],
+  "parallelism": 4,
   "passed": 63,
   "failed": 0,
   "skipped": 2,

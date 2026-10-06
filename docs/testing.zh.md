@@ -143,16 +143,16 @@ make e2e-test E2E_PARALLEL=8    # 复用已有集群，提高并发
 
 `make e2e-test` 通过 `hack/e2e-timings` 运行用例，在保留原有测试日志的同时额外产出：
 
-- `e2e-timings.json`：每个用例的耗时，作为 `e2e-timings` CI artifact 上传；
-- `e2e-timings.md`：最慢用例表格，追加到 workflow run summary。
+- `e2e-timings.json`：每个用例的耗时以及本次运行的并发度，作为 `e2e-timings` CI artifact 上传；
+- `e2e-timings.md`：最慢用例表格与基线对比，追加到 workflow run summary。
 
-耗时数据会与 `test/e2e/timings-baseline.json` 对比。相对基线同时慢至少 25% 且至少 2 秒的用例会被列为回归；该对比仅供参考（E2E 耗时依赖运行器），不会导致构建失败。可通过 `-regression-percent`、`-regression-seconds` 与 `-top` 调整阈值：
+每次运行会与 `test/e2e/timings-baseline.json` 对比：摘要给出测试阶段 wall clock、用例耗时总和，以及超过 `-regression-percent`（默认 50）与 `-regression-seconds`（默认 5）的用例级变慢。用例级列表仅供参考（并行调度会让单个用例耗时波动），且对比永远不会导致构建失败。只有两次报告记录的并发度相同时才会比较 wall clock。
 
 ```bash
-go test ./test/e2e/... -json | go run ./hack/e2e-timings -top 30 -report /tmp/e2e.json
+go test ./test/e2e/... -json | go run ./hack/e2e-timings -parallel 4 -top 30 -report /tmp/e2e.json
 ```
 
-在有意调整用例后，可将 CI 产出的 `e2e-timings.json` 复制覆盖 `test/e2e/timings-baseline.json` 来更新基线。
+在有意调整用例后，可将 CI 产出的 `e2e-timings.json` 复制覆盖 `test/e2e/timings-baseline.json`，并把其中的 `parallelism` 字段更新为本次测量使用的并发度。
 
 ### 实测提升
 

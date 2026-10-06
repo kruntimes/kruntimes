@@ -52,6 +52,7 @@ type report struct {
 	SchemaVersion       int          `json:"schemaVersion"`
 	GeneratedAt         time.Time    `json:"generatedAt"`
 	Packages            []string     `json:"packages"`
+	Parallelism         int          `json:"parallelism,omitempty"`
 	Passed              int          `json:"passed"`
 	Failed              int          `json:"failed"`
 	Skipped             int          `json:"skipped"`
@@ -60,35 +61,52 @@ type report struct {
 	Tests               []testResult `json:"tests"`
 }
 
-// regression describes how a test's duration changed against a baseline.
-type regression struct {
+// slowdown describes how a test's duration changed against a baseline.
+type slowdown struct {
 	Name            string  `json:"name"`
 	BaselineSeconds float64 `json:"baselineSeconds"`
 	CurrentSeconds  float64 `json:"currentSeconds"`
 	ChangePercent   float64 `json:"changePercent"`
 }
 
+// baselineComparison summarizes the current run against a previous report.
+// Wall-clock comparison is only meaningful when both runs used the same
+// parallel fan-out, so it is tracked separately from the advisory per-test
+// slowdowns, whose durations move with scheduling.
+type baselineComparison struct {
+	Path                string     `json:"path"`
+	BaselineParallelism int        `json:"baselineParallelism,omitempty"`
+	CurrentParallelism  int        `json:"currentParallelism,omitempty"`
+	BaselineWallClock   float64    `json:"baselineWallClockSeconds"`
+	WallClockChange     float64    `json:"wallClockChangePercent"`
+	BaselineTotal       float64    `json:"baselineTestDurationSeconds"`
+	TotalChange         float64    `json:"testDurationChangePercent"`
+	Slowdowns           []slowdown `json:"slowdowns,omitempty"`
+}
+
 func main() {
 	reportPath := flag.String("report", "", "write the JSON timing report to this path")
 	markdownPath := flag.String("markdown", "", "write a Markdown summary table to this path")
 	baselinePath := flag.String("baseline", "", "compare against a previous JSON report at this path")
+	parallel := flag.Int("parallel", 0, "parallel fan-out the suite ran with, recorded in the report")
 	top := flag.Int("top", 15, "number of slowest tests to print")
-	regressionPercent := flag.Float64("regression-percent", 25, "flag tests slower than their baseline by at least this percentage")
-	regressionSeconds := flag.Float64("regression-seconds", 2, "minimum absolute slowdown in seconds before flagging a regression")
+	regressionPercent := flag.Float64("regression-percent", 50, "flag tests slower than their baseline by at least this percentage")
+	regressionSeconds := flag.Float64("regression-seconds", 5, "minimum absolute slowdown in seconds before flagging a test")
 	quiet := flag.Bool("quiet", false, "suppress the summary printed to stdout")
 	flag.Parse()
 
-	if err := run(os.Stdin, os.Stdout, *reportPath, *markdownPath, *baselinePath, *top, *regressionPercent, *regressionSeconds, *quiet); err != nil {
+	if err := run(os.Stdin, os.Stdout, *reportPath, *markdownPath, *baselinePath, *parallel, *top, *regressionPercent, *regressionSeconds, *quiet); err != nil {
 		fmt.Fprintf(os.Stderr, "e2e-timings: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(stdin io.Reader, stdout io.Writer, reportPath, markdownPath, baselinePath string, top int, regressionPercent, regressionSeconds float64, quiet bool) error {
+func run(stdin io.Reader, stdout io.Writer, reportPath, markdownPath, baselinePath string, parallel, top int, regressionPercent, regressionSeconds float64, quiet bool) error {
 	rep, err := collect(stdin, stdout)
 	if err != nil {
 		return err
 	}
+	rep.Parallelism = parallel
 	if top <= 0 || top > len(rep.Tests) {
 		top = len(rep.Tests)
 	}
@@ -101,16 +119,13 @@ func run(stdin io.Reader, stdout io.Writer, reportPath, markdownPath, baselinePa
 		return rep.Tests[i].Name < rep.Tests[j].Name
 	})
 
-	var regressions []regression
+	var comparison *baselineComparison
 	if baselinePath != "" {
-		regressions, err = compareBaseline(baselinePath, rep, regressionPercent, regressionSeconds)
-		if err != nil {
-			return err
-		}
+		comparison = compareBaseline(baselinePath, rep, regressionPercent, regressionSeconds)
 	}
 
 	if !quiet {
-		writeSummary(stdout, rep, top, regressions)
+		writeSummary(stdout, rep, top, comparison)
 	}
 	if reportPath != "" {
 		if err := writeJSON(reportPath, rep); err != nil {
@@ -118,7 +133,7 @@ func run(stdin io.Reader, stdout io.Writer, reportPath, markdownPath, baselinePa
 		}
 	}
 	if markdownPath != "" {
-		if err := writeMarkdown(markdownPath, rep, top, regressions); err != nil {
+		if err := writeMarkdown(markdownPath, rep, top, comparison, regressionPercent, regressionSeconds); err != nil {
 			return err
 		}
 	}
@@ -205,38 +220,73 @@ func writeJSON(path string, rep report) error {
 	return nil
 }
 
-func writeSummary(w io.Writer, rep report, top int, regressions []regression) {
+func writeSummary(w io.Writer, rep report, top int, comparison *baselineComparison) {
 	fmt.Fprintf(w, "\nE2E timing summary: %d tests (%d passed, %d failed, %d skipped)\n",
 		len(rep.Tests), rep.Passed, rep.Failed, rep.Skipped)
-	fmt.Fprintf(w, "  approx wall clock:        %.2fs\n", rep.WallClockSeconds)
+	if rep.Parallelism > 0 {
+		fmt.Fprintf(w, "  approx wall clock:        %.2fs (parallelism %d)\n", rep.WallClockSeconds, rep.Parallelism)
+	} else {
+		fmt.Fprintf(w, "  approx wall clock:        %.2fs\n", rep.WallClockSeconds)
+	}
 	fmt.Fprintf(w, "  sum of test durations:    %.2fs\n", rep.TestDurationSeconds)
-	if len(regressions) > 0 {
-		fmt.Fprintf(w, "\nTiming regressions against baseline:\n")
-		for _, r := range regressions {
-			fmt.Fprintf(w, "  %+.0f%%  %6.2fs -> %6.2fs  %s\n", r.ChangePercent, r.BaselineSeconds, r.CurrentSeconds, r.Name)
+
+	if comparison != nil {
+		fmt.Fprintf(w, "\nBaseline comparison (%s):\n", comparison.Path)
+		if comparison.CurrentParallelism == comparison.BaselineParallelism {
+			fmt.Fprintf(w, "  wall clock:   %.2fs -> %.2fs (%+.1f%%)\n", comparison.BaselineWallClock, rep.WallClockSeconds, comparison.WallClockChange)
+		} else {
+			fmt.Fprintf(w, "  wall clock:   not comparable (baseline parallelism %d, current %d)\n", comparison.BaselineParallelism, comparison.CurrentParallelism)
+		}
+		fmt.Fprintf(w, "  test totals:  %.2fs -> %.2fs (%+.1f%%)\n", comparison.BaselineTotal, rep.TestDurationSeconds, comparison.TotalChange)
+		if len(comparison.Slowdowns) == 0 {
+			fmt.Fprintf(w, "  per-test slowdowns: none above the configured threshold\n")
+		} else {
+			fmt.Fprintf(w, "  per-test slowdowns (advisory; parallel scheduling adds noise):\n")
+			for _, s := range comparison.Slowdowns {
+				fmt.Fprintf(w, "    %+.0f%%  %6.2fs -> %6.2fs  %s\n", s.ChangePercent, s.BaselineSeconds, s.CurrentSeconds, s.Name)
+			}
 		}
 	}
+
 	fmt.Fprintf(w, "\nSlowest %d tests:\n", top)
 	for _, t := range rep.Tests[:top] {
 		fmt.Fprintf(w, "  %7.2fs  %-4s  %s\n", t.DurationSeconds, t.Status, t.Name)
 	}
 }
 
-func writeMarkdown(path string, rep report, top int, regressions []regression) error {
+func writeMarkdown(path string, rep report, top int, comparison *baselineComparison, regressionPercent, regressionSeconds float64) error {
 	var b strings.Builder
 	b.WriteString("## E2E timings\n\n")
 	fmt.Fprintf(&b, "- Tests: %d (passed %d, failed %d, skipped %d)\n", len(rep.Tests), rep.Passed, rep.Failed, rep.Skipped)
-	fmt.Fprintf(&b, "- Approx wall clock: %.2fs\n", rep.WallClockSeconds)
+	if rep.Parallelism > 0 {
+		fmt.Fprintf(&b, "- Approx wall clock: %.2fs (parallelism %d)\n", rep.WallClockSeconds, rep.Parallelism)
+	} else {
+		fmt.Fprintf(&b, "- Approx wall clock: %.2fs\n", rep.WallClockSeconds)
+	}
 	fmt.Fprintf(&b, "- Sum of test durations: %.2fs\n", rep.TestDurationSeconds)
+
+	if comparison != nil {
+		b.WriteString("\n### Baseline comparison\n\n| Metric | Baseline | Current | Change |\n| --- | ---: | ---: | ---: |\n")
+		if comparison.CurrentParallelism == comparison.BaselineParallelism {
+			fmt.Fprintf(&b, "| Test-phase wall clock | %.2fs | %.2fs | %+.1f%% |\n", comparison.BaselineWallClock, rep.WallClockSeconds, comparison.WallClockChange)
+		} else {
+			fmt.Fprintf(&b, "| Test-phase wall clock | %.2fs (parallelism %d) | %.2fs (parallelism %d) | n/a |\n",
+				comparison.BaselineWallClock, comparison.BaselineParallelism, rep.WallClockSeconds, comparison.CurrentParallelism)
+		}
+		fmt.Fprintf(&b, "| Sum of test durations | %.2fs | %.2fs | %+.1f%% |\n", comparison.BaselineTotal, rep.TestDurationSeconds, comparison.TotalChange)
+		if len(comparison.Slowdowns) > 0 {
+			fmt.Fprintf(&b, "\nPer-test slowdowns above +%.0f%% and +%.1fs (advisory; parallel scheduling adds noise):\n\n",
+				regressionPercent, regressionSeconds)
+			b.WriteString("| Test | Baseline | Current | Change |\n| --- | ---: | ---: | ---: |\n")
+			for _, s := range comparison.Slowdowns {
+				fmt.Fprintf(&b, "| `%s` | %.2fs | %.2fs | %+.0f%% |\n", s.Name, s.BaselineSeconds, s.CurrentSeconds, s.ChangePercent)
+			}
+		}
+	}
+
 	fmt.Fprintf(&b, "\n### Slowest %d tests\n\n| Test | Status | Duration |\n| --- | --- | ---: |\n", top)
 	for _, t := range rep.Tests[:top] {
 		fmt.Fprintf(&b, "| `%s` | %s | %.2fs |\n", t.Name, t.Status, t.DurationSeconds)
-	}
-	if len(regressions) > 0 {
-		b.WriteString("\n### Timing regressions\n\n| Test | Baseline | Current | Change |\n| --- | ---: | ---: | ---: |\n")
-		for _, r := range regressions {
-			fmt.Fprintf(&b, "| `%s` | %.2fs | %.2fs | %+.0f%% |\n", r.Name, r.BaselineSeconds, r.CurrentSeconds, r.ChangePercent)
-		}
 	}
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return fmt.Errorf("write markdown summary: %w", err)
@@ -244,32 +294,39 @@ func writeMarkdown(path string, rep report, top int, regressions []regression) e
 	return nil
 }
 
-// compareBaseline loads a previous report and returns the tests that got at
-// least regressionPercent percent and regressionSeconds seconds slower. The
-// comparison is advisory: it is reported in CI and never enforced, so a
-// missing or unreadable baseline is ignored rather than failing the run.
-func compareBaseline(path string, current report, regressionPercent, regressionSeconds float64) ([]regression, error) {
+// compareBaseline loads a previous report and summarizes how the current run
+// compares. Wall clock is compared directly; per-test changes above the
+// configured thresholds are listed as advisory slowdowns. A missing or
+// unreadable baseline is ignored: the comparison must never fail the run.
+func compareBaseline(path string, current report, regressionPercent, regressionSeconds float64) *baselineComparison {
 	payload, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+		if !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "e2e-timings: ignoring baseline %s: %v\n", path, err)
 		}
-		fmt.Fprintf(os.Stderr, "e2e-timings: ignoring baseline %s: %v\n", path, err)
-		return nil, nil
+		return nil
 	}
 	var baseline report
 	if err := json.Unmarshal(payload, &baseline); err != nil {
-		// A stale or hand-edited baseline must never fail the E2E run; the
-		// comparison is advisory.
+		// A stale or hand-edited baseline must never fail the E2E run.
 		fmt.Fprintf(os.Stderr, "e2e-timings: ignoring baseline %s: %v\n", path, err)
-		return nil, nil
+		return nil
 	}
+
+	comparison := &baselineComparison{
+		Path:                path,
+		BaselineParallelism: baseline.Parallelism,
+		CurrentParallelism:  current.Parallelism,
+		BaselineWallClock:   baseline.WallClockSeconds,
+		BaselineTotal:       baseline.TestDurationSeconds,
+	}
+	comparison.WallClockChange = changePercent(baseline.WallClockSeconds, current.WallClockSeconds)
+	comparison.TotalChange = changePercent(baseline.TestDurationSeconds, current.TestDurationSeconds)
+
 	previous := make(map[string]float64, len(baseline.Tests))
 	for _, t := range baseline.Tests {
 		previous[t.Name] = t.DurationSeconds
 	}
-
-	var regressions []regression
 	for _, t := range current.Tests {
 		before, ok := previous[t.Name]
 		if !ok || before <= 0 {
@@ -278,7 +335,7 @@ func compareBaseline(path string, current report, regressionPercent, regressionS
 		delta := t.DurationSeconds - before
 		percent := delta / before * 100
 		if delta >= regressionSeconds && percent >= regressionPercent {
-			regressions = append(regressions, regression{
+			comparison.Slowdowns = append(comparison.Slowdowns, slowdown{
 				Name:            t.Name,
 				BaselineSeconds: before,
 				CurrentSeconds:  t.DurationSeconds,
@@ -286,8 +343,15 @@ func compareBaseline(path string, current report, regressionPercent, regressionS
 			})
 		}
 	}
-	sort.SliceStable(regressions, func(i, j int) bool {
-		return regressions[i].ChangePercent > regressions[j].ChangePercent
+	sort.SliceStable(comparison.Slowdowns, func(i, j int) bool {
+		return comparison.Slowdowns[i].ChangePercent > comparison.Slowdowns[j].ChangePercent
 	})
-	return regressions, nil
+	return comparison
+}
+
+func changePercent(before, after float64) float64 {
+	if before <= 0 {
+		return 0
+	}
+	return (after - before) / before * 100
 }

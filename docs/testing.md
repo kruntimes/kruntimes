@@ -162,22 +162,26 @@ Scenario-owned Runtime CRs keep the product default capacity.
 `make e2e-test` runs the suite through `hack/e2e-timings`, which preserves the
 normal test log and additionally writes:
 
-- `e2e-timings.json` — per-test durations, uploaded as the `e2e-timings` CI
-  artifact, and
-- `e2e-timings.md` — slowest-test table appended to the workflow run summary.
+- `e2e-timings.json` — per-test durations plus the fan-out the run used,
+  uploaded as the `e2e-timings` CI artifact, and
+- `e2e-timings.md` — slowest-test table and baseline comparison, appended to
+  the workflow run summary.
 
-Durations are compared against `test/e2e/timings-baseline.json`. Tests that are
-both at least 25% and at least 2s slower than the baseline are listed as
-regressions; the comparison is advisory because E2E durations depend on the
-runner, and it never fails the build. Use `-regression-percent`,
-`-regression-seconds`, and `-top` to change the reporting thresholds:
+Each run is compared against `test/e2e/timings-baseline.json`: the summary
+reports the test-phase wall clock, the sum of per-test durations, and any
+per-test slowdowns above `-regression-percent` (default 50) and
+`-regression-seconds` (default 5). The per-test list is advisory because
+parallel scheduling moves individual durations around, and the comparison never
+fails the build. Wall clock is only compared when both reports recorded the
+same fan-out.
 
 ```bash
-go test ./test/e2e/... -json | go run ./hack/e2e-timings -top 30 -report /tmp/e2e.json
+go test ./test/e2e/... -json | go run ./hack/e2e-timings -parallel 4 -top 30 -report /tmp/e2e.json
 ```
 
-Snapshot and commit a new baseline after an intentional suite change by copying
-the `e2e-timings.json` artifact over `test/e2e/timings-baseline.json`.
+Refresh the baseline after an intentional suite change by copying the
+`e2e-timings.json` artifact over `test/e2e/timings-baseline.json` and updating
+its `parallelism` field to the fan-out the run used.
 
 ### Measured improvement
 

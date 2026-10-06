@@ -213,6 +213,7 @@ e2e-test: generate ## Run E2E tests against the kind cluster.
 		KRUNTIMES_E2E_CONSOLE_BOUNDS=$(E2E_CONSOLE_BOUNDS) \
 		go test ./test/e2e/... -json -count=1 -failfast -parallel $(E2E_PARALLEL) -timeout $(E2E_TEST_TIMEOUT) $(E2E_TEST_ARGS) \
 		| go run ./hack/e2e-timings \
+			-parallel $(E2E_PARALLEL) \
 			-report $(E2E_TIMINGS_JSON) \
 			-markdown $(E2E_TIMINGS_MD) \
 			-baseline $(E2E_TIMINGS_BASELINE)'
