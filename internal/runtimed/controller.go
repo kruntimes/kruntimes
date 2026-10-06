@@ -1215,6 +1215,14 @@ func (c *Controller) recoverActiveRunsOnce(ctx context.Context) {
 		if run.Status.AssignedPod != c.PodName || run.Status.Phase != v1alpha1.RunRunning {
 			continue
 		}
+		if _, claimed := c.activeRuns.Load(string(run.UID)); claimed {
+			// The live reconcile loop claimed this Run after startup and is
+			// still registering its execution with the Runtime Server. Startup
+			// recovery only owns Runs left behind by a previous process, so
+			// treating this one as lost would race execution registration into a
+			// spurious ExecutionLost failure.
+			continue
+		}
 		if _, ok := entries[string(run.UID)]; !ok {
 			if _, err := c.reconcileRunningRecovered(ctx, run); err != nil {
 				c.Log.Error(err, "failed to reconcile missing runtime execution during recovery", "run", run.Name)

@@ -100,6 +100,108 @@ Use this when changes affect:
 - artifact storage,
 - CLI behavior against a real cluster.
 
+### Suite layout
+
+The suite lives in `test/e2e/` and is organized by responsibility instead of a
+single multi-thousand-line file:
+
+| File | Responsibility |
+| --- | --- |
+| `main_test.go` | Kubernetes clients, image references, feature switches |
+| `runtime_fixture_test.go` | Runtime pools, pod readiness, diagnostics, restarts |
+| `wait_test.go` | condition-driven waits |
+| `run_assert_test.go` | Run assertions and termination requests |
+| `gateway_fixture_test.go` | Console gateway and log API fixtures |
+| `artifact_fixture_test.go` | artifact store assertions |
+| `runtime_test.go` | Runtime pool and one-shot Run execution |
+| `session_test.go` | Session mode and Console gateway |
+| `function_test.go` | Function mode |
+| `workflow_test.go` | Workflows, actions, and reusable workflows |
+| `artifact_test.go` | artifact export and staging |
+| `workspace_test.go` | PersistentWorkspace |
+| `scheduler_test.go` | placement, capacity, affinity, cancellation |
+| `diagnosis_test.go` | demo diagnosis runtime |
+
+Scenarios create resources with `GenerateName` or a timestamp suffix and clean
+them up with `t.Cleanup`, so no scenario depends on the order in which another
+scenario ran. The only long-lived shared state is the warm `bash` and `python`
+Runtime pools: the first scenario that needs one creates it, and later
+scenarios reuse it instead of re-issuing the same Runtime update and pod wait.
+
+### Parallel execution
+
+Scenarios that do not mutate cluster-wide state call `t.Parallel()`. The suite
+runs at most `E2E_PARALLEL` (default `4`) of them at a time:
+
+```bash
+make e2e                        # default fan-out
+E2E_PARALLEL=1 make e2e         # serial, historical order
+make e2e-test E2E_PARALLEL=8    # reuse an existing cluster, wider fan-out
+```
+
+The following scenarios stay serial and intentionally omit `t.Parallel()`:
+
+- `TestWorkflowRunRecoversActionAfterControllerRestart` restarts the controller
+  Deployment, which pauses reconciliation for every other scenario.
+- `TestRuntimeReadyReplicasTracksRuntimedAvailability`,
+  `TestRuntimedRecoversRunningRunAfterRestart`, and
+  `TestFunctionRunRecoversInvocationAfterRuntimedRestart` kill `runtimed` in a
+  Runtime pod to exercise restart recovery.
+- The `scheduler_test.go` scenarios assert scheduling latency, capacity, and
+  wake-up ordering, which parallel load would distort.
+- `TestSessionGatewayServesCertManagerTLS` runs in the dedicated
+  `e2e-cert-manager-run` and `e2e-console-bounds-run` jobs.
+
+Parallelism is bounded by cluster capacity, not by the tests: each parallel
+scenario may create its own Runtime pod, and the shared warm pools are created
+with 8 Run slots so scenarios do not queue behind each other on one pod.
+Scenario-owned Runtime CRs keep the product default capacity.
+
+### Timings
+
+`make e2e-test` runs the suite through `hack/e2e-timings`, which preserves the
+normal test log and additionally writes:
+
+- `e2e-timings.json` — per-test durations plus the fan-out the run used,
+  uploaded as the `e2e-timings` CI artifact, and
+- `e2e-timings.md` — slowest-test table and baseline comparison, appended to
+  the workflow run summary.
+
+Each run is compared against `test/e2e/timings-baseline.json`: the summary
+reports the test-phase wall clock, the sum of per-test durations, and any
+per-test slowdowns above `-regression-percent` (default 50) and
+`-regression-seconds` (default 5). The per-test list is advisory because
+parallel scheduling moves individual durations around, and the comparison never
+fails the build. Wall clock is only compared when both reports recorded the
+same fan-out.
+
+```bash
+go test ./test/e2e/... -json | go run ./hack/e2e-timings -parallel 4 -top 30 -report /tmp/e2e.json
+```
+
+Refresh the baseline after an intentional suite change by copying the
+`e2e-timings.json` artifact over `test/e2e/timings-baseline.json` and updating
+its `parallelism` field to the fan-out the run used.
+
+### Measured improvement
+
+The numbers below come from `make e2e` runs on a GitHub-hosted runner with the
+same 65 tests (63 run, 2 environment-gated skips):
+
+| Suite | Fan-out | Test phase | `make e2e` job |
+| --- | --- | --- | --- |
+| pre-split baseline | serial | 435.1s | 13m17s |
+| condition waits + shared pools | serial (`E2E_PARALLEL=1`) | 418.0s | 13m21s |
+| condition waits + shared pools + parallel | 4 | 180.0s | 10m40s |
+
+Condition-driven waits and the shared warm pools remove about 4% of the test
+phase on their own; safe parallelism removes a further 57% relative to serial,
+for a 58.6% reduction in total test-phase wall clock. The remaining slowest
+cases are bounded by product timers rather than by the harness: the pod-loss
+and stale-Run scenarios wait for the controller's 30-second stale requeue, so
+they stay at 32-37s each regardless of scheduling. Image builds, kind cluster
+creation, and Helm deployment are unchanged and dominate the rest of the job.
+
 ## Benchmarks
 
 ```bash
