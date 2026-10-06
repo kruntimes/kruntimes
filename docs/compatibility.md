@@ -34,7 +34,7 @@ public compatibility claim.
 
 | Scope | Version | Status | Evidence |
 | --- | --- | --- | --- |
-| Module toolchain | `1.26.4` | Required | `go.mod` `go` directive. |
+| Module toolchain | `1.26.8` | Required | `go.mod` `go` directive. |
 | Docker image builds | `1.26.4` | Required | Go builder images in project Dockerfiles. |
 | Local generated tools | Pinned in `Makefile` | Required | `controller-gen`, `setup-envtest`, `golangci-lint`, `govulncheck`, `protoc`, and proto plugins are version checked before use. |
 

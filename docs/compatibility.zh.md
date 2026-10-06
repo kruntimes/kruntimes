@@ -32,7 +32,7 @@ kruntimes 目前是一个 `v0.x` 实验性项目，使用 `v1alpha1` API。此�
 
 | 范围 | 版本 | 状态 | 证据 |
 | --- | --- | --- | --- |
-| 模块工具链 | `1.26.4` | 必需 | `go.mod` 的 `go` 指令。 |
+| 模块工具链 | `1.26.8` | 必需 | `go.mod` 的 `go` 指令。 |
 | Docker 镜像构建 | `1.26.4` | 必需 | 项目 Dockerfiles 中的 Go builder 镜像。 |
 | 本地生成工具 | 锁定在 `Makefile` 中 | 必需 | `controller-gen`、`setup-envtest`、`golangci-lint`、`govulncheck`、`protoc` 和 proto 插件在使用前进行版本检查。 |
 
