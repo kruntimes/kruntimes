@@ -335,18 +335,11 @@ type RunFunctionMode struct {
 // capacity until it terminates.
 type RunSessionMode struct {
 	// LeaseTimeoutSeconds is the duration after the last server-observed
-	// connection heartbeat before the session is closed. It is independent of
-	// idle operation expiry so a connected agent can retain its sandbox without
-	// issuing artificial commands.
+	// connection heartbeat before the session is closed. When omitted, lease expiry is disabled and
+	// the Session is not required to send heartbeats.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	LeaseTimeoutSeconds *int32 `json:"leaseTimeoutSeconds,omitempty"`
-
-	// IdleTimeoutSeconds is the duration after the last accepted command or file
-	// mutation before the session is closed.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	IdleTimeoutSeconds *int32 `json:"idleTimeoutSeconds,omitempty"`
 
 	// QueueSize limits queued command and file-mutation operations for this
 	// session. runtimed also applies its administrator-configured global limit.

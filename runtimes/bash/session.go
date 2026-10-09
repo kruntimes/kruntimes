@@ -34,6 +34,10 @@ type sessionEntry struct {
 	leaseHeartbeat time.Time
 }
 
+// Session operation output is persisted in the resumable operation journal.
+// Keep individual events below its 8 KiB encoded-record limit.
+const sessionOperationOutputChunkBytes = 4 << 10
+
 func (s *Server) RegisterSession(_ context.Context, registration *pb.RegisterSessionRequest) (*pb.SessionStatus, error) {
 	identity, workingDir, err := s.validateSessionRegistration(registration)
 	if err != nil {
@@ -72,9 +76,9 @@ func (s *Server) GetSessionStatus(_ context.Context, req *pb.GetSessionStatusReq
 	return entry.status(), nil
 }
 
-// TouchSession records a gateway-observed connection heartbeat. The timestamp
+// RenewSessionLease records a gateway-observed connection heartbeat. The timestamp
 // survives a runtimed restart through GetSessionStatus recovery.
-func (s *Server) TouchSession(_ context.Context, req *pb.TouchSessionRequest) (*pb.SessionStatus, error) {
+func (s *Server) RenewSessionLease(_ context.Context, req *pb.RenewSessionLeaseRequest) (*pb.SessionStatus, error) {
 	entry, err := s.matchSession(req.GetIdentity())
 	if err != nil {
 		return nil, err
@@ -83,10 +87,10 @@ func (s *Server) TouchSession(_ context.Context, req *pb.TouchSessionRequest) (*
 	return entry.status(), nil
 }
 
-// ExecuteSessionOperation executes one mutation already serialized and
-// admitted by runtimed. The Runtime Server deliberately does not assign
-// operation IDs or own a queue.
-func (s *Server) ExecuteSessionOperation(ctx context.Context, req *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
+// applySessionOperation executes a non-streaming workspace mutation. runtimed
+// owns admission and the public gateway exposes these mutations only through
+// the persistent Session WebSocket.
+func (s *Server) applySessionOperation(ctx context.Context, req *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
 	entry, err := s.matchSession(req.GetIdentity())
 	if err != nil {
 		return nil, err
@@ -144,7 +148,7 @@ func (s *Server) StreamSessionOperation(req *pb.ExecuteSessionOperationRequest, 
 		return server.Send(&pb.SessionOperationEvent{Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: terminal}}})
 	}
 
-	response, err := s.ExecuteSessionOperation(server.Context(), req)
+	response, err := s.applySessionOperation(server.Context(), req)
 	if err != nil {
 		return err
 	}
@@ -314,7 +318,7 @@ func copySessionOutput(
 	emit func(pb.SessionOperationOutputStream, []byte) error,
 	emitMu *sync.Mutex,
 ) error {
-	chunk := make([]byte, 32<<10)
+	chunk := make([]byte, sessionOperationOutputChunkBytes)
 	for {
 		count, readErr := reader.Read(chunk)
 		if count > 0 {

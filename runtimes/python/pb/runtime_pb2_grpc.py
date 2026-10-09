@@ -558,15 +558,10 @@ class SessionRuntimeStub(object):
                 request_serializer=runtime__pb2.GetSessionStatusRequest.SerializeToString,
                 response_deserializer=runtime__pb2.SessionStatus.FromString,
                 _registered_method=True)
-        self.TouchSession = channel.unary_unary(
-                '/executor.v1.SessionRuntime/TouchSession',
-                request_serializer=runtime__pb2.TouchSessionRequest.SerializeToString,
+        self.RenewSessionLease = channel.unary_unary(
+                '/executor.v1.SessionRuntime/RenewSessionLease',
+                request_serializer=runtime__pb2.RenewSessionLeaseRequest.SerializeToString,
                 response_deserializer=runtime__pb2.SessionStatus.FromString,
-                _registered_method=True)
-        self.ExecuteSessionOperation = channel.unary_unary(
-                '/executor.v1.SessionRuntime/ExecuteSessionOperation',
-                request_serializer=runtime__pb2.ExecuteSessionOperationRequest.SerializeToString,
-                response_deserializer=runtime__pb2.ExecuteSessionOperationResponse.FromString,
                 _registered_method=True)
         self.StreamSessionOperation = channel.unary_stream(
                 '/executor.v1.SessionRuntime/StreamSessionOperation',
@@ -612,15 +607,8 @@ class SessionRuntimeServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def TouchSession(self, request, context):
-        """TouchSession records a server-observed connection heartbeat for lease recovery.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ExecuteSessionOperation(self, request, context):
-        """ExecuteSessionOperation executes one mutation already admitted by runtimed.
+    def RenewSessionLease(self, request, context):
+        """RenewSessionLease records a server-observed connection heartbeat to renew the lease.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -668,15 +656,10 @@ def add_SessionRuntimeServicer_to_server(servicer, server):
                     request_deserializer=runtime__pb2.GetSessionStatusRequest.FromString,
                     response_serializer=runtime__pb2.SessionStatus.SerializeToString,
             ),
-            'TouchSession': grpc.unary_unary_rpc_method_handler(
-                    servicer.TouchSession,
-                    request_deserializer=runtime__pb2.TouchSessionRequest.FromString,
+            'RenewSessionLease': grpc.unary_unary_rpc_method_handler(
+                    servicer.RenewSessionLease,
+                    request_deserializer=runtime__pb2.RenewSessionLeaseRequest.FromString,
                     response_serializer=runtime__pb2.SessionStatus.SerializeToString,
-            ),
-            'ExecuteSessionOperation': grpc.unary_unary_rpc_method_handler(
-                    servicer.ExecuteSessionOperation,
-                    request_deserializer=runtime__pb2.ExecuteSessionOperationRequest.FromString,
-                    response_serializer=runtime__pb2.ExecuteSessionOperationResponse.SerializeToString,
             ),
             'StreamSessionOperation': grpc.unary_stream_rpc_method_handler(
                     servicer.StreamSessionOperation,
@@ -769,7 +752,7 @@ class SessionRuntime(object):
             _registered_method=True)
 
     @staticmethod
-    def TouchSession(request,
+    def RenewSessionLease(request,
             target,
             options=(),
             channel_credentials=None,
@@ -782,36 +765,9 @@ class SessionRuntime(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/executor.v1.SessionRuntime/TouchSession',
-            runtime__pb2.TouchSessionRequest.SerializeToString,
+            '/executor.v1.SessionRuntime/RenewSessionLease',
+            runtime__pb2.RenewSessionLeaseRequest.SerializeToString,
             runtime__pb2.SessionStatus.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ExecuteSessionOperation(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/executor.v1.SessionRuntime/ExecuteSessionOperation',
-            runtime__pb2.ExecuteSessionOperationRequest.SerializeToString,
-            runtime__pb2.ExecuteSessionOperationResponse.FromString,
             options,
             channel_credentials,
             insecure,

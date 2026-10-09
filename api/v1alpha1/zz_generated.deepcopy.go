@@ -744,11 +744,6 @@ func (in *RunSessionMode) DeepCopyInto(out *RunSessionMode) {
 		*out = new(int32)
 		**out = **in
 	}
-	if in.IdleTimeoutSeconds != nil {
-		in, out := &in.IdleTimeoutSeconds, &out.IdleTimeoutSeconds
-		*out = new(int32)
-		**out = **in
-	}
 	if in.QueueSize != nil {
 		in, out := &in.QueueSize, &out.QueueSize
 		*out = new(int32)

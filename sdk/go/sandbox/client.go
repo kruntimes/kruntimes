@@ -302,6 +302,34 @@ type Command struct {
 	TimeoutMillis    int64             `json:"timeoutMillis,omitempty"`
 }
 
+// Operation is one mutation submitted over a persistent Session connection.
+// Exactly one field must be set.
+type Operation struct {
+	Command         *Command         `json:"command,omitempty"`
+	WriteFile       *FileWrite       `json:"writeFile,omitempty"`
+	CreateDirectory *DirectoryCreate `json:"createDirectory,omitempty"`
+	DeleteFile      *FileDelete      `json:"deleteFile,omitempty"`
+	RenameFile      *FileRename      `json:"renameFile,omitempty"`
+}
+
+type FileWrite struct {
+	Path          string `json:"path"`
+	Contents      []byte `json:"contents"`
+	CreateParents bool   `json:"createParents,omitempty"`
+}
+type DirectoryCreate struct {
+	Path string `json:"path"`
+}
+type FileDelete struct {
+	Path      string `json:"path"`
+	Recursive bool   `json:"recursive,omitempty"`
+}
+type FileRename struct {
+	SourcePath      string `json:"sourcePath"`
+	DestinationPath string `json:"destinationPath"`
+	Overwrite       bool   `json:"overwrite,omitempty"`
+}
+
 // CommandResult is the bounded result of one command operation.
 type CommandResult struct {
 	ExitCode int32  `json:"exitCode"`
@@ -340,42 +368,6 @@ type OperationProgress struct {
 type OperationFailure struct {
 	Code    int32  `json:"code"`
 	Message string `json:"message"`
-}
-
-// Execute runs exactly one command. Transport errors have unknown execution
-// outcome and are intentionally never retried by this SDK.
-func (s *Sandbox) Execute(ctx context.Context, command Command) (CommandResult, error) {
-	var response struct {
-		Command *CommandResult `json:"command"`
-	}
-	err := s.operation(ctx, map[string]any{"command": command}, &response)
-	if err != nil {
-		return CommandResult{}, err
-	}
-	if response.Command == nil {
-		return CommandResult{}, errors.New("Console response did not include a command result")
-	}
-	return *response.Command, nil
-}
-
-// WriteFile writes bounded content at a workspace-relative path.
-func (s *Sandbox) WriteFile(ctx context.Context, path string, contents []byte, createParents bool) error {
-	return s.operation(ctx, map[string]any{"writeFile": map[string]any{"path": path, "contents": contents, "createParents": createParents}}, nil)
-}
-
-// CreateDirectory creates a workspace-relative directory and missing parents.
-func (s *Sandbox) CreateDirectory(ctx context.Context, path string) error {
-	return s.operation(ctx, map[string]any{"createDirectory": map[string]any{"path": path}}, nil)
-}
-
-// DeleteFile removes a workspace-relative file or directory.
-func (s *Sandbox) DeleteFile(ctx context.Context, path string, recursive bool) error {
-	return s.operation(ctx, map[string]any{"deleteFile": map[string]any{"path": path, "recursive": recursive}}, nil)
-}
-
-// RenameFile renames a workspace-relative file or directory.
-func (s *Sandbox) RenameFile(ctx context.Context, sourcePath, destinationPath string, overwrite bool) error {
-	return s.operation(ctx, map[string]any{"renameFile": map[string]any{"sourcePath": sourcePath, "destinationPath": destinationPath, "overwrite": overwrite}}, nil)
 }
 
 // ReadFile returns bounded content at a workspace-relative path.
@@ -516,14 +508,6 @@ type StateError struct {
 }
 
 func (e *StateError) Error() string { return e.Message }
-
-func (s *Sandbox) operation(ctx context.Context, operation any, response any) error {
-	endpoint, err := s.endpoint("operations:execute")
-	if err != nil {
-		return err
-	}
-	return s.request(ctx, http.MethodPost, endpoint, operation, response)
-}
 
 func (s *Sandbox) endpoint(suffix string) (string, error) {
 	if s.run.Status.Phase != v1alpha1.RunReady || s.run.Status.Endpoint == nil || s.run.Status.Endpoint.URL == "" {

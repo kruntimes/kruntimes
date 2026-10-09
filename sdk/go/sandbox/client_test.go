@@ -2,7 +2,6 @@ package sandbox
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -14,7 +13,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -23,7 +21,7 @@ import (
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
-func TestSandboxCreatesAndExecutes(t *testing.T) {
+func TestSandboxCreatesSessionRun(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -32,10 +30,7 @@ func TestSandboxCreatesAndExecutes(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer token" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
 		}
-		if r.URL.Path != "/v1/namespaces/default/runtimes/bash/sessions/run-uid/operations:execute" {
-			t.Fatalf("path = %q", r.URL.Path)
-		}
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"command":{"exitCode":0,"stdout":"b2s="}}`))}, nil
+		return nil, errors.New("no HTTP operation should be sent")
 	})
 	runs := fake.NewClientBuilder().WithScheme(scheme).Build()
 	client, err := New(Config{Runs: runs, HTTPClient: doer, BearerToken: "token"})
@@ -48,38 +43,6 @@ func TestSandboxCreatesAndExecutes(t *testing.T) {
 	}
 	if sandbox.run.Spec.Mode.Session == nil || len(sandbox.run.Spec.Env) != 2 || sandbox.run.Spec.Env[0].Name != "A" {
 		t.Fatalf("created Run = %#v", sandbox.run.Spec)
-	}
-	sandbox.run.UID = types.UID("run-uid")
-	sandbox.run.Status = v1alpha1.RunStatus{Phase: v1alpha1.RunReady, Endpoint: &v1alpha1.RunEndpoint{URL: "http://gateway/v1/namespaces/default/runtimes/bash/sessions/run-uid"}}
-	if _, err := sandbox.Execute(context.Background(), Command{Argv: []string{"echo", "ok"}}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestSandboxFileMutationsUseGatewayOperationNames(t *testing.T) {
-	operations := []string{}
-	sandbox := readySandbox(t, httpDoer(func(request *http.Request) (*http.Response, error) {
-		var payload map[string]any
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-			t.Fatal(err)
-		}
-		for name := range payload {
-			operations = append(operations, name)
-		}
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
-	}))
-	ctx := context.Background()
-	if err := sandbox.CreateDirectory(ctx, "notes"); err != nil {
-		t.Fatal(err)
-	}
-	if err := sandbox.DeleteFile(ctx, "notes/old", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := sandbox.RenameFile(ctx, "notes/a", "notes/b", true); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(operations, ",") != "createDirectory,deleteFile,renameFile" {
-		t.Fatalf("operation names = %v", operations)
 	}
 }
 

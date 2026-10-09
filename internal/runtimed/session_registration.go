@@ -32,19 +32,14 @@ func sessionRegistrationRequest(run *v1alpha1.Run, workingDir, artifactsDir stri
 		return nil, err
 	}
 
-	var idleTimeoutSeconds int64
-	if session.IdleTimeoutSeconds != nil {
-		idleTimeoutSeconds = int64(*session.IdleTimeoutSeconds)
-	}
 	env := sessionRegistrationEnv(run.Spec.Env)
 	if artifactsDir != "" {
 		env[artifact.ArtifactsDirEnv] = artifactsDir
 	}
 	return &pb.RegisterSessionRequest{
-		Identity:           identity,
-		WorkingDir:         workingDir,
-		Env:                env,
-		IdleTimeoutSeconds: idleTimeoutSeconds,
+		Identity:   identity,
+		WorkingDir: workingDir,
+		Env:        env,
 	}, nil
 }
 

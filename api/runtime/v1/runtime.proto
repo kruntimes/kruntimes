@@ -41,10 +41,8 @@ service SessionRuntime {
     rpc RegisterSession(RegisterSessionRequest) returns (SessionStatus);
     // GetSessionStatus returns local session state for recovery and idle checks.
     rpc GetSessionStatus(GetSessionStatusRequest) returns (SessionStatus);
-    // TouchSession records a server-observed connection heartbeat for lease recovery.
-    rpc TouchSession(TouchSessionRequest) returns (SessionStatus);
-    // ExecuteSessionOperation executes one mutation already admitted by runtimed.
-    rpc ExecuteSessionOperation(ExecuteSessionOperationRequest) returns (ExecuteSessionOperationResponse);
+    // RenewSessionLease records a server-observed connection heartbeat to renew the lease.
+    rpc RenewSessionLease(RenewSessionLeaseRequest) returns (SessionStatus);
     // StreamSessionOperation executes one mutation and emits ordered progress and
     // terminal events. The owner runtimed serializes the operation.
     rpc StreamSessionOperation(ExecuteSessionOperationRequest) returns (stream SessionOperationEvent);
@@ -213,8 +211,6 @@ message RegisterSessionRequest {
     string working_dir = 2;
     // Environment overrides available to every session command.
     map<string, string> env = 3;
-    // Idle lifetime requested by the Run. runtimed applies its own upper bound.
-    int64 idle_timeout_seconds = 4;
 }
 
 message GetSessionStatusRequest {
@@ -222,7 +218,7 @@ message GetSessionStatusRequest {
     SessionIdentity identity = 1;
 }
 
-message TouchSessionRequest {
+message RenewSessionLeaseRequest {
     // Immutable assignment identity for the connected Session Run.
     SessionIdentity identity = 1;
 }

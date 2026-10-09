@@ -697,19 +697,11 @@ spec:
                   session:
                     description: Session configures a stateful agent sandbox session.
                     properties:
-                      idleTimeoutSeconds:
-                        description: |-
-                          IdleTimeoutSeconds is the duration after the last accepted command or file
-                          mutation before the session is closed.
-                        format: int32
-                        minimum: 1
-                        type: integer
                       leaseTimeoutSeconds:
                         description: |-
                           LeaseTimeoutSeconds is the duration after the last server-observed
-                          connection heartbeat before the session is closed. It is independent of
-                          idle operation expiry so a connected agent can retain its sandbox without
-                          issuing artificial commands.
+                          connection heartbeat before the session is closed. When omitted, lease expiry is disabled and
+                          the Session is not required to send heartbeats.
                         format: int32
                         minimum: 1
                         type: integer

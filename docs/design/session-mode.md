@@ -26,7 +26,6 @@ type RunMode struct {
 
 type RunSessionMode struct {
     LeaseTimeoutSeconds *int32 `json:"leaseTimeoutSeconds,omitempty"`
-    IdleTimeoutSeconds *int32 `json:"idleTimeoutSeconds,omitempty"`
     QueueSize          *int32 `json:"queueSize,omitempty"`
     OperationTimeout   *metav1.Duration `json:"operationTimeout,omitempty"`
 }
@@ -76,7 +75,8 @@ waits for cleanup, and deletes its Session Run. An explicit immediate-release
 mode may cancel active work; the default is graceful draining.
 
 `leaseTimeoutSeconds` enables a distinct connection lease in addition to the
-existing operation-idle timeout. While a Session connection is open, the SDK
+existing operation-idle timeout. Omitting it disables lease expiry entirely,
+so the Session does not need to send heartbeats. While a Session connection is open, the SDK
 privately sends heartbeats; the gateway authenticates and forwards each one to
 owner runtimed. Owner runtimed records the server-authoritative lease timestamp
 separately from command activity and terminates the Session when it expires.
@@ -348,9 +348,7 @@ gRPC methods:
 | HTTP API | `SessionRuntime` method | Behavior |
 | --- | --- |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}` | `GetSessionStatus` | return readiness and bounded session metadata |
-| `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:execute` | `ExecuteSessionOperation` | execute one command or file mutation |
-| `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream` | `StreamSessionOperation` | execute one operation and stream ordered NDJSON progress and terminal events |
-| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `TouchSession`, `StreamSessionOperation` | persistent Session connection; authenticated open and private `heartbeat` frames touch the lease, while clients send `send`/`cancel` frames and receive ordered event frames |
+| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `RenewSessionLease`, `StreamSessionOperation` | persistent Session connection; authenticated open and private `heartbeat` frames renew the lease, while clients send `send`/`cancel` frames and receive ordered event frames |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files` | `ReadSessionFile`, `ListSessionFiles` | bounded workspace-relative file access |
 
 An exec request supplies exactly one of `argv` or `shell`. `argv` directly
@@ -470,9 +468,9 @@ The `SessionRuntime` method set is:
 service SessionRuntime {
   rpc RegisterSession(RegisterSessionRequest) returns (SessionStatus);
   rpc GetSessionStatus(GetSessionStatusRequest) returns (SessionStatus);
-  rpc TouchSession(TouchSessionRequest) returns (SessionStatus);
-  rpc ExecuteSessionOperation(ExecuteSessionOperationRequest)
-      returns (ExecuteSessionOperationResponse);
+  rpc RenewSessionLease(RenewSessionLeaseRequest) returns (SessionStatus);
+	 rpc StreamSessionOperation(ExecuteSessionOperationRequest)
+	     returns (stream SessionOperationEvent);
   rpc ReadSessionFile(ReadSessionFileRequest) returns (ReadSessionFileResponse);
   rpc ListSessionFiles(ListSessionFilesRequest) returns (ListSessionFilesResponse);
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
@@ -490,13 +488,15 @@ client-controlled HTTP input. A receiving runtimed either forwards the request
 to the owner or, when it is the owner, applies queue admission before calling
 its local Runtime Server. `RegisterSession` receives the prepared workspace
 path and immutable source inputs; it is idempotent for the same identity.
-`ExecuteSessionOperation` contains exactly one `oneof` payload: a command,
+`StreamSessionOperation` contains exactly one `oneof` payload: a command,
 file write, directory creation, delete, or rename. Its request context carries
 the command timeout; cancellation terminates the matching process group. Read
 and list RPCs are synchronous, bounded, and do not enter the mutation queue.
 The local Runtime Server does not route requests or allocate operation state.
-`TouchSession` is idempotent and updates only the separately stored lease
-heartbeat timestamp; it must not update command-idle activity.
+`RenewSessionLease` is idempotent and updates only the separately stored lease
+heartbeat timestamp. There is no Session idle-expiry setting: an allocated
+Session ends only through explicit termination, its Run timeout, or an enabled
+lease expiry.
 `CloseSession` is idempotent and removes local state after owner runtimed has
 rejected new gateway operations.
 

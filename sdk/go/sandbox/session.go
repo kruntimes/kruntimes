@@ -61,12 +61,8 @@ type Session struct {
 }
 
 type sessionSendFrame struct {
-	Type      string                  `json:"type"`
-	Operation sessionCommandOperation `json:"operation"`
-}
-
-type sessionCommandOperation struct {
-	Command Command `json:"command"`
+	Type      string    `json:"type"`
+	Operation Operation `json:"operation"`
 }
 
 // OpenSession opens a persistent connection to this ready Sandbox. It does not
@@ -120,9 +116,9 @@ func sessionWebSocketURL(endpoint string) (string, error) {
 	return parsed.String(), nil
 }
 
-// Send submits one command and waits for its accepted event. Only one command
+// Send submits one operation and waits for its accepted event. Only one operation
 // may be active on one Session connection at a time.
-func (s *Session) Send(ctx context.Context, command Command) (string, error) {
+func (s *Session) Send(ctx context.Context, operation Operation) (string, error) {
 	if s == nil || s.connection == nil {
 		return "", errors.New("Sandbox Session is not configured")
 	}
@@ -136,7 +132,7 @@ func (s *Session) Send(ctx context.Context, command Command) (string, error) {
 		return "", errors.New("Sandbox Session already has an active operation")
 	}
 	s.stateMu.Unlock()
-	payload, err := json.Marshal(sessionSendFrame{Type: sessionFrameTypeSend, Operation: sessionCommandOperation{Command: command}})
+	payload, err := json.Marshal(sessionSendFrame{Type: sessionFrameTypeSend, Operation: operation})
 	if err != nil {
 		return "", fmt.Errorf("encode Sandbox Session send: %w", err)
 	}
@@ -175,6 +171,11 @@ func (s *Session) Receive(ctx context.Context) (OperationEvent, error) {
 	defer s.connection.SetReadDeadline(time.Time{})
 	event, err := s.readEvent()
 	if err != nil {
+		// A gateway error terminates the active operation but not necessarily the
+		// persistent Session connection. Permit the caller to submit another one.
+		s.stateMu.Lock()
+		s.active = ""
+		s.stateMu.Unlock()
 		return OperationEvent{}, err
 	}
 	if event.Completed != nil || event.Failed != nil {

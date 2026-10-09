@@ -1807,11 +1807,11 @@ func TestReadyFunctionTotalTimeoutUnregistersBeforeTimeoutStatus(t *testing.T) {
 }
 
 func TestReadyFunctionIdleTimeoutUnregistersBeforeTimeoutStatus(t *testing.T) {
+	idleTimeout := int32(1)
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
 	}
-	idleTimeout := int32(1)
 	run := functionLifecycleTestRun()
 	run.Spec.Mode.Function.IdleTimeoutSeconds = &idleTimeout
 	run.Status.Phase = v1alpha1.RunReady
@@ -2441,17 +2441,17 @@ func TestSessionCloseTimeoutUsesConfiguredValue(t *testing.T) {
 }
 
 func TestReadySessionIdleExpiryClosesRuntimeSession(t *testing.T) {
+	t.Skip("Session idle expiry was removed; lease and total timeout remain")
 	setTestWorkspace(t)
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
 	}
-	idleTimeout := int32(1)
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default", UID: "session-uid"},
 		Spec: v1alpha1.RunSpec{
 			Runtime: "bash",
-			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{IdleTimeoutSeconds: &idleTimeout}},
+			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}},
 		},
 		Status: v1alpha1.RunStatus{Phase: v1alpha1.RunReady, AssignedPod: "runtime-pod", AssignedPodUID: "runtime-pod-uid", StartTime: &metav1.Time{Time: time.Now()}},
 	}
@@ -2524,14 +2524,13 @@ func TestReadySessionTotalTimeoutTakesPrecedenceOverIdleTimeout(t *testing.T) {
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
 	}
-	idleTimeout := int32(60)
 	totalTimeout := metav1.Duration{Duration: time.Second}
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default", UID: "session-uid"},
 		Spec: v1alpha1.RunSpec{
 			Runtime: "bash",
 			Timeout: &totalTimeout,
-			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{IdleTimeoutSeconds: &idleTimeout}},
+			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}},
 		},
 		Status: v1alpha1.RunStatus{Phase: v1alpha1.RunReady, AssignedPod: "runtime-pod", AssignedPodUID: "runtime-pod-uid", StartTime: &metav1.Time{Time: time.Now().Add(-2 * time.Second)}},
 	}

@@ -133,6 +133,33 @@ class CommandResult:
 
 
 @dataclass(frozen=True)
+class Operation:
+    """One mutation submitted through a persistent Session connection."""
+
+    command: Command | None = None
+    write_file: Mapping[str, Any] | None = None
+    create_directory: Mapping[str, Any] | None = None
+    delete_file: Mapping[str, Any] | None = None
+    rename_file: Mapping[str, Any] | None = None
+
+    def request_body(self) -> dict[str, Any]:
+        values: dict[str, Any] = {}
+        if self.command is not None:
+            values["command"] = self.command.request_body()
+        if self.write_file is not None:
+            values["writeFile"] = dict(self.write_file)
+        if self.create_directory is not None:
+            values["createDirectory"] = dict(self.create_directory)
+        if self.delete_file is not None:
+            values["deleteFile"] = dict(self.delete_file)
+        if self.rename_file is not None:
+            values["renameFile"] = dict(self.rename_file)
+        if len(values) != 1:
+            raise ValueError("exactly one Session operation is required")
+        return values
+
+
+@dataclass(frozen=True)
 class OperationEvent:
     sequence: int
     type: str
@@ -322,19 +349,6 @@ class Sandbox:
                 return
             _sleep_until(deadline, self._client._poll_interval_seconds)
 
-    def execute(self, command: Command) -> CommandResult:
-        """Execute one command without implicit retry after transport failure."""
-        response = self._operation({"command": command.request_body()})
-        command_response = response.get("command")
-        if not isinstance(command_response, Mapping):
-            raise ValueError("gateway response did not include a command result")
-        return CommandResult(
-            exit_code=int(command_response.get("exitCode", 0)),
-            stdout=_decode_bytes(command_response.get("stdout", "")),
-            stderr=_decode_bytes(command_response.get("stderr", "")),
-            timed_out=bool(command_response.get("timedOut", False)),
-        )
-
     def open_session(self, *, timeout_seconds: float | None = None) -> "Session":
         """Open a persistent operation connection to this ready Sandbox.
 
@@ -350,18 +364,6 @@ class Sandbox:
         except Exception as error:
             raise RuntimeError("open Sandbox Session") from error
         return Session(connection, _session_heartbeat_interval(self._run))
-
-    def write_file(self, path: str, contents: bytes, *, create_parents: bool = False) -> None:
-        self._operation({"writeFile": {"path": path, "contents": _encode_bytes(contents), "createParents": create_parents}})
-
-    def create_directory(self, path: str) -> None:
-        self._operation({"createDirectory": {"path": path}})
-
-    def delete_file(self, path: str, *, recursive: bool = False) -> None:
-        self._operation({"deleteFile": {"path": path, "recursive": recursive}})
-
-    def rename_file(self, source_path: str, destination_path: str, *, overwrite: bool = False) -> None:
-        self._operation({"renameFile": {"sourcePath": source_path, "destinationPath": destination_path, "overwrite": overwrite}})
 
     def read_file(self, path: str, *, max_bytes: int = 0) -> tuple[bytes, bool]:
         endpoint = self._endpoint("files")
@@ -427,9 +429,6 @@ class Sandbox:
             ))
         return result
 
-    def _operation(self, operation: Mapping[str, Any]) -> dict[str, Any]:
-        return self._request("POST", self._endpoint("operations:execute"), operation)
-
     def _endpoint(self, suffix: str) -> str:
         status = self._run.get("status", {})
         endpoint = status.get("endpoint", {}) if isinstance(status, Mapping) else {}
@@ -490,15 +489,15 @@ class Session:
             self._heartbeat_thread = threading.Thread(target=self._heartbeat, args=(heartbeat_interval_seconds,), daemon=True)
             self._heartbeat_thread.start()
 
-    def send(self, command: Command, *, idempotency_key: str = "") -> str:
-        """Submit one command and return after its ``accepted`` event."""
+    def send(self, operation: Operation, *, idempotency_key: str = "") -> str:
+        """Submit one operation and return after its ``accepted`` event."""
         if self._closed:
             raise RuntimeError("Sandbox Session is closed")
         if self._active_operation_id:
             raise RuntimeError("Sandbox Session already has an active operation")
         payload: dict[str, Any] = {
             "type": _SESSION_FRAME_TYPE_SEND,
-            "operation": {"command": command.request_body()},
+            "operation": operation.request_body(),
         }
         if idempotency_key:
             payload["idempotencyKey"] = idempotency_key

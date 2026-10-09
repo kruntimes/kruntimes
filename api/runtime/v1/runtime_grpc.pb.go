@@ -553,14 +553,13 @@ var FunctionRuntime_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	SessionRuntime_RegisterSession_FullMethodName         = "/executor.v1.SessionRuntime/RegisterSession"
-	SessionRuntime_GetSessionStatus_FullMethodName        = "/executor.v1.SessionRuntime/GetSessionStatus"
-	SessionRuntime_TouchSession_FullMethodName            = "/executor.v1.SessionRuntime/TouchSession"
-	SessionRuntime_ExecuteSessionOperation_FullMethodName = "/executor.v1.SessionRuntime/ExecuteSessionOperation"
-	SessionRuntime_StreamSessionOperation_FullMethodName  = "/executor.v1.SessionRuntime/StreamSessionOperation"
-	SessionRuntime_ReadSessionFile_FullMethodName         = "/executor.v1.SessionRuntime/ReadSessionFile"
-	SessionRuntime_ListSessionFiles_FullMethodName        = "/executor.v1.SessionRuntime/ListSessionFiles"
-	SessionRuntime_CloseSession_FullMethodName            = "/executor.v1.SessionRuntime/CloseSession"
+	SessionRuntime_RegisterSession_FullMethodName        = "/executor.v1.SessionRuntime/RegisterSession"
+	SessionRuntime_GetSessionStatus_FullMethodName       = "/executor.v1.SessionRuntime/GetSessionStatus"
+	SessionRuntime_RenewSessionLease_FullMethodName      = "/executor.v1.SessionRuntime/RenewSessionLease"
+	SessionRuntime_StreamSessionOperation_FullMethodName = "/executor.v1.SessionRuntime/StreamSessionOperation"
+	SessionRuntime_ReadSessionFile_FullMethodName        = "/executor.v1.SessionRuntime/ReadSessionFile"
+	SessionRuntime_ListSessionFiles_FullMethodName       = "/executor.v1.SessionRuntime/ListSessionFiles"
+	SessionRuntime_CloseSession_FullMethodName           = "/executor.v1.SessionRuntime/CloseSession"
 )
 
 // SessionRuntimeClient is the client API for SessionRuntime service.
@@ -577,10 +576,8 @@ type SessionRuntimeClient interface {
 	RegisterSession(ctx context.Context, in *RegisterSessionRequest, opts ...grpc.CallOption) (*SessionStatus, error)
 	// GetSessionStatus returns local session state for recovery and idle checks.
 	GetSessionStatus(ctx context.Context, in *GetSessionStatusRequest, opts ...grpc.CallOption) (*SessionStatus, error)
-	// TouchSession records a server-observed connection heartbeat for lease recovery.
-	TouchSession(ctx context.Context, in *TouchSessionRequest, opts ...grpc.CallOption) (*SessionStatus, error)
-	// ExecuteSessionOperation executes one mutation already admitted by runtimed.
-	ExecuteSessionOperation(ctx context.Context, in *ExecuteSessionOperationRequest, opts ...grpc.CallOption) (*ExecuteSessionOperationResponse, error)
+	// RenewSessionLease records a server-observed connection heartbeat to renew the lease.
+	RenewSessionLease(ctx context.Context, in *RenewSessionLeaseRequest, opts ...grpc.CallOption) (*SessionStatus, error)
 	// StreamSessionOperation executes one mutation and emits ordered progress and
 	// terminal events. The owner runtimed serializes the operation.
 	StreamSessionOperation(ctx context.Context, in *ExecuteSessionOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SessionOperationEvent], error)
@@ -620,20 +617,10 @@ func (c *sessionRuntimeClient) GetSessionStatus(ctx context.Context, in *GetSess
 	return out, nil
 }
 
-func (c *sessionRuntimeClient) TouchSession(ctx context.Context, in *TouchSessionRequest, opts ...grpc.CallOption) (*SessionStatus, error) {
+func (c *sessionRuntimeClient) RenewSessionLease(ctx context.Context, in *RenewSessionLeaseRequest, opts ...grpc.CallOption) (*SessionStatus, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SessionStatus)
-	err := c.cc.Invoke(ctx, SessionRuntime_TouchSession_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *sessionRuntimeClient) ExecuteSessionOperation(ctx context.Context, in *ExecuteSessionOperationRequest, opts ...grpc.CallOption) (*ExecuteSessionOperationResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ExecuteSessionOperationResponse)
-	err := c.cc.Invoke(ctx, SessionRuntime_ExecuteSessionOperation_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, SessionRuntime_RenewSessionLease_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -703,10 +690,8 @@ type SessionRuntimeServer interface {
 	RegisterSession(context.Context, *RegisterSessionRequest) (*SessionStatus, error)
 	// GetSessionStatus returns local session state for recovery and idle checks.
 	GetSessionStatus(context.Context, *GetSessionStatusRequest) (*SessionStatus, error)
-	// TouchSession records a server-observed connection heartbeat for lease recovery.
-	TouchSession(context.Context, *TouchSessionRequest) (*SessionStatus, error)
-	// ExecuteSessionOperation executes one mutation already admitted by runtimed.
-	ExecuteSessionOperation(context.Context, *ExecuteSessionOperationRequest) (*ExecuteSessionOperationResponse, error)
+	// RenewSessionLease records a server-observed connection heartbeat to renew the lease.
+	RenewSessionLease(context.Context, *RenewSessionLeaseRequest) (*SessionStatus, error)
 	// StreamSessionOperation executes one mutation and emits ordered progress and
 	// terminal events. The owner runtimed serializes the operation.
 	StreamSessionOperation(*ExecuteSessionOperationRequest, grpc.ServerStreamingServer[SessionOperationEvent]) error
@@ -732,11 +717,8 @@ func (UnimplementedSessionRuntimeServer) RegisterSession(context.Context, *Regis
 func (UnimplementedSessionRuntimeServer) GetSessionStatus(context.Context, *GetSessionStatusRequest) (*SessionStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSessionStatus not implemented")
 }
-func (UnimplementedSessionRuntimeServer) TouchSession(context.Context, *TouchSessionRequest) (*SessionStatus, error) {
-	return nil, status.Error(codes.Unimplemented, "method TouchSession not implemented")
-}
-func (UnimplementedSessionRuntimeServer) ExecuteSessionOperation(context.Context, *ExecuteSessionOperationRequest) (*ExecuteSessionOperationResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ExecuteSessionOperation not implemented")
+func (UnimplementedSessionRuntimeServer) RenewSessionLease(context.Context, *RenewSessionLeaseRequest) (*SessionStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenewSessionLease not implemented")
 }
 func (UnimplementedSessionRuntimeServer) StreamSessionOperation(*ExecuteSessionOperationRequest, grpc.ServerStreamingServer[SessionOperationEvent]) error {
 	return status.Error(codes.Unimplemented, "method StreamSessionOperation not implemented")
@@ -807,38 +789,20 @@ func _SessionRuntime_GetSessionStatus_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SessionRuntime_TouchSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TouchSessionRequest)
+func _SessionRuntime_RenewSessionLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenewSessionLeaseRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SessionRuntimeServer).TouchSession(ctx, in)
+		return srv.(SessionRuntimeServer).RenewSessionLease(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: SessionRuntime_TouchSession_FullMethodName,
+		FullMethod: SessionRuntime_RenewSessionLease_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SessionRuntimeServer).TouchSession(ctx, req.(*TouchSessionRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SessionRuntime_ExecuteSessionOperation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ExecuteSessionOperationRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SessionRuntimeServer).ExecuteSessionOperation(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SessionRuntime_ExecuteSessionOperation_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SessionRuntimeServer).ExecuteSessionOperation(ctx, req.(*ExecuteSessionOperationRequest))
+		return srv.(SessionRuntimeServer).RenewSessionLease(ctx, req.(*RenewSessionLeaseRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -924,12 +888,8 @@ var SessionRuntime_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SessionRuntime_GetSessionStatus_Handler,
 		},
 		{
-			MethodName: "TouchSession",
-			Handler:    _SessionRuntime_TouchSession_Handler,
-		},
-		{
-			MethodName: "ExecuteSessionOperation",
-			Handler:    _SessionRuntime_ExecuteSessionOperation_Handler,
+			MethodName: "RenewSessionLease",
+			Handler:    _SessionRuntime_RenewSessionLease_Handler,
 		},
 		{
 			MethodName: "ReadSessionFile",

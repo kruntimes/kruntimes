@@ -394,6 +394,9 @@ func (c *Controller) reconcileScheduled(ctx context.Context, run *v1alpha1.Run) 
 		LastTransitionTime: startedAt,
 	})
 	if run.Spec.Mode.Task != nil {
+		// Only Task Runs dispatch an Execute request at claim time. Session and
+		// Function Runs instead report readiness after their own registration,
+		// so Ready is their acceptance signal rather than RuntimeAccepted.
 		meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
 			Type:               runstatus.ConditionRuntimeAccepted,
 			Status:             metav1.ConditionFalse,
@@ -657,12 +660,6 @@ func (c *Controller) reconcileReadySession(ctx context.Context, run *v1alpha1.Ru
 		}
 		requeueAfter = min(requeueAfter, time.Until(ar.deadline))
 	}
-	if deadline, ok := c.sessionIdleDeadline(run, now); ok {
-		if !now.Before(deadline) {
-			return c.closeSessionAndApplyTerminal(ctx, ar, v1alpha1.RunTimeout, runretry.ReasonTimeout, "session idle timeout exceeded")
-		}
-		requeueAfter = min(requeueAfter, time.Until(deadline))
-	}
 	if deadline, ok := c.sessionLeaseDeadline(run); ok {
 		if !now.Before(deadline) {
 			return c.closeSessionAndApplyTerminal(ctx, ar, v1alpha1.RunTimeout, runretry.ReasonTimeout, "session lease expired")
@@ -670,13 +667,6 @@ func (c *Controller) reconcileReadySession(ctx context.Context, run *v1alpha1.Ru
 		requeueAfter = min(requeueAfter, time.Until(deadline))
 	}
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
-}
-
-func (c *Controller) sessionIdleDeadline(run *v1alpha1.Run, now time.Time) (time.Time, bool) {
-	if c.SessionOperations == nil || run == nil || run.Spec.Mode.Session == nil || run.Spec.Mode.Session.IdleTimeoutSeconds == nil {
-		return time.Time{}, false
-	}
-	return c.SessionOperations.IdleDeadline(string(run.UID), time.Duration(*run.Spec.Mode.Session.IdleTimeoutSeconds)*time.Second, now)
 }
 
 func (c *Controller) sessionLeaseDeadline(run *v1alpha1.Run) (time.Time, bool) {

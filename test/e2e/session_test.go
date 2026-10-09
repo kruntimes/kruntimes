@@ -38,7 +38,7 @@ import (
 	"github.com/kruntimes/kruntimes/internal/logapi"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
 	"github.com/kruntimes/kruntimes/internal/runstatus"
-	"github.com/kruntimes/kruntimes/sdk/go/sandbox"
+	sandboxsdk "github.com/kruntimes/kruntimes/sdk/go/sandbox"
 )
 
 func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
@@ -86,35 +86,23 @@ func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
 	unauthorizedToken := sessionGatewayTokenWithoutRunAccess(t)
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL, unauthorizedToken, nil, http.StatusForbidden)
 
-	payload := []byte(`{"command":{"argv":["sh","-c","printf gateway-ok"]}}`)
-	operationResponse := waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token, payload, http.StatusOK)
-	var operation struct {
-		Command struct {
-			ExitCode int32  `json:"exitCode"`
-			Stdout   []byte `json:"stdout"`
-		} `json:"command"`
-	}
-	if err := json.Unmarshal(operationResponse, &operation); err != nil {
-		t.Fatalf("decode Session operation response: %v", err)
-	}
-	if operation.Command.ExitCode != 0 || string(operation.Command.Stdout) != "gateway-ok" {
-		t.Fatalf("Session command result = %#v, want successful gateway-ok output", operation.Command)
+	operation, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-ok"]}}`))
+	if err != nil || operation.ExitCode != 0 || string(operation.Stdout) != "gateway-ok" {
+		t.Fatalf("Session command result = %#v, %v; want successful gateway-ok output", operation, err)
 	}
 	waitForSessionCommandLogs(t, run, "gateway-ok")
 
-	envPayload := []byte(`{"command":{"argv":["sh","-c","printf '%s:%s' \"$KRUNTIMES_SESSION_DEFAULT\" \"$KRUNTIMES_SESSION_COMMAND\""],"env":{"KRUNTIMES_SESSION_COMMAND":"command"}}}`)
-	envResponse := waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token, envPayload, http.StatusOK)
-	if err := json.Unmarshal(envResponse, &operation); err != nil {
-		t.Fatalf("decode Session environment response: %v", err)
-	}
-	if operation.Command.ExitCode != 0 || string(operation.Command.Stdout) != "registration:command" {
-		t.Fatalf("Session command environment result = %#v, want registration:command", operation.Command)
+	operation, err = executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf '%s:%s' \"$KRUNTIMES_SESSION_DEFAULT\" \"$KRUNTIMES_SESSION_COMMAND\""],"env":{"KRUNTIMES_SESSION_COMMAND":"command"}}}`))
+	if err != nil || operation.ExitCode != 0 || string(operation.Stdout) != "registration:command" {
+		t.Fatalf("Session command environment result = %#v, %v; want registration:command", operation, err)
 	}
 
-	writePayload := []byte(`{"writeFile":{"path":"notes/result.txt","contents":"Z2F0ZXdheS1maWxl","createParents":true}}`)
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token, writePayload, http.StatusOK)
-	escapingWrite := []byte(`{"writeFile":{"path":"../outside.txt","contents":"ZXNjYXBl","createParents":true}}`)
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token, escapingWrite, http.StatusBadRequest)
+	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"notes/result.txt","contents":"Z2F0ZXdheS1maWxl","createParents":true}}`)); err != nil {
+		t.Fatalf("write Session file: %v", err)
+	}
+	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"../outside.txt","contents":"ZXNjYXBl","createParents":true}}`)); err == nil {
+		t.Fatal("escaping Session write succeeded")
+	}
 
 	filesResponse := waitForGatewayResponse(t, http.MethodGet, baseURL+"/files?path=notes", token, nil, http.StatusOK)
 	var files struct {
@@ -147,6 +135,7 @@ func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
 }
 
 func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
+	t.Skip("covered by the persistent WebSocket operation tests")
 	t.Parallel()
 	runtimeName := fmt.Sprintf("session-stream-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
@@ -317,8 +306,9 @@ func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
 	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
 	token := sessionGatewayToken(t, run)
 	marker := "gateway-run-log-e2e"
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token,
-		[]byte(`{"command":{"argv":["sh","-c","printf gateway-run-log-e2e"]}}`), http.StatusOK)
+	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-run-log-e2e"]}}`)); err != nil {
+		t.Fatalf("write Session log marker: %v", err)
+	}
 	waitForSessionCommandLogs(t, run, marker)
 	requestRunCancel(t, run)
 	waitForRunPhase(t, run, 20*time.Second, v1alpha1.RunCancelled)
@@ -338,8 +328,9 @@ func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
 	noisyBaseURL := gatewayEndpointURL(t, waitForGatewayPod(t), noisyRun.Status.Endpoint.URL)
 	noisyToken := sessionGatewayToken(t, noisyRun)
 	for range 55 {
-		_ = waitForGatewayResponse(t, http.MethodPost, noisyBaseURL+"/operations:execute", noisyToken,
-			[]byte(`{"command":{"argv":["sh","-c","printf gateway-run-log-noise"]}}`), http.StatusOK)
+		if _, err := executeSessionOperation(t.Context(), noisyBaseURL, noisyToken, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-run-log-noise"]}}`)); err != nil {
+			t.Fatalf("write noisy Session log: %v", err)
+		}
 	}
 	waitForSessionCommandLogs(t, noisyRun, "gateway-run-log-noise")
 
@@ -648,16 +639,16 @@ func TestSessionGatewaySerializesMutations(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_, err := gatewayRequest(ctx, http.MethodPost, baseURL+"/operations:execute", token,
-			[]byte(`{"command":{"argv":["sh","-c","printf started > started; sleep 1; printf first > result.txt"]}}`), http.StatusOK)
+		_, err := executeSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 1; printf first > result.txt"]}}`))
 		firstResult <- err
 	}()
 
 	// Reading is not a mutation, so this confirms that the first command is
 	// active before the second mutation is submitted to the owner queue.
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL+"/files/started", token, nil, http.StatusOK)
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token,
-		[]byte(`{"writeFile":{"path":"result.txt","contents":"c2Vjb25k"}}`), http.StatusOK)
+	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"result.txt","contents":"c2Vjb25k"}}`)); err != nil {
+		t.Fatalf("write FIFO result: %v", err)
+	}
 	if err := <-firstResult; err != nil {
 		t.Fatalf("execute first FIFO mutation: %v", err)
 	}
@@ -700,8 +691,7 @@ func TestSessionRunCancellationTerminatesActiveGatewayCommand(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_, err := gatewayRequest(ctx, http.MethodPost, baseURL+"/operations:execute", token,
-			[]byte(`{"command":{"argv":["sh","-c","printf started > started; sleep 20; printf completed > completed"]}}`), http.StatusOK)
+		_, err := executeSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 20; printf completed > completed"]}}`))
 		commandResult <- err
 	}()
 
@@ -741,8 +731,7 @@ func TestSessionRunDrainCompletesAcceptedGatewayCommand(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_, err := gatewayRequest(ctx, http.MethodPost, baseURL+"/operations:execute", token,
-			[]byte(`{"command":{"argv":["sh","-c","printf started > started; sleep 15; printf completed > completed"]}}`), http.StatusOK)
+		_, err := executeSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 15; printf completed > completed"]}}`))
 		commandResult <- err
 	}()
 
@@ -751,8 +740,9 @@ func TestSessionRunDrainCompletesAcceptedGatewayCommand(t *testing.T) {
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL+"/files/started", token, nil, http.StatusOK)
 	requestRunDrain(t, run)
 	waitForRunPhase(t, run, 10*time.Second, v1alpha1.RunFinalizing)
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token,
-		[]byte(`{"writeFile":{"path":"rejected.txt","contents":"cmVqZWN0ZWQ="}}`), http.StatusConflict)
+	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"rejected.txt","contents":"cmVqZWN0ZWQ="}}`)); err == nil {
+		t.Fatal("Session mutation succeeded after Drain")
+	}
 	if err := <-commandResult; err != nil {
 		t.Fatalf("accepted Session command did not complete during Drain: %v", err)
 	}
@@ -790,31 +780,31 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	sdkConfig := rest.CopyConfig(restConfig)
 	sdkConfig.BearerToken = token
 	sdkConfig.BearerTokenFile = ""
-	forward, err := sandbox.StartConsolePortForward(t.Context(), sdkConfig, testNamespace, "kruntimes-console", 443)
+	forward, err := sandboxsdk.StartConsolePortForward(t.Context(), sdkConfig, testNamespace, "kruntimes-console", 443)
 	if err != nil {
 		t.Fatalf("start SDK Runtime gateway port-forward: %v", err)
 	}
 	t.Cleanup(forward.Close)
-	sdk, err := sandbox.NewFromRESTConfig(sdkConfig, sandbox.Config{HTTPClient: forward, SessionDialer: forward})
+	sdk, err := sandboxsdk.NewFromRESTConfig(sdkConfig, sandboxsdk.Config{HTTPClient: forward, SessionDialer: forward})
 	if err != nil {
 		t.Fatalf("create Sandbox SDK client: %v", err)
 	}
-	leaseTimeout := int32(3)
-	acquired, err := sdk.Runtime(testNamespace, runtimeName).AcquireSandbox(t.Context(), sandbox.AcquireOptions{
+	leaseTimeout := int32(15)
+	sandbox, err := sdk.Runtime(testNamespace, runtimeName).AcquireSandbox(t.Context(), sandboxsdk.AcquireOptions{
 		GenerateName: "e2e-sdk-session-",
 		Session:      &v1alpha1.RunSessionMode{LeaseTimeoutSeconds: &leaseTimeout},
 	})
 	if err != nil {
 		t.Fatalf("create SDK Session Run: %v", err)
 	}
-	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), acquired.Run()) })
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), sandbox.Run()) })
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	connection, err := acquired.OpenSession(ctx)
+	connection, err := sandbox.OpenSession(ctx)
 	if err != nil {
 		t.Fatalf("open SDK Session connection: %v", err)
 	}
-	operationID, err := connection.Send(ctx, sandbox.Command{Argv: []string{"sh", "-c", "printf sdk-port-forward"}})
+	operationID, err := connection.Send(ctx, sandboxsdk.Operation{Command: &sandboxsdk.Command{Argv: []string{"sh", "-c", "printf sdk-port-forward"}}})
 	if err != nil {
 		t.Fatalf("send SDK Session command: %v", err)
 	}
@@ -842,45 +832,69 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	}
 	// The SDK heartbeat must retain the Session Run beyond its lease interval
 	// without issuing an artificial operation.
-	time.Sleep(4 * time.Second)
-	if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(acquired.Run()), acquired.Run()); err != nil {
+	time.Sleep(16 * time.Second)
+	if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(sandbox.Run()), sandbox.Run()); err != nil {
 		t.Fatalf("get heartbeating SDK Session Run: %v", err)
 	}
-	if acquired.Run().Status.Phase != v1alpha1.RunReady {
-		t.Fatalf("heartbeating SDK Session phase = %s, want Ready", acquired.Run().Status.Phase)
+	if sandbox.Run().Status.Phase != v1alpha1.RunReady {
+		t.Fatalf("heartbeating SDK Session phase = %s, want Ready", sandbox.Run().Status.Phase)
 	}
 	if err := connection.Close(); err != nil {
 		t.Fatalf("close SDK Session connection: %v", err)
 	}
-	for _, name := range []string{"alpha.txt", "beta.txt", "gamma.txt"} {
-		if err := acquired.WriteFile(ctx, "pages/"+name, []byte(name), true); err != nil {
-			t.Fatalf("write SDK Session page file %q: %v", name, err)
-		}
+	postReconnectCtx, postReconnectCancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer postReconnectCancel()
+	connection, err = sandbox.OpenSession(postReconnectCtx)
+	if err != nil {
+		t.Fatalf("reopen SDK Session connection: %v", err)
 	}
-	page, err := acquired.ListFiles(ctx, sandbox.ListFilesOptions{Directory: "pages", Limit: 2})
+	for _, name := range []string{"alpha.txt", "beta.txt", "gamma.txt"} {
+		operationCtx, operationCancel := context.WithTimeout(t.Context(), 30*time.Second)
+		started := time.Now()
+		if _, err := connection.Send(operationCtx, sandboxsdk.Operation{WriteFile: &sandboxsdk.FileWrite{Path: "pages/" + name, Contents: []byte(name), CreateParents: true}}); err != nil {
+			operationCancel()
+			t.Fatalf("send SDK Session file operation %q: %v", name, err)
+		}
+		for {
+			event, err := connection.Receive(operationCtx)
+			if err != nil {
+				operationCancel()
+				t.Fatalf("receive SDK Session file operation %q: %v", name, err)
+			}
+			if event.Completed != nil {
+				break
+			}
+		}
+		operationCancel()
+		t.Logf("SDK Session file operation %q completed in %s", name, time.Since(started))
+	}
+	defer connection.Close()
+	page, err := sandbox.ListFiles(postReconnectCtx, sandboxsdk.ListFilesOptions{Directory: "pages", Limit: 2})
 	if err != nil {
 		t.Fatalf("list first SDK Session file page: %v", err)
 	}
 	if got, want := sessionFilePaths(page.Entries), []string{"alpha.txt", "beta.txt"}; !slices.Equal(got, want) || page.NextPageToken == "" {
 		t.Fatalf("first SDK Session file page = %#v, want %#v and next token", page, want)
 	}
-	page, err = acquired.ListFiles(ctx, sandbox.ListFilesOptions{Directory: "pages", Limit: 2, PageToken: page.NextPageToken})
+	page, err = sandbox.ListFiles(postReconnectCtx, sandboxsdk.ListFilesOptions{Directory: "pages", Limit: 2, PageToken: page.NextPageToken})
 	if err != nil {
 		t.Fatalf("list second SDK Session file page: %v", err)
 	}
 	if got, want := sessionFilePaths(page.Entries), []string{"gamma.txt"}; !slices.Equal(got, want) || page.NextPageToken != "" {
 		t.Fatalf("second SDK Session file page = %#v, want %#v and no next token", page, want)
 	}
-	if err := acquired.Release(ctx); err != nil {
+	if err := sandbox.Release(postReconnectCtx); err != nil {
 		t.Fatalf("release SDK Session Run: %v", err)
 	}
 
-	cancelled, err := sdk.Runtime(testNamespace, runtimeName).AcquireSandbox(ctx, sandbox.AcquireOptions{GenerateName: "e2e-sdk-cancel-"})
+	cancelCtx, cancelCancellation := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancelCancellation()
+	cancelled, err := sdk.Runtime(testNamespace, runtimeName).AcquireSandbox(cancelCtx, sandboxsdk.AcquireOptions{GenerateName: "e2e-sdk-cancel-"})
 	if err != nil {
 		t.Fatalf("create SDK cancellation Session Run: %v", err)
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), cancelled.Run()) })
-	if err := cancelled.Cancel(ctx); err != nil {
+	if err := cancelled.Cancel(cancelCtx); err != nil {
 		t.Fatalf("cancel SDK Session Run: %v", err)
 	}
 	if cancelled.Run().Status.Phase != v1alpha1.RunCancelled {
@@ -889,15 +903,15 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 }
 
 func TestSessionRunExpiresWhenIdle(t *testing.T) {
+	t.Skip("Session idle expiry was removed; lease and total timeout remain")
 	t.Parallel()
 	runtimeName := fmt.Sprintf("session-idle-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
-	idleTimeout := int32(1)
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-session-idle-", Namespace: testNamespace},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{IdleTimeoutSeconds: &idleTimeout}},
+			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}},
 		},
 	}
 	if err := k8sClient.Create(context.Background(), run); err != nil {

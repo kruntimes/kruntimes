@@ -5,7 +5,6 @@ package e2e
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,19 +131,9 @@ func TestSessionRunExportsArtifactsOnDrain(t *testing.T) {
 
 	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
 	token := sessionGatewayToken(t, run)
-	response := waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token,
-		[]byte(`{"command":{"argv":["sh","-c","printf session-report > \"$KRUNTIME_ARTIFACTS_DIR/report.txt\"; printf done"]}}`), http.StatusOK)
-	var operation struct {
-		Command struct {
-			ExitCode int32  `json:"exitCode"`
-			Stdout   []byte `json:"stdout"`
-		} `json:"command"`
-	}
-	if err := json.Unmarshal(response, &operation); err != nil {
-		t.Fatalf("decode Session artifact command response: %v", err)
-	}
-	if operation.Command.ExitCode != 0 || string(operation.Command.Stdout) != "done" {
-		t.Fatalf("Session artifact command = %#v, want successful done output", operation.Command)
+	operation, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf session-report > \"$KRUNTIME_ARTIFACTS_DIR/report.txt\"; printf done"]}}`))
+	if err != nil || operation.ExitCode != 0 || string(operation.Stdout) != "done" {
+		t.Fatalf("Session artifact command = %#v, %v; want successful done output", operation, err)
 	}
 
 	requestRunDrain(t, run)
@@ -232,19 +221,9 @@ func TestRunStagesArtifactInputs(t *testing.T) {
 	waitForRunPhase(t, sessionConsumer, 30*time.Second, v1alpha1.RunReady)
 	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), sessionConsumer.Status.Endpoint.URL)
 	token := sessionGatewayToken(t, sessionConsumer)
-	response := waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token,
-		[]byte(`{"command":{"argv":["sh","-c","printf '%s:%s' \"$(cat inputs/report.txt)\" \"$(cat inputs/bundle/data.txt)\""]}}`), http.StatusOK)
-	var operation struct {
-		Command struct {
-			ExitCode int32  `json:"exitCode"`
-			Stdout   []byte `json:"stdout"`
-		} `json:"command"`
-	}
-	if err := json.Unmarshal(response, &operation); err != nil {
-		t.Fatalf("decode Session artifact input response: %v", err)
-	}
-	if operation.Command.ExitCode != 0 || string(operation.Command.Stdout) != "report:nested" {
-		t.Fatalf("Session artifact input result = %#v, want report:nested", operation.Command)
+	operation, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf '%s:%s' \"$(cat inputs/report.txt)\" \"$(cat inputs/bundle/data.txt)\""]}}`))
+	if err != nil || operation.ExitCode != 0 || string(operation.Stdout) != "report:nested" {
+		t.Fatalf("Session artifact input result = %#v, %v; want report:nested", operation, err)
 	}
 	requestRunCancel(t, sessionConsumer)
 	waitForRunPhase(t, sessionConsumer, 20*time.Second, v1alpha1.RunCancelled)

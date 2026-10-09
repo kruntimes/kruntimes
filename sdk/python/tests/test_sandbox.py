@@ -5,6 +5,7 @@ import unittest
 from kruntimes.sandbox import (
     APIError,
     Command,
+    Operation,
     AcquireOptions,
     HTTPResponse,
     ListFilesOptions,
@@ -91,19 +92,12 @@ def ready_run():
 
 
 class SandboxTests(unittest.TestCase):
-    def test_acquire_sorts_environment_and_executes(self):
+    def test_acquire_sorts_environment(self):
         runs = FakeRuns(ready_run())
         gateway = FakeGateway()
         client = SandboxClient(runs, gateway, bearer_token="token")
         sandbox = client.runtime("default", "python").acquire_sandbox(AcquireOptions(name="sandbox", env={"B": "2", "A": "1"}))
-        gateway.response = HTTPResponse(200, json.dumps({"command": {"exitCode": 0, "stdout": "b2s="}}).encode())
-
-        result = sandbox.execute(Command(argv=["python", "-V"]))
-
-        self.assertEqual(0, result.exit_code)
-        self.assertEqual(b"ok", result.stdout)
         self.assertEqual([{"name": "A", "value": "1"}, {"name": "B", "value": "2"}], runs.created[1]["spec"]["env"])
-        self.assertEqual("Bearer token", gateway.requests[0][3]["Authorization"])
 
     def test_release_deletes_closed_sandbox(self):
         run = ready_run()
@@ -124,7 +118,7 @@ class SandboxTests(unittest.TestCase):
         sandbox = SandboxClient(runs, gateway, bearer_token="token").open("default", "sandbox")
         session = sandbox.open_session(timeout_seconds=3)
 
-        operation_id = session.send(Command(argv=["echo", "ok"]), idempotency_key="operation-1")
+        operation_id = session.send(Operation(command=Command(argv=["echo", "ok"])), idempotency_key="operation-1")
         output = session.receive()
         completed = session.receive()
         session.close()
@@ -145,7 +139,7 @@ class SandboxTests(unittest.TestCase):
         connection = FakeSessionConnection([{"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}}])
         gateway.connection = connection
         session = SandboxClient(FakeRuns(ready_run()), gateway).open("default", "sandbox").open_session()
-        operation_id = session.send(Command(shell="sleep 60"))
+        operation_id = session.send(Operation(command=Command(shell="sleep 60")))
         session.cancel(operation_id)
 
         self.assertEqual({"type": "cancel", "operationID": "operation-1"}, connection.sent[1])
@@ -208,7 +202,7 @@ class SandboxTests(unittest.TestCase):
         gateway.response = HTTPResponse(403, b'{"error":"forbidden"}')
         sandbox = SandboxClient(FakeRuns(ready_run()), gateway).open("default", "sandbox")
         with self.assertRaises(APIError) as error:
-            sandbox.execute(Command(shell="true"))
+            sandbox.read_file("forbidden")
         self.assertEqual(403, error.exception.status_code)
 
     def test_close_requests_drain(self):

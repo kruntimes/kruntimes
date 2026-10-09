@@ -25,6 +25,9 @@ MAX_SESSION_FILE_PAGE_SIZE = 1000
 SESSION_FILE_PAGE_TOKEN_VERSION = 1
 DEFAULT_FUNCTION_INVOKE_TIMEOUT_SECONDS = 30
 MAX_FUNCTION_INVOKE_TIMEOUT_SECONDS = 5 * 60
+# Session operation output is persisted in the resumable operation journal.
+# Keep individual events below its 8 KiB encoded-record limit.
+SESSION_OPERATION_OUTPUT_CHUNK_BYTES = 4 * 1024
 DEFAULT_FUNCTION_DRAIN_TIMEOUT_SECONDS = 30
 MAX_FUNCTION_DRAIN_TIMEOUT_SECONDS = 5 * 60
 HANDLER_COMPONENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -404,18 +407,29 @@ class PythonRuntime(
         entry = self._match_session(request.identity, context)
         return self._session_status(entry)
 
-    def TouchSession(self, request, context):
+    def RenewSessionLease(self, request, context):
         entry = self._match_session(request.identity, context)
         with self._sessions_lock:
             self._touch_session_lease(entry)
             return self._session_status(entry)
 
-    def ExecuteSessionOperation(self, request, context):
+    def StreamSessionOperation(self, request, context):
         entry = self._match_session(request.identity, context)
         operation = request.WhichOneof("operation")
         if operation == "command":
             result = self._execute_session_command(entry, request.command, context)
-            return runtime_pb2.ExecuteSessionOperationResponse(command=result)
+            yield from self._session_output_events(
+                runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDOUT, result.stdout
+            )
+            yield from self._session_output_events(
+                runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDERR, result.stderr
+            )
+            result.stdout = b""
+            result.stderr = b""
+            yield runtime_pb2.SessionOperationEvent(
+                completed=runtime_pb2.ExecuteSessionOperationResponse(command=result)
+            )
+            return
         if operation == "write_file":
             self._write_session_file(entry, request.write_file, context)
         elif operation == "create_directory":
@@ -429,7 +443,19 @@ class PythonRuntime(
                 grpc.StatusCode.INVALID_ARGUMENT,
                 "exactly one session operation is required",
             )
-        return runtime_pb2.ExecuteSessionOperationResponse()
+        yield runtime_pb2.SessionOperationEvent(
+            completed=runtime_pb2.ExecuteSessionOperationResponse()
+        )
+
+    @staticmethod
+    def _session_output_events(stream, data):
+        for offset in range(0, len(data), SESSION_OPERATION_OUTPUT_CHUNK_BYTES):
+            yield runtime_pb2.SessionOperationEvent(
+                output=runtime_pb2.SessionOperationOutput(
+                    stream=stream,
+                    data=data[offset : offset + SESSION_OPERATION_OUTPUT_CHUNK_BYTES],
+                )
+            )
 
     def _execute_session_command(self, entry, request, context):
         if bool(request.argv) == bool(request.shell):

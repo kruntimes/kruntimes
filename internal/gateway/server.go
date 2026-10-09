@@ -97,10 +97,7 @@ func (s *Server) registerRoutes() {
 		return s.withRequestLimit(s.withSessionRun(handler))
 	}
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}", withSessionRun(s.handleSessionStatus))
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:execute", withSessionRun(s.handleSessionExecute))
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream", withSessionRun(s.handleSessionStream))
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws", withSessionRun(s.handleSessionWebSocket))
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations/{operation}", withSessionRun(s.handleSessionResume))
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files", withSessionRun(s.handleSessionListFiles))
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files/{path...}", withSessionRun(s.handleSessionReadFile))
 	mux.HandleFunc("/", s.endpointNotFound)
@@ -191,22 +188,6 @@ func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request, run
 	s.getSessionStatus(w, r, run)
 }
 
-func (s *Server) handleSessionExecute(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	if r.Method != http.MethodPost {
-		s.methodNotAllowed(w)
-		return
-	}
-	s.executeOperation(w, r, run)
-}
-
-func (s *Server) handleSessionStream(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	if r.Method != http.MethodPost {
-		s.methodNotAllowed(w)
-		return
-	}
-	s.streamOperation(w, r, run)
-}
-
 func (s *Server) handleSessionWebSocket(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
 	if r.Method != http.MethodGet {
 		s.methodNotAllowed(w)
@@ -217,19 +198,6 @@ func (s *Server) handleSessionWebSocket(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	s.streamOperationWebSocket(w, r, run)
-}
-
-func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	if r.Method != http.MethodGet {
-		s.methodNotAllowed(w)
-		return
-	}
-	operationID, found := strings.CutSuffix(r.PathValue("operation"), ":stream")
-	if !found || operationID == "" {
-		s.endpointNotFound(w, r)
-		return
-	}
-	s.resumeOperation(w, r, run, operationID)
 }
 
 func (s *Server) handleSessionListFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
@@ -414,81 +382,6 @@ func (s *Server) getSessionStatus(w http.ResponseWriter, r *http.Request, run *v
 	s.writeJSON(w, http.StatusOK, newSessionStatusResponse(response))
 }
 
-func (s *Server) executeOperation(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	var request executeOperationRequest
-	if err := s.decodeJSON(r, &request); err != nil {
-		if errors.Is(err, errRequestBodyTooLarge) {
-			s.writeError(w, http.StatusRequestEntityTooLarge, err.Error())
-			return
-		}
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	operation, err := request.protobuf()
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	client, closer, err := s.runtimeClient(r.Context(), run)
-	if err != nil {
-		s.writeGatewayError(w, err)
-		return
-	}
-	defer closer.Close()
-	operation.Identity = sessionIdentity(run)
-	response, err := client.ExecuteSessionOperation(r.Context(), operation)
-	if err != nil {
-		s.writeGatewayError(w, err)
-		return
-	}
-	s.writeJSON(w, http.StatusOK, newExecuteOperationResponse(response))
-}
-
-// streamOperation writes one complete JSON object per line and flushes it as
-// soon as the owner runtimed emits an event. net/http chooses HTTP/1.1 chunked
-// transfer encoding automatically because this handler never sets a length.
-func (s *Server) streamOperation(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	var request executeOperationRequest
-	if err := s.decodeJSON(r, &request); err != nil {
-		if errors.Is(err, errRequestBodyTooLarge) {
-			s.writeError(w, http.StatusRequestEntityTooLarge, err.Error())
-			return
-		}
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	operation, err := request.protobuf()
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	operationID, err := sessionOperationID(r.Header.Get("Idempotency-Key"))
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	afterSequence, err := sessionOperationCursor(r)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	client, closer, err := s.runtimeClient(r.Context(), run)
-	if err != nil {
-		s.writeGatewayError(w, err)
-		return
-	}
-	defer closer.Close()
-	operation.Identity = sessionIdentity(run)
-	operation.IdempotencyKey = operationID
-	operation.ResumeAfterSequence = afterSequence
-	stream, err := client.StreamSessionOperation(r.Context(), operation)
-	if err != nil {
-		s.writeGatewayError(w, err)
-		return
-	}
-	s.writeSessionOperationStream(w, stream)
-}
-
 // streamOperationWebSocket upgrades one authorized request to a persistent
 // Session connection. It serializes send frames and accepts cancellation only
 // for the active operation.
@@ -538,18 +431,26 @@ func (s *Server) streamSessionConnectionOperation(parent context.Context, connec
 		return false
 	}
 	ctx, cancel := context.WithCancel(parent)
-	defer cancel()
 	client, closer, err := s.runtimeClient(ctx, run)
 	if err != nil {
+		cancel()
 		s.writeWebSocketError(connection, err)
-		return false
+		return true
 	}
-	defer closer.Close()
+	// Stop the stream receiver before closing its ClientConn. Closing a gRPC
+	// connection with a still-active Recv can wait for transport teardown and
+	// delay the next operation on this persistent WebSocket.
+	defer func() {
+		cancel()
+		// A gRPC ClientConn may wait for transport teardown in Close. The next
+		// operation on this persistent WebSocket must not wait behind that work.
+		go func() { _ = closer.Close() }()
+	}()
 	operation.Identity, operation.IdempotencyKey = sessionIdentity(run), operationID
 	stream, err := client.StreamSessionOperation(ctx, operation)
 	if err != nil {
 		s.writeWebSocketError(connection, err)
-		return false
+		return true
 	}
 	events := receiveSessionOperationEvents(ctx, stream)
 	for {
@@ -562,7 +463,7 @@ func (s *Server) streamSessionConnectionOperation(parent context.Context, connec
 			if frame.message.Type == sessionConnectionMessageHeartbeat {
 				if err := s.touchSession(ctx, run); err != nil {
 					s.writeWebSocketError(connection, err)
-					return false
+					return true
 				}
 				continue
 			}
@@ -574,21 +475,21 @@ func (s *Server) streamSessionConnectionOperation(parent context.Context, connec
 		case result, ok := <-events:
 			if !ok || result.err == io.EOF {
 				s.writeWebSocketError(connection, errors.New("Runtime Server stream ended without a terminal event"))
-				return false
+				return true
 			}
 			if result.err != nil {
 				s.writeWebSocketError(connection, result.err)
-				return false
+				return true
 			}
 			response, err := newSessionOperationEventResponse(result.event)
 			if err != nil {
 				s.writeWebSocketError(connection, err)
-				return false
+				return true
 			}
 			encoded, err := json.Marshal(response)
 			if err != nil || int64(len(encoded)) > s.maxResponseBodyBytes() {
 				s.writeWebSocketError(connection, errors.New("gateway stream event exceeds configured limit"))
-				return false
+				return true
 			}
 			if err := connection.WriteMessage(websocket.TextMessage, encoded); err != nil {
 				return false
@@ -606,7 +507,7 @@ func (s *Server) touchSession(ctx context.Context, run *v1alpha1.Run) error {
 		return err
 	}
 	defer closer.Close()
-	_, err = client.TouchSession(ctx, &pb.TouchSessionRequest{Identity: sessionIdentity(run)})
+	_, err = client.RenewSessionLease(ctx, &pb.RenewSessionLeaseRequest{Identity: sessionIdentity(run)})
 	return err
 }
 
@@ -646,81 +547,10 @@ func (s *Server) writeWebSocketError(connection *websocket.Conn, err error) {
 		Type  string `json:"type"`
 		Error string `json:"error"`
 	}{Type: "error", Error: status.Convert(err).Message()})
-	s.closeWebSocket(connection, websocket.CloseInternalServerErr, "operation stream failed")
 }
 
 func (s *Server) closeWebSocket(connection *websocket.Conn, code int, message string) {
 	_ = connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, message), time.Now().Add(time.Second))
-}
-
-func (s *Server) resumeOperation(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run, operationID string) {
-	decoded, err := url.PathUnescape(operationID)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "operation ID is invalid")
-		return
-	}
-	operationID, err = sessionOperationID(decoded)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	afterSequence, err := sessionOperationCursor(r)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	client, closer, err := s.runtimeClient(r.Context(), run)
-	if err != nil {
-		s.writeGatewayError(w, err)
-		return
-	}
-	defer closer.Close()
-	stream, err := client.StreamSessionOperation(r.Context(), &pb.ExecuteSessionOperationRequest{
-		Identity:            sessionIdentity(run),
-		IdempotencyKey:      operationID,
-		ResumeAfterSequence: afterSequence,
-	})
-	if err != nil {
-		s.writeGatewayError(w, err)
-		return
-	}
-	s.writeSessionOperationStream(w, stream)
-}
-
-func (s *Server) writeSessionOperationStream(w http.ResponseWriter, stream pb.SessionRuntime_StreamSessionOperationClient) {
-
-	// Receive the first event before committing HTTP headers. Queue admission and
-	// authorization failures therefore retain the ordinary gateway HTTP status.
-	event, err := stream.Recv()
-	if err != nil {
-		if err != io.EOF {
-			s.writeGatewayError(w, err)
-			return
-		}
-		s.writeError(w, http.StatusBadGateway, "Runtime Server stream ended without an event")
-		return
-	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		s.writeError(w, http.StatusInternalServerError, "gateway response streaming is unavailable")
-		return
-	}
-	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-	for {
-		if err := s.writeSessionOperationEvent(w, event); err != nil {
-			return
-		}
-		flusher.Flush()
-		event, err = stream.Recv()
-		if err == io.EOF {
-			return
-		}
-		if err != nil {
-			return
-		}
-	}
 }
 
 func sessionOperationID(value string) (string, error) {
@@ -740,18 +570,6 @@ func sessionOperationID(value string) (string, error) {
 		}
 	}
 	return value, nil
-}
-
-func sessionOperationCursor(r *http.Request) (int64, error) {
-	value := r.URL.Query().Get("after")
-	if value == "" {
-		return 0, nil
-	}
-	cursor, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || cursor < 0 {
-		return 0, errors.New("session operation cursor must be a non-negative integer")
-	}
-	return cursor, nil
 }
 
 func (s *Server) listFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
@@ -1064,22 +882,6 @@ type sessionOperationProgressResponse struct {
 type sessionOperationFailureResponse struct {
 	Code    int32  `json:"code"`
 	Message string `json:"message"`
-}
-
-func (s *Server) writeSessionOperationEvent(w http.ResponseWriter, value *pb.SessionOperationEvent) error {
-	response, err := newSessionOperationEventResponse(value)
-	if err != nil {
-		return err
-	}
-	encoded, err := json.Marshal(response)
-	if err != nil {
-		return err
-	}
-	if int64(len(encoded)+1) > s.maxResponseBodyBytes() {
-		return fmt.Errorf("gateway stream event exceeds configured limit")
-	}
-	_, err = w.Write(append(encoded, '\n'))
-	return err
 }
 
 func newSessionOperationEventResponse(value *pb.SessionOperationEvent) (sessionOperationEventResponse, error) {

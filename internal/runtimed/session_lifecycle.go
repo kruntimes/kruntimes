@@ -220,7 +220,7 @@ func (c *Controller) reconcileSessionRecovery(ctx context.Context, run *v1alpha1
 					return ctrl.Result{}, fmt.Errorf("restore Session idle tracking: %w", err)
 				}
 				if leaseHeartbeat := response.GetLastLeaseHeartbeatUnixNano(); leaseHeartbeat > 0 {
-					c.SessionOperations.TouchLease(string(run.UID), time.Unix(0, leaseHeartbeat))
+					c.SessionOperations.RenewLease(string(run.UID), time.Unix(0, leaseHeartbeat))
 				}
 			}
 			c.recordActiveRuns(run.Spec.Runtime)

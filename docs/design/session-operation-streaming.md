@@ -2,16 +2,13 @@
 
 ## Context
 
-`ExecuteSessionOperation` is a unary request. That is appropriate for short
-commands and atomic file mutations, but an interactive Runtime can spend a
-single operation on several model requests and tool calls before it has a final
-answer. A caller then receives no indication that the Session is alive until
-the complete operation returns.
+Session operations are public only through the persistent WebSocket. Each
+`send` frame is backed by the private streaming RPC below; unary and NDJSON
+operation endpoints have been removed.
 
 This design adds a generic, ordered live event stream for one Session operation.
 It is not an agent-specific API: Runtimes may use it for command output,
-progress reporting, or interactive agent turns. The existing unary operation
-API remains supported.
+progress reporting, or interactive agent turns.
 
 ## Goals
 
@@ -69,20 +66,16 @@ the Runtime Server event stream while its queue entry is active. This keeps the
 queue's mutation ordering intact even when a gateway request lands on a
 non-owner Runtime Pod and is forwarded once to the owner.
 
-The compatible HTTP endpoint is:
+The public endpoint is:
 
 ```
-POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream
-Content-Type: application/json
-Accept: application/x-ndjson
+GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws
+Upgrade: websocket
 ```
 
-Its request body is identical to `operations:execute`. The response is an
-`application/x-ndjson; charset=utf-8` stream: one complete JSON event per line,
-in sequence order. The gateway writes and flushes each event. Go's `net/http`
-automatically chooses HTTP/1.1 chunked transfer encoding when no content length
-is supplied; the server must not set `Transfer-Encoding` manually. HTTP/2 has
-its native data framing and needs no special case.
+Clients submit a JSON `send` frame with one operation and receive JSON event
+frames in sequence order. `cancel` cancels the active operation and
+`heartbeat` renews an enabled lease.
 
 Clients use `fetch` and consume `response.body` as a `ReadableStream`, which
 allows the same bearer-token headers used by all other gateway operations. A
@@ -219,13 +212,10 @@ results and each gateway JSON line.
 
 ## Compatibility and rollout
 
-`ExecuteSessionOperation`, `operations:execute`, and the NDJSON
-`operations:stream` endpoint remain available for non-SDK callers. Built-in Runtimes may initially
-return `Unimplemented` for the streaming gRPC method; the gateway maps that to
-a clear capability error. Interactive Runtimes opt in by implementing the
-method. The GitHub Issue Labeler Runtime will emit Pi text and tool lifecycle
-events, while its existing unary `message` command continues to return the
-final answer for non-streaming clients.
+This is a breaking Session API change: `ExecuteSessionOperation`,
+`operations:execute`, `operations:stream`, and operation-resume HTTP endpoints
+are removed. Built-in Runtimes implement `StreamSessionOperation`; the gateway
+maps an unavailable implementation to a capability error.
 
 The Go and Python Session SDKs expose `AcquireSandbox`, `OpenSession`, `Send`,
 `Receive`, `Cancel`, `Session.Close`, and `Sandbox.Release` rather than

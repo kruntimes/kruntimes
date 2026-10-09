@@ -4,6 +4,7 @@ from .sandbox import (
     APIError,
     Command,
     CommandResult,
+    Operation,
     Runtime,
     Session,
     AcquireOptions,

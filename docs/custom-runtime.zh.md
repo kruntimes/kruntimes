@@ -186,7 +186,7 @@ Runtime Server 应接受执行并快速返回，或返回 gRPC 错误。长时�
 
 ### Session 进程终止
 
-实现 `SessionRuntime` 时，取消 `ExecuteSessionOperation` context 必须停止 active operation 及其
+实现 `SessionRuntime` 时，取消 `StreamSessionOperation` context 必须停止 active operation 及其
 child process tree。Runtime Server 必须在 forcefully 结束未自行退出的进程前使用有界的 graceful
 termination period。这是 backend-specific implementation contract。内置 Bash 和 Python Runtime image
 为各自 command-line flag 暴露 Helm value；custom Runtime 必须在自己的 Pod template 中文档化并配置其

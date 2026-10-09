@@ -24,7 +24,6 @@ type RunMode struct {
 
 type RunSessionMode struct {
     LeaseTimeoutSeconds *int32 `json:"leaseTimeoutSeconds,omitempty"`
-    IdleTimeoutSeconds *int32 `json:"idleTimeoutSeconds,omitempty"`
     QueueSize          *int32 `json:"queueSize,omitempty"`
     OperationTimeout   *metav1.Duration `json:"operationTimeout,omitempty"`
 }
@@ -67,7 +66,8 @@ Session SDK 隐藏 HTTP、NDJSON 与 WebSocket transport。它的 data-plane ope
 等待 cleanup，并删除其 Session Run。显式 immediate-release mode 可以取消 active work；默认使用
 graceful drain。
 
-`leaseTimeoutSeconds` 在已有 operation-idle timeout 外启用独立 connection lease。active connection
+`leaseTimeoutSeconds` 在已有 operation-idle timeout 外启用独立 connection lease。未设置时完全禁用 lease
+expiry，Session 不需要发送 heartbeat。active connection
 打开期间，SDK 私下发送 heartbeat；gateway 认证后逐个转发到 owner runtimed。owner runtimed 将
 server-authoritative lease timestamp 与 command activity 分开记录，并在 lease 到期时终止 Session。关闭
 connection 不会立即 release Sandbox，caller 可在 expiry 前 reconnect；但 Runtime Pod 丢失会立即终止
@@ -280,9 +280,7 @@ gateway server 将下列 HTTP API operation 映射到 `SessionRuntime` gRPC meth
 | HTTP API | `SessionRuntime` method | 行为 |
 | --- | --- |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}` | `GetSessionStatus` | 返回 readiness 与 bounded session metadata |
-| `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:execute` | `ExecuteSessionOperation` | 执行一个 command 或 file mutation |
-| `POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream` | `StreamSessionOperation` | 执行一个 operation，并流式返回有序 NDJSON progress 与 terminal event |
-| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `TouchSession`、`StreamSessionOperation` | 持久 Session connection；认证后的打开和私有 `heartbeat` frame 会 touch lease，client 发送 `send`/`cancel` frame 并接收有序 event frame |
+| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `RenewSessionLease`、`StreamSessionOperation` | 持久 Session connection；认证后的打开和私有 `heartbeat` frame 会续租，client 发送 `send`/`cancel` frame 并接收有序 event frame |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files` | `ReadSessionFile`、`ListSessionFiles` | 有界的 workspace-relative file access |
 
 Exec request 必须且只能提供 `argv` 或 `shell`。`argv` 直接执行程序；`shell` 显式选择 Runtime
@@ -379,9 +377,9 @@ Session support 不在 `Runtime.spec` 中声明。
 service SessionRuntime {
   rpc RegisterSession(RegisterSessionRequest) returns (SessionStatus);
   rpc GetSessionStatus(GetSessionStatusRequest) returns (SessionStatus);
-  rpc TouchSession(TouchSessionRequest) returns (SessionStatus);
-  rpc ExecuteSessionOperation(ExecuteSessionOperationRequest)
-      returns (ExecuteSessionOperationResponse);
+  rpc RenewSessionLease(RenewSessionLeaseRequest) returns (SessionStatus);
+	 rpc StreamSessionOperation(ExecuteSessionOperationRequest)
+	     returns (stream SessionOperationEvent);
   rpc ReadSessionFile(ReadSessionFileRequest) returns (ReadSessionFileResponse);
   rpc ListSessionFiles(ListSessionFilesRequest) returns (ListSessionFilesResponse);
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
@@ -395,10 +393,10 @@ endpoint 相同的 `1..1000` limit 与 cursor semantics。
 每个 request 携带 immutable Run UID 和 assignment identity。gateway server 从当前 Run assignment 推导该
 identity；它不是 client 控制的 HTTP input。收到 request 的 runtimed 要么将其转发给 owner，要么在自己是
 owner 时完成 queue admission 后调用本地 Runtime Server。`RegisterSession` 接收已准备的 workspace path 和
-immutable source inputs；同一 identity 下调用是幂等的。`ExecuteSessionOperation` 包含恰好一个 `oneof`
+immutable source inputs；同一 identity 下调用是幂等的。`StreamSessionOperation` 包含恰好一个 `oneof`
 payload：command、file write、directory creation、delete 或 rename。其 request context 携带 command timeout；
 cancellation 终止对应 process group。read/list RPC 是 synchronous、有界的，不进入 mutation queue。本地
-Runtime Server 不路由 request，也不分配 operation state。`TouchSession` 是幂等的，只更新独立记录的 lease
+Runtime Server 不路由 request，也不分配 operation state。`RenewSessionLease` 是幂等的，只更新独立记录的 lease
 heartbeat timestamp，绝不更新 command-idle activity。`CloseSession` 是幂等操作：owner runtimed 拒绝新的
 gateway operation 后，它清理 local state。
 

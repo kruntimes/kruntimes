@@ -50,7 +50,7 @@ func TestSandboxSessionSendsReceivesAndCloses(t *testing.T) {
 		t.Fatalf("OpenSession: %v", err)
 	}
 	defer session.Close()
-	operationID, err := session.Send(t.Context(), Command{Argv: []string{"echo", "ok"}})
+	operationID, err := session.Send(t.Context(), Operation{Command: &Command{Argv: []string{"echo", "ok"}}})
 	if err != nil || operationID != "operation-1" {
 		t.Fatalf("Send = %q, %v", operationID, err)
 	}
@@ -94,7 +94,7 @@ func TestSandboxSessionCancelUsesActiveOperationID(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	operationID, err := session.Send(t.Context(), Command{Argv: []string{"sleep", "1"}})
+	operationID, err := session.Send(t.Context(), Operation{Command: &Command{Argv: []string{"sleep", "1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

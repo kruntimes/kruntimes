@@ -87,39 +87,6 @@ func TestSessionOperationQueueWaitsForAdmissionCallback(t *testing.T) {
 	}
 }
 
-func TestSessionOperationQueueIdleDeadlineTracksAcceptedOperations(t *testing.T) {
-	queue := NewSessionOperationQueue(1, time.Minute)
-	run := queuedSessionRun("session")
-	start := time.Now().Add(-time.Second)
-	if err := queue.Ensure(run, start); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	timeout := time.Second
-	if deadline, ok := queue.IdleDeadline(string(run.UID), timeout, time.Now()); !ok || deadline.Before(start.Add(timeout)) {
-		t.Fatalf("initial idle deadline = %s, tracked=%t", deadline, ok)
-	}
-
-	started := make(chan struct{})
-	release := make(chan struct{})
-	done := make(chan error, 1)
-	go func() {
-		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
-			close(started)
-			<-release
-			return &pb.ExecuteSessionOperationResponse{}, nil
-		})
-		done <- err
-	}()
-	<-started
-	if deadline, ok := queue.IdleDeadline(string(run.UID), timeout, time.Now()); !ok || deadline.Before(time.Now().Add(timeout-time.Millisecond)) {
-		t.Fatalf("active idle deadline = %s, tracked=%t", deadline, ok)
-	}
-	close(release)
-	if err := <-done; err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-}
-
 func TestSessionOperationQueueLeaseDeadlineTracksHeartbeatsSeparatelyFromOperations(t *testing.T) {
 	queue := NewSessionOperationQueue(1, time.Minute)
 	run := queuedSessionRun("session")
@@ -132,14 +99,11 @@ func TestSessionOperationQueueLeaseDeadlineTracksHeartbeatsSeparatelyFromOperati
 		t.Fatalf("initial lease deadline = %s, tracked=%t", deadline, ok)
 	}
 	heartbeat := time.Now()
-	if !queue.TouchLease(string(run.UID), heartbeat) {
-		t.Fatal("TouchLease = false, want tracked session")
+	if !queue.RenewLease(string(run.UID), heartbeat) {
+		t.Fatal("RenewLease = false, want tracked session")
 	}
 	if deadline, ok := queue.LeaseDeadline(string(run.UID), timeout); !ok || deadline.Before(heartbeat.Add(timeout-time.Millisecond)) {
 		t.Fatalf("heartbeat lease deadline = %s, tracked=%t", deadline, ok)
-	}
-	if deadline, ok := queue.IdleDeadline(string(run.UID), timeout, time.Now()); !ok || !deadline.Equal(start.Add(timeout)) {
-		t.Fatalf("idle deadline changed after lease heartbeat: %s, tracked=%t", deadline, ok)
 	}
 }
 

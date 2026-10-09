@@ -66,6 +66,7 @@ func TestGatewayRejectsUnauthorizedRequestBeforeDialingRuntime(t *testing.T) {
 }
 
 func TestGatewayExecutesExactlyOneOperation(t *testing.T) {
+	t.Skip("unary Session operation endpoint was removed")
 	run := readySessionRun()
 	client := &fakeSessionRuntimeClient{execute: func(_ context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error) {
 		if got := request.GetCommand().GetArgv(); len(got) != 2 || got[0] != "echo" || got[1] != "hello" {
@@ -88,6 +89,7 @@ func TestGatewayExecutesExactlyOneOperation(t *testing.T) {
 }
 
 func TestGatewayStreamsSessionOperationAsNDJSON(t *testing.T) {
+	t.Skip("NDJSON Session operation endpoint was removed")
 	run := readySessionRun()
 	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
 		if request.GetIdentity().GetRunUid() != string(run.UID) {
@@ -193,10 +195,112 @@ func TestGatewayStreamsSessionOperationOverWebSocket(t *testing.T) {
 	}
 }
 
-func TestGatewayWebSocketHeartbeatsTouchTheOwnerSession(t *testing.T) {
-	touches := make(chan *pb.TouchSessionRequest, 2)
-	client := &fakeSessionRuntimeClient{touch: func(_ context.Context, request *pb.TouchSessionRequest, _ ...grpc.CallOption) (*pb.SessionStatus, error) {
-		touches <- request
+func TestGatewayKeepsSessionWebSocketOpenAfterOperationError(t *testing.T) {
+	run := readySessionRun()
+	calls := 0
+	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, _ *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+		calls++
+		if calls == 1 {
+			return nil, status.Error(codes.ResourceExhausted, "retained event limit reached")
+		}
+		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
+			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{OperationId: "operation-2"}}},
+			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0}}}},
+		}}, nil
+	}}
+	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+
+	endpoint := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:ws"
+	connection, _, err := websocket.DefaultDialer.Dial(endpoint, nil)
+	if err != nil {
+		t.Fatalf("dial WebSocket: %v", err)
+	}
+	defer connection.Close()
+	for _, key := range []string{"operation-1", "operation-2"} {
+		if err := connection.WriteJSON(map[string]any{"type": "send", "idempotencyKey": key, "operation": map[string]any{"command": map[string]any{"argv": []string{"true"}}}}); err != nil {
+			t.Fatalf("write %s: %v", key, err)
+		}
+		if key == "operation-1" {
+			var response struct {
+				Type  string `json:"type"`
+				Error string `json:"error"`
+			}
+			if err := connection.ReadJSON(&response); err != nil {
+				t.Fatalf("read operation error: %v", err)
+			}
+			if response.Type != "error" || response.Error != "retained event limit reached" {
+				t.Fatalf("operation error = %#v", response)
+			}
+			continue
+		}
+		var accepted sessionOperationEventResponse
+		if err := connection.ReadJSON(&accepted); err != nil {
+			t.Fatalf("read accepted event: %v", err)
+		}
+		if accepted.Type != "accepted" || accepted.Accepted == nil || accepted.Accepted.OperationID != "operation-2" {
+			t.Fatalf("accepted event = %#v", accepted)
+		}
+		var completed sessionOperationEventResponse
+		if err := connection.ReadJSON(&completed); err != nil {
+			t.Fatalf("read completed event: %v", err)
+		}
+		if completed.Type != "completed" {
+			t.Fatalf("completed event = %#v", completed)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("stream calls = %d, want 2", calls)
+	}
+}
+
+func TestGatewayCancelsOperationStreamBeforeClosingClient(t *testing.T) {
+	run := readySessionRun()
+	closer := &contextAwareCloser{result: make(chan bool, 1)}
+	client := &fakeSessionRuntimeClient{stream: func(ctx context.Context, _ *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+		closer.done = ctx.Done()
+		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
+			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{OperationId: "operation-1"}}},
+			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0}}}},
+		}}, nil
+	}}
+	dialer := &fakeDialer{client: client, closers: []io.Closer{nopCloser{}, closer}}
+	server := testServer(t, run, allowAuthorizer{}, dialer)
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+
+	endpoint := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:ws"
+	connection, _, err := websocket.DefaultDialer.Dial(endpoint, nil)
+	if err != nil {
+		t.Fatalf("dial WebSocket: %v", err)
+	}
+	defer connection.Close()
+	if err := connection.WriteJSON(map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"true"}}}}); err != nil {
+		t.Fatalf("write send frame: %v", err)
+	}
+	var accepted sessionOperationEventResponse
+	if err := connection.ReadJSON(&accepted); err != nil {
+		t.Fatalf("read accepted event: %v", err)
+	}
+	var completed sessionOperationEventResponse
+	if err := connection.ReadJSON(&completed); err != nil {
+		t.Fatalf("read completed event: %v", err)
+	}
+	select {
+	case canceled := <-closer.result:
+		if !canceled {
+			t.Fatal("gateway closed the Runtime client before cancelling the operation stream")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("gateway did not close the Runtime client")
+	}
+}
+
+func TestGatewayWebSocketHeartbeatsTheOwnerSession(t *testing.T) {
+	heartbeats := make(chan *pb.RenewSessionLeaseRequest, 2)
+	client := &fakeSessionRuntimeClient{heartbeat: func(_ context.Context, request *pb.RenewSessionLeaseRequest, _ ...grpc.CallOption) (*pb.SessionStatus, error) {
+		heartbeats <- request
 		return &pb.SessionStatus{Identity: request.Identity, State: pb.SessionState_SESSION_STATE_READY, LastLeaseHeartbeatUnixNano: time.Now().UnixNano()}, nil
 	}}
 	server := testServer(t, readySessionRun(), allowAuthorizer{}, &fakeDialer{client: client})
@@ -209,16 +313,16 @@ func TestGatewayWebSocketHeartbeatsTouchTheOwnerSession(t *testing.T) {
 		t.Fatalf("dial WebSocket: %v", err)
 	}
 	defer connection.Close()
-	if request := <-touches; request.GetIdentity().GetRunUid() != "session-uid" {
-		t.Fatalf("initial TouchSession request = %#v", request)
+	if request := <-heartbeats; request.GetIdentity().GetRunUid() != "session-uid" {
+		t.Fatalf("initial RenewSessionLease request = %#v", request)
 	}
 	if err := connection.WriteJSON(map[string]any{"type": "heartbeat"}); err != nil {
 		t.Fatalf("write heartbeat: %v", err)
 	}
 	select {
-	case request := <-touches:
+	case request := <-heartbeats:
 		if request.GetIdentity().GetRunUid() != "session-uid" {
-			t.Fatalf("heartbeat TouchSession request = %#v", request)
+			t.Fatalf("heartbeat RenewSessionLease request = %#v", request)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("heartbeat did not touch Runtime Session")
@@ -308,6 +412,7 @@ func TestGatewayRejectsOversizedFunctionInputBeforeDialingRuntime(t *testing.T) 
 }
 
 func TestGatewayRejectsRequestBodyOverConfiguredLimitBeforeDialingRuntime(t *testing.T) {
+	t.Skip("HTTP Session operation endpoint was removed")
 	dialer := &fakeDialer{client: &fakeSessionRuntimeClient{}}
 	server := testServer(t, readySessionRun(), allowAuthorizer{}, dialer)
 	server.MaxRequestBodyBytes = 64
@@ -326,6 +431,7 @@ func TestGatewayRejectsRequestBodyOverConfiguredLimitBeforeDialingRuntime(t *tes
 }
 
 func TestGatewayRejectsResponseOverConfiguredLimitWithoutPartialJSON(t *testing.T) {
+	t.Skip("HTTP Session operation endpoint was removed")
 	client := &fakeSessionRuntimeClient{execute: func(_ context.Context, _ *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error) {
 		return &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte(strings.Repeat("x", 128))}}, nil
 	}}
@@ -395,6 +501,7 @@ func TestGatewayReadsNestedSessionFilePath(t *testing.T) {
 }
 
 func TestGatewayRejectsInvalidOperationShape(t *testing.T) {
+	t.Skip("HTTP Session operation endpoint was removed")
 	server := testServer(t, readySessionRun(), allowAuthorizer{}, &fakeDialer{client: &fakeSessionRuntimeClient{}})
 
 	response := httptest.NewRecorder()
@@ -502,6 +609,8 @@ type fakeDialer struct {
 	client         pb.SessionRuntimeClient
 	functionClient pb.FunctionRuntimeClient
 	address        string
+	closers        []io.Closer
+	dials          int
 }
 
 func (d *fakeDialer) DialFunction(_ context.Context, address string) (pb.FunctionRuntimeClient, io.Closer, error) {
@@ -511,6 +620,11 @@ func (d *fakeDialer) DialFunction(_ context.Context, address string) (pb.Functio
 
 func (d *fakeDialer) Dial(_ context.Context, address string) (pb.SessionRuntimeClient, io.Closer, error) {
 	d.address = address
+	if d.dials < len(d.closers) {
+		closer := d.closers[d.dials]
+		d.dials++
+		return d.client, closer, nil
+	}
 	return d.client, nopCloser{}, nil
 }
 
@@ -518,14 +632,29 @@ type nopCloser struct{}
 
 func (nopCloser) Close() error { return nil }
 
+type contextAwareCloser struct {
+	done   <-chan struct{}
+	result chan bool
+}
+
+func (c *contextAwareCloser) Close() error {
+	select {
+	case <-c.done:
+		c.result <- true
+	default:
+		c.result <- false
+	}
+	return nil
+}
+
 type fakeSessionRuntimeClient struct {
 	pb.SessionRuntimeClient
-	status  func(context.Context, *pb.GetSessionStatusRequest, ...grpc.CallOption) (*pb.SessionStatus, error)
-	touch   func(context.Context, *pb.TouchSessionRequest, ...grpc.CallOption) (*pb.SessionStatus, error)
-	execute func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error)
-	stream  func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error)
-	list    func(context.Context, *pb.ListSessionFilesRequest, ...grpc.CallOption) (*pb.ListSessionFilesResponse, error)
-	read    func(context.Context, *pb.ReadSessionFileRequest, ...grpc.CallOption) (*pb.ReadSessionFileResponse, error)
+	status    func(context.Context, *pb.GetSessionStatusRequest, ...grpc.CallOption) (*pb.SessionStatus, error)
+	heartbeat func(context.Context, *pb.RenewSessionLeaseRequest, ...grpc.CallOption) (*pb.SessionStatus, error)
+	execute   func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error)
+	stream    func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error)
+	list      func(context.Context, *pb.ListSessionFilesRequest, ...grpc.CallOption) (*pb.ListSessionFilesResponse, error)
+	read      func(context.Context, *pb.ReadSessionFileRequest, ...grpc.CallOption) (*pb.ReadSessionFileResponse, error)
 }
 
 type fakeFunctionRuntimeClient struct {
@@ -546,11 +675,11 @@ func (c *fakeSessionRuntimeClient) GetSessionStatus(ctx context.Context, request
 	}
 	return c.status(ctx, request, options...)
 }
-func (c *fakeSessionRuntimeClient) TouchSession(ctx context.Context, request *pb.TouchSessionRequest, options ...grpc.CallOption) (*pb.SessionStatus, error) {
-	if c.touch == nil {
+func (c *fakeSessionRuntimeClient) RenewSessionLease(ctx context.Context, request *pb.RenewSessionLeaseRequest, options ...grpc.CallOption) (*pb.SessionStatus, error) {
+	if c.heartbeat == nil {
 		return &pb.SessionStatus{Identity: request.GetIdentity(), State: pb.SessionState_SESSION_STATE_READY, LastActivityUnixNano: time.Now().UnixNano()}, nil
 	}
-	return c.touch(ctx, request, options...)
+	return c.heartbeat(ctx, request, options...)
 }
 func (c *fakeSessionRuntimeClient) ExecuteSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest, options ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error) {
 	if c.execute == nil {
