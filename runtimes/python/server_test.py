@@ -12,7 +12,40 @@ import grpc
 
 from pb import runtime_pb2
 from pb import runtime_pb2_grpc
-from server import OUTPUT_TRUNCATED_MARKER, PythonRuntime
+from server import (
+    OUTPUT_TRUNCATED_MARKER,
+    PythonRuntime,
+    SESSION_OPERATION_OUTPUT_CHUNK_BYTES,
+)
+
+
+class SessionTestStub:
+    """Test adapter over the stream-only SessionRuntime API."""
+
+    def __init__(self, stub):
+        self._stub = stub
+
+    def __getattr__(self, name):
+        return getattr(self._stub, name)
+
+    def ExecuteSessionOperation(self, request):
+        completed = None
+        stdout = bytearray()
+        stderr = bytearray()
+        for event in self._stub.StreamSessionOperation(request):
+            if event.HasField("output"):
+                if event.output.stream == runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDOUT:
+                    stdout.extend(event.output.data)
+                else:
+                    stderr.extend(event.output.data)
+            if event.HasField("completed"):
+                completed = event.completed
+        if completed is None:
+            raise RuntimeError("operation stream ended without completion")
+        if completed.HasField("command"):
+            completed.command.stdout = bytes(stdout)
+            completed.command.stderr = bytes(stderr)
+        return completed
 
 
 class TestPythonRuntime(unittest.TestCase):
@@ -34,7 +67,7 @@ class TestPythonRuntime(unittest.TestCase):
         self.channel = grpc.insecure_channel(f"localhost:{port}")
         self.stub = runtime_pb2_grpc.RuntimeStub(self.channel)
         self.function_stub = runtime_pb2_grpc.FunctionRuntimeStub(self.channel)
-        self.session_stub = runtime_pb2_grpc.SessionRuntimeStub(self.channel)
+        self.session_stub = SessionTestStub(runtime_pb2_grpc.SessionRuntimeStub(self.channel))
 
     def tearDown(self):
         self.server.stop(0)
@@ -107,6 +140,11 @@ class TestPythonRuntime(unittest.TestCase):
             runtime_pb2.GetSessionStatusRequest(identity=identity)
         )
         self.assertEqual(current.state, runtime_pb2.SESSION_STATE_READY)
+        lease_before = current.last_lease_heartbeat_unix_nano
+        current = self.session_stub.RenewSessionLease(
+            runtime_pb2.RenewSessionLeaseRequest(identity=identity)
+        )
+        self.assertGreater(current.last_lease_heartbeat_unix_nano, lease_before)
         self.session_stub.CloseSession(runtime_pb2.CloseSessionRequest(identity=identity))
         self.session_stub.CloseSession(runtime_pb2.CloseSessionRequest(identity=identity))
         with self.assertRaises(grpc.RpcError) as ctx:
@@ -134,6 +172,7 @@ class TestPythonRuntime(unittest.TestCase):
                 runtime_pb2.ExecuteSessionOperationRequest(identity=identity)
             )
         self.assertEqual(ctx.exception.code(), grpc.StatusCode.INVALID_ARGUMENT)
+
         self.session_stub.ExecuteSessionOperation(
             runtime_pb2.ExecuteSessionOperationRequest(
                 identity=identity,
@@ -206,6 +245,44 @@ class TestPythonRuntime(unittest.TestCase):
                 )
             )
         self.assertEqual(ctx.exception.code(), grpc.StatusCode.INVALID_ARGUMENT)
+
+    def test_session_command_chunks_large_stream_output(self):
+        session_dir = self._prepare_inline("# session")
+        self._register_session(session_dir)
+        identity = runtime_pb2.SessionIdentity(
+            run_uid="session-run",
+            assigned_pod_uid="pod-a",
+        )
+        output_size = SESSION_OPERATION_OUTPUT_CHUNK_BYTES * 2 + 1
+        events = list(self.session_stub.StreamSessionOperation(
+            runtime_pb2.ExecuteSessionOperationRequest(
+                identity=identity,
+                command=runtime_pb2.SessionCommand(
+                    argv=["python", "-c", f"import sys; sys.stdout.buffer.write(b'x' * {output_size})"],
+                ),
+            )
+        ))
+        chunks = [event.output.data for event in events if event.HasField("output")]
+        self.assertEqual(b"".join(chunks), b"x" * output_size)
+        self.assertTrue(all(len(chunk) <= SESSION_OPERATION_OUTPUT_CHUNK_BYTES for chunk in chunks))
+
+    def test_session_command_emits_output_before_process_exits(self):
+        session_dir = self._prepare_inline("# session")
+        self._register_session(session_dir)
+        identity = runtime_pb2.SessionIdentity(run_uid="session-run", assigned_pod_uid="pod-a")
+        started = time.monotonic()
+        stream = self.session_stub.StreamSessionOperation(
+            runtime_pb2.ExecuteSessionOperationRequest(
+                identity=identity,
+                command=runtime_pb2.SessionCommand(argv=["python", "-u", "-c", "import time; print('ready'); time.sleep(2)"]),
+            )
+        )
+        try:
+            output = next(event for event in stream if event.HasField("output"))
+            self.assertEqual(output.output.data, b"ready\n")
+            self.assertLess(time.monotonic() - started, 1.5)
+        finally:
+            stream.cancel()
 
     def test_session_file_listing_pages_are_bounded_and_cross_runtime(self):
         session_dir = self.work_dir / "session-pages"

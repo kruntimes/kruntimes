@@ -2,6 +2,7 @@ import base64
 import bisect
 import json
 import os
+import queue
 import re
 import secrets
 import signal
@@ -25,6 +26,9 @@ MAX_SESSION_FILE_PAGE_SIZE = 1000
 SESSION_FILE_PAGE_TOKEN_VERSION = 1
 DEFAULT_FUNCTION_INVOKE_TIMEOUT_SECONDS = 30
 MAX_FUNCTION_INVOKE_TIMEOUT_SECONDS = 5 * 60
+# Session operation output is persisted in the resumable operation journal.
+# Keep individual events below its 8 KiB encoded-record limit.
+SESSION_OPERATION_OUTPUT_CHUNK_BYTES = 4 * 1024
 DEFAULT_FUNCTION_DRAIN_TIMEOUT_SECONDS = 30
 MAX_FUNCTION_DRAIN_TIMEOUT_SECONDS = 5 * 60
 HANDLER_COMPONENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -395,6 +399,7 @@ class PythonRuntime(
                 "env": dict(request.env),
                 "state": runtime_pb2.SESSION_STATE_READY,
                 "last_activity_unix_nano": time.time_ns(),
+                "last_lease_heartbeat_unix_nano": time.time_ns(),
             }
             self._sessions[identity.run_uid] = entry
             return self._session_status(entry)
@@ -403,12 +408,44 @@ class PythonRuntime(
         entry = self._match_session(request.identity, context)
         return self._session_status(entry)
 
-    def ExecuteSessionOperation(self, request, context):
+    def RenewSessionLease(self, request, context):
+        entry = self._match_session(request.identity, context)
+        with self._sessions_lock:
+            self._touch_session_lease(entry)
+            return self._session_status(entry)
+
+    def StreamSessionOperation(self, request, context):
         entry = self._match_session(request.identity, context)
         operation = request.WhichOneof("operation")
         if operation == "command":
-            result = self._execute_session_command(entry, request.command, context)
-            return runtime_pb2.ExecuteSessionOperationResponse(command=result)
+            events = queue.Queue()
+
+            def emit(stream, data):
+                for event in self._session_output_events(stream, data):
+                    events.put(event)
+
+            def execute():
+                try:
+                    result = self._execute_session_command(entry, request.command, context, emit)
+                    events.put(("completed", result))
+                except Exception as error:
+                    events.put(("failed", error))
+
+            threading.Thread(target=execute, daemon=True).start()
+            while True:
+                event = events.get()
+                if isinstance(event, tuple):
+                    if event[0] == "failed":
+                        raise event[1]
+                    result = event[1]
+                    break
+                yield event
+            result.stdout = b""
+            result.stderr = b""
+            yield runtime_pb2.SessionOperationEvent(
+                completed=runtime_pb2.ExecuteSessionOperationResponse(command=result)
+            )
+            return
         if operation == "write_file":
             self._write_session_file(entry, request.write_file, context)
         elif operation == "create_directory":
@@ -422,9 +459,21 @@ class PythonRuntime(
                 grpc.StatusCode.INVALID_ARGUMENT,
                 "exactly one session operation is required",
             )
-        return runtime_pb2.ExecuteSessionOperationResponse()
+        yield runtime_pb2.SessionOperationEvent(
+            completed=runtime_pb2.ExecuteSessionOperationResponse()
+        )
 
-    def _execute_session_command(self, entry, request, context):
+    @staticmethod
+    def _session_output_events(stream, data):
+        for offset in range(0, len(data), SESSION_OPERATION_OUTPUT_CHUNK_BYTES):
+            yield runtime_pb2.SessionOperationEvent(
+                output=runtime_pb2.SessionOperationOutput(
+                    stream=stream,
+                    data=data[offset : offset + SESSION_OPERATION_OUTPUT_CHUNK_BYTES],
+                )
+            )
+
+    def _execute_session_command(self, entry, request, context, emit=None):
         if bool(request.argv) == bool(request.shell):
             context.abort(
                 grpc.StatusCode.INVALID_ARGUMENT,
@@ -465,12 +514,12 @@ class PythonRuntime(
         context.add_callback(cancel_process)
         stdout_thread = threading.Thread(
             target=self._read_session_stream,
-            args=(process.stdout, stdout),
+            args=(process.stdout, stdout, emit, runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDOUT),
             daemon=True,
         )
         stderr_thread = threading.Thread(
             target=self._read_session_stream,
-            args=(process.stderr, stderr),
+            args=(process.stderr, stderr, emit, runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDERR),
             daemon=True,
         )
         stdout_thread.start()
@@ -488,6 +537,11 @@ class PythonRuntime(
         finally:
             stdout_thread.join()
             stderr_thread.join()
+        if emit is not None:
+            if stdout.truncated:
+                emit(runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDOUT, OUTPUT_TRUNCATED_MARKER.encode())
+            if stderr.truncated:
+                emit(runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDERR, OUTPUT_TRUNCATED_MARKER.encode())
         self._touch_session(entry)
         return runtime_pb2.SessionCommandResult(
             exit_code=-1 if timed_out else process.returncode,
@@ -763,11 +817,16 @@ class PythonRuntime(
             identity=self._clone_session_identity(entry["identity"]),
             state=entry["state"],
             last_activity_unix_nano=entry["last_activity_unix_nano"],
+            last_lease_heartbeat_unix_nano=entry["last_lease_heartbeat_unix_nano"],
         )
 
     @staticmethod
     def _touch_session(entry):
         entry["last_activity_unix_nano"] = time.time_ns()
+
+    @staticmethod
+    def _touch_session_lease(entry):
+        entry["last_lease_heartbeat_unix_nano"] = time.time_ns()
 
     @staticmethod
     def _session_file_page_request(request):
@@ -829,13 +888,16 @@ class PythonRuntime(
         return timeout
 
     @staticmethod
-    def _read_session_stream(stream, buffer):
+    def _read_session_stream(stream, buffer, emit=None, output_stream=None):
         try:
             while True:
-                chunk = stream.read(4096)
+                chunk = os.read(stream.fileno(), SESSION_OPERATION_OUTPUT_CHUNK_BYTES)
                 if not chunk:
                     return
+                remaining = max(0, buffer._limit - buffer._size)
                 buffer.write(chunk)
+                if emit is not None and remaining:
+                    emit(output_stream, chunk[:remaining])
         finally:
             stream.close()
 

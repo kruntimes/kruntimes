@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -274,6 +276,87 @@ func gatewayRequest(ctx context.Context, method, requestURL, token string, body 
 		return nil, fmt.Errorf("gateway response status = %d, want %d: %s", response.StatusCode, expectedStatus, contents)
 	}
 	return contents, nil
+}
+
+type sessionOperationResult struct {
+	ExitCode int32
+	Stdout   []byte
+	Stderr   []byte
+	TimedOut bool
+}
+
+// executeSessionOperation submits one operation through the public Session
+// WebSocket and collects its bounded command result. The gateway no longer
+// exposes unary or NDJSON Session operation endpoints.
+func executeSessionOperation(ctx context.Context, baseURL, token string, operation json.RawMessage) (sessionOperationResult, error) {
+	websocketURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/operations:ws"
+	connection, response, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).DialContext(ctx, websocketURL, http.Header{"Authorization": []string{"Bearer " + token}}) //nolint:gosec // E2E local port-forward only.
+	if err != nil {
+		if response != nil {
+			return sessionOperationResult{}, fmt.Errorf("dial Session WebSocket (status %d): %w", response.StatusCode, err)
+		}
+		return sessionOperationResult{}, fmt.Errorf("dial Session WebSocket: %w", err)
+	}
+	defer connection.Close()
+	if err := connection.WriteJSON(struct {
+		Type      string          `json:"type"`
+		Operation json.RawMessage `json:"operation"`
+	}{Type: "send", Operation: operation}); err != nil {
+		return sessionOperationResult{}, fmt.Errorf("write Session operation: %w", err)
+	}
+	var result sessionOperationResult
+	for {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			deadline = time.Now().Add(30 * time.Second)
+		}
+		if err := connection.SetReadDeadline(deadline); err != nil {
+			return sessionOperationResult{}, err
+		}
+		var event struct {
+			Type   string `json:"type"`
+			Error  string `json:"error"`
+			Output *struct {
+				Stream string `json:"stream"`
+				Data   []byte `json:"data"`
+			} `json:"output"`
+			Completed *struct {
+				Command *struct {
+					ExitCode int32  `json:"exitCode"`
+					Stdout   []byte `json:"stdout"`
+					Stderr   []byte `json:"stderr"`
+					TimedOut bool   `json:"timedOut"`
+				} `json:"command"`
+			} `json:"completed"`
+			Failed *struct {
+				Message string `json:"message"`
+			} `json:"failed"`
+		}
+		if err := connection.ReadJSON(&event); err != nil {
+			return sessionOperationResult{}, fmt.Errorf("read Session operation event: %w", err)
+		}
+		if event.Type == "error" {
+			return sessionOperationResult{}, errors.New(event.Error)
+		}
+		if event.Output != nil {
+			if event.Output.Stream == "stdout" {
+				result.Stdout = append(result.Stdout, event.Output.Data...)
+			} else if event.Output.Stream == "stderr" {
+				result.Stderr = append(result.Stderr, event.Output.Data...)
+			}
+		}
+		if event.Failed != nil {
+			return sessionOperationResult{}, errors.New(event.Failed.Message)
+		}
+		if event.Completed != nil {
+			if command := event.Completed.Command; command != nil {
+				result.ExitCode, result.TimedOut = command.ExitCode, command.TimedOut
+				result.Stdout = append(result.Stdout, command.Stdout...)
+				result.Stderr = append(result.Stderr, command.Stderr...)
+			}
+			return result, nil
+		}
+	}
 }
 
 func forwardPodPort(ctx context.Context, namespace, podName string, localPort, remotePort int) (io.Closer, error) {

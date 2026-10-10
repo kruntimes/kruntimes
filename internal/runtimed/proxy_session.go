@@ -88,21 +88,30 @@ func (s *sessionRuntimeProxy) GetSessionStatus(ctx context.Context, req *pb.GetS
 	return route.client.GetSessionStatus(route.ctx, req)
 }
 
-func (s *sessionRuntimeProxy) ExecuteSessionOperation(ctx context.Context, req *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
+// RenewSessionLease accepts a heartbeat only through the owner runtimed. It updates
+// both owner lease state and Runtime Server state so recovery retains the
+// authoritative timestamp after a runtimed restart.
+func (s *sessionRuntimeProxy) RenewSessionLease(ctx context.Context, req *pb.RenewSessionLeaseRequest) (*pb.SessionStatus, error) {
 	route, err := s.route(ctx, req.GetIdentity())
 	if err != nil {
 		return nil, err
 	}
 	defer route.closer.Close()
 	if !route.owner {
-		return route.client.ExecuteSessionOperation(route.ctx, req)
+		return route.client.RenewSessionLease(route.ctx, req)
 	}
-	started := time.Now()
-	response, operationErr := s.operations.Execute(route.ctx, route.run, func(operationCtx context.Context) (*pb.ExecuteSessionOperationResponse, error) {
-		return route.client.ExecuteSessionOperation(operationCtx, req)
-	})
-	s.emitSessionOperationLog(route.run, req, response, operationErr, time.Since(started))
-	return response, operationErr
+	response, err := route.client.RenewSessionLease(route.ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if s.operations != nil {
+		heartbeat := time.Now()
+		if response.GetLastLeaseHeartbeatUnixNano() > 0 {
+			heartbeat = time.Unix(0, response.GetLastLeaseHeartbeatUnixNano())
+		}
+		s.operations.RenewLease(string(route.run.UID), heartbeat)
+	}
+	return response, nil
 }
 
 // StreamSessionOperation forwards one ordered operation event stream. Queue
@@ -119,7 +128,7 @@ func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.ExecuteSessionOpera
 		if err != nil {
 			return err
 		}
-		return forwardSessionOperationEvents(stream, nil, server.Send, nil)
+		return forwardSessionOperationEvents(stream, nil, server.Send, nil, nil)
 	}
 	operationID := req.GetIdempotencyKey()
 	if operationID == "" {
@@ -147,6 +156,7 @@ func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.ExecuteSessionOpera
 	sequence := int64(0)
 	admitted := false
 	started := time.Now()
+	var streamedStdout, streamedStderr []byte
 	var completed *pb.ExecuteSessionOperationResponse
 	persistAndSend := func(event *pb.SessionOperationEvent) error {
 		persistenceCtx, cancelPersistence := sessionOperationPersistenceContext()
@@ -169,8 +179,27 @@ func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.ExecuteSessionOpera
 		if err != nil {
 			return nil, err
 		}
-		return nil, forwardSessionOperationEvents(stream, &sequence, persistAndSend, func(response *pb.ExecuteSessionOperationResponse) {
-			completed = response
+		return nil, forwardSessionOperationEvents(stream, &sequence, persistAndSend, func(output *pb.SessionOperationOutput) {
+			switch output.GetStream() {
+			case pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDOUT:
+				streamedStdout = append(streamedStdout, output.GetData()...)
+			case pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDERR:
+				streamedStderr = append(streamedStderr, output.GetData()...)
+			}
+		}, func(response *pb.ExecuteSessionOperationResponse) {
+			// Runtime Servers stream command output so the terminal event remains
+			// small enough for the durable operation journal. Keep a private copy
+			// for the structured runtimed log projection instead of changing the
+			// event persisted for clients.
+			completed = proto.Clone(response).(*pb.ExecuteSessionOperationResponse)
+			if command := completed.GetCommand(); command != nil {
+				if len(streamedStdout) > 0 {
+					command.Stdout = streamedStdout
+				}
+				if len(streamedStderr) > 0 {
+					command.Stderr = streamedStderr
+				}
+			}
 		})
 	})
 	s.emitSessionOperationLog(route.run, req, completed, operationErr, time.Since(started))
@@ -188,6 +217,7 @@ func forwardSessionOperationEvents(
 	stream pb.SessionRuntime_StreamSessionOperationClient,
 	sequence *int64,
 	send func(*pb.SessionOperationEvent) error,
+	onOutput func(*pb.SessionOperationOutput),
 	onCompleted func(*pb.ExecuteSessionOperationResponse),
 ) error {
 	if send == nil {
@@ -233,6 +263,9 @@ func forwardSessionOperationEvents(
 		event.Sequence = *sequence
 		if err := send(event); err != nil {
 			return err
+		}
+		if output := event.GetOutput(); output != nil && onOutput != nil {
+			onOutput(output)
 		}
 		if response := event.GetCompleted(); response != nil && onCompleted != nil {
 			onCompleted(response)

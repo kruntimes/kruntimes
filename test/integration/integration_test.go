@@ -390,13 +390,23 @@ func TestSessionFilePaginationContract(t *testing.T) {
 		t.Fatalf("register Session: %v", err)
 	}
 	for _, name := range []string{"z", "a", "\u00e9", "b"} {
-		if _, err := client.ExecuteSessionOperation(t.Context(), &pb.ExecuteSessionOperationRequest{
+		stream, err := client.StreamSessionOperation(t.Context(), &pb.ExecuteSessionOperationRequest{
 			Identity: identity,
 			Operation: &pb.ExecuteSessionOperationRequest_WriteFile{WriteFile: &pb.SessionFileWrite{
 				Path: "pages/" + name, Contents: []byte(name), CreateParents: true,
 			}},
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("write Session file %q: %v", name, err)
+		}
+		for {
+			event, err := stream.Recv()
+			if err != nil {
+				t.Fatalf("receive Session file operation %q: %v", name, err)
+			}
+			if event.GetCompleted() != nil {
+				break
+			}
 		}
 	}
 

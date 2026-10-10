@@ -34,10 +34,10 @@ type sessionOperationQueueEntry struct {
 	closed   bool
 	draining bool
 
-	mu           sync.Mutex
-	activeCancel context.CancelFunc
-	lastActivity time.Time
-	pending      int
+	mu                 sync.Mutex
+	activeCancel       context.CancelFunc
+	lastLeaseHeartbeat time.Time
+	pending            int
 }
 
 // Ensure starts tracking a ready Session Run before its first operation.
@@ -55,18 +55,36 @@ func (q *SessionOperationQueue) Ensure(run *v1alpha1.Run, activity time.Time) er
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if entry := q.sessions[uid]; entry != nil {
-		entry.setActivity(activity)
 		return nil
 	}
-	entry := &sessionOperationQueueEntry{jobs: make(chan sessionOperationJob, queueSize), lastActivity: activity}
+	entry := &sessionOperationQueueEntry{jobs: make(chan sessionOperationJob, queueSize), lastLeaseHeartbeat: activity}
 	q.sessions[uid] = entry
 	go entry.run(timeout)
 	return nil
 }
 
-// IdleDeadline returns the next idle expiry for a tracked Session Run. Active
-// or queued operations keep the session active until they finish.
-func (q *SessionOperationQueue) IdleDeadline(runUID string, timeout time.Duration, now time.Time) (time.Time, bool) {
+// RenewLease records one server-observed persistent-connection heartbeat.
+// The caller is the owner runtimed proxy after it has verified Run identity.
+func (q *SessionOperationQueue) RenewLease(runUID string, heartbeat time.Time) bool {
+	if q == nil || runUID == "" {
+		return false
+	}
+	if heartbeat.IsZero() {
+		heartbeat = time.Now()
+	}
+	q.mu.Lock()
+	entry := q.sessions[runUID]
+	q.mu.Unlock()
+	if entry == nil {
+		return false
+	}
+	entry.touchLease(heartbeat)
+	return true
+}
+
+// LeaseDeadline reports when a connection-backed Session should expire if no
+// further server-observed heartbeat arrives.
+func (q *SessionOperationQueue) LeaseDeadline(runUID string, timeout time.Duration) (time.Time, bool) {
 	if q == nil || runUID == "" || timeout <= 0 {
 		return time.Time{}, false
 	}
@@ -76,7 +94,7 @@ func (q *SessionOperationQueue) IdleDeadline(runUID string, timeout time.Duratio
 	if entry == nil {
 		return time.Time{}, false
 	}
-	return entry.idleDeadline(timeout, now), true
+	return entry.leaseDeadline(timeout), true
 }
 
 type sessionOperationJob struct {
@@ -144,7 +162,8 @@ func (q *SessionOperationQueue) ExecuteWithAdmission(
 	q.mu.Lock()
 	entry := q.sessions[uid]
 	if entry == nil {
-		entry = &sessionOperationQueueEntry{jobs: make(chan sessionOperationJob, queueSize), lastActivity: time.Now()}
+		now := time.Now()
+		entry = &sessionOperationQueueEntry{jobs: make(chan sessionOperationJob, queueSize), lastLeaseHeartbeat: now}
 		q.sessions[uid] = entry
 		go entry.run(timeout)
 	}
@@ -160,7 +179,7 @@ func (q *SessionOperationQueue) ExecuteWithAdmission(
 		execute:  execute,
 		result:   make(chan sessionOperationResult, 1),
 	}
-	entry.accept(time.Now())
+	entry.accept()
 	select {
 	case entry.jobs <- job:
 		q.mu.Unlock()
@@ -176,7 +195,7 @@ func (q *SessionOperationQueue) ExecuteWithAdmission(
 			return nil, admissionErr
 		}
 	default:
-		entry.complete(time.Now())
+		entry.complete()
 		q.mu.Unlock()
 		return nil, status.Error(codes.ResourceExhausted, "session operation queue is full")
 	}
@@ -252,18 +271,18 @@ func (e *sessionOperationQueueEntry) run(timeout time.Duration) {
 		case <-job.admitted:
 		case <-job.ctx.Done():
 			e.deliver(job, nil, status.FromContextError(job.ctx.Err()).Err())
-			e.complete(time.Now())
+			e.complete()
 			continue
 		}
 		if e.isClosed() {
 			e.deliver(job, nil, status.Error(codes.Canceled, "session closed"))
-			e.complete(time.Now())
+			e.complete()
 			continue
 		}
 		select {
 		case <-job.ctx.Done():
 			e.deliver(job, nil, status.FromContextError(job.ctx.Err()).Err())
-			e.complete(time.Now())
+			e.complete()
 			continue
 		default:
 		}
@@ -272,7 +291,7 @@ func (e *sessionOperationQueueEntry) run(timeout time.Duration) {
 		if !e.setActive(cancel) {
 			cancel()
 			e.deliver(job, nil, status.Error(codes.Canceled, "session closed"))
-			e.complete(time.Now())
+			e.complete()
 			continue
 		}
 		response, err := job.execute(operationCtx)
@@ -285,41 +304,36 @@ func (e *sessionOperationQueueEntry) run(timeout time.Duration) {
 			}
 		}
 		e.deliver(job, response, err)
-		e.complete(time.Now())
+		e.complete()
 	}
 }
 
-func (e *sessionOperationQueueEntry) setActivity(activity time.Time) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.lastActivity.Before(activity) {
-		e.lastActivity = activity
-	}
-}
-
-func (e *sessionOperationQueueEntry) accept(activity time.Time) {
+func (e *sessionOperationQueueEntry) accept() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.pending++
-	e.lastActivity = activity
 }
 
-func (e *sessionOperationQueueEntry) complete(activity time.Time) {
+func (e *sessionOperationQueueEntry) touchLease(heartbeat time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.lastLeaseHeartbeat.Before(heartbeat) {
+		e.lastLeaseHeartbeat = heartbeat
+	}
+}
+
+func (e *sessionOperationQueueEntry) complete() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.pending > 0 {
 		e.pending--
 	}
-	e.lastActivity = activity
 }
 
-func (e *sessionOperationQueueEntry) idleDeadline(timeout time.Duration, now time.Time) time.Time {
+func (e *sessionOperationQueueEntry) leaseDeadline(timeout time.Duration) time.Time {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.pending > 0 {
-		return now.Add(timeout)
-	}
-	return e.lastActivity.Add(timeout)
+	return e.lastLeaseHeartbeat.Add(timeout)
 }
 
 func (e *sessionOperationQueueEntry) isClosed() bool {

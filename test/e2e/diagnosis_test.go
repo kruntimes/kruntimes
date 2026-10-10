@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"testing"
 	"time"
 
@@ -75,22 +74,12 @@ func TestKubernetesDiagnosisRuntimeCanReadNamespace(t *testing.T) {
 
 	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
 	token := sessionGatewayToken(t, run)
-	response := waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token,
-		[]byte(`{"command":{"argv":["kubectl","get","pods","--namespace","default","--output","json"]}}`), http.StatusOK)
-	var operation struct {
-		Command struct {
-			ExitCode int32  `json:"exitCode"`
-			Stdout   []byte `json:"stdout"`
-		} `json:"command"`
-	}
-	if err := json.Unmarshal(response, &operation); err != nil {
-		t.Fatalf("decode diagnosis command response: %v", err)
-	}
-	if operation.Command.ExitCode != 0 {
-		t.Fatalf("diagnosis kubectl command failed: %s", operation.Command.Stdout)
+	operation, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["kubectl","get","pods","--namespace","default","--output","json"]}}`))
+	if err != nil || operation.ExitCode != 0 {
+		t.Fatalf("diagnosis kubectl command failed: %s, %v", operation.Stdout, err)
 	}
 	var pods corev1.PodList
-	if err := json.Unmarshal(operation.Command.Stdout, &pods); err != nil || len(pods.Items) == 0 {
-		t.Fatalf("diagnosis kubectl output = %s, unmarshal error = %v", operation.Command.Stdout, err)
+	if err := json.Unmarshal(operation.Stdout, &pods); err != nil || len(pods.Items) == 0 {
+		t.Fatalf("diagnosis kubectl output = %s, unmarshal error = %v", operation.Stdout, err)
 	}
 }

@@ -3,7 +3,6 @@ package e2e
 // Session mode scenarios: Console gateway authorization, streaming, TLS, bounds, and run exhaustion.
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -38,7 +37,7 @@ import (
 	"github.com/kruntimes/kruntimes/internal/logapi"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
 	"github.com/kruntimes/kruntimes/internal/runstatus"
-	"github.com/kruntimes/kruntimes/sdk/go/sandbox"
+	sandboxsdk "github.com/kruntimes/kruntimes/sdk/go/sandbox"
 )
 
 func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
@@ -86,35 +85,23 @@ func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
 	unauthorizedToken := sessionGatewayTokenWithoutRunAccess(t)
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL, unauthorizedToken, nil, http.StatusForbidden)
 
-	payload := []byte(`{"command":{"argv":["sh","-c","printf gateway-ok"]}}`)
-	operationResponse := waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token, payload, http.StatusOK)
-	var operation struct {
-		Command struct {
-			ExitCode int32  `json:"exitCode"`
-			Stdout   []byte `json:"stdout"`
-		} `json:"command"`
-	}
-	if err := json.Unmarshal(operationResponse, &operation); err != nil {
-		t.Fatalf("decode Session operation response: %v", err)
-	}
-	if operation.Command.ExitCode != 0 || string(operation.Command.Stdout) != "gateway-ok" {
-		t.Fatalf("Session command result = %#v, want successful gateway-ok output", operation.Command)
+	operation, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-ok"]}}`))
+	if err != nil || operation.ExitCode != 0 || string(operation.Stdout) != "gateway-ok" {
+		t.Fatalf("Session command result = %#v, %v; want successful gateway-ok output", operation, err)
 	}
 	waitForSessionCommandLogs(t, run, "gateway-ok")
 
-	envPayload := []byte(`{"command":{"argv":["sh","-c","printf '%s:%s' \"$KRUNTIMES_SESSION_DEFAULT\" \"$KRUNTIMES_SESSION_COMMAND\""],"env":{"KRUNTIMES_SESSION_COMMAND":"command"}}}`)
-	envResponse := waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token, envPayload, http.StatusOK)
-	if err := json.Unmarshal(envResponse, &operation); err != nil {
-		t.Fatalf("decode Session environment response: %v", err)
-	}
-	if operation.Command.ExitCode != 0 || string(operation.Command.Stdout) != "registration:command" {
-		t.Fatalf("Session command environment result = %#v, want registration:command", operation.Command)
+	operation, err = executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf '%s:%s' \"$KRUNTIMES_SESSION_DEFAULT\" \"$KRUNTIMES_SESSION_COMMAND\""],"env":{"KRUNTIMES_SESSION_COMMAND":"command"}}}`))
+	if err != nil || operation.ExitCode != 0 || string(operation.Stdout) != "registration:command" {
+		t.Fatalf("Session command environment result = %#v, %v; want registration:command", operation, err)
 	}
 
-	writePayload := []byte(`{"writeFile":{"path":"notes/result.txt","contents":"Z2F0ZXdheS1maWxl","createParents":true}}`)
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token, writePayload, http.StatusOK)
-	escapingWrite := []byte(`{"writeFile":{"path":"../outside.txt","contents":"ZXNjYXBl","createParents":true}}`)
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token, escapingWrite, http.StatusBadRequest)
+	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"notes/result.txt","contents":"Z2F0ZXdheS1maWxl","createParents":true}}`)); err != nil {
+		t.Fatalf("write Session file: %v", err)
+	}
+	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"../outside.txt","contents":"ZXNjYXBl","createParents":true}}`)); err == nil {
+		t.Fatal("escaping Session write succeeded")
+	}
 
 	filesResponse := waitForGatewayResponse(t, http.MethodGet, baseURL+"/files?path=notes", token, nil, http.StatusOK)
 	var files struct {
@@ -164,103 +151,24 @@ func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
 	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunReady)
 
 	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
-	token := sessionGatewayToken(t, run)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/operations:stream", strings.NewReader(`{"command":{"argv":["sh","-c","printf stream-first; sleep 2; printf stream-last"]}}`))
+	websocketURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/operations:ws"
+	connection, response, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).Dial( //nolint:gosec // E2E local port-forward only.
+		websocketURL, http.Header{"Authorization": []string{"Bearer " + sessionGatewayToken(t, run)}})
 	if err != nil {
-		t.Fatalf("create streaming gateway request: %v", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+token)
-	response, err := gatewayInsecureHTTPClient.Do(request)
-	if err != nil {
-		t.Fatalf("call streaming gateway: %v", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		contents, _ := io.ReadAll(response.Body)
-		t.Fatalf("streaming gateway status = %d: %s", response.StatusCode, contents)
-	}
-	if got := response.Header.Get("Content-Type"); got != "application/x-ndjson; charset=utf-8" {
-		t.Fatalf("streaming content type = %q", got)
-	}
-
-	// Authorization and the initial HTTP response are outside the command
-	// streaming contract. Measure whether output arrives while the command is
-	// executing only after the NDJSON stream is established.
-	streamStarted := time.Now()
-	reader := bufio.NewReader(response.Body)
-	seenFirstOutput := false
-	var stdout strings.Builder
-	seenCompleted := false
-	lastSequence := int64(0)
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err == io.EOF {
-			break
+		if response != nil {
+			t.Fatalf("dial streaming WebSocket: %v (status %d)", err, response.StatusCode)
 		}
-		if err != nil {
-			t.Fatalf("read streaming gateway event: %v", err)
-		}
-		var event struct {
-			Sequence int64  `json:"sequence"`
-			Type     string `json:"type"`
-			Output   *struct {
-				Stream string `json:"stream"`
-				Data   []byte `json:"data"`
-			} `json:"output"`
-			Completed *struct {
-				Command *struct {
-					ExitCode int32  `json:"exitCode"`
-					Stdout   []byte `json:"stdout"`
-				} `json:"command"`
-			} `json:"completed"`
-		}
-		if err := json.Unmarshal(line, &event); err != nil {
-			t.Fatalf("decode streaming gateway event %q: %v", line, err)
-		}
-		if event.Sequence != lastSequence+1 {
-			t.Fatalf("event sequence = %d after %d", event.Sequence, lastSequence)
-		}
-		lastSequence = event.Sequence
-		if event.Type == "output" && event.Output != nil && event.Output.Stream == "stdout" && string(event.Output.Data) == "stream-first" {
-			if elapsed := time.Since(streamStarted); elapsed >= time.Second {
-				t.Fatalf("first command output arrived after %s, want it before command completion", elapsed)
-			}
-			seenFirstOutput = true
-		}
-		if event.Type == "output" && event.Output != nil && event.Output.Stream == "stdout" {
-			stdout.Write(event.Output.Data)
-		}
-		if event.Type == "completed" && event.Completed != nil && event.Completed.Command != nil {
-			if event.Completed.Command.ExitCode != 0 || len(event.Completed.Command.Stdout) != 0 {
-				t.Fatalf("completed command = %#v", event.Completed.Command)
-			}
-			seenCompleted = true
-		}
-	}
-	if !seenFirstOutput || !seenCompleted || stdout.String() != "stream-firststream-last" {
-		t.Fatalf("stream did not include early output and completion: first=%t completed=%t stdout=%q", seenFirstOutput, seenCompleted, stdout.String())
-	}
-
-	websocketURL := "wss" + strings.TrimPrefix(baseURL, "https") + "/operations:ws"
-	connection, websocketResponse, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).Dial(websocketURL, http.Header{"Authorization": []string{"Bearer " + token}}) //nolint:gosec // E2E local port-forward only.
-	if err != nil {
-		if websocketResponse != nil {
-			t.Fatalf("dial operation WebSocket: %v (status %d)", err, websocketResponse.StatusCode)
-		}
-		t.Fatalf("dial operation WebSocket: %v", err)
+		t.Fatalf("dial streaming WebSocket: %v", err)
 	}
 	defer connection.Close()
-	if err := connection.WriteJSON(map[string]any{"command": map[string]any{"argv": []string{"sh", "-c", "printf websocket"}}}); err != nil {
-		t.Fatalf("write WebSocket operation: %v", err)
+	if err := connection.WriteJSON(map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"sh", "-c", "printf stream-first; sleep 3; printf stream-last"}}}}); err != nil {
+		t.Fatalf("write streaming command: %v", err)
 	}
-	_ = connection.SetReadDeadline(time.Now().Add(10 * time.Second))
-	websocketOutput := false
-	websocketCompleted := false
-	lastSequence = 0
-	for !websocketCompleted {
+	_ = connection.SetReadDeadline(time.Now().Add(60 * time.Second))
+	var stdout strings.Builder
+	var firstOutputAt time.Time
+	var lastSequence int64
+	for {
 		var event struct {
 			Sequence int64  `json:"sequence"`
 			Type     string `json:"type"`
@@ -273,29 +181,40 @@ func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
 					ExitCode int32 `json:"exitCode"`
 				} `json:"command"`
 			} `json:"completed"`
+			Failed *struct {
+				Message string `json:"message"`
+			} `json:"failed"`
 		}
 		if err := connection.ReadJSON(&event); err != nil {
-			t.Fatalf("read WebSocket operation event: %v", err)
+			t.Fatalf("read streaming event: %v", err)
 		}
 		if event.Sequence != lastSequence+1 {
-			t.Fatalf("WebSocket event sequence = %d after %d", event.Sequence, lastSequence)
+			t.Fatalf("event sequence = %d after %d", event.Sequence, lastSequence)
 		}
 		lastSequence = event.Sequence
-		if event.Type == "output" && event.Output != nil && event.Output.Stream == "stdout" && string(event.Output.Data) == "websocket" {
-			websocketOutput = true
-		}
-		if event.Type == "completed" && event.Completed != nil && event.Completed.Command != nil {
-			if event.Completed.Command.ExitCode != 0 {
-				t.Fatalf("WebSocket command exit code = %d", event.Completed.Command.ExitCode)
+		if event.Output != nil && event.Output.Stream == "stdout" {
+			if firstOutputAt.IsZero() {
+				firstOutputAt = time.Now()
 			}
-			websocketCompleted = true
+			stdout.Write(event.Output.Data)
 		}
-	}
-	if !websocketOutput {
-		t.Fatal("WebSocket stream did not include command output")
+		if event.Failed != nil {
+			t.Fatalf("streaming command failed: %s", event.Failed.Message)
+		}
+		if event.Completed != nil {
+			if event.Completed.Command == nil || event.Completed.Command.ExitCode != 0 {
+				t.Fatalf("streaming completion = %#v", event.Completed)
+			}
+			if firstOutputAt.IsZero() || time.Since(firstOutputAt) < time.Second {
+				t.Fatalf("command output was not delivered before completion")
+			}
+			if got := stdout.String(); got != "stream-firststream-last" {
+				t.Fatalf("streaming output = %q", got)
+			}
+			return
+		}
 	}
 }
-
 func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
 	t.Parallel()
 	runtimeName := fmt.Sprintf("run-logs-%d", time.Now().UnixNano())
@@ -317,8 +236,9 @@ func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
 	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
 	token := sessionGatewayToken(t, run)
 	marker := "gateway-run-log-e2e"
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token,
-		[]byte(`{"command":{"argv":["sh","-c","printf gateway-run-log-e2e"]}}`), http.StatusOK)
+	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-run-log-e2e"]}}`)); err != nil {
+		t.Fatalf("write Session log marker: %v", err)
+	}
 	waitForSessionCommandLogs(t, run, marker)
 	requestRunCancel(t, run)
 	waitForRunPhase(t, run, 20*time.Second, v1alpha1.RunCancelled)
@@ -338,8 +258,9 @@ func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
 	noisyBaseURL := gatewayEndpointURL(t, waitForGatewayPod(t), noisyRun.Status.Endpoint.URL)
 	noisyToken := sessionGatewayToken(t, noisyRun)
 	for range 55 {
-		_ = waitForGatewayResponse(t, http.MethodPost, noisyBaseURL+"/operations:execute", noisyToken,
-			[]byte(`{"command":{"argv":["sh","-c","printf gateway-run-log-noise"]}}`), http.StatusOK)
+		if _, err := executeSessionOperation(t.Context(), noisyBaseURL, noisyToken, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-run-log-noise"]}}`)); err != nil {
+			t.Fatalf("write noisy Session log: %v", err)
+		}
 	}
 	waitForSessionCommandLogs(t, noisyRun, "gateway-run-log-noise")
 
@@ -533,16 +454,48 @@ func TestSessionGatewayEnforcesTransferBounds(t *testing.T) {
 	// Establish the port-forward with a response that remains below the focused
 	// response limit before exercising rejection paths.
 	_ = waitForGatewayResponseWithClient(t, portForwardClient, http.MethodGet, baseURL, token, nil, http.StatusOK)
-	oversizedRequest := []byte(`{"command":{"argv":["true"],"stdin":"` + strings.Repeat("eA==", 160) + `"}}`)
-	requestResponse := waitForGatewayResponseWithClient(t, portForwardClient, http.MethodPost, baseURL+"/operations:execute", token, oversizedRequest, http.StatusRequestEntityTooLarge)
-	if !strings.Contains(string(requestResponse), "gateway request body exceeds configured limit") {
-		t.Fatalf("oversized request response = %s", requestResponse)
+	websocketURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/operations:ws"
+	dial := func() *websocket.Conn {
+		t.Helper()
+		connection, _, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).DialContext( //nolint:gosec // E2E local port-forward only.
+			t.Context(), websocketURL, http.Header{"Authorization": []string{"Bearer " + token}})
+		if err != nil {
+			t.Fatalf("open bounded Session WebSocket: %v", err)
+		}
+		return connection
 	}
+	requestConnection := dial()
+	oversizedRequest := map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"true"}, "stdin": strings.Repeat("eA==", 160)}}}
+	if err := requestConnection.WriteJSON(oversizedRequest); err != nil {
+		t.Fatalf("write oversized Session request: %v", err)
+	}
+	_ = requestConnection.SetReadDeadline(time.Now().Add(30 * time.Second))
+	_, _, err := requestConnection.ReadMessage()
+	if !websocket.IsCloseError(err, websocket.CloseMessageTooBig, websocket.ClosePolicyViolation) {
+		t.Fatalf("oversized Session request read error = %v, want WebSocket close", err)
+	}
+	_ = requestConnection.Close()
 
-	responseResponse := waitForGatewayResponseWithClient(t, portForwardClient, http.MethodPost, baseURL+"/operations:execute", token,
-		[]byte(`{"command":{"argv":["sh","-c","head -c 1024 /dev/zero"]}}`), http.StatusRequestEntityTooLarge)
-	if got, want := string(responseResponse), "{\"error\":\"gateway response exceeds configured limit\"}\n"; got != want {
-		t.Fatalf("oversized response body = %q, want %q", got, want)
+	responseConnection := dial()
+	defer responseConnection.Close()
+	if err := responseConnection.WriteJSON(map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"sh", "-c", "head -c 1024 /dev/zero"}}}}); err != nil {
+		t.Fatalf("write Session operation with oversized output: %v", err)
+	}
+	_ = responseConnection.SetReadDeadline(time.Now().Add(60 * time.Second))
+	for {
+		var event struct {
+			Type  string `json:"type"`
+			Error string `json:"error"`
+		}
+		if err := responseConnection.ReadJSON(&event); err != nil {
+			t.Fatalf("read bounded Session response: %v", err)
+		}
+		if event.Type == "error" {
+			if !strings.Contains(event.Error, "gateway stream event exceeds configured limit") {
+				t.Fatalf("bounded Session error = %q", event.Error)
+			}
+			break
+		}
 	}
 
 	headerRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL, nil)
@@ -648,16 +601,16 @@ func TestSessionGatewaySerializesMutations(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_, err := gatewayRequest(ctx, http.MethodPost, baseURL+"/operations:execute", token,
-			[]byte(`{"command":{"argv":["sh","-c","printf started > started; sleep 1; printf first > result.txt"]}}`), http.StatusOK)
+		_, err := executeSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 1; printf first > result.txt"]}}`))
 		firstResult <- err
 	}()
 
 	// Reading is not a mutation, so this confirms that the first command is
 	// active before the second mutation is submitted to the owner queue.
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL+"/files/started", token, nil, http.StatusOK)
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token,
-		[]byte(`{"writeFile":{"path":"result.txt","contents":"c2Vjb25k"}}`), http.StatusOK)
+	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"result.txt","contents":"c2Vjb25k"}}`)); err != nil {
+		t.Fatalf("write FIFO result: %v", err)
+	}
 	if err := <-firstResult; err != nil {
 		t.Fatalf("execute first FIFO mutation: %v", err)
 	}
@@ -700,8 +653,7 @@ func TestSessionRunCancellationTerminatesActiveGatewayCommand(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_, err := gatewayRequest(ctx, http.MethodPost, baseURL+"/operations:execute", token,
-			[]byte(`{"command":{"argv":["sh","-c","printf started > started; sleep 20; printf completed > completed"]}}`), http.StatusOK)
+		_, err := executeSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 20; printf completed > completed"]}}`))
 		commandResult <- err
 	}()
 
@@ -741,8 +693,7 @@ func TestSessionRunDrainCompletesAcceptedGatewayCommand(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_, err := gatewayRequest(ctx, http.MethodPost, baseURL+"/operations:execute", token,
-			[]byte(`{"command":{"argv":["sh","-c","printf started > started; sleep 15; printf completed > completed"]}}`), http.StatusOK)
+		_, err := executeSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 15; printf completed > completed"]}}`))
 		commandResult <- err
 	}()
 
@@ -751,8 +702,9 @@ func TestSessionRunDrainCompletesAcceptedGatewayCommand(t *testing.T) {
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL+"/files/started", token, nil, http.StatusOK)
 	requestRunDrain(t, run)
 	waitForRunPhase(t, run, 10*time.Second, v1alpha1.RunFinalizing)
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL+"/operations:execute", token,
-		[]byte(`{"writeFile":{"path":"rejected.txt","contents":"cmVqZWN0ZWQ="}}`), http.StatusConflict)
+	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"rejected.txt","contents":"cmVqZWN0ZWQ="}}`)); err == nil {
+		t.Fatal("Session mutation succeeded after Drain")
+	}
 	if err := <-commandResult; err != nil {
 		t.Fatalf("accepted Session command did not complete during Drain: %v", err)
 	}
@@ -768,7 +720,7 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	role := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{Name: serviceAccount.Name, Namespace: testNamespace},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"runs"}, Verbs: []string{"create", "get", "update"}},
+			{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"runs"}, Verbs: []string{"create", "get", "update", "delete"}},
 			{APIGroups: []string{""}, Resources: []string{"services"}, Verbs: []string{"get"}},
 			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list"}},
 		},
@@ -790,67 +742,121 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	sdkConfig := rest.CopyConfig(restConfig)
 	sdkConfig.BearerToken = token
 	sdkConfig.BearerTokenFile = ""
-	forward, err := sandbox.StartConsolePortForward(t.Context(), sdkConfig, testNamespace, "kruntimes-console", 443)
+	forward, err := sandboxsdk.StartConsolePortForward(t.Context(), sdkConfig, testNamespace, "kruntimes-console", 443)
 	if err != nil {
 		t.Fatalf("start SDK Runtime gateway port-forward: %v", err)
 	}
 	t.Cleanup(forward.Close)
-	sdk, err := sandbox.NewFromRESTConfig(sdkConfig, sandbox.Config{HTTPClient: forward})
+	sdk, err := sandboxsdk.NewFromRESTConfig(sdkConfig, sandboxsdk.Config{HTTPClient: forward, SessionDialer: forward})
 	if err != nil {
 		t.Fatalf("create Sandbox SDK client: %v", err)
 	}
-	session, err := sdk.Create(t.Context(), sandbox.CreateOptions{GenerateName: "e2e-sdk-session-", Namespace: testNamespace, Runtime: runtimeName})
+	leaseTimeout := int32(15)
+	sandbox, err := sdk.Runtime(testNamespace, runtimeName).AcquireSandbox(t.Context(), sandboxsdk.AcquireOptions{
+		GenerateName: "e2e-sdk-session-",
+		Session:      &v1alpha1.RunSessionMode{LeaseTimeoutSeconds: &leaseTimeout},
+	})
 	if err != nil {
 		t.Fatalf("create SDK Session Run: %v", err)
 	}
-	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), session.Run()) })
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), sandbox.Run()) })
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	if err := session.Wait(ctx); err != nil {
-		t.Fatalf("wait for SDK Session Run: %v", err)
-	}
-	result, err := session.Execute(ctx, sandbox.Command{Argv: []string{"sh", "-c", "printf sdk-port-forward"}})
+	connection, err := sandbox.OpenSession(ctx)
 	if err != nil {
-		t.Fatalf("execute SDK Session command: %v", err)
+		t.Fatalf("open SDK Session connection: %v", err)
 	}
-	if result.ExitCode != 0 || string(result.Stdout) != "sdk-port-forward" {
-		t.Fatalf("SDK Session command result = %#v, want successful sdk-port-forward output", result)
+	operationID, err := connection.Send(ctx, sandboxsdk.Operation{Command: &sandboxsdk.Command{Argv: []string{"sh", "-c", "printf sdk-port-forward"}}})
+	if err != nil {
+		t.Fatalf("send SDK Session command: %v", err)
 	}
-	for _, name := range []string{"alpha.txt", "beta.txt", "gamma.txt"} {
-		if err := session.WriteFile(ctx, "pages/"+name, []byte(name), true); err != nil {
-			t.Fatalf("write SDK Session page file %q: %v", name, err)
+	var output bytes.Buffer
+	for {
+		event, err := connection.Receive(ctx)
+		if err != nil {
+			t.Fatalf("receive SDK Session event: %v", err)
+		}
+		if event.Output != nil && event.Output.Stream == "stdout" {
+			output.Write(event.Output.Data)
+		}
+		if event.Completed != nil {
+			if event.Completed.Command == nil || event.Completed.Command.ExitCode != 0 {
+				t.Fatalf("SDK Session completion = %#v, want successful command", event.Completed)
+			}
+			break
+		}
+		if event.Failed != nil {
+			t.Fatalf("SDK Session operation %s failed: %#v", operationID, event.Failed)
 		}
 	}
-	page, err := session.ListFiles(ctx, sandbox.ListFilesOptions{Directory: "pages", Limit: 2})
+	if output.String() != "sdk-port-forward" {
+		t.Fatalf("SDK Session output = %q, want sdk-port-forward", output.String())
+	}
+	// The SDK heartbeat must retain the Session Run beyond its lease interval
+	// without issuing an artificial operation.
+	time.Sleep(16 * time.Second)
+	if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(sandbox.Run()), sandbox.Run()); err != nil {
+		t.Fatalf("get heartbeating SDK Session Run: %v", err)
+	}
+	if sandbox.Run().Status.Phase != v1alpha1.RunReady {
+		t.Fatalf("heartbeating SDK Session phase = %s, want Ready", sandbox.Run().Status.Phase)
+	}
+	if err := connection.Close(); err != nil {
+		t.Fatalf("close SDK Session connection: %v", err)
+	}
+	postReconnectCtx, postReconnectCancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer postReconnectCancel()
+	connection, err = sandbox.OpenSession(postReconnectCtx)
+	if err != nil {
+		t.Fatalf("reopen SDK Session connection: %v", err)
+	}
+	for _, name := range []string{"alpha.txt", "beta.txt", "gamma.txt"} {
+		operationCtx, operationCancel := context.WithTimeout(t.Context(), 30*time.Second)
+		started := time.Now()
+		if _, err := connection.Send(operationCtx, sandboxsdk.Operation{WriteFile: &sandboxsdk.FileWrite{Path: "pages/" + name, Contents: []byte(name), CreateParents: true}}); err != nil {
+			operationCancel()
+			t.Fatalf("send SDK Session file operation %q: %v", name, err)
+		}
+		for {
+			event, err := connection.Receive(operationCtx)
+			if err != nil {
+				operationCancel()
+				t.Fatalf("receive SDK Session file operation %q: %v", name, err)
+			}
+			if event.Completed != nil {
+				break
+			}
+		}
+		operationCancel()
+		t.Logf("SDK Session file operation %q completed in %s", name, time.Since(started))
+	}
+	defer connection.Close()
+	page, err := sandbox.ListFiles(postReconnectCtx, sandboxsdk.ListFilesOptions{Directory: "pages", Limit: 2})
 	if err != nil {
 		t.Fatalf("list first SDK Session file page: %v", err)
 	}
 	if got, want := sessionFilePaths(page.Entries), []string{"alpha.txt", "beta.txt"}; !slices.Equal(got, want) || page.NextPageToken == "" {
 		t.Fatalf("first SDK Session file page = %#v, want %#v and next token", page, want)
 	}
-	page, err = session.ListFiles(ctx, sandbox.ListFilesOptions{Directory: "pages", Limit: 2, PageToken: page.NextPageToken})
+	page, err = sandbox.ListFiles(postReconnectCtx, sandboxsdk.ListFilesOptions{Directory: "pages", Limit: 2, PageToken: page.NextPageToken})
 	if err != nil {
 		t.Fatalf("list second SDK Session file page: %v", err)
 	}
 	if got, want := sessionFilePaths(page.Entries), []string{"gamma.txt"}; !slices.Equal(got, want) || page.NextPageToken != "" {
 		t.Fatalf("second SDK Session file page = %#v, want %#v and no next token", page, want)
 	}
-	if err := session.Close(ctx); err != nil {
-		t.Fatalf("close SDK Session Run: %v", err)
-	}
-	if session.Run().Status.Phase != v1alpha1.RunSucceeded {
-		t.Fatalf("SDK Close phase = %s, want Succeeded", session.Run().Status.Phase)
+	if err := sandbox.Release(postReconnectCtx); err != nil {
+		t.Fatalf("release SDK Session Run: %v", err)
 	}
 
-	cancelled, err := sdk.Create(t.Context(), sandbox.CreateOptions{GenerateName: "e2e-sdk-cancel-", Namespace: testNamespace, Runtime: runtimeName})
+	cancelCtx, cancelCancellation := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancelCancellation()
+	cancelled, err := sdk.Runtime(testNamespace, runtimeName).AcquireSandbox(cancelCtx, sandboxsdk.AcquireOptions{GenerateName: "e2e-sdk-cancel-"})
 	if err != nil {
 		t.Fatalf("create SDK cancellation Session Run: %v", err)
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), cancelled.Run()) })
-	if err := cancelled.Wait(ctx); err != nil {
-		t.Fatalf("wait for SDK cancellation Session Run: %v", err)
-	}
-	if err := cancelled.Cancel(ctx); err != nil {
+	if err := cancelled.Cancel(cancelCtx); err != nil {
 		t.Fatalf("cancel SDK Session Run: %v", err)
 	}
 	if cancelled.Run().Status.Phase != v1alpha1.RunCancelled {
@@ -858,23 +864,52 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	}
 }
 
-func TestSessionRunExpiresWhenIdle(t *testing.T) {
+func TestSessionRunLeaseExpiresAfterConnectionHeartbeatsStop(t *testing.T) {
 	t.Parallel()
-	runtimeName := fmt.Sprintf("session-idle-%d", time.Now().UnixNano())
+	runtimeName := fmt.Sprintf("session-lease-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
-	idleTimeout := int32(1)
+	leaseTimeout := int32(15)
 	run := &v1alpha1.Run{
-		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-session-idle-", Namespace: testNamespace},
+		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-session-lease-", Namespace: testNamespace},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
-			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{IdleTimeoutSeconds: &idleTimeout}},
+			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{LeaseTimeoutSeconds: &leaseTimeout}},
 		},
 	}
-	if err := k8sClient.Create(context.Background(), run); err != nil {
-		t.Fatalf("create idle Session Run: %v", err)
+	if err := k8sClient.Create(t.Context(), run); err != nil {
+		t.Fatalf("create lease Session Run: %v", err)
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), run) })
-	waitForRunPhase(t, run, 10*time.Second, v1alpha1.RunTimeout)
+	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunReady)
+
+	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
+	websocketURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/operations:ws"
+	connection, response, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).Dial(websocketURL, http.Header{"Authorization": []string{"Bearer " + sessionGatewayToken(t, run)}}) //nolint:gosec // E2E local port-forward only.
+	if err != nil {
+		if response != nil {
+			t.Fatalf("dial lease WebSocket: %v (status %d)", err, response.StatusCode)
+		}
+		t.Fatalf("dial lease WebSocket: %v", err)
+	}
+	// Observe Ready beyond the original lease window. A single early check
+	// would pass even if every heartbeat were ignored by the owner runtimed.
+	for range 5 {
+		if err := connection.WriteJSON(map[string]string{"type": "heartbeat"}); err != nil {
+			t.Fatalf("send lease heartbeat: %v", err)
+		}
+		time.Sleep(4 * time.Second)
+		if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get heartbeat Session Run: %v", err)
+		}
+		if run.Status.Phase != v1alpha1.RunReady {
+			t.Fatalf("Session Run phase with active connection = %s, want Ready", run.Status.Phase)
+		}
+	}
+	_ = connection.Close()
+	waitForRunPhase(t, run, 25*time.Second, v1alpha1.RunTimeout)
+	if run.Status.Message != "session lease expired" {
+		t.Fatalf("lease expiry message = %q, want session lease expired", run.Status.Message)
+	}
 }
 
 func TestSessionRunExpiresWhenTotalTimeoutReached(t *testing.T) {

@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 import time
 from dataclasses import dataclass, field
-from collections.abc import Iterator
-from typing import Any, Callable, Mapping, Protocol, Sequence
-from urllib.parse import quote, urlencode, urlparse, urlunparse
+from typing import Any, Mapping, Protocol, Sequence
+from urllib.parse import urlencode, urlparse, urlunparse
 
 
 _TERMINAL_PHASES = frozenset(("Succeeded", "Failed", "Timeout", "Cancelled"))
 _DEFAULT_POLL_INTERVAL_SECONDS = 0.5
+_SESSION_FRAME_TYPE_SEND = "send"
+_SESSION_FRAME_TYPE_CANCEL = "cancel"
+_SESSION_FRAME_TYPE_HEARTBEAT = "heartbeat"
 
 
 class RunClient(Protocol):
@@ -28,6 +31,8 @@ class RunClient(Protocol):
 
     def replace(self, namespace: str, name: str, run: Mapping[str, Any]) -> dict[str, Any]: ...
 
+    def delete(self, namespace: str, name: str) -> None: ...
+
 
 class GatewayTransport(Protocol):
     """HTTP boundary used for the shared Runtime gateway."""
@@ -36,9 +41,18 @@ class GatewayTransport(Protocol):
         self, method: str, url: str, body: bytes | None, headers: Mapping[str, str]
     ) -> "HTTPResponse": ...
 
-    def stream_request(
-        self, method: str, url: str, body: bytes | None, headers: Mapping[str, str]
-    ) -> "StreamingHTTPResponse": ...
+    def open_session(self, url: str, headers: Mapping[str, str], timeout_seconds: float | None) -> "SessionConnection": ...
+
+
+class SessionConnection(Protocol):
+    """One bidirectional Runtime gateway WebSocket connection."""
+
+    def send(self, payload: str) -> None: ...
+
+    def recv(self) -> str | bytes: ...
+
+    def close(self) -> None: ...
+
 
 
 class LogReader(Protocol):
@@ -54,14 +68,6 @@ class HTTPResponse:
     status_code: int
     body: bytes = b""
 
-
-@dataclass
-class StreamingHTTPResponse:
-    """One open NDJSON response owned by the caller."""
-
-    status_code: int
-    lines: Iterator[bytes]
-    close: Callable[[], None]
 
 
 class APIError(Exception):
@@ -82,11 +88,9 @@ class SandboxStateError(Exception):
 
 
 @dataclass(frozen=True)
-class CreateOptions:
-    """Inputs used to create a Session-mode Run."""
+class AcquireOptions:
+    """Inputs used to acquire one ready Sandbox from a Runtime."""
 
-    namespace: str
-    runtime: str
     name: str | None = None
     generate_name: str | None = None
     source: Mapping[str, Any] | None = None
@@ -126,6 +130,33 @@ class CommandResult:
     stdout: bytes = b""
     stderr: bytes = b""
     timed_out: bool = False
+
+
+@dataclass(frozen=True)
+class Operation:
+    """One mutation submitted through a persistent Session connection."""
+
+    command: Command | None = None
+    write_file: Mapping[str, Any] | None = None
+    create_directory: Mapping[str, Any] | None = None
+    delete_file: Mapping[str, Any] | None = None
+    rename_file: Mapping[str, Any] | None = None
+
+    def request_body(self) -> dict[str, Any]:
+        values: dict[str, Any] = {}
+        if self.command is not None:
+            values["command"] = self.command.request_body()
+        if self.write_file is not None:
+            values["writeFile"] = dict(self.write_file)
+        if self.create_directory is not None:
+            values["createDirectory"] = dict(self.create_directory)
+        if self.delete_file is not None:
+            values["deleteFile"] = dict(self.delete_file)
+        if self.rename_file is not None:
+            values["renameFile"] = dict(self.rename_file)
+        if len(values) != 1:
+            raise ValueError("exactly one Session operation is required")
+        return values
 
 
 @dataclass(frozen=True)
@@ -197,19 +228,23 @@ class SandboxClient:
         self._bearer_token = bearer_token
         self._poll_interval_seconds = poll_interval_seconds
 
-    def create(self, options: CreateOptions) -> "Sandbox":
-        """Create a Session Run without waiting for capacity or registration."""
-        if not options.namespace or not options.runtime:
+    def runtime(self, namespace: str, name: str) -> "Runtime":
+        """Return one reusable Session Runtime pool."""
+        return Runtime(self, namespace, name)
+
+    def _create(self, namespace: str, runtime: str, options: AcquireOptions) -> "Sandbox":
+        """Create the Run for Runtime.acquire_sandbox; never expose it publicly."""
+        if not namespace or not runtime:
             raise ValueError("sandbox namespace and runtime are required")
         if not options.name and not options.generate_name:
             raise ValueError("sandbox name or generate_name is required")
-        metadata: dict[str, Any] = {"namespace": options.namespace}
+        metadata: dict[str, Any] = {"namespace": namespace}
         if options.name:
             metadata["name"] = options.name
         if options.generate_name:
             metadata["generateName"] = options.generate_name
         spec: dict[str, Any] = {
-            "runtime": options.runtime,
+            "runtime": runtime,
             "env": [{"name": name, "value": options.env[name]} for name in sorted(options.env)],
             "mode": {"session": dict(options.session)},
         }
@@ -220,7 +255,7 @@ class SandboxClient:
         if options.timeout_seconds is not None:
             spec["timeout"] = f"{options.timeout_seconds}s"
         run = self._runs.create(
-            options.namespace,
+            namespace,
             {"apiVersion": "kruntimes.io/v1alpha1", "kind": "Run", "metadata": metadata, "spec": spec},
         )
         return Sandbox(self, run)
@@ -231,6 +266,32 @@ class SandboxClient:
         if not _is_session_run(run):
             raise SandboxStateError(run, "Run is not a Session Run")
         return Sandbox(self, run)
+
+
+class Runtime:
+    """A reusable Runtime pool that atomically acquires ready Sandboxes."""
+
+    def __init__(self, client: SandboxClient, namespace: str, name: str) -> None:
+        self._client = client
+        self._namespace = namespace
+        self._name = name
+
+    def acquire_sandbox(self, options: AcquireOptions, *, timeout_seconds: float | None = None) -> "Sandbox":
+        if not self._namespace or not self._name:
+            raise ValueError("sandbox Runtime namespace and name are required")
+        sandbox = self._client._create(self._namespace, self._name, options)
+        try:
+            sandbox.wait(timeout_seconds)
+        except Exception as error:
+            metadata = _metadata(sandbox.run)
+            try:
+                self._client._runs.delete(_namespace(metadata), _name(metadata))
+            except Exception as cleanup_error:
+                raise RuntimeError(
+                    f"acquire Sandbox failed and deleting Run {_name(metadata)} failed: {cleanup_error}"
+                ) from error
+            raise
+        return sandbox
 
 
 class Sandbox:
@@ -270,6 +331,12 @@ class Sandbox:
         """Request immediate Session cancellation and wait for terminal lifecycle completion."""
         self._terminate("Immediate", timeout_seconds)
 
+    def release(self, timeout_seconds: float | None = None) -> None:
+        """Drain the Session and remove its backing Run to release capacity."""
+        self.close(timeout_seconds)
+        metadata = _metadata(self._run)
+        self._client._runs.delete(_namespace(metadata), _name(metadata))
+
     def _terminate(self, mode: str, timeout_seconds: float | None) -> None:
         self.refresh()
         spec = dict(self._run.get("spec", {}))
@@ -292,76 +359,26 @@ class Sandbox:
                 return
             _sleep_until(deadline, self._client._poll_interval_seconds)
 
-    def execute(self, command: Command) -> CommandResult:
-        """Execute one command without implicit retry after transport failure."""
-        response = self._operation({"command": command.request_body()})
-        command_response = response.get("command")
-        if not isinstance(command_response, Mapping):
-            raise ValueError("gateway response did not include a command result")
-        return CommandResult(
-            exit_code=int(command_response.get("exitCode", 0)),
-            stdout=_decode_bytes(command_response.get("stdout", "")),
-            stderr=_decode_bytes(command_response.get("stderr", "")),
-            timed_out=bool(command_response.get("timedOut", False)),
-        )
+    def open_session(self, *, timeout_seconds: float | None = None) -> "Session":
+        """Open a persistent operation connection to this ready Sandbox.
 
-    def stream(self, command: Command, *, idempotency_key: str = "", after_sequence: int = 0) -> Iterator[OperationEvent]:
-        endpoint = self._endpoint("operations:stream")
-        if after_sequence > 0:
-            endpoint += "?" + urlencode({"after": after_sequence})
-        headers = self._stream_headers(idempotency_key)
-        response = self._client._gateway.stream_request("POST", endpoint, json.dumps({"command": command.request_body()}).encode(), headers)
-        return self._read_operation_events(response, after_sequence)
-
-    def resume(self, operation_id: str, *, after_sequence: int = 0) -> Iterator[OperationEvent]:
-        if not operation_id or after_sequence < 0:
-            raise ValueError("operation ID and non-negative cursor are required")
-        endpoint = self._endpoint("operations/" + quote(operation_id, safe="") + ":stream")
-        if after_sequence > 0:
-            endpoint += "?" + urlencode({"after": after_sequence})
-        return self._read_operation_events(self._client._gateway.stream_request("GET", endpoint, None, self._stream_headers()), after_sequence)
-
-    def _stream_headers(self, idempotency_key: str = "") -> dict[str, str]:
-        headers = {"Accept": "application/x-ndjson"}
-        if idempotency_key:
-            headers["Idempotency-Key"] = idempotency_key
+        Closing the returned connection does not close this Sandbox or release
+        its Runtime capacity. One command may be active on a Session at a time.
+        """
+        endpoint = _websocket_url(self._endpoint("operations:ws"))
+        headers: dict[str, str] = {}
         if self._client._bearer_token:
             headers["Authorization"] = "Bearer " + self._client._bearer_token
-        return headers
-
-    def _read_operation_events(self, response: StreamingHTTPResponse, cursor: int) -> Iterator[OperationEvent]:
-        if not 200 <= response.status_code < 300:
-            response.close()
-            raise APIError(response.status_code, "stream request failed")
-        def events() -> Iterator[OperationEvent]:
-            nonlocal cursor
-            try:
-                for raw in response.lines:
-                    if not raw.strip():
-                        continue
-                    value = json.loads(raw)
-                    if not isinstance(value, Mapping):
-                        raise ValueError("operation event must be an object")
-                    sequence = int(value.get("sequence", 0))
-                    if sequence != cursor + 1:
-                        raise ValueError(f"operation event sequence {sequence} follows {cursor}")
-                    cursor = sequence
-                    yield OperationEvent(sequence, str(value.get("type", "")), value)
-            finally:
-                response.close()
-        return events()
-
-    def write_file(self, path: str, contents: bytes, *, create_parents: bool = False) -> None:
-        self._operation({"writeFile": {"path": path, "contents": _encode_bytes(contents), "createParents": create_parents}})
-
-    def create_directory(self, path: str) -> None:
-        self._operation({"createDirectory": {"path": path}})
-
-    def delete_file(self, path: str, *, recursive: bool = False) -> None:
-        self._operation({"deleteFile": {"path": path, "recursive": recursive}})
-
-    def rename_file(self, source_path: str, destination_path: str, *, overwrite: bool = False) -> None:
-        self._operation({"renameFile": {"sourcePath": source_path, "destinationPath": destination_path, "overwrite": overwrite}})
+        try:
+            ca_bundle = self._endpoint_ca_bundle()
+            dial_with_ca = getattr(self._client._gateway, "open_session_with_ca", None)
+            if ca_bundle and callable(dial_with_ca):
+                connection = dial_with_ca(endpoint, headers, timeout_seconds, ca_bundle)
+            else:
+                connection = self._client._gateway.open_session(endpoint, headers, timeout_seconds)
+        except Exception as error:
+            raise RuntimeError("open Sandbox Session") from error
+        return Session(connection, _session_heartbeat_interval(self._run))
 
     def read_file(self, path: str, *, max_bytes: int = 0) -> tuple[bytes, bool]:
         endpoint = self._endpoint("files")
@@ -427,9 +444,6 @@ class Sandbox:
             ))
         return result
 
-    def _operation(self, operation: Mapping[str, Any]) -> dict[str, Any]:
-        return self._request("POST", self._endpoint("operations:execute"), operation)
-
     def _endpoint(self, suffix: str) -> str:
         status = self._run.get("status", {})
         endpoint = status.get("endpoint", {}) if isinstance(status, Mapping) else {}
@@ -451,7 +465,12 @@ class Sandbox:
             encoded = json.dumps(body, separators=(",", ":")).encode()
         if self._client._bearer_token:
             headers["Authorization"] = "Bearer " + self._client._bearer_token
-        response = self._client._gateway.request(method, url, encoded, headers)
+        ca_bundle = self._endpoint_ca_bundle()
+        request_with_ca = getattr(self._client._gateway, "request_with_ca", None)
+        if ca_bundle and callable(request_with_ca):
+            response = request_with_ca(method, url, encoded, headers, ca_bundle)
+        else:
+            response = self._client._gateway.request(method, url, encoded, headers)
         if not 200 <= response.status_code < 300:
             message = ""
             try:
@@ -470,6 +489,111 @@ class Sandbox:
         if not isinstance(value, dict):
             raise ValueError("gateway response must be an object")
         return value
+
+    def _endpoint_ca_bundle(self) -> bytes:
+        status = self._run.get("status", {})
+        endpoint = status.get("endpoint", {}) if isinstance(status, Mapping) else {}
+        return _decode_bytes(endpoint.get("caBundle", "")) if isinstance(endpoint, Mapping) else b""
+
+
+class Session:
+    """One replaceable, persistent connection to a ready Sandbox.
+
+    This object owns only the WebSocket. Call :meth:`Sandbox.release` to
+    terminate the backing Run and return its Runtime capacity.
+    """
+
+    def __init__(self, connection: SessionConnection, heartbeat_interval_seconds: float | None = None) -> None:
+        self._connection = connection
+        self._active_operation_id = ""
+        self._closed = False
+        self._write_lock = threading.Lock()
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
+        if heartbeat_interval_seconds is not None:
+            self._heartbeat_thread = threading.Thread(target=self._heartbeat, args=(heartbeat_interval_seconds,), daemon=True)
+            self._heartbeat_thread.start()
+
+    def send(self, operation: Operation, *, idempotency_key: str = "") -> str:
+        """Submit one operation and return after its ``accepted`` event."""
+        if self._closed:
+            raise RuntimeError("Sandbox Session is closed")
+        if self._active_operation_id:
+            raise RuntimeError("Sandbox Session already has an active operation")
+        payload: dict[str, Any] = {
+            "type": _SESSION_FRAME_TYPE_SEND,
+            "operation": operation.request_body(),
+        }
+        if idempotency_key:
+            payload["idempotencyKey"] = idempotency_key
+        self._send(payload)
+        event = self._read_event()
+        accepted = event.value.get("accepted") if event.type == "accepted" else None
+        operation_id = accepted.get("operationID", "") if isinstance(accepted, Mapping) else ""
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ValueError("Sandbox Session did not return an accepted operation")
+        self._active_operation_id = operation_id
+        return operation_id
+
+    def receive(self) -> OperationEvent:
+        """Receive the next event for the active command."""
+        if self._closed:
+            raise RuntimeError("Sandbox Session is closed")
+        if not self._active_operation_id:
+            raise RuntimeError("Sandbox Session has no active operation")
+        try:
+            event = self._read_event()
+        except RuntimeError:
+            self._active_operation_id = ""
+            raise
+        if event.type in ("completed", "failed"):
+            self._active_operation_id = ""
+        return event
+
+    def cancel(self, operation_id: str) -> None:
+        """Request cancellation of the currently active command."""
+        if self._closed or not operation_id or operation_id != self._active_operation_id:
+            raise RuntimeError("Sandbox Session operation is not active")
+        self._send({"type": _SESSION_FRAME_TYPE_CANCEL, "operationID": operation_id})
+
+    def close(self) -> None:
+        """Close only the connection; the backing Sandbox remains allocated."""
+        if self._closed:
+            return
+        self._closed = True
+        self._heartbeat_stop.set()
+        self._connection.close()
+        if self._heartbeat_thread is not None and self._heartbeat_thread is not threading.current_thread():
+            self._heartbeat_thread.join()
+
+    def _send(self, payload: Mapping[str, Any]) -> None:
+        with self._write_lock:
+            self._connection.send(json.dumps(payload, separators=(",", ":")))
+
+    def _heartbeat(self, interval_seconds: float) -> None:
+        while not self._heartbeat_stop.wait(interval_seconds):
+            if self._closed:
+                return
+            try:
+                self._send({"type": _SESSION_FRAME_TYPE_HEARTBEAT})
+            except Exception:
+                self._closed = True
+                self._connection.close()
+                return
+
+    def _read_event(self) -> OperationEvent:
+        raw = self._connection.recv()
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        try:
+            value = json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as error:
+            raise ValueError("decode Sandbox Session frame") from error
+        if not isinstance(value, Mapping):
+            raise ValueError("Sandbox Session frame must be an object")
+        if value.get("type") == "error":
+            raise RuntimeError(str(value.get("error", "Sandbox Session failed")))
+        return OperationEvent(int(value.get("sequence", 0)), str(value.get("type", "")), value)
 
 
 def _is_session_run(run: Mapping[str, Any]) -> bool:
@@ -512,6 +636,25 @@ def _decode_bytes(value: Any) -> bytes:
     if not isinstance(value, str):
         return b""
     return base64.b64decode(value)
+
+
+def _websocket_url(endpoint: str) -> str:
+    parsed = urlparse(endpoint)
+    if parsed.scheme == "http":
+        return urlunparse(parsed._replace(scheme="ws"))
+    if parsed.scheme == "https":
+        return urlunparse(parsed._replace(scheme="wss"))
+    raise ValueError("Sandbox Session endpoint must use HTTP or HTTPS")
+
+
+def _session_heartbeat_interval(run: Mapping[str, Any]) -> float | None:
+    spec = run.get("spec", {})
+    mode = spec.get("mode", {}) if isinstance(spec, Mapping) else {}
+    session = mode.get("session", {}) if isinstance(mode, Mapping) else {}
+    value = session.get("leaseTimeoutSeconds") if isinstance(session, Mapping) else None
+    if not isinstance(value, int) or value <= 0:
+        return None
+    return min(max(value / 3, 0.1), 30.0)
 
 
 def _deadline(timeout_seconds: float | None) -> float | None:

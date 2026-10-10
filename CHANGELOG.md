@@ -8,6 +8,23 @@ but each release note must call them out explicitly.
 
 ## Unreleased
 
+### Changed
+
+- Session operations now use one persistent bidirectional WebSocket connection
+  backed by the streaming `StreamSessionOperation` Runtime RPC. Removed the
+  unary `ExecuteSessionOperation` RPC and the `operations:execute`,
+  `operations:stream`, and operation-resume HTTP endpoints.
+- Replaced Session `idleTimeoutSeconds` with opt-in `leaseTimeoutSeconds`.
+  Leases are renewed by explicit connection heartbeats; existing manifests
+  using idle timeout must be migrated.
+- Go and Python sandbox SDKs now submit `Operation` values via `OpenSession`
+  and `Send`/`Receive`. Removed one-shot mutation methods and stream/resume
+  helpers; callers must migrate. The Python SDK requires `websocket-client`.
+
+### Added
+
+- Added the `RuntimeAccepted` Run condition for one-shot Runtime dispatch.
+
 ## 0.0.5 - 2026-09-21
 
 ### Added

@@ -83,6 +83,13 @@ same namespace and runtime. A periodic retry remains as a fallback.
 
 Terminal conditions are normalized for failed, timeout, and cancelled outcomes.
 
+For task Runs, `Running=True` means runtimed has claimed local capacity; it does
+not by itself mean the Runtime Server has created an execution. The
+`RuntimeAccepted` condition starts as `False` with reason `Dispatching` and
+becomes `True` with reason `Observed` after runtimed receives a Runtime
+`Status` response for that execution. Consumers that need to distinguish
+dispatch from an executable Runtime task should use this condition.
+
 ## Data Boundaries
 
 Kubernetes stores compact control-plane state:

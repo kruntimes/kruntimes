@@ -79,7 +79,39 @@ func startFunctionTestServer(t *testing.T, outputLimit int) (pb.FunctionRuntimeC
 	}
 }
 
-func startSessionTestServer(t *testing.T) (pb.SessionRuntimeClient, string, func()) {
+type sessionTestClient struct{ pb.SessionRuntimeClient }
+
+func (c sessionTestClient) ExecuteSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
+	stream, err := c.StreamSessionOperation(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	var stdout, stderr []byte
+	for {
+		event, err := stream.Recv()
+		if err == io.EOF {
+			return nil, status.Error(codes.Internal, "operation stream ended without completion")
+		}
+		if err != nil {
+			return nil, err
+		}
+		if output := event.GetOutput(); output != nil {
+			if output.GetStream() == pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDOUT {
+				stdout = append(stdout, output.GetData()...)
+			} else {
+				stderr = append(stderr, output.GetData()...)
+			}
+		}
+		if completed := event.GetCompleted(); completed != nil {
+			if command := completed.GetCommand(); command != nil {
+				command.Stdout, command.Stderr = stdout, stderr
+			}
+			return completed, nil
+		}
+	}
+}
+
+func startSessionTestServer(t *testing.T) (sessionTestClient, string, func()) {
 	t.Helper()
 
 	workDir := t.TempDir()
@@ -97,7 +129,7 @@ func startSessionTestServer(t *testing.T) (pb.SessionRuntimeClient, string, func
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	return pb.NewSessionRuntimeClient(conn), workDir, func() {
+	return sessionTestClient{SessionRuntimeClient: pb.NewSessionRuntimeClient(conn)}, workDir, func() {
 		conn.Close()
 		srv.Stop()
 	}
@@ -221,6 +253,14 @@ func TestSessionRuntimeRegisterStatusCloseAndAssignmentFencing(t *testing.T) {
 	}
 	if current.State != pb.SessionState_SESSION_STATE_READY {
 		t.Fatalf("session state = %v, want ready", current.State)
+	}
+	leaseBefore := current.LastLeaseHeartbeatUnixNano
+	if _, err := client.RenewSessionLease(context.Background(), &pb.RenewSessionLeaseRequest{Identity: identity}); err != nil {
+		t.Fatalf("RenewSessionLease: %v", err)
+	}
+	current, err = client.GetSessionStatus(context.Background(), &pb.GetSessionStatusRequest{Identity: identity})
+	if err != nil || current.LastLeaseHeartbeatUnixNano <= leaseBefore {
+		t.Fatalf("lease heartbeat after touch = %#v, err = %v", current, err)
 	}
 	if _, err := client.CloseSession(context.Background(), &pb.CloseSessionRequest{Identity: identity}); err != nil {
 		t.Fatalf("CloseSession: %v", err)

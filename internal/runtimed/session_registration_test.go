@@ -12,11 +12,10 @@ import (
 )
 
 func TestSessionRegistrationRequest(t *testing.T) {
-	idleTimeout := int32(120)
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{UID: types.UID("session-run")},
 		Spec: v1alpha1.RunSpec{
-			Mode: v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{IdleTimeoutSeconds: &idleTimeout}},
+			Mode: v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}},
 			Env:  []corev1.EnvVar{{Name: "TOKEN", Value: "value"}},
 		},
 		Status: v1alpha1.RunStatus{AssignedPodUID: "runtime-pod"},
@@ -29,7 +28,7 @@ func TestSessionRegistrationRequest(t *testing.T) {
 	if request.Identity.GetRunUid() != "session-run" || request.Identity.GetAssignedPodUid() != "runtime-pod" {
 		t.Fatalf("identity = %#v", request.Identity)
 	}
-	if request.WorkingDir != "/workspace/session-run" || request.IdleTimeoutSeconds != 120 || request.Env["TOKEN"] != "value" {
+	if request.WorkingDir != "/workspace/session-run" || request.Env["TOKEN"] != "value" {
 		t.Fatalf("request = %#v", request)
 	}
 	if request.Env[artifact.ArtifactsDirEnv] != "/workspace/session-run/artifacts" {

@@ -25,13 +25,18 @@ import (
 // sessionEntry is Runtime Server-local state. runtimed owns the operation
 // queue, so this entry only records the fenced workspace lifecycle.
 type sessionEntry struct {
-	mu         sync.RWMutex
-	identity   *pb.SessionIdentity
-	workDir    string
-	sessionEnv map[string]string
-	state      pb.SessionState
-	activity   time.Time
+	mu             sync.RWMutex
+	identity       *pb.SessionIdentity
+	workDir        string
+	sessionEnv     map[string]string
+	state          pb.SessionState
+	activity       time.Time
+	leaseHeartbeat time.Time
 }
+
+// Session operation output is persisted in the resumable operation journal.
+// Keep individual events below its 8 KiB encoded-record limit.
+const sessionOperationOutputChunkBytes = 4 << 10
 
 func (s *Server) RegisterSession(_ context.Context, registration *pb.RegisterSessionRequest) (*pb.SessionStatus, error) {
 	identity, workingDir, err := s.validateSessionRegistration(registration)
@@ -50,11 +55,12 @@ func (s *Server) RegisterSession(_ context.Context, registration *pb.RegisterSes
 	}
 
 	entry := &sessionEntry{
-		identity:   cloneSessionIdentity(identity),
-		workDir:    workingDir,
-		sessionEnv: maps.Clone(registration.Env),
-		state:      pb.SessionState_SESSION_STATE_READY,
-		activity:   time.Now(),
+		identity:       cloneSessionIdentity(identity),
+		workDir:        workingDir,
+		sessionEnv:     maps.Clone(registration.Env),
+		state:          pb.SessionState_SESSION_STATE_READY,
+		activity:       time.Now(),
+		leaseHeartbeat: time.Now(),
 	}
 	s.mu.Lock()
 	s.sessions[identity.RunUid] = entry
@@ -70,10 +76,21 @@ func (s *Server) GetSessionStatus(_ context.Context, req *pb.GetSessionStatusReq
 	return entry.status(), nil
 }
 
-// ExecuteSessionOperation executes one mutation already serialized and
-// admitted by runtimed. The Runtime Server deliberately does not assign
-// operation IDs or own a queue.
-func (s *Server) ExecuteSessionOperation(ctx context.Context, req *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
+// RenewSessionLease records a gateway-observed connection heartbeat. The timestamp
+// survives a runtimed restart through GetSessionStatus recovery.
+func (s *Server) RenewSessionLease(_ context.Context, req *pb.RenewSessionLeaseRequest) (*pb.SessionStatus, error) {
+	entry, err := s.matchSession(req.GetIdentity())
+	if err != nil {
+		return nil, err
+	}
+	entry.touchLease()
+	return entry.status(), nil
+}
+
+// applySessionOperation executes a non-streaming workspace mutation. runtimed
+// owns admission and the public gateway exposes these mutations only through
+// the persistent Session WebSocket.
+func (s *Server) applySessionOperation(ctx context.Context, req *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
 	entry, err := s.matchSession(req.GetIdentity())
 	if err != nil {
 		return nil, err
@@ -131,7 +148,7 @@ func (s *Server) StreamSessionOperation(req *pb.ExecuteSessionOperationRequest, 
 		return server.Send(&pb.SessionOperationEvent{Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: terminal}}})
 	}
 
-	response, err := s.ExecuteSessionOperation(server.Context(), req)
+	response, err := s.applySessionOperation(server.Context(), req)
 	if err != nil {
 		return err
 	}
@@ -301,7 +318,7 @@ func copySessionOutput(
 	emit func(pb.SessionOperationOutputStream, []byte) error,
 	emitMu *sync.Mutex,
 ) error {
-	chunk := make([]byte, 32<<10)
+	chunk := make([]byte, sessionOperationOutputChunkBytes)
 	for {
 		count, readErr := reader.Read(chunk)
 		if count > 0 {
@@ -569,9 +586,10 @@ func (e *sessionEntry) status() *pb.SessionStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return &pb.SessionStatus{
-		Identity:             cloneSessionIdentity(e.identity),
-		State:                e.state,
-		LastActivityUnixNano: e.activity.UnixNano(),
+		Identity:                   cloneSessionIdentity(e.identity),
+		State:                      e.state,
+		LastActivityUnixNano:       e.activity.UnixNano(),
+		LastLeaseHeartbeatUnixNano: e.leaseHeartbeat.UnixNano(),
 	}
 }
 
@@ -586,6 +604,12 @@ func (e *sessionEntry) touch() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.activity = time.Now()
+}
+
+func (e *sessionEntry) touchLease() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.leaseHeartbeat = time.Now()
 }
 
 func sessionCommand(ctx context.Context, req *pb.SessionCommand) *exec.Cmd {
