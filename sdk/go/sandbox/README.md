@@ -26,7 +26,7 @@ if err != nil {
 }
 defer session.Close()
 
-operationID, err := session.Send(ctx, sdk.Command{Argv: []string{"sh", "-c", "kubectl get pods -A"}})
+operationID, err := session.Send(ctx, sdk.Operation{Command: &sdk.Command{Argv: []string{"sh", "-c", "kubectl get pods -A"}}})
 if err != nil {
     return err
 }
@@ -68,7 +68,7 @@ for {
 ```
 
 For local development, forward only the shared Console Service. Pass
-the returned forward as `Config.HTTPClient`; it preserves the endpoint path and
+the returned forward as both `Config.HTTPClient` and `Config.SessionDialer`; it preserves the endpoint path and
 does not expose runtimed or Runtime Server gRPC ports:
 
 ```go
@@ -80,17 +80,16 @@ if err != nil {
 }
 defer forward.Close()
 
-client, err := sdk.NewFromRESTConfig(restConfig, sdk.Config{HTTPClient: forward})
+client, err := sdk.NewFromRESTConfig(restConfig, sdk.Config{HTTPClient: forward, SessionDialer: forward})
 ```
 
-The same `ConsolePortForward` is used internally by `OpenSession`; callers do
-not need to configure or expose a separate WebSocket endpoint.
+`OpenSession` uses that same `ConsolePortForward` without exposing a separate WebSocket endpoint.
 
 The SDK never retries commands, file mutations, or `Close` after a transport
 failure. Refresh the Run and read structured owner-runtimed logs to determine
 the outcome.
 
-When `Session.LeaseTimeoutSeconds` is set on `AcquireOptions`, an open Session
+When `AcquireOptions.Session.LeaseTimeoutSeconds` is set, an open Session
 maintains its lease internally. Closing the connection stops heartbeats but
 does not release the Sandbox; call `Release` to return Runtime capacity.
 

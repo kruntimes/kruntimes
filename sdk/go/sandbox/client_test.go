@@ -146,6 +146,37 @@ func TestRuntimeAcquiresReadySandbox(t *testing.T) {
 	}
 }
 
+func TestRuntimeDeletesRunWhenAcquireFails(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	runs := fake.NewClientBuilder().WithScheme(scheme).Build()
+	sandboxClient, err := New(Config{Runs: runs, HTTPClient: httpDoer(func(*http.Request) (*http.Response, error) { return nil, nil }), PollInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exercise the post-create Wait failure with a Run that transitions to Failed.
+	go func() {
+		for {
+			var run v1alpha1.Run
+			if err := runs.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "failed"}, &run); err == nil {
+				run.Status.Phase = v1alpha1.RunFailed
+				_ = runs.Update(context.Background(), &run)
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	if _, err := sandboxClient.Runtime("default", "bash").AcquireSandbox(t.Context(), AcquireOptions{Name: "failed"}); err == nil {
+		t.Fatal("AcquireSandbox succeeded for failed Run")
+	}
+	var run v1alpha1.Run
+	if err := runs.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "failed"}, &run); err == nil {
+		t.Fatal("failed AcquireSandbox left its Run behind")
+	}
+}
+
 func TestSandboxReleaseDeletesSucceededRun(t *testing.T) {
 	sandbox := terminalSandbox(t, nil)
 	if err := sandbox.Release(t.Context()); err != nil {

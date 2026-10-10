@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -51,6 +52,11 @@ func (r *Runtime) AcquireSandbox(ctx context.Context, options AcquireOptions) (*
 		return nil, err
 	}
 	if err := sandbox.Wait(ctx); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if cleanupErr := r.client.runs.Delete(cleanupCtx, sandbox.run); client.IgnoreNotFound(cleanupErr) != nil {
+			return nil, fmt.Errorf("acquire Sandbox: %w (delete unready Run %s/%s: %v)", err, sandbox.run.Namespace, sandbox.run.Name, cleanupErr)
+		}
 		return nil, fmt.Errorf("acquire Sandbox: %w", err)
 	}
 	return sandbox, nil

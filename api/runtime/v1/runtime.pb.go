@@ -3237,7 +3237,7 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\fregistration\x18\x01 \x01(\v2!.executor.v1.FunctionRegistrationR\fregistration\"T\n" +
 	"\x0fSessionIdentity\x12\x17\n" +
 	"\arun_uid\x18\x01 \x01(\tR\x06runUid\x12(\n" +
-	"\x10assigned_pod_uid\x18\x02 \x01(\tR\x0eassignedPodUid\"\xeb\x01\n" +
+	"\x10assigned_pod_uid\x18\x02 \x01(\tR\x0eassignedPodUid\"\xf1\x01\n" +
 	"\x16RegisterSessionRequest\x128\n" +
 	"\bidentity\x18\x01 \x01(\v2\x1c.executor.v1.SessionIdentityR\bidentity\x12\x1f\n" +
 	"\vworking_dir\x18\x02 \x01(\tR\n" +
@@ -3245,7 +3245,7 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\x03env\x18\x03 \x03(\v2,.executor.v1.RegisterSessionRequest.EnvEntryR\x03env\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"S\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x04\x10\x05\"S\n" +
 	"\x17GetSessionStatusRequest\x128\n" +
 	"\bidentity\x18\x01 \x01(\v2\x1c.executor.v1.SessionIdentityR\bidentity\"T\n" +
 	"\x18RenewSessionLeaseRequest\x128\n" +

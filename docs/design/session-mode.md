@@ -65,7 +65,7 @@ Pod capacity. Its returned `Sandbox` is backed by that Run, which owns agent
 context, Run-UID-scoped workspace, and tool state. A Sandbox therefore has
 exactly one Session and exactly one assigned Runtime Pod while it is active.
 
-The Session SDK hides HTTP, NDJSON, and WebSocket transports. Its data-plane
+The Session SDK hides HTTP and WebSocket transport details. Its data-plane
 operations are `Send`, `Receive`, and `Cancel`; its lifecycle operations are
 `OpenSession`, `Session.Close`, and `Release`. `OpenSession` establishes
 a replaceable streaming connection to the already-ready Session; it neither
@@ -75,7 +75,7 @@ waits for cleanup, and deletes its Session Run. An explicit immediate-release
 mode may cancel active work; the default is graceful draining.
 
 `leaseTimeoutSeconds` enables a distinct connection lease in addition to the
-existing operation-idle timeout. Omitting it disables lease expiry entirely,
+Session lifecycle. Omitting it disables lease expiry entirely,
 so the Session does not need to send heartbeats. While a Session connection is open, the SDK
 privately sends heartbeats; the gateway authenticates and forwards each one to
 owner runtimed. Owner runtimed records the server-authoritative lease timestamp
@@ -108,9 +108,9 @@ if err != nil {
 }
 defer session.Close()
 
-operationID, err := session.Send(ctx, sandbox.Command{
+operationID, err := session.Send(ctx, sandbox.Operation{Command: &sandbox.Command{
 	Shell: "classify and label issue #123",
-})
+}})
 if err != nil {
 	return err
 }
@@ -119,7 +119,7 @@ for {
 	if err != nil {
 		return err
 	}
-	if event.OperationID == operationID && event.Terminal() {
+	if event.Completed != nil || event.Failed != nil {
 		break
 	}
 }
@@ -135,10 +135,10 @@ sandbox = runtime.acquire_sandbox(generate_name="labeler-")
 try:
     session = sandbox.open_session()
     try:
-        operation_id = session.send(Command(shell="classify and label issue #123"))
+        operation_id = session.send(Operation(command=Command(shell="classify and label issue #123")))
         while True:
             event = session.receive()
-            if event.operation_id == operation_id and event.terminal:
+            if event.type in ("completed", "failed"):
                 break
     finally:
         session.close()
@@ -193,15 +193,14 @@ resume, or transparent migration promise.
 session command. A command may supply its own environment map; those values
 override the registered values for that command only.
 
-`Run.spec.timeout` bounds the entire reservation. `idleTimeoutSeconds` expires
-the session after no accepted mutation or command activity; `leaseTimeoutSeconds`
-expires it after no server-observed connection heartbeat. They are independent:
-a heartbeat never resets the operation-idle timeout. A Session Run uses
+`Run.spec.timeout` bounds the entire reservation. When configured,
+`leaseTimeoutSeconds` expires the session after no server-observed connection
+heartbeat. A Session Run uses
 the normal Run cancellation, deletion, TTL, authorization, endpoint, and
 assignment-UID fencing rules. Registration can retry before `Ready`, when no
 usable session state exists. Once Ready, an assigned-Pod loss is terminal: the
 client must create a new Session Run rather than silently continuing in an
-empty workspace. Idle expiry is also terminal: it closes the local session,
+empty workspace. Lease expiry is also terminal: it closes the local session,
 cleans its ephemeral workspace, and records `RunTimeout`. Reopening or
 resubmitting the same Run cannot restore it; a client that needs a new sandbox
 must create a new Session Run. Explicit suspend and resume semantics are a
@@ -336,11 +335,13 @@ authorization errors. Set either `--authorization-cache-ttl=0` or
 can take up to the configured TTL to affect an already cached successful
 decision.
 
-Each Runtime gateway Pod accepts at most 128 concurrent HTTP requests by
+Each Console Pod accepts at most 128 concurrent Runtime access HTTP requests by
 default. Admission is non-blocking: a request above the per-Pod limit receives
 `429 Too Many Requests` instead of waiting in an unbounded gateway queue.
 Health checks do not consume a request slot. The Helm value
-`gateway.maxConcurrentRequests` configures the limit for every gateway Pod.
+`console.access.maxConcurrentRequests` configures the limit for every Console Pod.
+Persistent Session WebSockets have a separate `console.access.maxSessionConnections`
+limit, so idle connections cannot consume the ordinary HTTP request quota.
 
 The gateway server maps the following HTTP API operations to `SessionRuntime`
 gRPC methods:

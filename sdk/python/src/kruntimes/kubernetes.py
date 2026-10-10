@@ -72,20 +72,46 @@ class UrllibGatewayTransport(GatewayTransport):
     def request(
         self, method: str, url: str, body: bytes | None, headers: Mapping[str, str]
     ) -> HTTPResponse:
+        return self.request_with_ca(method, url, body, headers, b"")
+
+    def request_with_ca(
+        self, method: str, url: str, body: bytes | None, headers: Mapping[str, str], ca_bundle: bytes
+    ) -> HTTPResponse:
         request = Request(url, data=body, headers=dict(headers), method=method)
+        context = self._ssl_context(ca_bundle)
         try:
-            with urlopen(request) as response:  # noqa: S310 - caller controls endpoint from Run status
+            with urlopen(request, context=context) as response:  # noqa: S310 - caller controls endpoint from Run status
                 return HTTPResponse(response.status, response.read(1 << 20))
         except HTTPError as error:
             return HTTPResponse(error.code, error.read(1 << 20))
 
     def open_session(self, url: str, headers: Mapping[str, str], timeout_seconds: float | None) -> SessionConnection:
+        return self.open_session_with_ca(url, headers, timeout_seconds, b"")
+
+    def open_session_with_ca(self, url: str, headers: Mapping[str, str], timeout_seconds: float | None, ca_bundle: bytes) -> SessionConnection:
         try:
             import websocket
         except ImportError as error:
             raise ImportError("install kruntimes-sdk WebSocket dependencies") from error
         header = [f"{name}: {value}" for name, value in headers.items()]
-        return websocket.create_connection(url, header=header, timeout=timeout_seconds, sslopt=self._websocket_sslopt)
+        sslopt = dict(self._websocket_sslopt)
+        if context := self._ssl_context(ca_bundle):
+            sslopt["context"] = context
+        connection = websocket.create_connection(url, header=header, timeout=timeout_seconds, sslopt=sslopt)
+        # The timeout bounds only the upgrade handshake. A long-running
+        # operation must not inherit it as a per-receive idle timeout.
+        connection.settimeout(None)
+        return connection
+
+    def _ssl_context(self, ca_bundle: bytes) -> ssl.SSLContext | None:
+        if not ca_bundle:
+            return None
+        context = ssl.create_default_context(cadata=ca_bundle.decode())
+        if ca_file := self._websocket_sslopt.get("ca_certs"):
+            context.load_verify_locations(cafile=ca_file)
+        if cert_file := self._websocket_sslopt.get("certfile"):
+            context.load_cert_chain(cert_file, self._websocket_sslopt.get("keyfile"))
+        return context
 
 
 
@@ -148,6 +174,11 @@ class PortForwardGatewayTransport(GatewayTransport):
         local_url = urlunparse(original._replace(scheme=local.scheme, netloc=local.netloc))
         return self._upstream.request(method, local_url, body, headers)
 
+    def request_with_ca(self, method: str, url: str, body: bytes | None, headers: Mapping[str, str], ca_bundle: bytes) -> HTTPResponse:
+        # The local forwarded socket is HTTP; its upstream certificate is not
+        # presented on this hop.
+        return self.request(method, url, body, headers)
+
     def open_session(self, url: str, headers: Mapping[str, str], timeout_seconds: float | None) -> SessionConnection:
         if self._process is not None and self._process.poll() is not None:
             raise RuntimeError("Runtime gateway port-forward exited")
@@ -156,6 +187,9 @@ class PortForwardGatewayTransport(GatewayTransport):
         scheme = "wss" if local.scheme == "https" else "ws"
         local_url = urlunparse(original._replace(scheme=scheme, netloc=local.netloc))
         return self._upstream.open_session(local_url, headers, timeout_seconds)
+
+    def open_session_with_ca(self, url: str, headers: Mapping[str, str], timeout_seconds: float | None, ca_bundle: bytes) -> SessionConnection:
+        return self.open_session(url, headers, timeout_seconds)
 
     def close(self) -> None:
         """Stop the scoped port-forward process, if this transport started one."""

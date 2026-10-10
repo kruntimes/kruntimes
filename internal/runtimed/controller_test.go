@@ -2440,45 +2440,6 @@ func TestSessionCloseTimeoutUsesConfiguredValue(t *testing.T) {
 	}
 }
 
-func TestReadySessionIdleExpiryClosesRuntimeSession(t *testing.T) {
-	t.Skip("Session idle expiry was removed; lease and total timeout remain")
-	setTestWorkspace(t)
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
-	run := &v1alpha1.Run{
-		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default", UID: "session-uid"},
-		Spec: v1alpha1.RunSpec{
-			Runtime: "bash",
-			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}},
-		},
-		Status: v1alpha1.RunStatus{Phase: v1alpha1.RunReady, AssignedPod: "runtime-pod", AssignedPodUID: "runtime-pod-uid", StartTime: &metav1.Time{Time: time.Now()}},
-	}
-	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
-	operations := NewSessionOperationQueue(0, 0)
-	if err := operations.Ensure(run, time.Now().Add(-2*time.Second)); err != nil {
-		t.Fatalf("start idle tracking: %v", err)
-	}
-	sessionClient := &fakeSessionRuntimeClient{}
-	c := &Controller{Client: k8sClient, PodName: "runtime-pod", sessionCli: sessionClient, SessionOperations: operations}
-	c.activeRuns.Store(string(run.UID), newActiveRun(run, time.Now()))
-
-	if _, err := c.reconcileReady(t.Context(), run); err != nil {
-		t.Fatalf("reconcileReady: %v", err)
-	}
-	if len(sessionClient.closeRequests) != 1 {
-		t.Fatalf("CloseSession requests = %d, want 1", len(sessionClient.closeRequests))
-	}
-	var updated v1alpha1.Run
-	if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), &updated); err != nil {
-		t.Fatalf("get updated Run: %v", err)
-	}
-	if updated.Status.Phase != v1alpha1.RunTimeout {
-		t.Fatalf("phase = %s, want Timeout", updated.Status.Phase)
-	}
-}
-
 func TestReadySessionLeaseExpiryClosesRuntimeSession(t *testing.T) {
 	setTestWorkspace(t)
 	scheme := runtime.NewScheme()
@@ -2518,7 +2479,7 @@ func TestReadySessionLeaseExpiryClosesRuntimeSession(t *testing.T) {
 	}
 }
 
-func TestReadySessionTotalTimeoutTakesPrecedenceOverIdleTimeout(t *testing.T) {
+func TestReadySessionTotalTimeoutExpiresWithoutLease(t *testing.T) {
 	setTestWorkspace(t)
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
@@ -2537,7 +2498,7 @@ func TestReadySessionTotalTimeoutTakesPrecedenceOverIdleTimeout(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(run).WithObjects(run).Build()
 	operations := NewSessionOperationQueue(0, 0)
 	if err := operations.Ensure(run, time.Now()); err != nil {
-		t.Fatalf("start idle tracking: %v", err)
+		t.Fatalf("start session tracking: %v", err)
 	}
 	sessionClient := &fakeSessionRuntimeClient{}
 	c := &Controller{Client: k8sClient, PodName: "runtime-pod", sessionCli: sessionClient, SessionOperations: operations}

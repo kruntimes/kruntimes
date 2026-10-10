@@ -315,6 +315,7 @@ func executeSessionOperation(ctx context.Context, baseURL, token string, operati
 		}
 		var event struct {
 			Type   string `json:"type"`
+			Error  string `json:"error"`
 			Output *struct {
 				Stream string `json:"stream"`
 				Data   []byte `json:"data"`
@@ -333,6 +334,9 @@ func executeSessionOperation(ctx context.Context, baseURL, token string, operati
 		}
 		if err := connection.ReadJSON(&event); err != nil {
 			return sessionOperationResult{}, fmt.Errorf("read Session operation event: %w", err)
+		}
+		if event.Type == "error" {
+			return sessionOperationResult{}, errors.New(event.Error)
 		}
 		if event.Output != nil {
 			if event.Output.Stream == "stdout" {

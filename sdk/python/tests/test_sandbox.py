@@ -1,6 +1,9 @@
 import json
+import base64
 import time
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 from kruntimes.sandbox import (
     APIError,
@@ -12,7 +15,7 @@ from kruntimes.sandbox import (
     SandboxClient,
     SandboxStateError,
 )
-from kruntimes.kubernetes import PortForwardGatewayTransport
+from kruntimes.kubernetes import PortForwardGatewayTransport, UrllibGatewayTransport
 
 
 class FakeRuns:
@@ -92,12 +95,42 @@ def ready_run():
 
 
 class SandboxTests(unittest.TestCase):
+    def test_session_timeout_only_bounds_upgrade(self):
+        connection = mock.Mock()
+        dial = mock.Mock(return_value=connection)
+        with mock.patch.dict("sys.modules", {"websocket": SimpleNamespace(create_connection=dial)}):
+            self.assertIs(connection, UrllibGatewayTransport().open_session("ws://gateway/session", {}, 3))
+        self.assertEqual(3, dial.call_args.kwargs["timeout"])
+        connection.settimeout.assert_called_once_with(None)
+
+    def test_session_uses_run_endpoint_ca_bundle(self):
+        run = ready_run()
+        run["status"]["endpoint"]["caBundle"] = base64.b64encode(b"test CA").decode()
+        connection = mock.Mock()
+        context = mock.Mock()
+        dial = mock.Mock(return_value=connection)
+        with mock.patch.dict("sys.modules", {"websocket": SimpleNamespace(create_connection=dial)}), \
+                mock.patch("ssl.create_default_context", return_value=context) as create_context:
+            sandbox = SandboxClient(FakeRuns(run), UrllibGatewayTransport()).open("default", "sandbox")
+            session = sandbox.open_session(timeout_seconds=3)
+        create_context.assert_called_once_with(cadata="test CA")
+        self.assertIs(context, dial.call_args.kwargs["sslopt"]["context"])
+        session.close()
+
     def test_acquire_sorts_environment(self):
         runs = FakeRuns(ready_run())
         gateway = FakeGateway()
         client = SandboxClient(runs, gateway, bearer_token="token")
         sandbox = client.runtime("default", "python").acquire_sandbox(AcquireOptions(name="sandbox", env={"B": "2", "A": "1"}))
         self.assertEqual([{"name": "A", "value": "1"}, {"name": "B", "value": "2"}], runs.created[1]["spec"]["env"])
+
+    def test_failed_acquire_deletes_created_run(self):
+        run = ready_run()
+        run["status"]["phase"] = "Failed"
+        runs = FakeRuns(run)
+        with self.assertRaises(SandboxStateError):
+            SandboxClient(runs, FakeGateway()).runtime("default", "python").acquire_sandbox(AcquireOptions(name="sandbox"))
+        self.assertEqual(("default", "sandbox"), runs.deleted)
 
     def test_release_deletes_closed_sandbox(self):
         run = ready_run()
@@ -145,6 +178,19 @@ class SandboxTests(unittest.TestCase):
         self.assertEqual({"type": "cancel", "operationID": "operation-1"}, connection.sent[1])
         with self.assertRaises(RuntimeError):
             session.cancel("operation-2")
+
+    def test_session_error_frame_clears_active_operation(self):
+        gateway = FakeGateway()
+        gateway.connection = FakeSessionConnection([
+            {"type": "accepted", "accepted": {"operationID": "operation-1"}},
+            {"type": "error", "error": "admission rejected"},
+            {"type": "accepted", "accepted": {"operationID": "operation-2"}},
+        ])
+        session = SandboxClient(FakeRuns(ready_run()), gateway).open("default", "sandbox").open_session()
+        session.send(Operation(command=Command(shell="true")))
+        with self.assertRaisesRegex(RuntimeError, "admission rejected"):
+            session.receive()
+        self.assertEqual("operation-2", session.send(Operation(command=Command(shell="true"))))
 
     def test_session_maintains_configured_lease_heartbeat(self):
         gateway = FakeGateway()

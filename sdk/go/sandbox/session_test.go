@@ -1,14 +1,70 @@
 package sandbox
 
 import (
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"k8s.io/client-go/rest"
 )
+
+func TestRESTSessionDialerUsesTokenFileCredentials(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte("dynamic-token"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer dynamic-token" {
+			http.Error(w, "missing token-file credentials", http.StatusUnauthorized)
+			return
+		}
+		connection, err := upgrader.Upgrade(w, r, nil)
+		if err == nil {
+			_ = connection.Close()
+		}
+	}))
+	defer server.Close()
+	dialer, err := newRESTSessionDialer(&rest.Config{BearerTokenFile: tokenFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, response, err := dialer.DialSession(t.Context(), "ws"+strings.TrimPrefix(server.URL, "http"), http.Header{})
+	if err != nil {
+		t.Fatalf("dial with token-file credentials: %v (response = %#v)", err, response)
+	}
+	_ = connection.Close()
+}
+
+func TestRESTSessionDialerTrustsRunEndpointCABundle(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err == nil {
+			_ = connection.Close()
+		}
+	}))
+	defer server.Close()
+	sandbox := readySandbox(t, httpDoer(func(*http.Request) (*http.Response, error) { return nil, nil }))
+	sandbox.run.Status.Endpoint.URL = server.URL + "/v1/namespaces/default/runtimes/bash/sessions/run-uid"
+	sandbox.run.Status.Endpoint.CABundle = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	dialer, err := newRESTSessionDialer(&rest.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sandbox.client.sessionDialer = dialer
+	session, err := sandbox.OpenSession(t.Context())
+	if err != nil {
+		t.Fatalf("OpenSession with Run endpoint CA: %v", err)
+	}
+	_ = session.Close()
+}
 
 func TestSandboxSessionSendsReceivesAndCloses(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
@@ -25,12 +81,13 @@ func TestSandboxSessionSendsReceivesAndCloses(t *testing.T) {
 		}
 		defer connection.Close()
 		var send struct {
-			Type      string `json:"type"`
-			Operation struct {
+			Type           string `json:"type"`
+			IdempotencyKey string `json:"idempotencyKey"`
+			Operation      struct {
 				Command Command `json:"command"`
 			} `json:"operation"`
 		}
-		if err := connection.ReadJSON(&send); err != nil || send.Type != "send" || len(send.Operation.Command.Argv) != 2 || send.Operation.Command.Argv[0] != "echo" {
+		if err := connection.ReadJSON(&send); err != nil || send.Type != "send" || send.IdempotencyKey != "operation-1" || len(send.Operation.Command.Argv) != 2 || send.Operation.Command.Argv[0] != "echo" {
 			t.Fatalf("send frame = %#v, err = %v", send, err)
 		}
 		if err := connection.WriteJSON(map[string]any{"sequence": 1, "type": "accepted", "accepted": map[string]string{"operationID": "operation-1"}}); err != nil {
@@ -50,7 +107,7 @@ func TestSandboxSessionSendsReceivesAndCloses(t *testing.T) {
 		t.Fatalf("OpenSession: %v", err)
 	}
 	defer session.Close()
-	operationID, err := session.Send(t.Context(), Operation{Command: &Command{Argv: []string{"echo", "ok"}}})
+	operationID, err := session.Send(t.Context(), Operation{Command: &Command{Argv: []string{"echo", "ok"}}}, "operation-1")
 	if err != nil || operationID != "operation-1" {
 		t.Fatalf("Send = %q, %v", operationID, err)
 	}

@@ -280,7 +280,17 @@ class Runtime:
         if not self._namespace or not self._name:
             raise ValueError("sandbox Runtime namespace and name are required")
         sandbox = self._client._create(self._namespace, self._name, options)
-        sandbox.wait(timeout_seconds)
+        try:
+            sandbox.wait(timeout_seconds)
+        except Exception as error:
+            metadata = _metadata(sandbox.run)
+            try:
+                self._client._runs.delete(_namespace(metadata), _name(metadata))
+            except Exception as cleanup_error:
+                raise RuntimeError(
+                    f"acquire Sandbox failed and deleting Run {_name(metadata)} failed: {cleanup_error}"
+                ) from error
+            raise
         return sandbox
 
 
@@ -360,7 +370,12 @@ class Sandbox:
         if self._client._bearer_token:
             headers["Authorization"] = "Bearer " + self._client._bearer_token
         try:
-            connection = self._client._gateway.open_session(endpoint, headers, timeout_seconds)
+            ca_bundle = self._endpoint_ca_bundle()
+            dial_with_ca = getattr(self._client._gateway, "open_session_with_ca", None)
+            if ca_bundle and callable(dial_with_ca):
+                connection = dial_with_ca(endpoint, headers, timeout_seconds, ca_bundle)
+            else:
+                connection = self._client._gateway.open_session(endpoint, headers, timeout_seconds)
         except Exception as error:
             raise RuntimeError("open Sandbox Session") from error
         return Session(connection, _session_heartbeat_interval(self._run))
@@ -450,7 +465,12 @@ class Sandbox:
             encoded = json.dumps(body, separators=(",", ":")).encode()
         if self._client._bearer_token:
             headers["Authorization"] = "Bearer " + self._client._bearer_token
-        response = self._client._gateway.request(method, url, encoded, headers)
+        ca_bundle = self._endpoint_ca_bundle()
+        request_with_ca = getattr(self._client._gateway, "request_with_ca", None)
+        if ca_bundle and callable(request_with_ca):
+            response = request_with_ca(method, url, encoded, headers, ca_bundle)
+        else:
+            response = self._client._gateway.request(method, url, encoded, headers)
         if not 200 <= response.status_code < 300:
             message = ""
             try:
@@ -469,6 +489,11 @@ class Sandbox:
         if not isinstance(value, dict):
             raise ValueError("gateway response must be an object")
         return value
+
+    def _endpoint_ca_bundle(self) -> bytes:
+        status = self._run.get("status", {})
+        endpoint = status.get("endpoint", {}) if isinstance(status, Mapping) else {}
+        return _decode_bytes(endpoint.get("caBundle", "")) if isinstance(endpoint, Mapping) else b""
 
 
 class Session:
@@ -516,7 +541,11 @@ class Session:
             raise RuntimeError("Sandbox Session is closed")
         if not self._active_operation_id:
             raise RuntimeError("Sandbox Session has no active operation")
-        event = self._read_event()
+        try:
+            event = self._read_event()
+        except RuntimeError:
+            self._active_operation_id = ""
+            raise
         if event.type in ("completed", "failed"):
             self._active_operation_id = ""
         return event
@@ -533,9 +562,9 @@ class Session:
             return
         self._closed = True
         self._heartbeat_stop.set()
+        self._connection.close()
         if self._heartbeat_thread is not None and self._heartbeat_thread is not threading.current_thread():
             self._heartbeat_thread.join()
-        self._connection.close()
 
     def _send(self, payload: Mapping[str, Any]) -> None:
         with self._write_lock:

@@ -3,7 +3,6 @@ package e2e
 // Session mode scenarios: Console gateway authorization, streaming, TLS, bounds, and run exhaustion.
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -135,7 +134,6 @@ func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
 }
 
 func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
-	t.Skip("covered by the persistent WebSocket operation tests")
 	t.Parallel()
 	runtimeName := fmt.Sprintf("session-stream-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
@@ -153,103 +151,24 @@ func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
 	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunReady)
 
 	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
-	token := sessionGatewayToken(t, run)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/operations:stream", strings.NewReader(`{"command":{"argv":["sh","-c","printf stream-first; sleep 2; printf stream-last"]}}`))
+	websocketURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/operations:ws"
+	connection, response, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).Dial( //nolint:gosec // E2E local port-forward only.
+		websocketURL, http.Header{"Authorization": []string{"Bearer " + sessionGatewayToken(t, run)}})
 	if err != nil {
-		t.Fatalf("create streaming gateway request: %v", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+token)
-	response, err := gatewayInsecureHTTPClient.Do(request)
-	if err != nil {
-		t.Fatalf("call streaming gateway: %v", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		contents, _ := io.ReadAll(response.Body)
-		t.Fatalf("streaming gateway status = %d: %s", response.StatusCode, contents)
-	}
-	if got := response.Header.Get("Content-Type"); got != "application/x-ndjson; charset=utf-8" {
-		t.Fatalf("streaming content type = %q", got)
-	}
-
-	// Authorization and the initial HTTP response are outside the command
-	// streaming contract. Measure whether output arrives while the command is
-	// executing only after the NDJSON stream is established.
-	streamStarted := time.Now()
-	reader := bufio.NewReader(response.Body)
-	seenFirstOutput := false
-	var stdout strings.Builder
-	seenCompleted := false
-	lastSequence := int64(0)
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err == io.EOF {
-			break
+		if response != nil {
+			t.Fatalf("dial streaming WebSocket: %v (status %d)", err, response.StatusCode)
 		}
-		if err != nil {
-			t.Fatalf("read streaming gateway event: %v", err)
-		}
-		var event struct {
-			Sequence int64  `json:"sequence"`
-			Type     string `json:"type"`
-			Output   *struct {
-				Stream string `json:"stream"`
-				Data   []byte `json:"data"`
-			} `json:"output"`
-			Completed *struct {
-				Command *struct {
-					ExitCode int32  `json:"exitCode"`
-					Stdout   []byte `json:"stdout"`
-				} `json:"command"`
-			} `json:"completed"`
-		}
-		if err := json.Unmarshal(line, &event); err != nil {
-			t.Fatalf("decode streaming gateway event %q: %v", line, err)
-		}
-		if event.Sequence != lastSequence+1 {
-			t.Fatalf("event sequence = %d after %d", event.Sequence, lastSequence)
-		}
-		lastSequence = event.Sequence
-		if event.Type == "output" && event.Output != nil && event.Output.Stream == "stdout" && string(event.Output.Data) == "stream-first" {
-			if elapsed := time.Since(streamStarted); elapsed >= time.Second {
-				t.Fatalf("first command output arrived after %s, want it before command completion", elapsed)
-			}
-			seenFirstOutput = true
-		}
-		if event.Type == "output" && event.Output != nil && event.Output.Stream == "stdout" {
-			stdout.Write(event.Output.Data)
-		}
-		if event.Type == "completed" && event.Completed != nil && event.Completed.Command != nil {
-			if event.Completed.Command.ExitCode != 0 || len(event.Completed.Command.Stdout) != 0 {
-				t.Fatalf("completed command = %#v", event.Completed.Command)
-			}
-			seenCompleted = true
-		}
-	}
-	if !seenFirstOutput || !seenCompleted || stdout.String() != "stream-firststream-last" {
-		t.Fatalf("stream did not include early output and completion: first=%t completed=%t stdout=%q", seenFirstOutput, seenCompleted, stdout.String())
-	}
-
-	websocketURL := "wss" + strings.TrimPrefix(baseURL, "https") + "/operations:ws"
-	connection, websocketResponse, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).Dial(websocketURL, http.Header{"Authorization": []string{"Bearer " + token}}) //nolint:gosec // E2E local port-forward only.
-	if err != nil {
-		if websocketResponse != nil {
-			t.Fatalf("dial operation WebSocket: %v (status %d)", err, websocketResponse.StatusCode)
-		}
-		t.Fatalf("dial operation WebSocket: %v", err)
+		t.Fatalf("dial streaming WebSocket: %v", err)
 	}
 	defer connection.Close()
-	if err := connection.WriteJSON(map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"sh", "-c", "printf websocket"}}}}); err != nil {
-		t.Fatalf("write WebSocket send frame: %v", err)
+	if err := connection.WriteJSON(map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"sh", "-c", "printf stream-first; sleep 3; printf stream-last"}}}}); err != nil {
+		t.Fatalf("write streaming command: %v", err)
 	}
-	_ = connection.SetReadDeadline(time.Now().Add(10 * time.Second))
-	websocketOutput := false
-	websocketCompleted := false
-	lastSequence = 0
-	for !websocketCompleted {
+	_ = connection.SetReadDeadline(time.Now().Add(60 * time.Second))
+	var stdout strings.Builder
+	var firstOutputAt time.Time
+	var lastSequence int64
+	for {
 		var event struct {
 			Sequence int64  `json:"sequence"`
 			Type     string `json:"type"`
@@ -262,29 +181,40 @@ func TestSessionGatewayStreamsCommandOutput(t *testing.T) {
 					ExitCode int32 `json:"exitCode"`
 				} `json:"command"`
 			} `json:"completed"`
+			Failed *struct {
+				Message string `json:"message"`
+			} `json:"failed"`
 		}
 		if err := connection.ReadJSON(&event); err != nil {
-			t.Fatalf("read WebSocket operation event: %v", err)
+			t.Fatalf("read streaming event: %v", err)
 		}
 		if event.Sequence != lastSequence+1 {
-			t.Fatalf("WebSocket event sequence = %d after %d", event.Sequence, lastSequence)
+			t.Fatalf("event sequence = %d after %d", event.Sequence, lastSequence)
 		}
 		lastSequence = event.Sequence
-		if event.Type == "output" && event.Output != nil && event.Output.Stream == "stdout" && string(event.Output.Data) == "websocket" {
-			websocketOutput = true
-		}
-		if event.Type == "completed" && event.Completed != nil && event.Completed.Command != nil {
-			if event.Completed.Command.ExitCode != 0 {
-				t.Fatalf("WebSocket command exit code = %d", event.Completed.Command.ExitCode)
+		if event.Output != nil && event.Output.Stream == "stdout" {
+			if firstOutputAt.IsZero() {
+				firstOutputAt = time.Now()
 			}
-			websocketCompleted = true
+			stdout.Write(event.Output.Data)
 		}
-	}
-	if !websocketOutput {
-		t.Fatal("WebSocket stream did not include command output")
+		if event.Failed != nil {
+			t.Fatalf("streaming command failed: %s", event.Failed.Message)
+		}
+		if event.Completed != nil {
+			if event.Completed.Command == nil || event.Completed.Command.ExitCode != 0 {
+				t.Fatalf("streaming completion = %#v", event.Completed)
+			}
+			if firstOutputAt.IsZero() || time.Since(firstOutputAt) < time.Second {
+				t.Fatalf("command output was not delivered before completion")
+			}
+			if got := stdout.String(); got != "stream-firststream-last" {
+				t.Fatalf("streaming output = %q", got)
+			}
+			return
+		}
 	}
 }
-
 func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
 	t.Parallel()
 	runtimeName := fmt.Sprintf("run-logs-%d", time.Now().UnixNano())
@@ -524,16 +454,48 @@ func TestSessionGatewayEnforcesTransferBounds(t *testing.T) {
 	// Establish the port-forward with a response that remains below the focused
 	// response limit before exercising rejection paths.
 	_ = waitForGatewayResponseWithClient(t, portForwardClient, http.MethodGet, baseURL, token, nil, http.StatusOK)
-	oversizedRequest := []byte(`{"command":{"argv":["true"],"stdin":"` + strings.Repeat("eA==", 160) + `"}}`)
-	requestResponse := waitForGatewayResponseWithClient(t, portForwardClient, http.MethodPost, baseURL+"/operations:execute", token, oversizedRequest, http.StatusRequestEntityTooLarge)
-	if !strings.Contains(string(requestResponse), "gateway request body exceeds configured limit") {
-		t.Fatalf("oversized request response = %s", requestResponse)
+	websocketURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/operations:ws"
+	dial := func() *websocket.Conn {
+		t.Helper()
+		connection, _, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).DialContext( //nolint:gosec // E2E local port-forward only.
+			t.Context(), websocketURL, http.Header{"Authorization": []string{"Bearer " + token}})
+		if err != nil {
+			t.Fatalf("open bounded Session WebSocket: %v", err)
+		}
+		return connection
 	}
+	requestConnection := dial()
+	oversizedRequest := map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"true"}, "stdin": strings.Repeat("eA==", 160)}}}
+	if err := requestConnection.WriteJSON(oversizedRequest); err != nil {
+		t.Fatalf("write oversized Session request: %v", err)
+	}
+	_ = requestConnection.SetReadDeadline(time.Now().Add(30 * time.Second))
+	_, _, err := requestConnection.ReadMessage()
+	if !websocket.IsCloseError(err, websocket.CloseMessageTooBig, websocket.ClosePolicyViolation) {
+		t.Fatalf("oversized Session request read error = %v, want WebSocket close", err)
+	}
+	_ = requestConnection.Close()
 
-	responseResponse := waitForGatewayResponseWithClient(t, portForwardClient, http.MethodPost, baseURL+"/operations:execute", token,
-		[]byte(`{"command":{"argv":["sh","-c","head -c 1024 /dev/zero"]}}`), http.StatusRequestEntityTooLarge)
-	if got, want := string(responseResponse), "{\"error\":\"gateway response exceeds configured limit\"}\n"; got != want {
-		t.Fatalf("oversized response body = %q, want %q", got, want)
+	responseConnection := dial()
+	defer responseConnection.Close()
+	if err := responseConnection.WriteJSON(map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"sh", "-c", "head -c 1024 /dev/zero"}}}}); err != nil {
+		t.Fatalf("write Session operation with oversized output: %v", err)
+	}
+	_ = responseConnection.SetReadDeadline(time.Now().Add(60 * time.Second))
+	for {
+		var event struct {
+			Type  string `json:"type"`
+			Error string `json:"error"`
+		}
+		if err := responseConnection.ReadJSON(&event); err != nil {
+			t.Fatalf("read bounded Session response: %v", err)
+		}
+		if event.Type == "error" {
+			if !strings.Contains(event.Error, "gateway stream event exceeds configured limit") {
+				t.Fatalf("bounded Session error = %q", event.Error)
+			}
+			break
+		}
 	}
 
 	headerRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL, nil)
@@ -902,30 +864,11 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	}
 }
 
-func TestSessionRunExpiresWhenIdle(t *testing.T) {
-	t.Skip("Session idle expiry was removed; lease and total timeout remain")
-	t.Parallel()
-	runtimeName := fmt.Sprintf("session-idle-%d", time.Now().UnixNano())
-	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
-	run := &v1alpha1.Run{
-		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-session-idle-", Namespace: testNamespace},
-		Spec: v1alpha1.RunSpec{
-			Runtime: runtimeName,
-			Mode:    v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}},
-		},
-	}
-	if err := k8sClient.Create(context.Background(), run); err != nil {
-		t.Fatalf("create idle Session Run: %v", err)
-	}
-	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), run) })
-	waitForRunPhase(t, run, 10*time.Second, v1alpha1.RunTimeout)
-}
-
 func TestSessionRunLeaseExpiresAfterConnectionHeartbeatsStop(t *testing.T) {
 	t.Parallel()
 	runtimeName := fmt.Sprintf("session-lease-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
-	leaseTimeout := int32(5)
+	leaseTimeout := int32(15)
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-session-lease-", Namespace: testNamespace},
 		Spec: v1alpha1.RunSpec{
@@ -948,21 +891,22 @@ func TestSessionRunLeaseExpiresAfterConnectionHeartbeatsStop(t *testing.T) {
 		}
 		t.Fatalf("dial lease WebSocket: %v", err)
 	}
-	// A Session connection retains capacity only while it emits heartbeat frames.
-	// Send one explicitly before checking that the Run remains ready; the gateway
-	// unit tests cover the initial touch performed at authenticated upgrade.
-	if err := connection.WriteJSON(map[string]string{"type": "heartbeat"}); err != nil {
-		t.Fatalf("send lease heartbeat: %v", err)
-	}
-	time.Sleep(time.Second)
-	if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), run); err != nil {
-		t.Fatalf("get heartbeat Session Run: %v", err)
-	}
-	if run.Status.Phase != v1alpha1.RunReady {
-		t.Fatalf("Session Run phase with active connection = %s, want Ready", run.Status.Phase)
+	// Observe Ready beyond the original lease window. A single early check
+	// would pass even if every heartbeat were ignored by the owner runtimed.
+	for range 5 {
+		if err := connection.WriteJSON(map[string]string{"type": "heartbeat"}); err != nil {
+			t.Fatalf("send lease heartbeat: %v", err)
+		}
+		time.Sleep(4 * time.Second)
+		if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get heartbeat Session Run: %v", err)
+		}
+		if run.Status.Phase != v1alpha1.RunReady {
+			t.Fatalf("Session Run phase with active connection = %s, want Ready", run.Status.Phase)
+		}
 	}
 	_ = connection.Close()
-	waitForRunPhase(t, run, 15*time.Second, v1alpha1.RunTimeout)
+	waitForRunPhase(t, run, 25*time.Second, v1alpha1.RunTimeout)
 	if run.Status.Message != "session lease expired" {
 		t.Fatalf("lease expiry message = %q, want session lease expired", run.Status.Message)
 	}

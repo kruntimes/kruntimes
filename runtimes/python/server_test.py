@@ -266,6 +266,24 @@ class TestPythonRuntime(unittest.TestCase):
         self.assertEqual(b"".join(chunks), b"x" * output_size)
         self.assertTrue(all(len(chunk) <= SESSION_OPERATION_OUTPUT_CHUNK_BYTES for chunk in chunks))
 
+    def test_session_command_emits_output_before_process_exits(self):
+        session_dir = self._prepare_inline("# session")
+        self._register_session(session_dir)
+        identity = runtime_pb2.SessionIdentity(run_uid="session-run", assigned_pod_uid="pod-a")
+        started = time.monotonic()
+        stream = self.session_stub.StreamSessionOperation(
+            runtime_pb2.ExecuteSessionOperationRequest(
+                identity=identity,
+                command=runtime_pb2.SessionCommand(argv=["python", "-u", "-c", "import time; print('ready'); time.sleep(2)"]),
+            )
+        )
+        try:
+            output = next(event for event in stream if event.HasField("output"))
+            self.assertEqual(output.output.data, b"ready\n")
+            self.assertLess(time.monotonic() - started, 1.5)
+        finally:
+            stream.cancel()
+
     def test_session_file_listing_pages_are_bounded_and_cross_runtime(self):
         session_dir = self.work_dir / "session-pages"
         session_dir.mkdir()

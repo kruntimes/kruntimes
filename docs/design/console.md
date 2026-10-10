@@ -56,8 +56,7 @@ Run configures a lease, private heartbeat frames for as long as that connection
 remains open. Closing it does not release the backing Session Run. A transport error or an early
 connection close is displayed in the panel. Selecting **Run again** always
 starts a new operation; the current WebSocket protocol does not provide an
-operation-ID resume frame. Clients that need resumability can use the existing
-NDJSON stream endpoint with its `after` query parameter.
+operation-ID resume frame or a separate NDJSON fallback.
 
 ## Helm configuration
 

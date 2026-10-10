@@ -2,12 +2,12 @@
 
 ## 背景
 
-`ExecuteSessionOperation` 是 unary request。这适合短命令和原子文件 mutation，但 interactive
+早期的 `ExecuteSessionOperation` 是 unary request。这适合短命令和原子文件 mutation，但 interactive
 Runtime 的一次 operation 可能要经过多次 model request 和 tool call 才产生最终回答。在完整 operation
 返回前，caller 无法得知 Session 是否仍在工作。
 
 本设计为单个 Session operation 增加通用、有序的实时事件流。它不是 agent 专用 API：Runtime 可将它用于
-command output、progress reporting 或 interactive agent turn。已有 unary operation API 保持支持。
+  command output、progress reporting 或 interactive agent turn。旧 unary operation API 已移除。
 
 ## 目标
 
@@ -54,23 +54,9 @@ rpc StreamSessionOperation(ExecuteSessionOperationRequest)
 Server event stream。这样即使 gateway request 到达非 owner Runtime Pod、再单跳转发给 owner，也不会破坏
 queue mutation ordering。
 
-兼容的 HTTP endpoint：
-
-```
-POST /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:stream
-Content-Type: application/json
-Accept: application/x-ndjson
-```
-
-request body 与 `operations:execute` 完全一致。response 是 `application/x-ndjson; charset=utf-8`
-stream：每行一个完整 JSON event，并按 sequence 顺序排列。gateway 每个 event 都会 write 并 flush。在未设置
-content length 时，Go `net/http` 自动选择 HTTP/1.1 chunked transfer encoding；server 不应手动设置
-`Transfer-Encoding`。HTTP/2 使用自身 data framing，无需特殊处理。
-
-client 用 `fetch` 消费 `response.body` 的 `ReadableStream`，因此可以使用与其他 gateway operation 相同的
-bearer-token header。CLI 直接读取 JSON line。无法 authorize 或 admission 的 request 会在任何 response
-event 前使用现有 HTTP error mapping 失败。event byte 一旦写出，HTTP status 就不能安全改变；之后 terminal
-failure 用 `failed` event 表示。
+公开的实时 operation endpoint 仅支持持久双向 WebSocket；旧的 unary HTTP 与 NDJSON endpoint 已移除。
+upgrade 前使用普通 HTTP authentication、authorization 与 error mapping；upgrade 后以 event frame
+或 `{"type":"error","error":"..."}` 表示失败。
 
 Session connection 的内部 transport 是已有的 operation WebSocket：
 
@@ -110,12 +96,12 @@ operation ID，SDK 将其作为 `Send` 的返回值；`Receive` 暴露后续 eve
 
 operation 期间，`Cancel(operationID)` 写入内部 frame
 `{"type":"cancel","operationID":"op-7b7b"}`。gateway 拒绝 ID 不是当前 operation 的 cancellation。
-terminal event 前第二个 `send` 是 connection protocol error。WebSocket ping/pong frame 承载 SDK lease
-heartbeat；没有公开的 application-level heartbeat message。任意 interactive input 或 approval message 尚未成为
+terminal event 前第二个 `send` 是 connection protocol error。SDK 通过 application frame
+`{"type":"heartbeat"}` 续租已配置的 lease。任意 interactive input 或 approval message 尚未成为
 Runtime protocol 的一部分。
 
 WebSocket upgrade 前的 error 仍是普通 HTTP error。upgrade 后的 error 将以
-`{"type":"error","error":"..."}` 发送，随后发送 WebSocket close frame；成功 upgrade 后不能再更改 HTTP status。
+`{"type":"error","error":"..."}` 发送，connection 可继续处理下一个 operation；成功 upgrade 后不能再更改 HTTP status。
 
 HTTP representation 使用小写 protocol value：output 的 `stream` 为 `stdout` 或 `stderr`；progress 的
 `kind` 为 `status`、`text_delta`、`tool_call_started` 或 `tool_call_finished`。二进制 `data` field 使用标准
@@ -155,7 +141,9 @@ message 携带有序的 `SessionOperationEvent` 及 operation ID。upgrade 后�
 SDK transport error，而不是普通 event。
 
 由 Kubernetes REST configuration 构造的 SDK 会为该 connection 使用其中的 TLS CA bundle 和可选的
-client certificate/key，并在配置时使用显式 bearer token。custom SDK transport 必须自行实现这一
+client certificate/key，在 endpoint 提供 `Run.status.endpoint.caBundle` 时信任该证书，并在 upgrade 前应用
+Kubernetes REST 认证 wrapper（包括轮换的 token file 和
+exec credential）。custom SDK transport 必须自行实现这一
 connection boundary；仅有 HTTP `RoundTripper` 无法完成 WebSocket upgrade。受限的 Console
 port-forward adapter 会像改写普通 HTTP endpoint 一样改写 connection endpoint，并保留 caller credential。
 
@@ -165,7 +153,7 @@ live-connection contract。
 
 ## Lifecycle、cancellation 与边界
 
-gateway 对 connection 的 authorization 与 unary operation 相同。`Cancel`、gateway shutdown、Immediate
+gateway 会对 connection 的目标 Session Run 授权。`Cancel`、gateway shutdown、Immediate
 Session termination 和 effective operation timeout 会取消 active Runtime Server operation 并释放 queue entry。
 关闭 SDK Session connection 只会 detach event consumer，不会取消已 admission 的 work，也不会 release
 Session capacity。owner runtimed 继续强制 operation timeout 与 Session lease。`Drain` 允许已 admission 的
@@ -177,10 +165,8 @@ event 会以 resource-limit failure 结束 operation。Runtime 提供的 progres
 
 ## 兼容性与 rollout
 
-`ExecuteSessionOperation`、`operations:execute` 与 NDJSON `operations:stream` endpoint 仍可用于 non-SDK caller。built-in Runtime
-初期可以对 streaming gRPC method 返回 `Unimplemented`；gateway 会映射为明确的 capability error。interactive Runtime
-通过实现该 method opt in。GitHub Issue Labeler Runtime 将发出 Pi text 和 tool lifecycle event；它已有的 unary
-`message` command 继续为非 streaming client 返回最终回答。
+`ExecuteSessionOperation`、`operations:execute` 与 NDJSON `operations:stream` endpoint 均已移除。
+所有 built-in Runtime 都通过 `StreamSessionOperation` 实现 operation；custom Runtime 也必须实现该 method。
 
 Go 与 Python Session SDK 暴露 `AcquireSandbox`、`OpenSession`、`Send`、`Receive`、`Cancel`、
 `Session.Close` 与 `Sandbox.Release`，而不是 transport-specific streaming helper。Console 为 agent turn 打开

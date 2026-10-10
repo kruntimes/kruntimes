@@ -64,6 +64,7 @@ spec:
             - --authorization-cache-ttl={{ .Values.console.access.authorizationCacheTTL }}
             - --authorization-cache-capacity={{ .Values.console.access.authorizationCacheCapacity }}
             - --max-concurrent-requests={{ .Values.console.access.maxConcurrentRequests }}
+            - --max-session-connections={{ .Values.console.access.maxSessionConnections }}
             - --max-request-body-bytes={{ int64 .Values.console.access.maxRequestBodyBytes }}
             - --max-response-body-bytes={{ int64 .Values.console.access.maxResponseBodyBytes }}
             - --max-header-bytes={{ int64 .Values.console.access.maxHeaderBytes }}

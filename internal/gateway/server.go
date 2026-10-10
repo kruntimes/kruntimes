@@ -39,6 +39,8 @@ const (
 	DefaultMaxHeaderBytes = 1 << 20
 	// DefaultMaxConcurrentRequests is the per-Console-Pod HTTP request limit.
 	DefaultMaxConcurrentRequests = 128
+	// DefaultMaxSessionConnections isolates long-lived WebSockets from HTTP requests.
+	DefaultMaxSessionConnections = 128
 )
 
 var errRequestBodyTooLarge = errors.New("gateway request body exceeds configured limit")
@@ -69,6 +71,8 @@ type Server struct {
 	// MaxConcurrentRequests bounds requests handled by one Console Pod. Values
 	// less than one use the default. Health checks do not consume this limit.
 	MaxConcurrentRequests int
+	// MaxSessionConnections bounds persistent Session WebSockets independently of HTTP requests.
+	MaxSessionConnections int
 	// MaxRequestBodyBytes bounds access API JSON request bodies. Values less than
 	// one use the default.
 	MaxRequestBodyBytes int64
@@ -77,10 +81,11 @@ type Server struct {
 	MaxResponseBodyBytes int64
 	// MaxHeaderBytes bounds HTTP request headers before routing. Values less than
 	// one use the default.
-	MaxHeaderBytes int
-	requestLimiter gatewayRequestLimiter
-	routesOnce     sync.Once
-	routes         http.Handler
+	MaxHeaderBytes    int
+	requestLimiter    gatewayRequestLimiter
+	connectionLimiter gatewayRequestLimiter
+	routesOnce        sync.Once
+	routes            http.Handler
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +102,7 @@ func (s *Server) registerRoutes() {
 		return s.withRequestLimit(s.withSessionRun(handler))
 	}
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}", withSessionRun(s.handleSessionStatus))
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws", withSessionRun(s.handleSessionWebSocket))
+	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws", s.withSessionConnectionLimit(s.withSessionRun(s.handleSessionWebSocket)))
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files", withSessionRun(s.handleSessionListFiles))
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files/{path...}", withSessionRun(s.handleSessionReadFile))
 	mux.HandleFunc("/", s.endpointNotFound)
@@ -124,6 +129,21 @@ func (s *Server) withRequestLimit(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		defer s.requestLimiter.release()
+		next(w, r)
+	}
+}
+
+func (s *Server) withSessionConnectionLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit := s.MaxSessionConnections
+		if limit < 1 {
+			limit = DefaultMaxSessionConnections
+		}
+		if !s.connectionLimiter.tryAcquire(limit) {
+			s.writeError(w, http.StatusTooManyRequests, "gateway Session connection limit reached")
+			return
+		}
+		defer s.connectionLimiter.release()
 		next(w, r)
 	}
 }
@@ -392,8 +412,6 @@ func (s *Server) streamOperationWebSocket(w http.ResponseWriter, r *http.Request
 	}
 	defer connection.Close()
 	connection.SetReadLimit(s.maxRequestBodyBytes())
-	connection.SetReadDeadline(time.Now().Add(15 * time.Second))
-	connection.SetReadDeadline(time.Time{})
 	if err := s.touchSession(r.Context(), run); err != nil {
 		s.writeWebSocketError(connection, err)
 		return
@@ -411,6 +429,10 @@ func (s *Server) streamOperationWebSocket(w http.ResponseWriter, r *http.Request
 				s.writeWebSocketError(connection, err)
 				return
 			}
+			continue
+		}
+		if frame.message.Type == sessionConnectionMessageCancel {
+			s.writeWebSocketError(connection, errors.New("no active Session operation to cancel"))
 			continue
 		}
 		if frame.message.Type != sessionConnectionMessageSend || !s.streamSessionConnectionOperation(r.Context(), connection, frames, run, frame.message) {

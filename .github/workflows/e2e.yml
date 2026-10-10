@@ -13,12 +13,17 @@ on:
         description: Maximum concurrently running E2E scenarios
         required: false
         default: "4"
+      console_bounds:
+        description: Run the opt-in Console transfer-bounds scenario
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2e-${{ github.ref }}
+  group: e2e-${{ github.ref }}-${{ inputs.console_bounds || 'false' }}
   cancel-in-progress: true
 
 jobs:
@@ -41,7 +46,12 @@ jobs:
         with:
           cluster_name: kruntimes-e2e
       - name: Run E2E
-        run: make e2e E2E_TEST="${{ inputs.e2e_test }}" E2E_PARALLEL="${{ inputs.e2e_parallel || '4' }}"
+        run: |
+          if [ "${{ inputs.console_bounds }}" = "true" ]; then
+            make e2e-console-bounds-run E2E_TEST="${{ inputs.e2e_test || 'TestSessionGatewayEnforcesTransferBounds' }}" E2E_PARALLEL="${{ inputs.e2e_parallel || '4' }}"
+          else
+            make e2e E2E_TEST="${{ inputs.e2e_test }}" E2E_PARALLEL="${{ inputs.e2e_parallel || '4' }}"
+          fi
       - name: Summarize E2E timings
         if: always()
         run: |

@@ -59,14 +59,14 @@ registration 获得 Runtime Pod capacity。其返回的 `Sandbox` 由该 Run 支
 按 Run UID 隔离的 workspace 与 tool state。因此 active Sandbox 恰有一个 Session，并且恰有一个
 assigned Runtime Pod。
 
-Session SDK 隐藏 HTTP、NDJSON 与 WebSocket transport。它的 data-plane operation 是 `Send`、
+Session SDK 隐藏 HTTP 与 WebSocket transport 细节。它的 data-plane operation 是 `Send`、
 `Receive`、`Cancel`；lifecycle operation 是 `OpenSession`、`Session.Close` 与 `Release`。
 `OpenSession` 为已经 Ready 的 Session 建立可替换的 streaming connection，不创建也不分配 Session Run。
 `Session.Close` 只释放该 connection。`Release` 才是 resource operation：它停止 Session、
 等待 cleanup，并删除其 Session Run。显式 immediate-release mode 可以取消 active work；默认使用
 graceful drain。
 
-`leaseTimeoutSeconds` 在已有 operation-idle timeout 外启用独立 connection lease。未设置时完全禁用 lease
+`leaseTimeoutSeconds` 为 Session 启用 connection lease。未设置时完全禁用 lease
 expiry，Session 不需要发送 heartbeat。active connection
 打开期间，SDK 私下发送 heartbeat；gateway 认证后逐个转发到 owner runtimed。owner runtimed 将
 server-authoritative lease timestamp 与 command activity 分开记录，并在 lease 到期时终止 Session。关闭
@@ -96,9 +96,9 @@ if err != nil {
 }
 defer session.Close()
 
-operationID, err := session.Send(ctx, sandbox.Command{
+operationID, err := session.Send(ctx, sandbox.Operation{Command: &sandbox.Command{
 	Shell: "classify and label issue #123",
-})
+}})
 if err != nil {
 	return err
 }
@@ -107,7 +107,7 @@ for {
 	if err != nil {
 		return err
 	}
-	if event.OperationID == operationID && event.Terminal() {
+	if event.Completed != nil || event.Failed != nil {
 		break
 	}
 }
@@ -122,10 +122,10 @@ sandbox = runtime.acquire_sandbox(generate_name="labeler-")
 try:
     session = sandbox.open_session()
     try:
-        operation_id = session.send(Command(shell="classify and label issue #123"))
+        operation_id = session.send(Operation(command=Command(shell="classify and label issue #123")))
         while True:
             event = session.receive()
-            if event.operation_id == operation_id and event.terminal:
+            if event.type in ("completed", "failed"):
                 break
     finally:
         session.close()
@@ -166,12 +166,11 @@ session 失败，v0 不承诺 checkpoint、resume 或透明迁移。
 `Run.spec.env` 会在 registration 时被固定，并提供给每个 session command。command 可以提供自己的
 environment map；其中的值只对该 command 覆盖已注册的值。
 
-`Run.spec.timeout` 限制整个 reservation。`idleTimeoutSeconds` 在没有 accepted mutation 或 command
-activity 后过期；`leaseTimeoutSeconds` 在没有服务端观察到的 connection heartbeat 后过期。二者独立：
-heartbeat 不会重置 operation-idle timeout。Session 继续使用普通 Run 的 cancellation、deletion、TTL、authorization、endpoint
+`Run.spec.timeout` 限制整个 reservation。配置了 `leaseTimeoutSeconds` 时，若服务端长时间没有观察到
+connection heartbeat，Session 会过期。Session 继续使用普通 Run 的 cancellation、deletion、TTL、authorization、endpoint
 和 assignment-UID fencing。注册在 `Ready` 前可以 retry，因为此时尚不存在可用的 session state；
 进入 Ready 后 assigned-Pod loss 是 terminal，client 必须创建新的 Session Run，而不能在空 workspace
-中静默继续。idle expiry 同样是 terminal：它会关闭本地 session、清理 ephemeral workspace，并记录为
+中静默继续。lease expiry 同样是 terminal：它会关闭本地 session、清理 ephemeral workspace，并记录为
 `RunTimeout`。重新打开或再次提交同一个 Run 不能恢复它；需要新 sandbox 的 client 必须创建新的
 Session Run。显式 suspend/resume 是独立的 v1 design item，不能从 timeout recovery 隐式推导。
 
@@ -271,9 +270,10 @@ authorization error。将 `--authorization-cache-ttl=0` 或
 `--authorization-cache-capacity=0` 任一设为零即可禁用 cache。已缓存成功 decision 最多会在配置的 TTL 内继续
 生效，因此 authorization change 在这段时间后才会影响该 decision。
 
-每个 Runtime gateway Pod 默认最多接受 128 个并发 HTTP request。admission 不会等待：超过单个 Pod limit 的
+每个 Console Pod 默认最多接受 128 个并发 Runtime access HTTP request。admission 不会等待：超过单个 Pod limit 的
 request 立即返回 `429 Too Many Requests`，不会在 gateway queue 中无限等待。health check 不消耗 request slot。
-Helm value `gateway.maxConcurrentRequests` 为每个 gateway Pod 配置该 limit。
+Helm value `console.access.maxConcurrentRequests` 为每个 Console Pod 配置该 limit。持久 Session WebSocket
+使用独立的 `console.access.maxSessionConnections` limit，因此空闲 connection 不会占用普通 HTTP 配额。
 
 gateway server 将下列 HTTP API operation 映射到 `SessionRuntime` gRPC method：
 

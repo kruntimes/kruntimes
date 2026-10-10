@@ -128,15 +128,14 @@ frames or WebSocket details:
 During the operation, `Cancel(operationID)` writes the internal frame
 `{"type":"cancel","operationID":"op-7b7b"}`. The gateway rejects a
 cancellation whose ID is not the current operation. A second `send` before a
-terminal event is a connection protocol error. WebSocket ping/pong frames carry
-the SDK lease heartbeat; no application-level heartbeat message is public.
+terminal event is a connection protocol error. The SDK sends
+`{"type":"heartbeat"}` application frames to renew a configured lease.
 Arbitrary interactive input or approval messages are not yet part of the
 Runtime protocol.
 
 An error before WebSocket upgrade is an ordinary HTTP error. An error after
-upgrade is sent as `{"type":"error","error":"..."}` followed by a WebSocket
-close frame. This is necessary because an HTTP status cannot change after a
-successful upgrade.
+upgrade is sent as `{"type":"error","error":"..."}`. The connection may remain
+open for another operation; an HTTP status cannot change after a successful upgrade.
 
 The HTTP representation uses lower-case protocol values: output `stream` is
 `stdout` or `stderr`; progress `kind` is `status`, `text_delta`,
@@ -181,8 +180,10 @@ its operation ID. A gateway error after upgrade is surfaced as a typed SDK
 transport error rather than as an event.
 
 SDK constructors derived from a Kubernetes REST configuration use its TLS CA
-bundle and optional client certificate/key for the connection, and apply an
-explicit bearer token when configured. A custom SDK transport must implement
+bundle and optional client certificate/key for the connection, trust the
+`Run.status.endpoint.caBundle` when provided, and apply
+Kubernetes REST authentication wrappers (including rotating token files and
+exec credentials) before the upgrade. A custom SDK transport must implement
 this connection boundary itself; an HTTP `RoundTripper` alone cannot upgrade a
 WebSocket. Scoped Console port-forward adapters rewrite the connection endpoint
 as they do regular HTTP endpoints and preserve caller credentials.
@@ -194,8 +195,8 @@ Durable operation replay is separate from this live-connection contract.
 
 ## Lifecycle, cancellation, and bounds
 
-The gateway authorizes the connection exactly as it authorizes unary
-operations. `Cancel`, gateway shutdown, immediate Session termination, and the
+The gateway authorizes the connection against its Session Run. `Cancel`,
+gateway shutdown, immediate Session termination, and the
 effective operation timeout cancel an active Runtime Server operation and free
 the queue entry. Closing the SDK Session connection only detaches the event
 consumer; it does not cancel admitted work or release Session capacity. The

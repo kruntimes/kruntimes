@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,21 +30,78 @@ func (defaultSessionDialer) DialSession(ctx context.Context, endpoint string, he
 	return websocket.DefaultDialer.DialContext(ctx, endpoint, headers)
 }
 
-type restSessionDialer struct{ dialer *websocket.Dialer }
+type restSessionDialer struct {
+	dialer *websocket.Dialer
+	config *rest.Config
+}
 
 func newRESTSessionDialer(config *rest.Config) (SessionDialer, error) {
 	tlsConfig, err := rest.TLSConfigFor(config)
 	if err != nil {
 		return nil, fmt.Errorf("create Session TLS config: %w", err)
 	}
-	return restSessionDialer{dialer: &websocket.Dialer{TLSClientConfig: tlsConfig}}, nil
+	return restSessionDialer{dialer: &websocket.Dialer{
+		TLSClientConfig:  tlsConfig,
+		HandshakeTimeout: 15 * time.Second,
+		Proxy:            config.Proxy,
+		NetDialContext:   config.Dial,
+	}, config: rest.CopyConfig(config)}, nil
 }
 
 func (d restSessionDialer) DialSession(ctx context.Context, endpoint string, headers http.Header) (*websocket.Conn, *http.Response, error) {
-	if d.dialer == nil {
+	if d.dialer == nil || d.config == nil {
 		return nil, nil, errors.New("Session WebSocket dialer is not configured")
 	}
-	return d.dialer.DialContext(ctx, endpoint, headers)
+	requestURL, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, nil, err
+	}
+	switch requestURL.Scheme {
+	case "ws":
+		requestURL.Scheme = "http"
+	case "wss":
+		requestURL.Scheme = "https"
+	default:
+		return nil, nil, errors.New("Session WebSocket endpoint is invalid")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	request.Header = headers.Clone()
+	// Kubernetes REST wrappers supply rotating token-file, exec-plugin, and
+	// auth-provider credentials before the WebSocket handshake.
+	handshake := &websocketHandshakeTransport{dialer: d.dialer, endpoint: endpoint}
+	transport, err := rest.HTTPWrappersForConfig(d.config, handshake)
+	if err != nil {
+		return nil, nil, fmt.Errorf("configure Session credentials: %w", err)
+	}
+	response, err := transport.RoundTrip(request)
+	if handshake.connection != nil {
+		return handshake.connection, response, nil
+	}
+	if err != nil {
+		return nil, response, err
+	}
+	return nil, response, errors.New("Session WebSocket handshake failed")
+}
+
+type websocketHandshakeTransport struct {
+	dialer     *websocket.Dialer
+	endpoint   string
+	connection *websocket.Conn
+}
+
+func (t *websocketHandshakeTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	connection, response, err := t.dialer.DialContext(request.Context(), t.endpoint, request.Header)
+	if err != nil {
+		if response != nil {
+			return response, nil
+		}
+		return nil, err
+	}
+	t.connection = connection
+	return response, nil
 }
 
 // Session is one replaceable, persistent SDK connection to a ready Sandbox.
@@ -54,6 +113,7 @@ type Session struct {
 	readMu  sync.Mutex
 	stateMu sync.Mutex
 	active  string
+	sending bool
 	closed  bool
 
 	heartbeatStop chan struct{}
@@ -61,8 +121,9 @@ type Session struct {
 }
 
 type sessionSendFrame struct {
-	Type      string    `json:"type"`
-	Operation Operation `json:"operation"`
+	Type           string    `json:"type"`
+	Operation      Operation `json:"operation"`
+	IdempotencyKey string    `json:"idempotencyKey,omitempty"`
 }
 
 // OpenSession opens a persistent connection to this ready Sandbox. It does not
@@ -86,7 +147,15 @@ func (s *Sandbox) OpenSession(ctx context.Context) (*Session, error) {
 	if s.client.bearerToken != "" {
 		headers.Set("Authorization", "Bearer "+s.client.bearerToken)
 	}
-	connection, response, err := s.client.sessionDialer.DialSession(ctx, websocketEndpoint, headers)
+	var connection *websocket.Conn
+	var response *http.Response
+	if dialer, ok := s.client.sessionDialer.(interface {
+		DialSessionWithCA(context.Context, string, http.Header, []byte) (*websocket.Conn, *http.Response, error)
+	}); ok && s.run.Status.Endpoint != nil && len(s.run.Status.Endpoint.CABundle) > 0 {
+		connection, response, err = dialer.DialSessionWithCA(ctx, websocketEndpoint, headers, s.run.Status.Endpoint.CABundle)
+	} else {
+		connection, response, err = s.client.sessionDialer.DialSession(ctx, websocketEndpoint, headers)
+	}
 	if err != nil {
 		if response != nil {
 			return nil, &APIError{StatusCode: response.StatusCode, Message: "open Sandbox Session"}
@@ -98,6 +167,36 @@ func (s *Sandbox) OpenSession(ctx context.Context) (*Session, error) {
 		session.startHeartbeat(interval)
 	}
 	return session, nil
+}
+
+func (d restSessionDialer) DialSessionWithCA(ctx context.Context, endpoint string, headers http.Header, bundle []byte) (*websocket.Conn, *http.Response, error) {
+	if d.dialer == nil {
+		return nil, nil, errors.New("Session WebSocket dialer is not configured")
+	}
+	cloned := *d.dialer
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if cloned.TLSClientConfig != nil {
+		tlsConfig = cloned.TLSClientConfig.Clone()
+	}
+	var roots *x509.CertPool
+	if tlsConfig.RootCAs != nil {
+		roots = tlsConfig.RootCAs.Clone()
+	} else {
+		var err error
+		roots, err = x509.SystemCertPool()
+		if err != nil {
+			roots = x509.NewCertPool()
+		}
+	}
+	if !roots.AppendCertsFromPEM(bundle) {
+		return nil, nil, errors.New("Session endpoint CA bundle contains no certificates")
+	}
+	tlsConfig.RootCAs = roots
+	// The Run endpoint, not the Kubernetes API server, supplies this hostname.
+	tlsConfig.ServerName = ""
+	cloned.TLSClientConfig = tlsConfig
+	d.dialer = &cloned
+	return d.DialSession(ctx, endpoint, headers)
 }
 
 func sessionWebSocketURL(endpoint string) (string, error) {
@@ -118,7 +217,7 @@ func sessionWebSocketURL(endpoint string) (string, error) {
 
 // Send submits one operation and waits for its accepted event. Only one operation
 // may be active on one Session connection at a time.
-func (s *Session) Send(ctx context.Context, operation Operation) (string, error) {
+func (s *Session) Send(ctx context.Context, operation Operation, idempotencyKey ...string) (string, error) {
 	if s == nil || s.connection == nil {
 		return "", errors.New("Sandbox Session is not configured")
 	}
@@ -127,26 +226,49 @@ func (s *Session) Send(ctx context.Context, operation Operation) (string, error)
 		s.stateMu.Unlock()
 		return "", errors.New("Sandbox Session is closed")
 	}
-	if s.active != "" {
+	if s.active != "" || s.sending {
 		s.stateMu.Unlock()
 		return "", errors.New("Sandbox Session already has an active operation")
 	}
+	s.sending = true
 	s.stateMu.Unlock()
-	payload, err := json.Marshal(sessionSendFrame{Type: sessionFrameTypeSend, Operation: operation})
+	defer func() {
+		s.stateMu.Lock()
+		s.sending = false
+		s.stateMu.Unlock()
+	}()
+	if len(idempotencyKey) > 1 {
+		return "", errors.New("at most one Session idempotency key is allowed")
+	}
+	frame := sessionSendFrame{Type: sessionFrameTypeSend, Operation: operation}
+	if len(idempotencyKey) == 1 {
+		frame.IdempotencyKey = idempotencyKey[0]
+	}
+	payload, err := json.Marshal(frame)
 	if err != nil {
 		return "", fmt.Errorf("encode Sandbox Session send: %w", err)
 	}
 	s.writeMu.Lock()
+	deadline := deadlineFromContext(ctx)
+	if deadline.IsZero() {
+		deadline = time.Now().Add(30 * time.Second)
+	}
+	_ = s.connection.SetWriteDeadline(deadline)
+	callbackDone := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(callbackDone)
+		_ = s.connection.SetWriteDeadline(time.Now())
+	})
 	err = s.connection.WriteMessage(websocket.TextMessage, payload)
+	if !stop() {
+		<-callbackDone
+	}
+	_ = s.connection.SetWriteDeadline(time.Time{})
 	s.writeMu.Unlock()
 	if err != nil {
 		return "", fmt.Errorf("send Sandbox Session operation: %w", err)
 	}
-	if err := s.connection.SetReadDeadline(deadlineFromContext(ctx)); err != nil {
-		return "", fmt.Errorf("set Sandbox Session read deadline: %w", err)
-	}
-	defer s.connection.SetReadDeadline(time.Time{})
-	event, err := s.readEvent()
+	event, err := s.readEvent(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -165,11 +287,7 @@ func (s *Session) Receive(ctx context.Context) (OperationEvent, error) {
 	if s == nil || s.connection == nil {
 		return OperationEvent{}, errors.New("Sandbox Session is not configured")
 	}
-	if err := s.connection.SetReadDeadline(deadlineFromContext(ctx)); err != nil {
-		return OperationEvent{}, fmt.Errorf("set Sandbox Session read deadline: %w", err)
-	}
-	defer s.connection.SetReadDeadline(time.Time{})
-	event, err := s.readEvent()
+	event, err := s.readEvent(ctx)
 	if err != nil {
 		// A gateway error terminates the active operation but not necessarily the
 		// persistent Session connection. Permit the caller to submit another one.
@@ -229,11 +347,12 @@ func (s *Session) Close() error {
 	}
 	s.closed = true
 	s.stateMu.Unlock()
+	err := s.connection.Close()
 	if s.heartbeatStop != nil {
 		close(s.heartbeatStop)
 		<-s.heartbeatDone
 	}
-	return s.connection.Close()
+	return err
 }
 
 func sessionHeartbeatInterval(run *v1alpha1.Run) time.Duration {
@@ -277,6 +396,10 @@ func (s *Session) writeHeartbeat() error {
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if err := s.connection.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return err
+	}
+	defer s.connection.SetWriteDeadline(time.Time{})
 	if err := s.connection.WriteJSON(struct {
 		Type string `json:"type"`
 	}{Type: sessionFrameTypeHeartbeat}); err != nil {
@@ -285,9 +408,23 @@ func (s *Session) writeHeartbeat() error {
 	return nil
 }
 
-func (s *Session) readEvent() (OperationEvent, error) {
+func (s *Session) readEvent(ctx context.Context) (OperationEvent, error) {
 	s.readMu.Lock()
 	defer s.readMu.Unlock()
+	if err := s.connection.SetReadDeadline(deadlineFromContext(ctx)); err != nil {
+		return OperationEvent{}, fmt.Errorf("set Sandbox Session read deadline: %w", err)
+	}
+	callbackDone := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(callbackDone)
+		_ = s.connection.SetReadDeadline(time.Now())
+	})
+	defer func() {
+		if !stop() {
+			<-callbackDone
+		}
+		_ = s.connection.SetReadDeadline(time.Time{})
+	}()
 	var raw json.RawMessage
 	if err := s.connection.ReadJSON(&raw); err != nil {
 		return OperationEvent{}, fmt.Errorf("read Sandbox Session event: %w", err)

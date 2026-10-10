@@ -15,7 +15,7 @@ Runtime gateway, construct the client directly:
 
 ```python
 from kruntimes.kubernetes import from_incluster
-from kruntimes.sandbox import AcquireOptions, Command
+from kruntimes.sandbox import AcquireOptions, Command, Operation
 
 client = from_incluster()
 sandbox = client.runtime("agents", "python-session").acquire_sandbox(AcquireOptions(
@@ -24,7 +24,7 @@ sandbox = client.runtime("agents", "python-session").acquire_sandbox(AcquireOpti
 try:
     session = sandbox.open_session()
     try:
-        operation_id = session.send(Command(argv=["sh", "-c", "kubectl get pods -A"]))
+        operation_id = session.send(Operation(command=Command(argv=["sh", "-c", "kubectl get pods -A"])))
         while True:
             event = session.receive()
             if event.type in ("completed", "failed"):
@@ -62,9 +62,9 @@ Runtime Server gRPC ports:
 from kruntimes.kubernetes import PortForwardGatewayTransport, from_kube_config
 
 with PortForwardGatewayTransport.start(
-    namespace="kruntimes-system",
-    service="kruntimes-gateway",
-    service_port=80,
+    namespace="default",
+    service="kruntimes-console",
+    service_port=443,
 ) as gateway:
     client = from_kube_config(gateway=gateway)
     sandbox = client.open("agents", "diagnose-api")  # reconnect to an existing Run; no allocation

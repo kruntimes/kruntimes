@@ -2,6 +2,7 @@ import base64
 import bisect
 import json
 import os
+import queue
 import re
 import secrets
 import signal
@@ -417,13 +418,28 @@ class PythonRuntime(
         entry = self._match_session(request.identity, context)
         operation = request.WhichOneof("operation")
         if operation == "command":
-            result = self._execute_session_command(entry, request.command, context)
-            yield from self._session_output_events(
-                runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDOUT, result.stdout
-            )
-            yield from self._session_output_events(
-                runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDERR, result.stderr
-            )
+            events = queue.Queue()
+
+            def emit(stream, data):
+                for event in self._session_output_events(stream, data):
+                    events.put(event)
+
+            def execute():
+                try:
+                    result = self._execute_session_command(entry, request.command, context, emit)
+                    events.put(("completed", result))
+                except Exception as error:
+                    events.put(("failed", error))
+
+            threading.Thread(target=execute, daemon=True).start()
+            while True:
+                event = events.get()
+                if isinstance(event, tuple):
+                    if event[0] == "failed":
+                        raise event[1]
+                    result = event[1]
+                    break
+                yield event
             result.stdout = b""
             result.stderr = b""
             yield runtime_pb2.SessionOperationEvent(
@@ -457,7 +473,7 @@ class PythonRuntime(
                 )
             )
 
-    def _execute_session_command(self, entry, request, context):
+    def _execute_session_command(self, entry, request, context, emit=None):
         if bool(request.argv) == bool(request.shell):
             context.abort(
                 grpc.StatusCode.INVALID_ARGUMENT,
@@ -498,12 +514,12 @@ class PythonRuntime(
         context.add_callback(cancel_process)
         stdout_thread = threading.Thread(
             target=self._read_session_stream,
-            args=(process.stdout, stdout),
+            args=(process.stdout, stdout, emit, runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDOUT),
             daemon=True,
         )
         stderr_thread = threading.Thread(
             target=self._read_session_stream,
-            args=(process.stderr, stderr),
+            args=(process.stderr, stderr, emit, runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDERR),
             daemon=True,
         )
         stdout_thread.start()
@@ -521,6 +537,11 @@ class PythonRuntime(
         finally:
             stdout_thread.join()
             stderr_thread.join()
+        if emit is not None:
+            if stdout.truncated:
+                emit(runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDOUT, OUTPUT_TRUNCATED_MARKER.encode())
+            if stderr.truncated:
+                emit(runtime_pb2.SESSION_OPERATION_OUTPUT_STREAM_STDERR, OUTPUT_TRUNCATED_MARKER.encode())
         self._touch_session(entry)
         return runtime_pb2.SessionCommandResult(
             exit_code=-1 if timed_out else process.returncode,
@@ -867,13 +888,16 @@ class PythonRuntime(
         return timeout
 
     @staticmethod
-    def _read_session_stream(stream, buffer):
+    def _read_session_stream(stream, buffer, emit=None, output_stream=None):
         try:
             while True:
-                chunk = stream.read(4096)
+                chunk = os.read(stream.fileno(), SESSION_OPERATION_OUTPUT_CHUNK_BYTES)
                 if not chunk:
                     return
+                remaining = max(0, buffer._limit - buffer._size)
                 buffer.write(chunk)
+                if emit is not None and remaining:
+                    emit(output_stream, chunk[:remaining])
         finally:
             stream.close()
 

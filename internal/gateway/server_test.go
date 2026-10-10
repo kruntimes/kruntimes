@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,68 +63,6 @@ func TestGatewayRejectsUnauthorizedRequestBeforeDialingRuntime(t *testing.T) {
 	}
 	if dialer.address != "" {
 		t.Fatalf("dialed Runtime Service %q for denied request", dialer.address)
-	}
-}
-
-func TestGatewayExecutesExactlyOneOperation(t *testing.T) {
-	t.Skip("unary Session operation endpoint was removed")
-	run := readySessionRun()
-	client := &fakeSessionRuntimeClient{execute: func(_ context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error) {
-		if got := request.GetCommand().GetArgv(); len(got) != 2 || got[0] != "echo" || got[1] != "hello" {
-			t.Fatalf("command = %#v", request.GetCommand())
-		}
-		return &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte("hello\n")}}, nil
-	}}
-	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
-
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:execute", strings.NewReader(`{"command":{"argv":["echo","hello"]}}`))
-	server.ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-	if !strings.Contains(response.Body.String(), `"stdout":"aGVsbG8K"`) {
-		t.Fatalf("response = %s", response.Body.String())
-	}
-}
-
-func TestGatewayStreamsSessionOperationAsNDJSON(t *testing.T) {
-	t.Skip("NDJSON Session operation endpoint was removed")
-	run := readySessionRun()
-	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
-		if request.GetIdentity().GetRunUid() != string(run.UID) {
-			t.Fatalf("identity = %#v", request.GetIdentity())
-		}
-		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
-			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{}}},
-			{Sequence: 2, Event: &pb.SessionOperationEvent_Progress{Progress: &pb.SessionOperationProgress{Kind: pb.SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_TEXT_DELTA, Message: "working"}}},
-			{Sequence: 3, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte("done\n")}}}},
-		}}, nil
-	}}
-	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:stream", strings.NewReader(`{"command":{"argv":["echo","done"]}}`))
-	server.ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-	if got := response.Header().Get("Content-Type"); got != "application/x-ndjson; charset=utf-8" {
-		t.Fatalf("content type = %q", got)
-	}
-	lines := strings.Split(strings.TrimSpace(response.Body.String()), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("lines = %#v", lines)
-	}
-	if !strings.Contains(lines[0], `"sequence":1`) || !strings.Contains(lines[0], `"type":"accepted"`) {
-		t.Fatalf("accepted event = %s", lines[0])
-	}
-	if !strings.Contains(lines[1], `"type":"progress"`) || !strings.Contains(lines[1], `"message":"working"`) {
-		t.Fatalf("progress event = %s", lines[1])
-	}
-	if !strings.Contains(lines[2], `"type":"completed"`) || !strings.Contains(lines[2], `"stdout":"ZG9uZQo="`) {
-		t.Fatalf("completed event = %s", lines[2])
 	}
 }
 
@@ -411,48 +350,6 @@ func TestGatewayRejectsOversizedFunctionInputBeforeDialingRuntime(t *testing.T) 
 	}
 }
 
-func TestGatewayRejectsRequestBodyOverConfiguredLimitBeforeDialingRuntime(t *testing.T) {
-	t.Skip("HTTP Session operation endpoint was removed")
-	dialer := &fakeDialer{client: &fakeSessionRuntimeClient{}}
-	server := testServer(t, readySessionRun(), allowAuthorizer{}, dialer)
-	server.MaxRequestBodyBytes = 64
-	payload := `{"command":{"argv":["echo","` + strings.Repeat("x", 80) + `"]}}`
-
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:execute", strings.NewReader(payload))
-	server.ServeHTTP(response, request)
-
-	if response.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-	if dialer.address != "" {
-		t.Fatalf("dialed Runtime Service %q for oversized request", dialer.address)
-	}
-}
-
-func TestGatewayRejectsResponseOverConfiguredLimitWithoutPartialJSON(t *testing.T) {
-	t.Skip("HTTP Session operation endpoint was removed")
-	client := &fakeSessionRuntimeClient{execute: func(_ context.Context, _ *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error) {
-		return &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte(strings.Repeat("x", 128))}}, nil
-	}}
-	server := testServer(t, readySessionRun(), allowAuthorizer{}, &fakeDialer{client: client})
-	server.MaxResponseBodyBytes = 64
-
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:execute", strings.NewReader(`{"command":{"argv":["true"]}}`))
-	server.ServeHTTP(response, request)
-
-	if response.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-	if got, want := response.Body.String(), "{\"error\":\"gateway response exceeds configured limit\"}\n"; got != want {
-		t.Fatalf("response = %q, want %q", got, want)
-	}
-	if strings.Contains(response.Body.String(), "stdout") {
-		t.Fatalf("response contains partial successful JSON: %s", response.Body.String())
-	}
-}
-
 func TestGatewayListsSessionFilesInPages(t *testing.T) {
 	run := readySessionRun()
 	client := &fakeSessionRuntimeClient{list: func(_ context.Context, request *pb.ListSessionFilesRequest, _ ...grpc.CallOption) (*pb.ListSessionFilesResponse, error) {
@@ -496,19 +393,6 @@ func TestGatewayReadsNestedSessionFilePath(t *testing.T) {
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/files/artifacts/test/output.log", nil))
 
 	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-}
-
-func TestGatewayRejectsInvalidOperationShape(t *testing.T) {
-	t.Skip("HTTP Session operation endpoint was removed")
-	server := testServer(t, readySessionRun(), allowAuthorizer{}, &fakeDialer{client: &fakeSessionRuntimeClient{}})
-
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:execute", strings.NewReader(`{"command":{"shell":"true"},"deleteFile":{"path":"x"}}`))
-	server.ServeHTTP(response, request)
-
-	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
@@ -560,6 +444,76 @@ func TestGatewayLimitsConcurrentRequests(t *testing.T) {
 	}
 }
 
+func TestGatewaySessionConnectionsDoNotExhaustHTTPRequests(t *testing.T) {
+	client := &fakeSessionRuntimeClient{status: func(_ context.Context, _ *pb.GetSessionStatusRequest, _ ...grpc.CallOption) (*pb.SessionStatus, error) {
+		return &pb.SessionStatus{State: pb.SessionState_SESSION_STATE_READY}, nil
+	}}
+	server := testServer(t, readySessionRun(), allowAuthorizer{}, &fakeDialer{client: client})
+	server.MaxConcurrentRequests = 1
+	server.MaxSessionConnections = 1
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+	path := "/v1/namespaces/default/runtimes/bash/sessions/session-uid"
+	connection, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(httpServer.URL, "http")+path+"/operations:ws", nil)
+	if err != nil {
+		t.Fatalf("dial first Session: %v", err)
+	}
+	defer connection.Close()
+	response, err := http.Get(httpServer.URL + path) //nolint:gosec // local test server
+	if err != nil {
+		t.Fatalf("get Session status while WebSocket is idle: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("HTTP request status = %d, want 200", response.StatusCode)
+	}
+	_, rejected, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(httpServer.URL, "http")+path+"/operations:ws", nil)
+	if err == nil {
+		t.Fatal("second Session WebSocket exceeded connection limit")
+	}
+	if rejected == nil || rejected.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second Session response = %#v, want 429", rejected)
+	}
+}
+
+func TestGatewayRejectsInactiveCancelWithoutClosingSession(t *testing.T) {
+	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, _ *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
+			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{OperationId: "operation-1"}}},
+			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{}}},
+		}}, nil
+	}}
+	server := testServer(t, readySessionRun(), allowAuthorizer{}, &fakeDialer{client: client})
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+	endpoint := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/v1/namespaces/default/runtimes/bash/sessions/session-uid/operations:ws"
+	connection, _, err := websocket.DefaultDialer.Dial(endpoint, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if err := connection.WriteJSON(map[string]any{"type": "cancel", "operationID": "old"}); err != nil {
+		t.Fatal(err)
+	}
+	var rejected struct {
+		Type string `json:"type"`
+	}
+	if err := connection.ReadJSON(&rejected); err != nil || rejected.Type != "error" {
+		t.Fatalf("inactive cancel response = %#v, %v", rejected, err)
+	}
+	if err := connection.WriteJSON(map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"true"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"accepted", "completed"} {
+		var event struct {
+			Type string `json:"type"`
+		}
+		if err := connection.ReadJSON(&event); err != nil || event.Type != want {
+			t.Fatalf("response after inactive cancel = %#v, %v; want %s", event, err, want)
+		}
+	}
+}
+
 func testServer(t *testing.T, run *v1alpha1.Run, authorizer Authorizer, dialer SessionRuntimeDialer) *Server {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -606,6 +560,7 @@ func (denyAuthorizer) Authorize(context.Context, *http.Request, *v1alpha1.Run) e
 }
 
 type fakeDialer struct {
+	mu             sync.Mutex
 	client         pb.SessionRuntimeClient
 	functionClient pb.FunctionRuntimeClient
 	address        string
@@ -614,11 +569,15 @@ type fakeDialer struct {
 }
 
 func (d *fakeDialer) DialFunction(_ context.Context, address string) (pb.FunctionRuntimeClient, io.Closer, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.address = address
 	return d.functionClient, nopCloser{}, nil
 }
 
 func (d *fakeDialer) Dial(_ context.Context, address string) (pb.SessionRuntimeClient, io.Closer, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.address = address
 	if d.dials < len(d.closers) {
 		closer := d.closers[d.dials]
