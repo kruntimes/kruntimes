@@ -66,7 +66,7 @@ export type SessionOperationRequest = {
 export type SessionOperationEvent = {
   sequence: number;
   type: "accepted" | "output" | "progress" | "completed" | "failed";
-  accepted?: { operationId: string };
+  accepted?: { operationID: string };
   output?: { stream: "stdout" | "stderr"; data: string };
   progress?: {
     kind: "status" | "text_delta" | "tool_call_started" | "tool_call_finished";

@@ -334,11 +334,12 @@ type RunFunctionMode struct {
 // It is a trusted-workload preview; a Session Run holds exclusive v0 Runtime
 // capacity until it terminates.
 type RunSessionMode struct {
-	// IdleTimeoutSeconds is the duration after the last accepted command or file
-	// mutation before the session is closed.
+	// LeaseTimeoutSeconds is the duration after the last server-observed
+	// connection heartbeat before the session is closed. When omitted, lease expiry is disabled and
+	// the Session is not required to send heartbeats.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
-	IdleTimeoutSeconds *int32 `json:"idleTimeoutSeconds,omitempty"`
+	LeaseTimeoutSeconds *int32 `json:"leaseTimeoutSeconds,omitempty"`
 
 	// QueueSize limits queued command and file-mutation operations for this
 	// session. runtimed also applies its administrator-configured global limit.

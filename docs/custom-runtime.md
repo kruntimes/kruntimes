@@ -206,7 +206,7 @@ work.
 ### Session Process Termination
 
 When implementing `SessionRuntime`, cancellation of an
-`ExecuteSessionOperation` context must stop the active operation and its child
+`StreamSessionOperation` context must stop the active operation and its child
 process tree. The Runtime Server must use a bounded graceful-termination period
 before forcefully ending processes that do not exit. This is a backend-specific
 implementation contract. Built-in Bash and Python Runtime images expose Helm

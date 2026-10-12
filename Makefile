@@ -107,7 +107,7 @@ test-sdk-python: ## Run Python Sandbox SDK and diagnosis agent unit tests.
 
 .PHONY: test-race
 test-race: generate manifests proto ## Run focused Go race-detector coverage for runtime and control-plane packages.
-	go test -race ./internal/controller ./internal/scheduler ./internal/runtimed ./runtimes/bash -count=1
+	go test -race ./internal/controller ./internal/scheduler ./internal/runtimed ./internal/gateway ./runtimes/bash ./sdk/go/sandbox -count=1
 
 .PHONY: govulncheck
 govulncheck: govulncheck-tool ## Run govulncheck against all Go packages.

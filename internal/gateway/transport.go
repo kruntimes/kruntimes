@@ -18,7 +18,10 @@ import (
 // Runtime's NetworkPolicy and the gateway's authenticated HTTP boundary.
 type GRPCDialer struct{}
 
-const runtimeDialTimeout = 5 * time.Second
+// Runtime Services can be freshly created when a Session first becomes Ready.
+// Leave enough time for cluster DNS/endpoints convergence while still being
+// bounded by the caller's context deadline.
+const runtimeDialTimeout = 15 * time.Second
 
 func (GRPCDialer) Dial(ctx context.Context, address string) (pb.SessionRuntimeClient, io.Closer, error) {
 	connection, err := dialReadyRuntime(ctx, address)

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gorilla/websocket"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -26,13 +27,14 @@ import (
 // Kubernetes Pod port-forward. It changes only the endpoint scheme and host;
 // the Run-owned path, query, and HTTP headers are preserved.
 type ConsolePortForward struct {
-	httpClient HTTPDoer
-	localURL   *url.URL
-	stop       chan struct{}
-	done       chan struct{}
-	err        error
-	errMu      sync.RWMutex
-	closeOnce  sync.Once
+	httpClient    HTTPDoer
+	sessionDialer SessionDialer
+	localURL      *url.URL
+	stop          chan struct{}
+	done          chan struct{}
+	err           error
+	errMu         sync.RWMutex
+	closeOnce     sync.Once
 }
 
 // StartConsolePortForward starts a local port-forward to one Ready Pod behind
@@ -60,6 +62,10 @@ func StartConsolePortForward(ctx context.Context, config *rest.Config, namespace
 	if err != nil {
 		return nil, err
 	}
+	sessionDialer, err := consolePortForwardSessionDialer(config, tlsEnabled)
+	if err != nil {
+		return nil, err
+	}
 	transport, upgrader, err := spdy.RoundTripperFor(config)
 	if err != nil {
 		return nil, fmt.Errorf("create Kubernetes port-forward transport: %w", err)
@@ -76,7 +82,7 @@ func StartConsolePortForward(ctx context.Context, config *rest.Config, namespace
 	if err != nil {
 		return nil, fmt.Errorf("create Console port-forward: %w", err)
 	}
-	forward := &ConsolePortForward{httpClient: httpClient, stop: stop, done: make(chan struct{})}
+	forward := &ConsolePortForward{httpClient: httpClient, sessionDialer: sessionDialer, stop: stop, done: make(chan struct{})}
 	go func() {
 		defer close(forward.done)
 		forward.setError(forwarder.ForwardPorts())
@@ -103,6 +109,16 @@ func StartConsolePortForward(ctx context.Context, config *rest.Config, namespace
 	}
 	forward.localURL = &url.URL{Scheme: scheme, Host: "127.0.0.1:" + strconv.Itoa(int(ports[0].Local))}
 	return forward, nil
+}
+
+func consolePortForwardSessionDialer(config *rest.Config, tlsEnabled bool) (SessionDialer, error) {
+	forwardConfig := rest.CopyConfig(config)
+	if tlsEnabled {
+		forwardConfig.TLSClientConfig.Insecure = true //nolint:gosec // Kubernetes-authenticated local port-forward only.
+		forwardConfig.TLSClientConfig.CAData = nil
+		forwardConfig.TLSClientConfig.CAFile = ""
+	}
+	return newRESTSessionDialer(forwardConfig)
 }
 
 func consolePortForwardHTTPClient(config *rest.Config, tlsEnabled bool) (*http.Client, error) {
@@ -149,6 +165,33 @@ func (f *ConsolePortForward) Do(request *http.Request) (*http.Response, error) {
 	copy.URL = &endpoint
 	copy.Host = ""
 	return f.httpClient.Do(copy)
+}
+
+// DialSession implements SessionDialer through the same scoped local
+// port-forward used for HTTP gateway requests.
+func (f *ConsolePortForward) DialSession(ctx context.Context, endpoint string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+	if f == nil || f.sessionDialer == nil || f.localURL == nil {
+		return nil, nil, errors.New("Console port-forward is not ready")
+	}
+	select {
+	case <-f.done:
+		return nil, nil, errors.New("Console port-forward is closed")
+	default:
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse Session endpoint: %w", err)
+	}
+	switch f.localURL.Scheme {
+	case "http":
+		parsed.Scheme = "ws"
+	case "https":
+		parsed.Scheme = "wss"
+	default:
+		return nil, nil, errors.New("Console port-forward has an invalid endpoint")
+	}
+	parsed.Host = f.localURL.Host
+	return f.sessionDialer.DialSession(ctx, parsed.String(), headers)
 }
 
 // Close stops the local port-forward. It is safe to call more than once.

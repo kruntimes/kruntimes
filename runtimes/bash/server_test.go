@@ -79,7 +79,39 @@ func startFunctionTestServer(t *testing.T, outputLimit int) (pb.FunctionRuntimeC
 	}
 }
 
-func startSessionTestServer(t *testing.T) (pb.SessionRuntimeClient, string, func()) {
+type sessionTestClient struct{ pb.SessionRuntimeClient }
+
+func (c sessionTestClient) collectSessionOperation(ctx context.Context, request *pb.SessionOperationRequest) (*pb.SessionOperationResult, error) {
+	stream, err := c.StreamSessionOperation(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	var stdout, stderr []byte
+	for {
+		event, err := stream.Recv()
+		if err == io.EOF {
+			return nil, status.Error(codes.Internal, "operation stream ended without completion")
+		}
+		if err != nil {
+			return nil, err
+		}
+		if output := event.GetOutput(); output != nil {
+			if output.GetStream() == pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDOUT {
+				stdout = append(stdout, output.GetData()...)
+			} else {
+				stderr = append(stderr, output.GetData()...)
+			}
+		}
+		if completed := event.GetCompleted(); completed != nil {
+			if command := completed.GetCommand(); command != nil {
+				command.Stdout, command.Stderr = stdout, stderr
+			}
+			return completed, nil
+		}
+	}
+}
+
+func startSessionTestServer(t *testing.T) (sessionTestClient, string, func()) {
 	t.Helper()
 
 	workDir := t.TempDir()
@@ -97,7 +129,7 @@ func startSessionTestServer(t *testing.T) (pb.SessionRuntimeClient, string, func
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	return pb.NewSessionRuntimeClient(conn), workDir, func() {
+	return sessionTestClient{SessionRuntimeClient: pb.NewSessionRuntimeClient(conn)}, workDir, func() {
 		conn.Close()
 		srv.Stop()
 	}
@@ -222,6 +254,14 @@ func TestSessionRuntimeRegisterStatusCloseAndAssignmentFencing(t *testing.T) {
 	if current.State != pb.SessionState_SESSION_STATE_READY {
 		t.Fatalf("session state = %v, want ready", current.State)
 	}
+	leaseBefore := current.LastLeaseHeartbeatUnixNano
+	if _, err := client.RenewSessionLease(context.Background(), &pb.RenewSessionLeaseRequest{Identity: identity}); err != nil {
+		t.Fatalf("RenewSessionLease: %v", err)
+	}
+	current, err = client.GetSessionStatus(context.Background(), &pb.GetSessionStatusRequest{Identity: identity})
+	if err != nil || current.LastLeaseHeartbeatUnixNano <= leaseBefore {
+		t.Fatalf("lease heartbeat after touch = %#v, err = %v", current, err)
+	}
 	if _, err := client.CloseSession(context.Background(), &pb.CloseSessionRequest{Identity: identity}); err != nil {
 		t.Fatalf("CloseSession: %v", err)
 	}
@@ -270,24 +310,24 @@ func TestSessionRuntimeExecutesCommandsAndConfinesFiles(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
 	}
-	if _, err := client.ExecuteSessionOperation(context.Background(), &pb.ExecuteSessionOperationRequest{Identity: identity}); status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("ExecuteSessionOperation without operation = %v, want InvalidArgument", err)
+	if _, err := client.collectSessionOperation(context.Background(), &pb.SessionOperationRequest{Identity: identity}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("collectSessionOperation without operation = %v, want InvalidArgument", err)
 	}
-	if _, err := client.ExecuteSessionOperation(context.Background(), &pb.ExecuteSessionOperationRequest{
+	if _, err := client.collectSessionOperation(context.Background(), &pb.SessionOperationRequest{
 		Identity: identity,
-		Operation: &pb.ExecuteSessionOperationRequest_CreateDirectory{CreateDirectory: &pb.SessionDirectoryCreate{
+		Operation: &pb.SessionOperationRequest_CreateDirectory{CreateDirectory: &pb.SessionDirectoryCreate{
 			Path: "scratch/nested",
 		}},
 	}); err != nil {
-		t.Fatalf("ExecuteSessionOperation create directory: %v", err)
+		t.Fatalf("collectSessionOperation create directory: %v", err)
 	}
-	if _, err := client.ExecuteSessionOperation(context.Background(), &pb.ExecuteSessionOperationRequest{
+	if _, err := client.collectSessionOperation(context.Background(), &pb.SessionOperationRequest{
 		Identity: identity,
-		Operation: &pb.ExecuteSessionOperationRequest_WriteFile{WriteFile: &pb.SessionFileWrite{
+		Operation: &pb.SessionOperationRequest_WriteFile{WriteFile: &pb.SessionFileWrite{
 			Path: "notes/hello.txt", Contents: []byte("hello\n"), CreateParents: true,
 		}},
 	}); err != nil {
-		t.Fatalf("ExecuteSessionOperation write: %v", err)
+		t.Fatalf("collectSessionOperation write: %v", err)
 	}
 	read, err := client.ReadSessionFile(context.Background(), &pb.ReadSessionFileRequest{Identity: identity, Path: "notes/hello.txt", MaxBytes: 1024})
 	if err != nil {
@@ -310,34 +350,34 @@ func TestSessionRuntimeExecutesCommandsAndConfinesFiles(t *testing.T) {
 	if notes == nil || !notes.Directory {
 		t.Fatalf("directory entries = %#v, want notes directory", listed.Entries)
 	}
-	operation, err := client.ExecuteSessionOperation(context.Background(), &pb.ExecuteSessionOperationRequest{
+	operation, err := client.collectSessionOperation(context.Background(), &pb.SessionOperationRequest{
 		Identity: identity,
-		Operation: &pb.ExecuteSessionOperationRequest_Command{Command: &pb.SessionCommand{
+		Operation: &pb.SessionOperationRequest_Command{Command: &pb.SessionCommand{
 			Argv: []string{"bash", "-c", "printf '%s:%s:' \"$KRUNTIMES_SESSION_DEFAULT\" \"$KRUNTIMES_SESSION_TEST\"; cat notes/hello.txt"},
 			Env:  map[string]string{"KRUNTIMES_SESSION_TEST": "environment"},
 		}},
 	})
 	if err != nil {
-		t.Fatalf("ExecuteSessionOperation command: %v", err)
+		t.Fatalf("collectSessionOperation command: %v", err)
 	}
 	if operation.Command == nil || operation.Command.ExitCode != 0 || string(operation.Command.Stdout) != "session:environment:hello\n" || operation.Command.TimedOut {
 		t.Fatalf("command result = %#v", operation)
 	}
-	if _, err := client.ExecuteSessionOperation(context.Background(), &pb.ExecuteSessionOperationRequest{
+	if _, err := client.collectSessionOperation(context.Background(), &pb.SessionOperationRequest{
 		Identity: identity,
-		Operation: &pb.ExecuteSessionOperationRequest_RenameFile{RenameFile: &pb.SessionFileRename{
+		Operation: &pb.SessionOperationRequest_RenameFile{RenameFile: &pb.SessionFileRename{
 			SourcePath: "notes/hello.txt", DestinationPath: "notes/greeting.txt",
 		}},
 	}); err != nil {
-		t.Fatalf("ExecuteSessionOperation rename: %v", err)
+		t.Fatalf("collectSessionOperation rename: %v", err)
 	}
-	if _, err := client.ExecuteSessionOperation(context.Background(), &pb.ExecuteSessionOperationRequest{
+	if _, err := client.collectSessionOperation(context.Background(), &pb.SessionOperationRequest{
 		Identity: identity,
-		Operation: &pb.ExecuteSessionOperationRequest_DeleteFile{DeleteFile: &pb.SessionFileDelete{
+		Operation: &pb.SessionOperationRequest_DeleteFile{DeleteFile: &pb.SessionFileDelete{
 			Path: "notes", Recursive: true,
 		}},
 	}); err != nil {
-		t.Fatalf("ExecuteSessionOperation delete: %v", err)
+		t.Fatalf("collectSessionOperation delete: %v", err)
 	}
 	if _, err := client.ReadSessionFile(context.Background(), &pb.ReadSessionFileRequest{Identity: identity, Path: "../outside", MaxBytes: 1}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("ReadSessionFile escaping path = %v, want InvalidArgument", err)
@@ -353,9 +393,9 @@ func TestSessionRuntimeStreamsCommandOutputBeforeCompletion(t *testing.T) {
 	}
 
 	started := time.Now()
-	stream, err := client.StreamSessionOperation(context.Background(), &pb.ExecuteSessionOperationRequest{
+	stream, err := client.StreamSessionOperation(context.Background(), &pb.SessionOperationRequest{
 		Identity: identity,
-		Operation: &pb.ExecuteSessionOperationRequest_Command{Command: &pb.SessionCommand{
+		Operation: &pb.SessionOperationRequest_Command{Command: &pb.SessionCommand{
 			Argv: []string{"sh", "-c", "printf first; sleep 1; printf second"},
 		}},
 	})
@@ -373,7 +413,7 @@ func TestSessionRuntimeStreamsCommandOutputBeforeCompletion(t *testing.T) {
 		t.Fatalf("first event = %#v", first)
 	}
 
-	var completed *pb.ExecuteSessionOperationResponse
+	var completed *pb.SessionOperationResult
 	for {
 		event, err := stream.Recv()
 		if err == io.EOF {

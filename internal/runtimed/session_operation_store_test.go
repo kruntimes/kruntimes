@@ -1,6 +1,7 @@
 package runtimed
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -13,6 +14,38 @@ import (
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
+
+func TestSessionOperationStoreRetainsMoreThanSixtyFourOutputEvents(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	apiClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	run := &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default", UID: types.UID("run-uid")}}
+	store := newSessionOperationStore(apiClient, apiClient)
+	if _, created, err := store.Begin(t.Context(), run, "large-output", "digest"); err != nil || !created {
+		t.Fatalf("Begin() = created %t, err %v", created, err)
+	}
+	if err := store.Append(t.Context(), run, "large-output", sessionOperationAccepted(1, "large-output")); err != nil {
+		t.Fatal(err)
+	}
+	for sequence := int64(2); sequence <= 80; sequence++ {
+		event := &pb.SessionOperationEvent{Sequence: sequence, Event: &pb.SessionOperationEvent_Output{Output: &pb.SessionOperationOutput{Stream: pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDOUT, Data: bytes.Repeat([]byte("x"), 4096)}}}
+		if err := store.Append(t.Context(), run, "large-output", event); err != nil {
+			t.Fatalf("append output event %d: %v", sequence, err)
+		}
+	}
+	completed := &pb.SessionOperationEvent{Sequence: 81, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.SessionOperationResult{Command: &pb.SessionCommandResult{ExitCode: 0}}}}
+	if err := store.Append(t.Context(), run, "large-output", completed); err != nil {
+		t.Fatalf("append completion after large output: %v", err)
+	}
+	if record, err := newSessionOperationStore(apiClient, apiClient).Record(t.Context(), run, "large-output"); err != nil || !record.Terminal || len(record.Events) != 81 {
+		t.Fatalf("replayed large output = %#v, err %v", record, err)
+	}
+}
 
 func TestSessionOperationStorePersistsAndReplaysEvents(t *testing.T) {
 	scheme := runtime.NewScheme()
@@ -29,7 +62,7 @@ func TestSessionOperationStorePersistsAndReplaysEvents(t *testing.T) {
 		t.Fatalf("Begin() = created %t, err %v", created, err)
 	}
 	accepted := sessionOperationAccepted(1, "turn-1")
-	completed := &pb.SessionOperationEvent{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0}}}}
+	completed := &pb.SessionOperationEvent{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.SessionOperationResult{Command: &pb.SessionCommandResult{ExitCode: 0}}}}
 	if err := store.Append(t.Context(), run, "turn-1", accepted); err != nil {
 		t.Fatalf("append accepted: %v", err)
 	}

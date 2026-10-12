@@ -7,7 +7,9 @@ name = "kruntimes-sdk"
 version = "0.0.0"
 description = "Python Sandbox SDK for kruntimes Session-mode Runs"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "websocket-client>=1.8.0",
+]
 
 [project.optional-dependencies]
 kubernetes = [

@@ -23,6 +23,29 @@ func findRunCondition(run *v1alpha1.Run, typ string) *metav1.Condition {
 	return nil
 }
 
+func waitForRunCondition(t *testing.T, run *v1alpha1.Run, typ string, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run); err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if condition := findRunCondition(run, typ); condition != nil && condition.Status == metav1.ConditionTrue {
+			return
+		}
+		switch run.Status.Phase {
+		case v1alpha1.RunSucceeded, v1alpha1.RunFailed, v1alpha1.RunTimeout, v1alpha1.RunCancelled:
+			t.Fatalf("Run %s reached %s before condition %s=True: %s", run.Name, run.Status.Phase, typ, run.Status.Message)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for Run %s condition %s=True", run.Name, typ)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
 func assertCancelledRun(t *testing.T, run *v1alpha1.Run) {
 	t.Helper()
 	if run.Status.Phase != v1alpha1.RunCancelled {

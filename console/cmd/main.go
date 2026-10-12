@@ -38,6 +38,7 @@ func main() {
 		authorizationCacheTTL      time.Duration
 		authorizationCacheCapacity int
 		maxConcurrentRequests      int
+		maxSessionConnections      int
 		maxRequestBodyBytes        int64
 		maxResponseBodyBytes       int64
 		maxHeaderBytes             int
@@ -52,6 +53,7 @@ func main() {
 	flag.DurationVar(&authorizationCacheTTL, "authorization-cache-ttl", defaultAuthorizationCache.TTL, "How long successful access authorization decisions remain cached; zero disables caching.")
 	flag.IntVar(&authorizationCacheCapacity, "authorization-cache-capacity", defaultAuthorizationCache.Capacity, "Maximum successful authorization decisions retained; zero disables caching.")
 	flag.IntVar(&maxConcurrentRequests, "max-concurrent-requests", gateway.DefaultMaxConcurrentRequests, "Maximum Runtime access API requests handled by one Console Pod.")
+	flag.IntVar(&maxSessionConnections, "max-session-connections", gateway.DefaultMaxSessionConnections, "Maximum persistent Session WebSocket connections handled by one Console Pod.")
 	flag.Int64Var(&maxRequestBodyBytes, "max-request-body-bytes", gateway.DefaultMaxRequestBodyBytes, "Maximum Runtime access API JSON request body size in bytes.")
 	flag.Int64Var(&maxResponseBodyBytes, "max-response-body-bytes", gateway.DefaultMaxResponseBodyBytes, "Maximum Runtime access API JSON response size in bytes.")
 	flag.IntVar(&maxHeaderBytes, "max-header-bytes", gateway.DefaultMaxHeaderBytes, "Maximum HTTP request header size in bytes.")
@@ -114,6 +116,7 @@ func main() {
 			Dialer:                gateway.GRPCDialer{},
 			FunctionDialer:        gateway.GRPCDialer{},
 			MaxConcurrentRequests: maxConcurrentRequests,
+			MaxSessionConnections: maxSessionConnections,
 			MaxRequestBodyBytes:   maxRequestBodyBytes,
 			MaxResponseBodyBytes:  maxResponseBodyBytes,
 			MaxHeaderBytes:        maxHeaderBytes,

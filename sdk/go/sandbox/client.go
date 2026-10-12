@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,6 +35,12 @@ type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
+// SessionDialer opens the SDK's internal persistent Session connection.
+// Implementations may rewrite the endpoint for a scoped Console port-forward.
+type SessionDialer interface {
+	DialSession(context.Context, string, http.Header) (*websocket.Conn, *http.Response, error)
+}
+
 // LogReader opens the runtimed container log for one assigned Runtime Pod.
 type LogReader interface {
 	Open(ctx context.Context, namespace, pod, container string) (io.ReadCloser, error)
@@ -41,22 +48,24 @@ type LogReader interface {
 
 // Client creates and manages Sandboxes backed by Session-mode Runs.
 type Client struct {
-	runs         client.Client
-	httpClient   HTTPDoer
-	logReader    LogReader
-	bearerToken  string
-	pollInterval time.Duration
+	runs          client.Client
+	httpClient    HTTPDoer
+	sessionDialer SessionDialer
+	logReader     LogReader
+	bearerToken   string
+	pollInterval  time.Duration
 }
 
 // Config supplies the explicit Kubernetes and Console dependencies for Client.
 // Callers may use a Kubernetes-configured HTTP client that injects credentials
 // instead of BearerToken.
 type Config struct {
-	Runs         client.Client
-	HTTPClient   HTTPDoer
-	LogReader    LogReader
-	BearerToken  string
-	PollInterval time.Duration
+	Runs          client.Client
+	HTTPClient    HTTPDoer
+	SessionDialer SessionDialer
+	LogReader     LogReader
+	BearerToken   string
+	PollInterval  time.Duration
 }
 
 // New constructs a Sandbox client. Kubernetes and Console dependencies are
@@ -72,7 +81,11 @@ func New(config Config) (*Client, error) {
 	if interval <= 0 {
 		interval = defaultPollInterval
 	}
-	return &Client{runs: config.Runs, httpClient: config.HTTPClient, logReader: config.LogReader, bearerToken: config.BearerToken, pollInterval: interval}, nil
+	dialer := config.SessionDialer
+	if dialer == nil {
+		dialer = defaultSessionDialer{}
+	}
+	return &Client{runs: config.Runs, httpClient: config.HTTPClient, sessionDialer: dialer, logReader: config.LogReader, bearerToken: config.BearerToken, pollInterval: interval}, nil
 }
 
 // NewFromRESTConfig constructs a Client from Kubernetes REST credentials.
@@ -97,6 +110,16 @@ func NewFromRESTConfig(config *rest.Config, options Config) (*Client, error) {
 			return nil, fmt.Errorf("create Console HTTP client: %w", err)
 		}
 		options.HTTPClient = httpClient
+	}
+	if options.BearerToken == "" {
+		options.BearerToken = config.BearerToken
+	}
+	if options.SessionDialer == nil {
+		dialer, err := newRESTSessionDialer(config)
+		if err != nil {
+			return nil, err
+		}
+		options.SessionDialer = dialer
 	}
 	if options.LogReader == nil {
 		pods, err := corev1client.NewForConfig(config)
@@ -128,32 +151,20 @@ func (r KubernetesLogReader) Open(ctx context.Context, namespace, pod, container
 	return r.Pods.Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Container: container}).Stream(ctx)
 }
 
-// CreateOptions defines a new Session-mode Run.
-type CreateOptions struct {
-	Name           string
-	GenerateName   string
-	Namespace      string
-	Runtime        string
-	Source         *v1alpha1.CodeSource
-	ArtifactInputs []v1alpha1.ArtifactInput
-	Env            map[string]string
-	Timeout        *metav1.Duration
-	Session        *v1alpha1.RunSessionMode
-}
-
-// Create creates a Session Run. It does not wait for Runtime capacity or
-// registration; callers use Wait to obtain a ready Sandbox.
-func (c *Client) Create(ctx context.Context, options CreateOptions) (*Sandbox, error) {
-	if options.Namespace == "" || options.Runtime == "" {
+// create is the internal Run-creation half of Runtime.AcquireSandbox. It must
+// not be exposed because callers could otherwise receive a Sandbox before it
+// has acquired Runtime capacity.
+func (c *Client) create(ctx context.Context, namespace, runtimeName string, options AcquireOptions) (*Sandbox, error) {
+	if namespace == "" || runtimeName == "" {
 		return nil, errors.New("sandbox namespace and runtime are required")
 	}
 	if options.Name == "" && options.GenerateName == "" {
 		return nil, errors.New("sandbox name or generateName is required")
 	}
 	run := &v1alpha1.Run{
-		ObjectMeta: metav1.ObjectMeta{Name: options.Name, GenerateName: options.GenerateName, Namespace: options.Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: options.Name, GenerateName: options.GenerateName, Namespace: namespace},
 		Spec: v1alpha1.RunSpec{
-			Runtime:        options.Runtime,
+			Runtime:        runtimeName,
 			Source:         options.Source,
 			ArtifactInputs: options.ArtifactInputs,
 			Env:            environmentVariables(options.Env),
@@ -291,20 +302,40 @@ type Command struct {
 	TimeoutMillis    int64             `json:"timeoutMillis,omitempty"`
 }
 
+// Operation is one mutation submitted over a persistent Session connection.
+// Exactly one field must be set.
+type Operation struct {
+	Command         *Command         `json:"command,omitempty"`
+	WriteFile       *FileWrite       `json:"writeFile,omitempty"`
+	CreateDirectory *DirectoryCreate `json:"createDirectory,omitempty"`
+	DeleteFile      *FileDelete      `json:"deleteFile,omitempty"`
+	RenameFile      *FileRename      `json:"renameFile,omitempty"`
+}
+
+type FileWrite struct {
+	Path          string `json:"path"`
+	Contents      []byte `json:"contents"`
+	CreateParents bool   `json:"createParents,omitempty"`
+}
+type DirectoryCreate struct {
+	Path string `json:"path"`
+}
+type FileDelete struct {
+	Path      string `json:"path"`
+	Recursive bool   `json:"recursive,omitempty"`
+}
+type FileRename struct {
+	SourcePath      string `json:"sourcePath"`
+	DestinationPath string `json:"destinationPath"`
+	Overwrite       bool   `json:"overwrite,omitempty"`
+}
+
 // CommandResult is the bounded result of one command operation.
 type CommandResult struct {
 	ExitCode int32  `json:"exitCode"`
 	Stdout   []byte `json:"stdout,omitempty"`
 	Stderr   []byte `json:"stderr,omitempty"`
 	TimedOut bool   `json:"timedOut,omitempty"`
-}
-
-// StreamOptions controls durable Session operation streaming. Supplying an
-// IdempotencyKey makes retries safe; the accepted event exposes the generated
-// OperationID when this field is empty.
-type StreamOptions struct {
-	IdempotencyKey string
-	AfterSequence  int64
 }
 
 // OperationEvent is one ordered event emitted by a streaming Session operation.
@@ -337,153 +368,6 @@ type OperationProgress struct {
 type OperationFailure struct {
 	Code    int32  `json:"code"`
 	Message string `json:"message"`
-}
-
-// OperationStream owns a single NDJSON response. Next returns io.EOF after a
-// terminal event; callers retain the last Sequence as the resume cursor.
-type OperationStream struct {
-	body         io.ReadCloser
-	decoder      *json.Decoder
-	lastSequence int64
-}
-
-func (s *OperationStream) Next() (OperationEvent, error) {
-	if s == nil || s.decoder == nil {
-		return OperationEvent{}, errors.New("operation stream is not configured")
-	}
-	var event OperationEvent
-	if err := s.decoder.Decode(&event); err != nil {
-		return OperationEvent{}, err
-	}
-	if event.Sequence != s.lastSequence+1 {
-		return OperationEvent{}, fmt.Errorf("operation event sequence %d follows %d", event.Sequence, s.lastSequence)
-	}
-	s.lastSequence = event.Sequence
-	return event, nil
-}
-
-func (s *OperationStream) Close() error {
-	if s == nil || s.body == nil {
-		return nil
-	}
-	return s.body.Close()
-}
-func (s *OperationStream) Cursor() int64 {
-	if s == nil {
-		return 0
-	}
-	return s.lastSequence
-}
-
-// Stream starts or reattaches to one command operation.
-func (s *Sandbox) Stream(ctx context.Context, command Command, options StreamOptions) (*OperationStream, error) {
-	endpoint, err := s.endpoint("operations:stream")
-	if err != nil {
-		return nil, err
-	}
-	if options.AfterSequence > 0 {
-		endpoint += "?after=" + strconv.FormatInt(options.AfterSequence, 10)
-	}
-	return s.openOperationStream(ctx, http.MethodPost, endpoint, map[string]any{"command": command}, options.IdempotencyKey)
-}
-
-// Resume replays retained events strictly after afterSequence without executing
-// the operation again.
-func (s *Sandbox) Resume(ctx context.Context, operationID string, afterSequence int64) (*OperationStream, error) {
-	if operationID == "" || afterSequence < 0 {
-		return nil, errors.New("operation ID and non-negative cursor are required")
-	}
-	endpoint, err := s.endpoint("operations/" + url.PathEscape(operationID) + ":stream")
-	if err != nil {
-		return nil, err
-	}
-	if afterSequence > 0 {
-		endpoint += "?after=" + strconv.FormatInt(afterSequence, 10)
-	}
-	return s.openOperationStream(ctx, http.MethodGet, endpoint, nil, "")
-}
-
-func (s *Sandbox) openOperationStream(ctx context.Context, method, endpoint string, body any, idempotencyKey string) (*OperationStream, error) {
-	var content io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("encode Console request: %w", err)
-		}
-		content = bytes.NewReader(encoded)
-	}
-	request, err := http.NewRequestWithContext(ctx, method, endpoint, content)
-	if err != nil {
-		return nil, fmt.Errorf("build Console request: %w", err)
-	}
-	request.Header.Set("Accept", "application/x-ndjson")
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	if idempotencyKey != "" {
-		request.Header.Set("Idempotency-Key", idempotencyKey)
-	}
-	if s.client.bearerToken != "" {
-		request.Header.Set("Authorization", "Bearer "+s.client.bearerToken)
-	}
-	response, err := s.client.httpClient.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("call Console Runtime access API: %w", err)
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		defer response.Body.Close()
-		var responseError struct {
-			Error string `json:"error"`
-		}
-		_ = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&responseError)
-		return nil, &APIError{StatusCode: response.StatusCode, Message: responseError.Error}
-	}
-	return &OperationStream{body: response.Body, decoder: json.NewDecoder(response.Body), lastSequence: operationStreamCursor(endpoint)}, nil
-}
-
-func operationStreamCursor(endpoint string) int64 {
-	parsed, err := url.Parse(endpoint)
-	if err != nil {
-		return 0
-	}
-	cursor, _ := strconv.ParseInt(parsed.Query().Get("after"), 10, 64)
-	return max(cursor, 0)
-}
-
-// Execute runs exactly one command. Transport errors have unknown execution
-// outcome and are intentionally never retried by this SDK.
-func (s *Sandbox) Execute(ctx context.Context, command Command) (CommandResult, error) {
-	var response struct {
-		Command *CommandResult `json:"command"`
-	}
-	err := s.operation(ctx, map[string]any{"command": command}, &response)
-	if err != nil {
-		return CommandResult{}, err
-	}
-	if response.Command == nil {
-		return CommandResult{}, errors.New("Console response did not include a command result")
-	}
-	return *response.Command, nil
-}
-
-// WriteFile writes bounded content at a workspace-relative path.
-func (s *Sandbox) WriteFile(ctx context.Context, path string, contents []byte, createParents bool) error {
-	return s.operation(ctx, map[string]any{"writeFile": map[string]any{"path": path, "contents": contents, "createParents": createParents}}, nil)
-}
-
-// CreateDirectory creates a workspace-relative directory and missing parents.
-func (s *Sandbox) CreateDirectory(ctx context.Context, path string) error {
-	return s.operation(ctx, map[string]any{"createDirectory": map[string]any{"path": path}}, nil)
-}
-
-// DeleteFile removes a workspace-relative file or directory.
-func (s *Sandbox) DeleteFile(ctx context.Context, path string, recursive bool) error {
-	return s.operation(ctx, map[string]any{"deleteFile": map[string]any{"path": path, "recursive": recursive}}, nil)
-}
-
-// RenameFile renames a workspace-relative file or directory.
-func (s *Sandbox) RenameFile(ctx context.Context, sourcePath, destinationPath string, overwrite bool) error {
-	return s.operation(ctx, map[string]any{"renameFile": map[string]any{"sourcePath": sourcePath, "destinationPath": destinationPath, "overwrite": overwrite}}, nil)
 }
 
 // ReadFile returns bounded content at a workspace-relative path.
@@ -624,14 +508,6 @@ type StateError struct {
 }
 
 func (e *StateError) Error() string { return e.Message }
-
-func (s *Sandbox) operation(ctx context.Context, operation any, response any) error {
-	endpoint, err := s.endpoint("operations:execute")
-	if err != nil {
-		return err
-	}
-	return s.request(ctx, http.MethodPost, endpoint, operation, response)
-}
 
 func (s *Sandbox) endpoint(suffix string) (string, error) {
 	if s.run.Status.Phase != v1alpha1.RunReady || s.run.Status.Endpoint == nil || s.run.Status.Endpoint.URL == "" {

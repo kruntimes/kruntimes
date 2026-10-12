@@ -21,7 +21,7 @@ const decodeBase64 = (value?: string) => {
 const eventText = (event: SessionOperationEvent) => {
   switch (event.type) {
     case "accepted":
-      return `accepted: ${event.accepted?.operationId || "operation admitted"}`;
+      return `accepted: ${event.accepted?.operationID || "operation admitted"}`;
     case "output":
       return `[${event.output?.stream || "output"}] ${decodeBase64(event.output?.data)}`;
     case "progress":
@@ -117,6 +117,7 @@ export function SessionOperationPanel({
           }
         },
       },
+      sessionLeaseTimeout(run.spec),
     );
     socketRef.current = socket;
   };
@@ -152,7 +153,7 @@ export function SessionOperationPanel({
         >
           {state === "idle" ? "Run command" : "Run again"}
         </button>
-        {isActive && (
+        {state === "streaming" && (
           <button className={ui.button} onClick={cancel}>
             Cancel operation
           </button>
@@ -177,4 +178,13 @@ export function SessionOperationPanel({
       </pre>
     </section>
   );
+}
+
+function sessionLeaseTimeout(spec: Record<string, unknown>): number | undefined {
+  const mode = spec.mode;
+  if (!mode || typeof mode !== "object") return undefined;
+  const session = (mode as Record<string, unknown>).session;
+  if (!session || typeof session !== "object") return undefined;
+  const value = (session as Record<string, unknown>).leaseTimeoutSeconds;
+  return typeof value === "number" && value > 0 ? value : undefined;
 }

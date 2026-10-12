@@ -10,8 +10,12 @@ import (
 const (
 	ConditionScheduled = "Scheduled"
 	ConditionRunning   = "Running"
-	ConditionReady     = "Ready"
-	ConditionCompleted = "Completed"
+	// ConditionRuntimeAccepted confirms that the Runtime Server has created an
+	// execution for a task Run. Running=True only means runtimed has claimed
+	// the Run and may still be dispatching Execute.
+	ConditionRuntimeAccepted = "RuntimeAccepted"
+	ConditionReady           = "Ready"
+	ConditionCompleted       = "Completed"
 )
 
 // SetTerminal applies the common status fields and lifecycle conditions for a
