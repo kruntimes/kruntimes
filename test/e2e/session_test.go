@@ -457,12 +457,29 @@ func TestSessionGatewayEnforcesTransferBounds(t *testing.T) {
 	websocketURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/operations:ws"
 	dial := func() *websocket.Conn {
 		t.Helper()
-		connection, _, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).DialContext( //nolint:gosec // E2E local port-forward only.
-			t.Context(), websocketURL, http.Header{"Authorization": []string{"Bearer " + token}})
-		if err != nil {
-			t.Fatalf("open bounded Session WebSocket: %v", err)
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			attemptCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			connection, response, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).DialContext( //nolint:gosec // E2E local port-forward only.
+				attemptCtx, websocketURL, http.Header{"Authorization": []string{"Bearer " + token}})
+			cancel()
+			if err == nil {
+				return connection
+			}
+			if response != nil {
+				_ = response.Body.Close()
+				t.Fatalf("open bounded Session WebSocket: %v (status %d)", err, response.StatusCode)
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("open bounded Session WebSocket after transient port-forward failures: %v", err)
+			}
+			t.Logf("retry bounded Session WebSocket after port-forward error: %v", err)
+			select {
+			case <-t.Context().Done():
+				t.Fatal(t.Context().Err())
+			case <-time.After(250 * time.Millisecond):
+			}
 		}
-		return connection
 	}
 	requestConnection := dial()
 	oversizedRequest := map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"true"}, "stdin": strings.Repeat("eA==", 160)}}}

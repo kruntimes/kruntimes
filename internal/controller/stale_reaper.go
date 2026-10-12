@@ -144,19 +144,23 @@ func (r *StaleRunReaper) handleStaleRun(ctx context.Context, run *v1alpha1.Run, 
 		runstatus.SetTerminal(run, v1alpha1.RunFailed, reason, msg, now)
 	}
 
-	if err := r.Status().Update(ctx, run); err != nil {
-		return err
-	}
 	// A Session or Function registration is local to the assigned Runtime Pod.
 	// Once that Pod is known to be gone (or terminating), its registration has
 	// disappeared with it. Retaining the cleanup finalizer would make a later
 	// delete wait forever for an Unregister RPC that can no longer be delivered.
+	// Remove it before marking the Run terminal: a conflict after the terminal
+	// status update cannot be retried by the active-Run predicate.
 	if run.Status.Phase == v1alpha1.RunFailed &&
 		(reason == runretry.ReasonPodGone || reason == runretry.ReasonPodTerminating) &&
 		controllerutil.RemoveFinalizer(run, v1alpha1.RunRegistrationCleanupFinalizer) {
+		status := run.Status.DeepCopy()
 		if err := r.Update(ctx, run); err != nil {
 			return fmt.Errorf("remove abandoned registration cleanup finalizer: %w", err)
 		}
+		run.Status = *status
+	}
+	if err := r.Status().Update(ctx, run); err != nil {
+		return err
 	}
 	if r.Recorder == nil {
 		return nil

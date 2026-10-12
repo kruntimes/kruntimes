@@ -210,9 +210,10 @@ func main() {
 	}
 
 	workflowRunReconciler := &controller.WorkflowRunReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("WorkflowRun"),
-		Scheme: mgr.GetScheme(),
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		Log:       ctrl.Log.WithName("controllers").WithName("WorkflowRun"),
+		Scheme:    mgr.GetScheme(),
 	}
 	if err := workflowRunReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "WorkflowRun")

@@ -97,8 +97,9 @@ func (e *workflowStepValidationError) Unwrap() error { return e.err }
 // WorkflowRunReconciler owns WorkflowRun execution-instance status.
 type WorkflowRunReconciler struct {
 	client.Client
-	Log    logr.Logger
-	Scheme *runtime.Scheme
+	APIReader client.Reader
+	Log       logr.Logger
+	Scheme    *runtime.Scheme
 }
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=workflowruns,verbs=get;list;watch;create;update;patch
@@ -483,6 +484,10 @@ func resolvedJobStatuses(jobs map[string]v1alpha1.JobSpec) map[string]v1alpha1.J
 }
 
 func (r *WorkflowRunReconciler) resolveWorkflowRunActions(ctx context.Context, workflowRun *v1alpha1.WorkflowRun, jobs map[string]v1alpha1.JobSpec) (map[string]workflowActionSnapshot, error) {
+	reader := client.Reader(r.Client)
+	if r.APIReader != nil {
+		reader = r.APIReader
+	}
 	actions := make(map[string]workflowActionSnapshot)
 	jobNames := make([]string, 0, len(jobs))
 	for jobName := range jobs {
@@ -495,7 +500,7 @@ func (r *WorkflowRunReconciler) resolveWorkflowRunActions(ctx context.Context, w
 				continue
 			}
 			action := &v1alpha1.Action{}
-			if err := r.Get(ctx, client.ObjectKey{Namespace: workflowRun.Namespace, Name: step.Uses}, action); err != nil {
+			if err := reader.Get(ctx, client.ObjectKey{Namespace: workflowRun.Namespace, Name: step.Uses}, action); err != nil {
 				if apierrors.IsNotFound(err) {
 					return nil, fmt.Errorf("Action %q for step %q in job %q does not exist", step.Uses, step.Name, jobName)
 				}

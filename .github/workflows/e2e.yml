@@ -81,6 +81,7 @@ jobs:
           kubectl describe runs -A
           kubectl get events -A --sort-by=.lastTimestamp
           kubectl logs deploy/kruntimes-controller --all-containers --tail=300 || true
+          kubectl logs deploy/kruntimes-console --all-containers --tail=300 || true
           kubectl logs -l app=kruntimes-scheduler --all-containers --tail=300 || true
           for pod in $(kubectl get pods -A -l runtime -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}'); do
             namespace=${pod%%/*}

@@ -27,7 +27,7 @@ const (
 	sessionOperationJournalLabel   = "kruntimes.io/session-operation"
 	sessionOperationRunUIDLabel    = "kruntimes.io/run-uid"
 
-	maxStoredSessionOperationEvents = 64
+	maxStoredSessionOperationEvents = 128
 	maxStoredSessionOperationBytes  = 8 << 10
 	maxSessionOperationJournalBytes = 768 << 10
 	sessionOperationSubscriberSize  = 16

@@ -338,6 +338,28 @@ func TestWorkflowRunReconcilerRejectsMissingActionBeforeCreatingRuns(t *testing.
 	assertChildRunCount(t, c, workflowRun.Namespace, 0)
 }
 
+func TestWorkflowRunActionResolutionUsesAPIReader(t *testing.T) {
+	scheme := workflowRunTestScheme(t)
+	action := &v1alpha1.Action{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-action", Namespace: "default"},
+		Spec:       v1alpha1.ActionSpec{Steps: []v1alpha1.StepSpec{{Name: "run", Run: "true"}}},
+	}
+	// The cache can lag behind a just-created Action even when the API server
+	// already exposes it. Action resolution must use the uncached reader.
+	cached := fake.NewClientBuilder().WithScheme(scheme).Build()
+	direct := fake.NewClientBuilder().WithScheme(scheme).WithObjects(action).Build()
+	reconciler := &WorkflowRunReconciler{Client: cached, APIReader: direct, Scheme: scheme}
+	workflowRun := &v1alpha1.WorkflowRun{ObjectMeta: metav1.ObjectMeta{Namespace: "default"}}
+	jobs := map[string]v1alpha1.JobSpec{"build": {Steps: []v1alpha1.StepSpec{{Name: "setup", Uses: action.Name}}}}
+	resolved, err := reconciler.resolveWorkflowRunActions(t.Context(), workflowRun, jobs)
+	if err != nil {
+		t.Fatalf("resolve newly created Action: %v", err)
+	}
+	if got := resolved[workflowActionSnapshotKey("build", "setup")].Name; got != action.Name {
+		t.Fatalf("resolved Action = %q, want %q", got, action.Name)
+	}
+}
+
 func TestWorkflowRunReconcilerRejectsInvalidActionInputBeforeCreatingRuns(t *testing.T) {
 	scheme := workflowRunTestScheme(t)
 	action := &v1alpha1.Action{
