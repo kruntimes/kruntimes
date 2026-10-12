@@ -45,7 +45,7 @@ service SessionRuntime {
     rpc RenewSessionLease(RenewSessionLeaseRequest) returns (SessionStatus);
     // StreamSessionOperation executes one mutation and emits ordered progress and
     // terminal events. The owner runtimed serializes the operation.
-    rpc StreamSessionOperation(ExecuteSessionOperationRequest) returns (stream SessionOperationEvent);
+    rpc StreamSessionOperation(SessionOperationRequest) returns (stream SessionOperationEvent);
     // ReadSessionFile returns bounded contents of one workspace-relative file.
     rpc ReadSessionFile(ReadSessionFileRequest) returns (ReadSessionFileResponse);
     // ListSessionFiles lists workspace-relative directory entries.
@@ -238,10 +238,10 @@ message SessionStatus {
     int64 last_lease_heartbeat_unix_nano = 5;
 }
 
-// ExecuteSessionOperationRequest carries exactly one mutation. Owner runtimed
+// SessionOperationRequest carries exactly one mutation. Owner runtimed
 // serializes it in the session queue and applies policy before calling the
 // local Runtime Server.
-message ExecuteSessionOperationRequest {
+message SessionOperationRequest {
     // Immutable assignment identity for the Session Run receiving this operation.
     SessionIdentity identity = 1;
     oneof operation {
@@ -284,7 +284,7 @@ message SessionCommand {
     int64 timeout_millis = 6;
 }
 
-message ExecuteSessionOperationResponse {
+message SessionOperationResult {
     // Command result when the request operation is command. It is absent for
     // successful file mutations.
     SessionCommandResult command = 1;
@@ -305,7 +305,7 @@ message SessionOperationEvent {
         // tool lifecycle event.
         SessionOperationProgress progress = 4;
         // Completed is emitted exactly once when an operation succeeds.
-        ExecuteSessionOperationResponse completed = 5;
+        SessionOperationResult completed = 5;
         // Failed is emitted exactly once after a stream has started when an
         // operation cannot complete successfully.
         SessionOperationFailure failed = 6;

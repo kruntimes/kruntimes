@@ -1753,21 +1753,21 @@ func (x *SessionStatus) GetLastLeaseHeartbeatUnixNano() int64 {
 	return 0
 }
 
-// ExecuteSessionOperationRequest carries exactly one mutation. Owner runtimed
+// SessionOperationRequest carries exactly one mutation. Owner runtimed
 // serializes it in the session queue and applies policy before calling the
 // local Runtime Server.
-type ExecuteSessionOperationRequest struct {
+type SessionOperationRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Immutable assignment identity for the Session Run receiving this operation.
 	Identity *SessionIdentity `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
 	// Types that are valid to be assigned to Operation:
 	//
-	//	*ExecuteSessionOperationRequest_Command
-	//	*ExecuteSessionOperationRequest_WriteFile
-	//	*ExecuteSessionOperationRequest_CreateDirectory
-	//	*ExecuteSessionOperationRequest_DeleteFile
-	//	*ExecuteSessionOperationRequest_RenameFile
-	Operation isExecuteSessionOperationRequest_Operation `protobuf_oneof:"operation"`
+	//	*SessionOperationRequest_Command
+	//	*SessionOperationRequest_WriteFile
+	//	*SessionOperationRequest_CreateDirectory
+	//	*SessionOperationRequest_DeleteFile
+	//	*SessionOperationRequest_RenameFile
+	Operation isSessionOperationRequest_Operation `protobuf_oneof:"operation"`
 	// IdempotencyKey identifies one submitted interactive operation. It is
 	// assigned by the Console when the caller does not provide one.
 	// Reusing a key with different operation contents is rejected.
@@ -1780,20 +1780,20 @@ type ExecuteSessionOperationRequest struct {
 	sizeCache           protoimpl.SizeCache
 }
 
-func (x *ExecuteSessionOperationRequest) Reset() {
-	*x = ExecuteSessionOperationRequest{}
+func (x *SessionOperationRequest) Reset() {
+	*x = SessionOperationRequest{}
 	mi := &file_api_runtime_v1_runtime_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ExecuteSessionOperationRequest) String() string {
+func (x *SessionOperationRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ExecuteSessionOperationRequest) ProtoMessage() {}
+func (*SessionOperationRequest) ProtoMessage() {}
 
-func (x *ExecuteSessionOperationRequest) ProtoReflect() protoreflect.Message {
+func (x *SessionOperationRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_api_runtime_v1_runtime_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1805,122 +1805,122 @@ func (x *ExecuteSessionOperationRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ExecuteSessionOperationRequest.ProtoReflect.Descriptor instead.
-func (*ExecuteSessionOperationRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SessionOperationRequest.ProtoReflect.Descriptor instead.
+func (*SessionOperationRequest) Descriptor() ([]byte, []int) {
 	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{26}
 }
 
-func (x *ExecuteSessionOperationRequest) GetIdentity() *SessionIdentity {
+func (x *SessionOperationRequest) GetIdentity() *SessionIdentity {
 	if x != nil {
 		return x.Identity
 	}
 	return nil
 }
 
-func (x *ExecuteSessionOperationRequest) GetOperation() isExecuteSessionOperationRequest_Operation {
+func (x *SessionOperationRequest) GetOperation() isSessionOperationRequest_Operation {
 	if x != nil {
 		return x.Operation
 	}
 	return nil
 }
 
-func (x *ExecuteSessionOperationRequest) GetCommand() *SessionCommand {
+func (x *SessionOperationRequest) GetCommand() *SessionCommand {
 	if x != nil {
-		if x, ok := x.Operation.(*ExecuteSessionOperationRequest_Command); ok {
+		if x, ok := x.Operation.(*SessionOperationRequest_Command); ok {
 			return x.Command
 		}
 	}
 	return nil
 }
 
-func (x *ExecuteSessionOperationRequest) GetWriteFile() *SessionFileWrite {
+func (x *SessionOperationRequest) GetWriteFile() *SessionFileWrite {
 	if x != nil {
-		if x, ok := x.Operation.(*ExecuteSessionOperationRequest_WriteFile); ok {
+		if x, ok := x.Operation.(*SessionOperationRequest_WriteFile); ok {
 			return x.WriteFile
 		}
 	}
 	return nil
 }
 
-func (x *ExecuteSessionOperationRequest) GetCreateDirectory() *SessionDirectoryCreate {
+func (x *SessionOperationRequest) GetCreateDirectory() *SessionDirectoryCreate {
 	if x != nil {
-		if x, ok := x.Operation.(*ExecuteSessionOperationRequest_CreateDirectory); ok {
+		if x, ok := x.Operation.(*SessionOperationRequest_CreateDirectory); ok {
 			return x.CreateDirectory
 		}
 	}
 	return nil
 }
 
-func (x *ExecuteSessionOperationRequest) GetDeleteFile() *SessionFileDelete {
+func (x *SessionOperationRequest) GetDeleteFile() *SessionFileDelete {
 	if x != nil {
-		if x, ok := x.Operation.(*ExecuteSessionOperationRequest_DeleteFile); ok {
+		if x, ok := x.Operation.(*SessionOperationRequest_DeleteFile); ok {
 			return x.DeleteFile
 		}
 	}
 	return nil
 }
 
-func (x *ExecuteSessionOperationRequest) GetRenameFile() *SessionFileRename {
+func (x *SessionOperationRequest) GetRenameFile() *SessionFileRename {
 	if x != nil {
-		if x, ok := x.Operation.(*ExecuteSessionOperationRequest_RenameFile); ok {
+		if x, ok := x.Operation.(*SessionOperationRequest_RenameFile); ok {
 			return x.RenameFile
 		}
 	}
 	return nil
 }
 
-func (x *ExecuteSessionOperationRequest) GetIdempotencyKey() string {
+func (x *SessionOperationRequest) GetIdempotencyKey() string {
 	if x != nil {
 		return x.IdempotencyKey
 	}
 	return ""
 }
 
-func (x *ExecuteSessionOperationRequest) GetResumeAfterSequence() int64 {
+func (x *SessionOperationRequest) GetResumeAfterSequence() int64 {
 	if x != nil {
 		return x.ResumeAfterSequence
 	}
 	return 0
 }
 
-type isExecuteSessionOperationRequest_Operation interface {
-	isExecuteSessionOperationRequest_Operation()
+type isSessionOperationRequest_Operation interface {
+	isSessionOperationRequest_Operation()
 }
 
-type ExecuteSessionOperationRequest_Command struct {
+type SessionOperationRequest_Command struct {
 	// Executes one command in the session workspace.
 	Command *SessionCommand `protobuf:"bytes,2,opt,name=command,proto3,oneof"`
 }
 
-type ExecuteSessionOperationRequest_WriteFile struct {
+type SessionOperationRequest_WriteFile struct {
 	// Writes one bounded file in the session workspace.
 	WriteFile *SessionFileWrite `protobuf:"bytes,3,opt,name=write_file,json=writeFile,proto3,oneof"`
 }
 
-type ExecuteSessionOperationRequest_CreateDirectory struct {
+type SessionOperationRequest_CreateDirectory struct {
 	// Creates one directory in the session workspace.
 	CreateDirectory *SessionDirectoryCreate `protobuf:"bytes,4,opt,name=create_directory,json=createDirectory,proto3,oneof"`
 }
 
-type ExecuteSessionOperationRequest_DeleteFile struct {
+type SessionOperationRequest_DeleteFile struct {
 	// Deletes one file or directory in the session workspace.
 	DeleteFile *SessionFileDelete `protobuf:"bytes,5,opt,name=delete_file,json=deleteFile,proto3,oneof"`
 }
 
-type ExecuteSessionOperationRequest_RenameFile struct {
+type SessionOperationRequest_RenameFile struct {
 	// Renames one file or directory in the session workspace.
 	RenameFile *SessionFileRename `protobuf:"bytes,6,opt,name=rename_file,json=renameFile,proto3,oneof"`
 }
 
-func (*ExecuteSessionOperationRequest_Command) isExecuteSessionOperationRequest_Operation() {}
+func (*SessionOperationRequest_Command) isSessionOperationRequest_Operation() {}
 
-func (*ExecuteSessionOperationRequest_WriteFile) isExecuteSessionOperationRequest_Operation() {}
+func (*SessionOperationRequest_WriteFile) isSessionOperationRequest_Operation() {}
 
-func (*ExecuteSessionOperationRequest_CreateDirectory) isExecuteSessionOperationRequest_Operation() {}
+func (*SessionOperationRequest_CreateDirectory) isSessionOperationRequest_Operation() {}
 
-func (*ExecuteSessionOperationRequest_DeleteFile) isExecuteSessionOperationRequest_Operation() {}
+func (*SessionOperationRequest_DeleteFile) isSessionOperationRequest_Operation() {}
 
-func (*ExecuteSessionOperationRequest_RenameFile) isExecuteSessionOperationRequest_Operation() {}
+func (*SessionOperationRequest_RenameFile) isSessionOperationRequest_Operation() {}
 
 type SessionCommand struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2015,7 +2015,7 @@ func (x *SessionCommand) GetTimeoutMillis() int64 {
 	return 0
 }
 
-type ExecuteSessionOperationResponse struct {
+type SessionOperationResult struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Command result when the request operation is command. It is absent for
 	// successful file mutations.
@@ -2024,20 +2024,20 @@ type ExecuteSessionOperationResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ExecuteSessionOperationResponse) Reset() {
-	*x = ExecuteSessionOperationResponse{}
+func (x *SessionOperationResult) Reset() {
+	*x = SessionOperationResult{}
 	mi := &file_api_runtime_v1_runtime_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ExecuteSessionOperationResponse) String() string {
+func (x *SessionOperationResult) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ExecuteSessionOperationResponse) ProtoMessage() {}
+func (*SessionOperationResult) ProtoMessage() {}
 
-func (x *ExecuteSessionOperationResponse) ProtoReflect() protoreflect.Message {
+func (x *SessionOperationResult) ProtoReflect() protoreflect.Message {
 	mi := &file_api_runtime_v1_runtime_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2049,12 +2049,12 @@ func (x *ExecuteSessionOperationResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ExecuteSessionOperationResponse.ProtoReflect.Descriptor instead.
-func (*ExecuteSessionOperationResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SessionOperationResult.ProtoReflect.Descriptor instead.
+func (*SessionOperationResult) Descriptor() ([]byte, []int) {
 	return file_api_runtime_v1_runtime_proto_rawDescGZIP(), []int{28}
 }
 
-func (x *ExecuteSessionOperationResponse) GetCommand() *SessionCommandResult {
+func (x *SessionOperationResult) GetCommand() *SessionCommandResult {
 	if x != nil {
 		return x.Command
 	}
@@ -2150,7 +2150,7 @@ func (x *SessionOperationEvent) GetProgress() *SessionOperationProgress {
 	return nil
 }
 
-func (x *SessionOperationEvent) GetCompleted() *ExecuteSessionOperationResponse {
+func (x *SessionOperationEvent) GetCompleted() *SessionOperationResult {
 	if x != nil {
 		if x, ok := x.Event.(*SessionOperationEvent_Completed); ok {
 			return x.Completed
@@ -2191,7 +2191,7 @@ type SessionOperationEvent_Progress struct {
 
 type SessionOperationEvent_Completed struct {
 	// Completed is emitted exactly once when an operation succeeds.
-	Completed *ExecuteSessionOperationResponse `protobuf:"bytes,5,opt,name=completed,proto3,oneof"`
+	Completed *SessionOperationResult `protobuf:"bytes,5,opt,name=completed,proto3,oneof"`
 }
 
 type SessionOperationEvent_Failed struct {
@@ -3256,8 +3256,8 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\x17last_activity_unix_nano\x18\x03 \x01(\x03R\x14lastActivityUnixNano\x12\x1f\n" +
 	"\vfatal_error\x18\x04 \x01(\tR\n" +
 	"fatalError\x12B\n" +
-	"\x1elast_lease_heartbeat_unix_nano\x18\x05 \x01(\x03R\x1alastLeaseHeartbeatUnixNano\"\x95\x04\n" +
-	"\x1eExecuteSessionOperationRequest\x128\n" +
+	"\x1elast_lease_heartbeat_unix_nano\x18\x05 \x01(\x03R\x1alastLeaseHeartbeatUnixNano\"\x8e\x04\n" +
+	"\x17SessionOperationRequest\x128\n" +
 	"\bidentity\x18\x01 \x01(\v2\x1c.executor.v1.SessionIdentityR\bidentity\x127\n" +
 	"\acommand\x18\x02 \x01(\v2\x1b.executor.v1.SessionCommandH\x00R\acommand\x12>\n" +
 	"\n" +
@@ -3279,15 +3279,15 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\x0etimeout_millis\x18\x06 \x01(\x03R\rtimeoutMillis\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"^\n" +
-	"\x1fExecuteSessionOperationResponse\x12;\n" +
-	"\acommand\x18\x01 \x01(\v2!.executor.v1.SessionCommandResultR\acommand\"\x93\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"U\n" +
+	"\x16SessionOperationResult\x12;\n" +
+	"\acommand\x18\x01 \x01(\v2!.executor.v1.SessionCommandResultR\acommand\"\x8a\x03\n" +
 	"\x15SessionOperationEvent\x12\x1a\n" +
 	"\bsequence\x18\x01 \x01(\x03R\bsequence\x12C\n" +
 	"\baccepted\x18\x02 \x01(\v2%.executor.v1.SessionOperationAcceptedH\x00R\baccepted\x12=\n" +
 	"\x06output\x18\x03 \x01(\v2#.executor.v1.SessionOperationOutputH\x00R\x06output\x12C\n" +
-	"\bprogress\x18\x04 \x01(\v2%.executor.v1.SessionOperationProgressH\x00R\bprogress\x12L\n" +
-	"\tcompleted\x18\x05 \x01(\v2,.executor.v1.ExecuteSessionOperationResponseH\x00R\tcompleted\x12>\n" +
+	"\bprogress\x18\x04 \x01(\v2%.executor.v1.SessionOperationProgressH\x00R\bprogress\x12C\n" +
+	"\tcompleted\x18\x05 \x01(\v2#.executor.v1.SessionOperationResultH\x00R\tcompleted\x12>\n" +
 	"\x06failed\x18\x06 \x01(\v2$.executor.v1.SessionOperationFailureH\x00R\x06failedB\a\n" +
 	"\x05event\"=\n" +
 	"\x18SessionOperationAccepted\x12!\n" +
@@ -3390,12 +3390,12 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\x10RegisterFunction\x12$.executor.v1.RegisterFunctionRequest\x1a%.executor.v1.RegisterFunctionResponse\x12Y\n" +
 	"\x0eFunctionStatus\x12\".executor.v1.FunctionStatusRequest\x1a#.executor.v1.FunctionStatusResponse\x12Y\n" +
 	"\x0eInvokeFunction\x12\".executor.v1.InvokeFunctionRequest\x1a#.executor.v1.InvokeFunctionResponse\x12e\n" +
-	"\x12UnregisterFunction\x12&.executor.v1.UnregisterFunctionRequest\x1a'.executor.v1.UnregisterFunctionResponse2\x93\x05\n" +
+	"\x12UnregisterFunction\x12&.executor.v1.UnregisterFunctionRequest\x1a'.executor.v1.UnregisterFunctionResponse2\x8c\x05\n" +
 	"\x0eSessionRuntime\x12R\n" +
 	"\x0fRegisterSession\x12#.executor.v1.RegisterSessionRequest\x1a\x1a.executor.v1.SessionStatus\x12T\n" +
 	"\x10GetSessionStatus\x12$.executor.v1.GetSessionStatusRequest\x1a\x1a.executor.v1.SessionStatus\x12V\n" +
-	"\x11RenewSessionLease\x12%.executor.v1.RenewSessionLeaseRequest\x1a\x1a.executor.v1.SessionStatus\x12k\n" +
-	"\x16StreamSessionOperation\x12+.executor.v1.ExecuteSessionOperationRequest\x1a\".executor.v1.SessionOperationEvent0\x01\x12\\\n" +
+	"\x11RenewSessionLease\x12%.executor.v1.RenewSessionLeaseRequest\x1a\x1a.executor.v1.SessionStatus\x12d\n" +
+	"\x16StreamSessionOperation\x12$.executor.v1.SessionOperationRequest\x1a\".executor.v1.SessionOperationEvent0\x01\x12\\\n" +
 	"\x0fReadSessionFile\x12#.executor.v1.ReadSessionFileRequest\x1a$.executor.v1.ReadSessionFileResponse\x12_\n" +
 	"\x10ListSessionFiles\x12$.executor.v1.ListSessionFilesRequest\x1a%.executor.v1.ListSessionFilesResponse\x12S\n" +
 	"\fCloseSession\x12 .executor.v1.CloseSessionRequest\x1a!.executor.v1.CloseSessionResponseB9Z7github.com/kruntimes/kruntimes/api/runtime/v1;runtimev1b\x06proto3"
@@ -3415,62 +3415,62 @@ func file_api_runtime_v1_runtime_proto_rawDescGZIP() []byte {
 var file_api_runtime_v1_runtime_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
 var file_api_runtime_v1_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 51)
 var file_api_runtime_v1_runtime_proto_goTypes = []any{
-	(ExecutionState)(0),                     // 0: executor.v1.ExecutionState
-	(FunctionRegistrationState)(0),          // 1: executor.v1.FunctionRegistrationState
-	(SessionState)(0),                       // 2: executor.v1.SessionState
-	(SessionOperationOutputStream)(0),       // 3: executor.v1.SessionOperationOutputStream
-	(SessionOperationProgressKind)(0),       // 4: executor.v1.SessionOperationProgressKind
-	(*ExecuteRequest)(nil),                  // 5: executor.v1.ExecuteRequest
-	(*ExecuteResponse)(nil),                 // 6: executor.v1.ExecuteResponse
-	(*StatusRequest)(nil),                   // 7: executor.v1.StatusRequest
-	(*StatusResponse)(nil),                  // 8: executor.v1.StatusResponse
-	(*ListRequest)(nil),                     // 9: executor.v1.ListRequest
-	(*ListResponse)(nil),                    // 10: executor.v1.ListResponse
-	(*CancelRequest)(nil),                   // 11: executor.v1.CancelRequest
-	(*CancelResponse)(nil),                  // 12: executor.v1.CancelResponse
-	(*ForgetRequest)(nil),                   // 13: executor.v1.ForgetRequest
-	(*ForgetResponse)(nil),                  // 14: executor.v1.ForgetResponse
-	(*HealthRequest)(nil),                   // 15: executor.v1.HealthRequest
-	(*HealthResponse)(nil),                  // 16: executor.v1.HealthResponse
-	(*FunctionRegistration)(nil),            // 17: executor.v1.FunctionRegistration
-	(*RegisterFunctionRequest)(nil),         // 18: executor.v1.RegisterFunctionRequest
-	(*RegisterFunctionResponse)(nil),        // 19: executor.v1.RegisterFunctionResponse
-	(*FunctionStatusRequest)(nil),           // 20: executor.v1.FunctionStatusRequest
-	(*FunctionStatusResponse)(nil),          // 21: executor.v1.FunctionStatusResponse
-	(*InvokeFunctionRequest)(nil),           // 22: executor.v1.InvokeFunctionRequest
-	(*InvokeFunctionResponse)(nil),          // 23: executor.v1.InvokeFunctionResponse
-	(*UnregisterFunctionRequest)(nil),       // 24: executor.v1.UnregisterFunctionRequest
-	(*UnregisterFunctionResponse)(nil),      // 25: executor.v1.UnregisterFunctionResponse
-	(*SessionIdentity)(nil),                 // 26: executor.v1.SessionIdentity
-	(*RegisterSessionRequest)(nil),          // 27: executor.v1.RegisterSessionRequest
-	(*GetSessionStatusRequest)(nil),         // 28: executor.v1.GetSessionStatusRequest
-	(*RenewSessionLeaseRequest)(nil),        // 29: executor.v1.RenewSessionLeaseRequest
-	(*SessionStatus)(nil),                   // 30: executor.v1.SessionStatus
-	(*ExecuteSessionOperationRequest)(nil),  // 31: executor.v1.ExecuteSessionOperationRequest
-	(*SessionCommand)(nil),                  // 32: executor.v1.SessionCommand
-	(*ExecuteSessionOperationResponse)(nil), // 33: executor.v1.ExecuteSessionOperationResponse
-	(*SessionOperationEvent)(nil),           // 34: executor.v1.SessionOperationEvent
-	(*SessionOperationAccepted)(nil),        // 35: executor.v1.SessionOperationAccepted
-	(*SessionOperationOutput)(nil),          // 36: executor.v1.SessionOperationOutput
-	(*SessionOperationProgress)(nil),        // 37: executor.v1.SessionOperationProgress
-	(*SessionOperationFailure)(nil),         // 38: executor.v1.SessionOperationFailure
-	(*SessionCommandResult)(nil),            // 39: executor.v1.SessionCommandResult
-	(*ReadSessionFileRequest)(nil),          // 40: executor.v1.ReadSessionFileRequest
-	(*ReadSessionFileResponse)(nil),         // 41: executor.v1.ReadSessionFileResponse
-	(*ListSessionFilesRequest)(nil),         // 42: executor.v1.ListSessionFilesRequest
-	(*SessionFileInfo)(nil),                 // 43: executor.v1.SessionFileInfo
-	(*ListSessionFilesResponse)(nil),        // 44: executor.v1.ListSessionFilesResponse
-	(*SessionFileWrite)(nil),                // 45: executor.v1.SessionFileWrite
-	(*SessionDirectoryCreate)(nil),          // 46: executor.v1.SessionDirectoryCreate
-	(*SessionFileDelete)(nil),               // 47: executor.v1.SessionFileDelete
-	(*SessionFileRename)(nil),               // 48: executor.v1.SessionFileRename
-	(*CloseSessionRequest)(nil),             // 49: executor.v1.CloseSessionRequest
-	(*CloseSessionResponse)(nil),            // 50: executor.v1.CloseSessionResponse
-	nil,                                     // 51: executor.v1.ExecuteRequest.EnvEntry
-	nil,                                     // 52: executor.v1.RegisterFunctionRequest.EnvEntry
-	nil,                                     // 53: executor.v1.InvokeFunctionResponse.OutputsEntry
-	nil,                                     // 54: executor.v1.RegisterSessionRequest.EnvEntry
-	nil,                                     // 55: executor.v1.SessionCommand.EnvEntry
+	(ExecutionState)(0),                // 0: executor.v1.ExecutionState
+	(FunctionRegistrationState)(0),     // 1: executor.v1.FunctionRegistrationState
+	(SessionState)(0),                  // 2: executor.v1.SessionState
+	(SessionOperationOutputStream)(0),  // 3: executor.v1.SessionOperationOutputStream
+	(SessionOperationProgressKind)(0),  // 4: executor.v1.SessionOperationProgressKind
+	(*ExecuteRequest)(nil),             // 5: executor.v1.ExecuteRequest
+	(*ExecuteResponse)(nil),            // 6: executor.v1.ExecuteResponse
+	(*StatusRequest)(nil),              // 7: executor.v1.StatusRequest
+	(*StatusResponse)(nil),             // 8: executor.v1.StatusResponse
+	(*ListRequest)(nil),                // 9: executor.v1.ListRequest
+	(*ListResponse)(nil),               // 10: executor.v1.ListResponse
+	(*CancelRequest)(nil),              // 11: executor.v1.CancelRequest
+	(*CancelResponse)(nil),             // 12: executor.v1.CancelResponse
+	(*ForgetRequest)(nil),              // 13: executor.v1.ForgetRequest
+	(*ForgetResponse)(nil),             // 14: executor.v1.ForgetResponse
+	(*HealthRequest)(nil),              // 15: executor.v1.HealthRequest
+	(*HealthResponse)(nil),             // 16: executor.v1.HealthResponse
+	(*FunctionRegistration)(nil),       // 17: executor.v1.FunctionRegistration
+	(*RegisterFunctionRequest)(nil),    // 18: executor.v1.RegisterFunctionRequest
+	(*RegisterFunctionResponse)(nil),   // 19: executor.v1.RegisterFunctionResponse
+	(*FunctionStatusRequest)(nil),      // 20: executor.v1.FunctionStatusRequest
+	(*FunctionStatusResponse)(nil),     // 21: executor.v1.FunctionStatusResponse
+	(*InvokeFunctionRequest)(nil),      // 22: executor.v1.InvokeFunctionRequest
+	(*InvokeFunctionResponse)(nil),     // 23: executor.v1.InvokeFunctionResponse
+	(*UnregisterFunctionRequest)(nil),  // 24: executor.v1.UnregisterFunctionRequest
+	(*UnregisterFunctionResponse)(nil), // 25: executor.v1.UnregisterFunctionResponse
+	(*SessionIdentity)(nil),            // 26: executor.v1.SessionIdentity
+	(*RegisterSessionRequest)(nil),     // 27: executor.v1.RegisterSessionRequest
+	(*GetSessionStatusRequest)(nil),    // 28: executor.v1.GetSessionStatusRequest
+	(*RenewSessionLeaseRequest)(nil),   // 29: executor.v1.RenewSessionLeaseRequest
+	(*SessionStatus)(nil),              // 30: executor.v1.SessionStatus
+	(*SessionOperationRequest)(nil),    // 31: executor.v1.SessionOperationRequest
+	(*SessionCommand)(nil),             // 32: executor.v1.SessionCommand
+	(*SessionOperationResult)(nil),     // 33: executor.v1.SessionOperationResult
+	(*SessionOperationEvent)(nil),      // 34: executor.v1.SessionOperationEvent
+	(*SessionOperationAccepted)(nil),   // 35: executor.v1.SessionOperationAccepted
+	(*SessionOperationOutput)(nil),     // 36: executor.v1.SessionOperationOutput
+	(*SessionOperationProgress)(nil),   // 37: executor.v1.SessionOperationProgress
+	(*SessionOperationFailure)(nil),    // 38: executor.v1.SessionOperationFailure
+	(*SessionCommandResult)(nil),       // 39: executor.v1.SessionCommandResult
+	(*ReadSessionFileRequest)(nil),     // 40: executor.v1.ReadSessionFileRequest
+	(*ReadSessionFileResponse)(nil),    // 41: executor.v1.ReadSessionFileResponse
+	(*ListSessionFilesRequest)(nil),    // 42: executor.v1.ListSessionFilesRequest
+	(*SessionFileInfo)(nil),            // 43: executor.v1.SessionFileInfo
+	(*ListSessionFilesResponse)(nil),   // 44: executor.v1.ListSessionFilesResponse
+	(*SessionFileWrite)(nil),           // 45: executor.v1.SessionFileWrite
+	(*SessionDirectoryCreate)(nil),     // 46: executor.v1.SessionDirectoryCreate
+	(*SessionFileDelete)(nil),          // 47: executor.v1.SessionFileDelete
+	(*SessionFileRename)(nil),          // 48: executor.v1.SessionFileRename
+	(*CloseSessionRequest)(nil),        // 49: executor.v1.CloseSessionRequest
+	(*CloseSessionResponse)(nil),       // 50: executor.v1.CloseSessionResponse
+	nil,                                // 51: executor.v1.ExecuteRequest.EnvEntry
+	nil,                                // 52: executor.v1.RegisterFunctionRequest.EnvEntry
+	nil,                                // 53: executor.v1.InvokeFunctionResponse.OutputsEntry
+	nil,                                // 54: executor.v1.RegisterSessionRequest.EnvEntry
+	nil,                                // 55: executor.v1.SessionCommand.EnvEntry
 }
 var file_api_runtime_v1_runtime_proto_depIdxs = []int32{
 	51, // 0: executor.v1.ExecuteRequest.env:type_name -> executor.v1.ExecuteRequest.EnvEntry
@@ -3493,18 +3493,18 @@ var file_api_runtime_v1_runtime_proto_depIdxs = []int32{
 	26, // 17: executor.v1.RenewSessionLeaseRequest.identity:type_name -> executor.v1.SessionIdentity
 	26, // 18: executor.v1.SessionStatus.identity:type_name -> executor.v1.SessionIdentity
 	2,  // 19: executor.v1.SessionStatus.state:type_name -> executor.v1.SessionState
-	26, // 20: executor.v1.ExecuteSessionOperationRequest.identity:type_name -> executor.v1.SessionIdentity
-	32, // 21: executor.v1.ExecuteSessionOperationRequest.command:type_name -> executor.v1.SessionCommand
-	45, // 22: executor.v1.ExecuteSessionOperationRequest.write_file:type_name -> executor.v1.SessionFileWrite
-	46, // 23: executor.v1.ExecuteSessionOperationRequest.create_directory:type_name -> executor.v1.SessionDirectoryCreate
-	47, // 24: executor.v1.ExecuteSessionOperationRequest.delete_file:type_name -> executor.v1.SessionFileDelete
-	48, // 25: executor.v1.ExecuteSessionOperationRequest.rename_file:type_name -> executor.v1.SessionFileRename
+	26, // 20: executor.v1.SessionOperationRequest.identity:type_name -> executor.v1.SessionIdentity
+	32, // 21: executor.v1.SessionOperationRequest.command:type_name -> executor.v1.SessionCommand
+	45, // 22: executor.v1.SessionOperationRequest.write_file:type_name -> executor.v1.SessionFileWrite
+	46, // 23: executor.v1.SessionOperationRequest.create_directory:type_name -> executor.v1.SessionDirectoryCreate
+	47, // 24: executor.v1.SessionOperationRequest.delete_file:type_name -> executor.v1.SessionFileDelete
+	48, // 25: executor.v1.SessionOperationRequest.rename_file:type_name -> executor.v1.SessionFileRename
 	55, // 26: executor.v1.SessionCommand.env:type_name -> executor.v1.SessionCommand.EnvEntry
-	39, // 27: executor.v1.ExecuteSessionOperationResponse.command:type_name -> executor.v1.SessionCommandResult
+	39, // 27: executor.v1.SessionOperationResult.command:type_name -> executor.v1.SessionCommandResult
 	35, // 28: executor.v1.SessionOperationEvent.accepted:type_name -> executor.v1.SessionOperationAccepted
 	36, // 29: executor.v1.SessionOperationEvent.output:type_name -> executor.v1.SessionOperationOutput
 	37, // 30: executor.v1.SessionOperationEvent.progress:type_name -> executor.v1.SessionOperationProgress
-	33, // 31: executor.v1.SessionOperationEvent.completed:type_name -> executor.v1.ExecuteSessionOperationResponse
+	33, // 31: executor.v1.SessionOperationEvent.completed:type_name -> executor.v1.SessionOperationResult
 	38, // 32: executor.v1.SessionOperationEvent.failed:type_name -> executor.v1.SessionOperationFailure
 	3,  // 33: executor.v1.SessionOperationOutput.stream:type_name -> executor.v1.SessionOperationOutputStream
 	4,  // 34: executor.v1.SessionOperationProgress.kind:type_name -> executor.v1.SessionOperationProgressKind
@@ -3526,7 +3526,7 @@ var file_api_runtime_v1_runtime_proto_depIdxs = []int32{
 	27, // 50: executor.v1.SessionRuntime.RegisterSession:input_type -> executor.v1.RegisterSessionRequest
 	28, // 51: executor.v1.SessionRuntime.GetSessionStatus:input_type -> executor.v1.GetSessionStatusRequest
 	29, // 52: executor.v1.SessionRuntime.RenewSessionLease:input_type -> executor.v1.RenewSessionLeaseRequest
-	31, // 53: executor.v1.SessionRuntime.StreamSessionOperation:input_type -> executor.v1.ExecuteSessionOperationRequest
+	31, // 53: executor.v1.SessionRuntime.StreamSessionOperation:input_type -> executor.v1.SessionOperationRequest
 	40, // 54: executor.v1.SessionRuntime.ReadSessionFile:input_type -> executor.v1.ReadSessionFileRequest
 	42, // 55: executor.v1.SessionRuntime.ListSessionFiles:input_type -> executor.v1.ListSessionFilesRequest
 	49, // 56: executor.v1.SessionRuntime.CloseSession:input_type -> executor.v1.CloseSessionRequest
@@ -3560,11 +3560,11 @@ func file_api_runtime_v1_runtime_proto_init() {
 		return
 	}
 	file_api_runtime_v1_runtime_proto_msgTypes[26].OneofWrappers = []any{
-		(*ExecuteSessionOperationRequest_Command)(nil),
-		(*ExecuteSessionOperationRequest_WriteFile)(nil),
-		(*ExecuteSessionOperationRequest_CreateDirectory)(nil),
-		(*ExecuteSessionOperationRequest_DeleteFile)(nil),
-		(*ExecuteSessionOperationRequest_RenameFile)(nil),
+		(*SessionOperationRequest_Command)(nil),
+		(*SessionOperationRequest_WriteFile)(nil),
+		(*SessionOperationRequest_CreateDirectory)(nil),
+		(*SessionOperationRequest_DeleteFile)(nil),
+		(*SessionOperationRequest_RenameFile)(nil),
 	}
 	file_api_runtime_v1_runtime_proto_msgTypes[29].OneofWrappers = []any{
 		(*SessionOperationEvent_Accepted)(nil),

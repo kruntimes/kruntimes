@@ -24,18 +24,18 @@ func TestSessionOperationQueueExecutesMutationsInFIFOOrder(t *testing.T) {
 	secondDone := make(chan error, 1)
 
 	go func() {
-		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.SessionOperationResult, error) {
 			close(firstStarted)
 			<-releaseFirst
-			return &pb.ExecuteSessionOperationResponse{}, nil
+			return &pb.SessionOperationResult{}, nil
 		})
 		firstDone <- err
 	}()
 	<-firstStarted
 	go func() {
-		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.SessionOperationResult, error) {
 			close(secondStarted)
-			return &pb.ExecuteSessionOperationResponse{}, nil
+			return &pb.SessionOperationResult{}, nil
 		})
 		secondDone <- err
 	}()
@@ -68,9 +68,9 @@ func TestSessionOperationQueueWaitsForAdmissionCallback(t *testing.T) {
 			close(admissionStarted)
 			<-releaseAdmission
 			return nil
-		}, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+		}, func(context.Context) (*pb.SessionOperationResult, error) {
 			close(executionStarted)
-			return &pb.ExecuteSessionOperationResponse{}, nil
+			return &pb.SessionOperationResult{}, nil
 		})
 		done <- err
 	}()
@@ -118,24 +118,24 @@ func TestSessionOperationQueueRejectsWhenQueuedMutationLimitIsReached(t *testing
 	secondDone := make(chan error, 1)
 
 	go func() {
-		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.SessionOperationResult, error) {
 			close(started)
 			<-release
-			return &pb.ExecuteSessionOperationResponse{}, nil
+			return &pb.SessionOperationResult{}, nil
 		})
 		firstDone <- err
 	}()
 	<-started
 	go func() {
-		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
-			return &pb.ExecuteSessionOperationResponse{}, nil
+		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.SessionOperationResult, error) {
+			return &pb.SessionOperationResult{}, nil
 		})
 		secondDone <- err
 	}()
 	waitForQueueDepth(t, queue, string(run.UID), 1)
 
-	_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
-		return &pb.ExecuteSessionOperationResponse{}, nil
+	_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.SessionOperationResult, error) {
+		return &pb.SessionOperationResult{}, nil
 	})
 	if status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("third Execute() code = %s, want %s", status.Code(err), codes.ResourceExhausted)
@@ -158,7 +158,7 @@ func TestSessionOperationQueueCloseCancelsActiveAndQueuedMutations(t *testing.T)
 	secondDone := make(chan error, 1)
 
 	go func() {
-		_, err := queue.Execute(t.Context(), run, func(ctx context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+		_, err := queue.Execute(t.Context(), run, func(ctx context.Context) (*pb.SessionOperationResult, error) {
 			close(started)
 			<-ctx.Done()
 			return nil, ctx.Err()
@@ -167,7 +167,7 @@ func TestSessionOperationQueueCloseCancelsActiveAndQueuedMutations(t *testing.T)
 	}()
 	<-started
 	go func() {
-		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.SessionOperationResult, error) {
 			queuedExecuted <- struct{}{}
 			return nil, nil
 		})
@@ -201,18 +201,18 @@ func TestSessionOperationQueueDrainCompletesAcceptedMutations(t *testing.T) {
 	secondDone := make(chan error, 1)
 
 	go func() {
-		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.SessionOperationResult, error) {
 			close(firstStarted)
 			<-releaseFirst
-			return &pb.ExecuteSessionOperationResponse{}, nil
+			return &pb.SessionOperationResult{}, nil
 		})
 		firstDone <- err
 	}()
 	<-firstStarted
 	go func() {
-		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+		_, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.SessionOperationResult, error) {
 			close(secondStarted)
-			return &pb.ExecuteSessionOperationResponse{}, nil
+			return &pb.SessionOperationResult{}, nil
 		})
 		secondDone <- err
 	}()
@@ -221,8 +221,8 @@ func TestSessionOperationQueueDrainCompletesAcceptedMutations(t *testing.T) {
 	if queue.Drain(string(run.UID)) {
 		t.Fatal("Drain() = true with accepted operations, want false")
 	}
-	if _, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.ExecuteSessionOperationResponse, error) {
-		return &pb.ExecuteSessionOperationResponse{}, nil
+	if _, err := queue.Execute(t.Context(), run, func(context.Context) (*pb.SessionOperationResult, error) {
+		return &pb.SessionOperationResult{}, nil
 	}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("Execute() after Drain code = %s, want %s", status.Code(err), codes.FailedPrecondition)
 	}
@@ -249,7 +249,7 @@ func TestSessionOperationQueueAppliesSessionOperationTimeout(t *testing.T) {
 	run := queuedSessionRun("session")
 	run.Spec.Mode.Session.OperationTimeout = &metav1.Duration{Duration: 10 * time.Millisecond}
 
-	_, err := queue.Execute(t.Context(), run, func(ctx context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+	_, err := queue.Execute(t.Context(), run, func(ctx context.Context) (*pb.SessionOperationResult, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	})

@@ -100,12 +100,12 @@ func (q *SessionOperationQueue) LeaseDeadline(runUID string, timeout time.Durati
 type sessionOperationJob struct {
 	ctx      context.Context
 	admitted chan struct{}
-	execute  func(context.Context) (*pb.ExecuteSessionOperationResponse, error)
+	execute  func(context.Context) (*pb.SessionOperationResult, error)
 	result   chan sessionOperationResult
 }
 
 type sessionOperationResult struct {
-	response *pb.ExecuteSessionOperationResponse
+	response *pb.SessionOperationResult
 	err      error
 }
 
@@ -131,8 +131,8 @@ func NewSessionOperationQueue(maxQueueSize int, maxOperationTimeout time.Duratio
 func (q *SessionOperationQueue) Execute(
 	ctx context.Context,
 	run *v1alpha1.Run,
-	execute func(context.Context) (*pb.ExecuteSessionOperationResponse, error),
-) (*pb.ExecuteSessionOperationResponse, error) {
+	execute func(context.Context) (*pb.SessionOperationResult, error),
+) (*pb.SessionOperationResult, error) {
 	return q.ExecuteWithAdmission(ctx, run, nil, execute)
 }
 
@@ -143,8 +143,8 @@ func (q *SessionOperationQueue) ExecuteWithAdmission(
 	ctx context.Context,
 	run *v1alpha1.Run,
 	onAdmitted func() error,
-	execute func(context.Context) (*pb.ExecuteSessionOperationResponse, error),
-) (*pb.ExecuteSessionOperationResponse, error) {
+	execute func(context.Context) (*pb.SessionOperationResult, error),
+) (*pb.SessionOperationResult, error) {
 	if q == nil {
 		return nil, status.Error(codes.FailedPrecondition, "Session operation queue is not configured")
 	}
@@ -386,6 +386,6 @@ func (e *sessionOperationQueueEntry) cancelActive() {
 	}
 }
 
-func (e *sessionOperationQueueEntry) deliver(job sessionOperationJob, response *pb.ExecuteSessionOperationResponse, err error) {
+func (e *sessionOperationQueueEntry) deliver(job sessionOperationJob, response *pb.SessionOperationResult, err error) {
 	job.result <- sessionOperationResult{response: response, err: err}
 }

@@ -48,10 +48,14 @@ Runtime capacity。
 
 公开 SDK 提供面向 agent 的 lifecycle：
 
-```text
-Runtime pool -> AcquireSandbox (create Session Run) -> assigned Runtime Pod
-             -> OpenSession -> Send / Receive / Cancel
-             -> Session.Close -> Release (stop/delete Session Run)
+```mermaid
+flowchart LR
+    pool["Runtime pool"] --> acquire["AcquireSandbox<br/>(create Session Run)"]
+    acquire --> pod["Assigned Runtime Pod"]
+    pod --> open["OpenSession"]
+    open --> operations["Send / Receive / Cancel"]
+    operations --> close["Session.Close"]
+    close --> release["Release<br/>(stop/delete Session Run)"]
 ```
 
 `Runtime` 是可复用 pool。`AcquireSandbox` 创建唯一的 session-mode Run，并等待 scheduling 与
@@ -378,7 +382,7 @@ service SessionRuntime {
   rpc RegisterSession(RegisterSessionRequest) returns (SessionStatus);
   rpc GetSessionStatus(GetSessionStatusRequest) returns (SessionStatus);
   rpc RenewSessionLease(RenewSessionLeaseRequest) returns (SessionStatus);
-	 rpc StreamSessionOperation(ExecuteSessionOperationRequest)
+	 rpc StreamSessionOperation(SessionOperationRequest)
 	     returns (stream SessionOperationEvent);
   rpc ReadSessionFile(ReadSessionFileRequest) returns (ReadSessionFileResponse);
   rpc ListSessionFiles(ListSessionFilesRequest) returns (ListSessionFilesResponse);

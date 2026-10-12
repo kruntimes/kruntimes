@@ -565,7 +565,7 @@ class SessionRuntimeStub(object):
                 _registered_method=True)
         self.StreamSessionOperation = channel.unary_stream(
                 '/executor.v1.SessionRuntime/StreamSessionOperation',
-                request_serializer=runtime__pb2.ExecuteSessionOperationRequest.SerializeToString,
+                request_serializer=runtime__pb2.SessionOperationRequest.SerializeToString,
                 response_deserializer=runtime__pb2.SessionOperationEvent.FromString,
                 _registered_method=True)
         self.ReadSessionFile = channel.unary_unary(
@@ -663,7 +663,7 @@ def add_SessionRuntimeServicer_to_server(servicer, server):
             ),
             'StreamSessionOperation': grpc.unary_stream_rpc_method_handler(
                     servicer.StreamSessionOperation,
-                    request_deserializer=runtime__pb2.ExecuteSessionOperationRequest.FromString,
+                    request_deserializer=runtime__pb2.SessionOperationRequest.FromString,
                     response_serializer=runtime__pb2.SessionOperationEvent.SerializeToString,
             ),
             'ReadSessionFile': grpc.unary_unary_rpc_method_handler(
@@ -793,7 +793,7 @@ class SessionRuntime(object):
             request,
             target,
             '/executor.v1.SessionRuntime/StreamSessionOperation',
-            runtime__pb2.ExecuteSessionOperationRequest.SerializeToString,
+            runtime__pb2.SessionOperationRequest.SerializeToString,
             runtime__pb2.SessionOperationEvent.FromString,
             options,
             channel_credentials,

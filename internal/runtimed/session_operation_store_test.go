@@ -38,7 +38,7 @@ func TestSessionOperationStoreRetainsMoreThanSixtyFourOutputEvents(t *testing.T)
 			t.Fatalf("append output event %d: %v", sequence, err)
 		}
 	}
-	completed := &pb.SessionOperationEvent{Sequence: 81, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0}}}}
+	completed := &pb.SessionOperationEvent{Sequence: 81, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.SessionOperationResult{Command: &pb.SessionCommandResult{ExitCode: 0}}}}
 	if err := store.Append(t.Context(), run, "large-output", completed); err != nil {
 		t.Fatalf("append completion after large output: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestSessionOperationStorePersistsAndReplaysEvents(t *testing.T) {
 		t.Fatalf("Begin() = created %t, err %v", created, err)
 	}
 	accepted := sessionOperationAccepted(1, "turn-1")
-	completed := &pb.SessionOperationEvent{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0}}}}
+	completed := &pb.SessionOperationEvent{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.SessionOperationResult{Command: &pb.SessionCommandResult{ExitCode: 0}}}}
 	if err := store.Append(t.Context(), run, "turn-1", accepted); err != nil {
 		t.Fatalf("append accepted: %v", err)
 	}

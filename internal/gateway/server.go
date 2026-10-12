@@ -548,7 +548,7 @@ func sameOriginWebSocketRequest(r *http.Request) bool {
 	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host == r.Host
 }
 
-func (s *Server) websocketOperation(payload []byte) (*pb.ExecuteSessionOperationRequest, error) {
+func (s *Server) websocketOperation(payload []byte) (*pb.SessionOperationRequest, error) {
 	if int64(len(payload)) > s.maxRequestBodyBytes() {
 		return nil, errRequestBodyTooLarge
 	}
@@ -791,7 +791,7 @@ type executeOperationRequest struct {
 	RenameFile      *sessionFileRenameRequest      `json:"renameFile,omitempty"`
 }
 
-func (r executeOperationRequest) protobuf() (*pb.ExecuteSessionOperationRequest, error) {
+func (r executeOperationRequest) protobuf() (*pb.SessionOperationRequest, error) {
 	count := 0
 	if r.Command != nil {
 		count++
@@ -812,18 +812,18 @@ func (r executeOperationRequest) protobuf() (*pb.ExecuteSessionOperationRequest,
 		return nil, errors.New("exactly one session operation is required")
 	}
 	if r.Command != nil {
-		return &pb.ExecuteSessionOperationRequest{Operation: &pb.ExecuteSessionOperationRequest_Command{Command: &pb.SessionCommand{Argv: r.Command.Argv, Shell: r.Command.Shell, WorkingDirectory: r.Command.WorkingDirectory, Env: r.Command.Env, Stdin: r.Command.Stdin, TimeoutMillis: r.Command.TimeoutMillis}}}, nil
+		return &pb.SessionOperationRequest{Operation: &pb.SessionOperationRequest_Command{Command: &pb.SessionCommand{Argv: r.Command.Argv, Shell: r.Command.Shell, WorkingDirectory: r.Command.WorkingDirectory, Env: r.Command.Env, Stdin: r.Command.Stdin, TimeoutMillis: r.Command.TimeoutMillis}}}, nil
 	}
 	if r.WriteFile != nil {
-		return &pb.ExecuteSessionOperationRequest{Operation: &pb.ExecuteSessionOperationRequest_WriteFile{WriteFile: &pb.SessionFileWrite{Path: r.WriteFile.Path, Contents: r.WriteFile.Contents, CreateParents: r.WriteFile.CreateParents}}}, nil
+		return &pb.SessionOperationRequest{Operation: &pb.SessionOperationRequest_WriteFile{WriteFile: &pb.SessionFileWrite{Path: r.WriteFile.Path, Contents: r.WriteFile.Contents, CreateParents: r.WriteFile.CreateParents}}}, nil
 	}
 	if r.CreateDirectory != nil {
-		return &pb.ExecuteSessionOperationRequest{Operation: &pb.ExecuteSessionOperationRequest_CreateDirectory{CreateDirectory: &pb.SessionDirectoryCreate{Path: r.CreateDirectory.Path}}}, nil
+		return &pb.SessionOperationRequest{Operation: &pb.SessionOperationRequest_CreateDirectory{CreateDirectory: &pb.SessionDirectoryCreate{Path: r.CreateDirectory.Path}}}, nil
 	}
 	if r.DeleteFile != nil {
-		return &pb.ExecuteSessionOperationRequest{Operation: &pb.ExecuteSessionOperationRequest_DeleteFile{DeleteFile: &pb.SessionFileDelete{Path: r.DeleteFile.Path, Recursive: r.DeleteFile.Recursive}}}, nil
+		return &pb.SessionOperationRequest{Operation: &pb.SessionOperationRequest_DeleteFile{DeleteFile: &pb.SessionFileDelete{Path: r.DeleteFile.Path, Recursive: r.DeleteFile.Recursive}}}, nil
 	}
-	return &pb.ExecuteSessionOperationRequest{Operation: &pb.ExecuteSessionOperationRequest_RenameFile{RenameFile: &pb.SessionFileRename{SourcePath: r.RenameFile.SourcePath, DestinationPath: r.RenameFile.DestinationPath, Overwrite: r.RenameFile.Overwrite}}}, nil
+	return &pb.SessionOperationRequest{Operation: &pb.SessionOperationRequest_RenameFile{RenameFile: &pb.SessionFileRename{SourcePath: r.RenameFile.SourcePath, DestinationPath: r.RenameFile.DestinationPath, Overwrite: r.RenameFile.Overwrite}}}, nil
 }
 
 type sessionCommandRequest struct {
@@ -866,7 +866,7 @@ type executeOperationResponse struct {
 	Command *sessionCommandResultResponse `json:"command,omitempty"`
 }
 
-func newExecuteOperationResponse(value *pb.ExecuteSessionOperationResponse) executeOperationResponse {
+func newExecuteOperationResponse(value *pb.SessionOperationResult) executeOperationResponse {
 	if command := value.GetCommand(); command != nil {
 		return executeOperationResponse{Command: &sessionCommandResultResponse{ExitCode: command.GetExitCode(), Stdout: command.GetStdout(), Stderr: command.GetStderr(), TimedOut: command.GetTimedOut()}}
 	}

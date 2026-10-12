@@ -409,11 +409,11 @@ func cloneStoredSessionOperation(record *storedSessionOperation) *storedSessionO
 	return &clone
 }
 
-func sessionOperationRequestDigest(request *pb.ExecuteSessionOperationRequest) (string, error) {
+func sessionOperationRequestDigest(request *pb.SessionOperationRequest) (string, error) {
 	if request == nil || request.GetOperation() == nil {
 		return "", errors.New("session operation payload is required")
 	}
-	clone := proto.Clone(request).(*pb.ExecuteSessionOperationRequest)
+	clone := proto.Clone(request).(*pb.SessionOperationRequest)
 	clone.Identity = nil
 	clone.IdempotencyKey = ""
 	clone.ResumeAfterSequence = 0

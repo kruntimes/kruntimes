@@ -69,7 +69,7 @@ func TestGatewayRejectsUnauthorizedRequestBeforeDialingRuntime(t *testing.T) {
 func TestGatewayStreamsSessionOperationOverWebSocket(t *testing.T) {
 	run := readySessionRun()
 	calls := 0
-	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, request *pb.SessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
 		calls++
 		if got := request.GetCommand().GetArgv(); len(got) != 2 || got[0] != "echo" || got[1] != map[int]string{1: "done", 2: "again"}[calls] {
 			t.Fatalf("command = %#v", request.GetCommand())
@@ -78,7 +78,7 @@ func TestGatewayStreamsSessionOperationOverWebSocket(t *testing.T) {
 		output := map[int]string{1: "done\n", 2: "again\n"}[calls]
 		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
 			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{OperationId: operationID}}},
-			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte(output)}}}},
+			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.SessionOperationResult{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte(output)}}}},
 		}}, nil
 	}}
 	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
@@ -137,14 +137,14 @@ func TestGatewayStreamsSessionOperationOverWebSocket(t *testing.T) {
 func TestGatewayKeepsSessionWebSocketOpenAfterOperationError(t *testing.T) {
 	run := readySessionRun()
 	calls := 0
-	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, _ *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, _ *pb.SessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
 		calls++
 		if calls == 1 {
 			return nil, status.Error(codes.ResourceExhausted, "retained event limit reached")
 		}
 		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
 			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{OperationId: "operation-2"}}},
-			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0}}}},
+			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.SessionOperationResult{Command: &pb.SessionCommandResult{ExitCode: 0}}}},
 		}}, nil
 	}}
 	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
@@ -197,11 +197,11 @@ func TestGatewayKeepsSessionWebSocketOpenAfterOperationError(t *testing.T) {
 func TestGatewayCancelsOperationStreamBeforeClosingClient(t *testing.T) {
 	run := readySessionRun()
 	closer := &contextAwareCloser{result: make(chan bool, 1)}
-	client := &fakeSessionRuntimeClient{stream: func(ctx context.Context, _ *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+	client := &fakeSessionRuntimeClient{stream: func(ctx context.Context, _ *pb.SessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
 		closer.done = ctx.Done()
 		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
 			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{OperationId: "operation-1"}}},
-			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0}}}},
+			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.SessionOperationResult{Command: &pb.SessionCommandResult{ExitCode: 0}}}},
 		}}, nil
 	}}
 	dialer := &fakeDialer{client: client, closers: []io.Closer{nopCloser{}, closer}}
@@ -270,7 +270,7 @@ func TestGatewayWebSocketHeartbeatsTheOwnerSession(t *testing.T) {
 
 func TestGatewayCancelsActiveSessionWebSocketOperation(t *testing.T) {
 	started := make(chan struct{})
-	client := &fakeSessionRuntimeClient{stream: func(ctx context.Context, _ *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+	client := &fakeSessionRuntimeClient{stream: func(ctx context.Context, _ *pb.SessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
 		close(started)
 		return &cancelAwareSessionOperationStream{ctx: ctx}, nil
 	}}
@@ -477,10 +477,10 @@ func TestGatewaySessionConnectionsDoNotExhaustHTTPRequests(t *testing.T) {
 }
 
 func TestGatewayRejectsInactiveCancelWithoutClosingSession(t *testing.T) {
-	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, _ *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+	client := &fakeSessionRuntimeClient{stream: func(_ context.Context, _ *pb.SessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
 		return &fakeSessionOperationStream{events: []*pb.SessionOperationEvent{
 			{Sequence: 1, Event: &pb.SessionOperationEvent_Accepted{Accepted: &pb.SessionOperationAccepted{OperationId: "operation-1"}}},
-			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{}}},
+			{Sequence: 2, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.SessionOperationResult{}}},
 		}}, nil
 	}}
 	server := testServer(t, readySessionRun(), allowAuthorizer{}, &fakeDialer{client: client})
@@ -610,8 +610,7 @@ type fakeSessionRuntimeClient struct {
 	pb.SessionRuntimeClient
 	status    func(context.Context, *pb.GetSessionStatusRequest, ...grpc.CallOption) (*pb.SessionStatus, error)
 	heartbeat func(context.Context, *pb.RenewSessionLeaseRequest, ...grpc.CallOption) (*pb.SessionStatus, error)
-	execute   func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error)
-	stream    func(context.Context, *pb.ExecuteSessionOperationRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error)
+	stream    func(context.Context, *pb.SessionOperationRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error)
 	list      func(context.Context, *pb.ListSessionFilesRequest, ...grpc.CallOption) (*pb.ListSessionFilesResponse, error)
 	read      func(context.Context, *pb.ReadSessionFileRequest, ...grpc.CallOption) (*pb.ReadSessionFileResponse, error)
 }
@@ -640,14 +639,7 @@ func (c *fakeSessionRuntimeClient) RenewSessionLease(ctx context.Context, reques
 	}
 	return c.heartbeat(ctx, request, options...)
 }
-func (c *fakeSessionRuntimeClient) ExecuteSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest, options ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error) {
-	if c.execute == nil {
-		return nil, status.Error(codes.Unimplemented, "ExecuteSessionOperation")
-	}
-	return c.execute(ctx, request, options...)
-}
-
-func (c *fakeSessionRuntimeClient) StreamSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest, options ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+func (c *fakeSessionRuntimeClient) StreamSessionOperation(ctx context.Context, request *pb.SessionOperationRequest, options ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
 	if c.stream == nil {
 		return nil, status.Error(codes.Unimplemented, "StreamSessionOperation")
 	}

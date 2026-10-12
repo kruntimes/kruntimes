@@ -285,10 +285,10 @@ type sessionOperationResult struct {
 	TimedOut bool
 }
 
-// executeSessionOperation submits one operation through the public Session
+// runSessionOperation submits one operation through the public Session
 // WebSocket and collects its bounded command result. The gateway no longer
 // exposes unary or NDJSON Session operation endpoints.
-func executeSessionOperation(ctx context.Context, baseURL, token string, operation json.RawMessage) (sessionOperationResult, error) {
+func runSessionOperation(ctx context.Context, baseURL, token string, operation json.RawMessage) (sessionOperationResult, error) {
 	websocketURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/operations:ws"
 	connection, response, err := (&websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}).DialContext(ctx, websocketURL, http.Header{"Authorization": []string{"Bearer " + token}}) //nolint:gosec // E2E local port-forward only.
 	if err != nil {

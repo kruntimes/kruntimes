@@ -85,21 +85,21 @@ func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
 	unauthorizedToken := sessionGatewayTokenWithoutRunAccess(t)
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL, unauthorizedToken, nil, http.StatusForbidden)
 
-	operation, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-ok"]}}`))
+	operation, err := runSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-ok"]}}`))
 	if err != nil || operation.ExitCode != 0 || string(operation.Stdout) != "gateway-ok" {
 		t.Fatalf("Session command result = %#v, %v; want successful gateway-ok output", operation, err)
 	}
 	waitForSessionCommandLogs(t, run, "gateway-ok")
 
-	operation, err = executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf '%s:%s' \"$KRUNTIMES_SESSION_DEFAULT\" \"$KRUNTIMES_SESSION_COMMAND\""],"env":{"KRUNTIMES_SESSION_COMMAND":"command"}}}`))
+	operation, err = runSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf '%s:%s' \"$KRUNTIMES_SESSION_DEFAULT\" \"$KRUNTIMES_SESSION_COMMAND\""],"env":{"KRUNTIMES_SESSION_COMMAND":"command"}}}`))
 	if err != nil || operation.ExitCode != 0 || string(operation.Stdout) != "registration:command" {
 		t.Fatalf("Session command environment result = %#v, %v; want registration:command", operation, err)
 	}
 
-	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"notes/result.txt","contents":"Z2F0ZXdheS1maWxl","createParents":true}}`)); err != nil {
+	if _, err := runSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"notes/result.txt","contents":"Z2F0ZXdheS1maWxl","createParents":true}}`)); err != nil {
 		t.Fatalf("write Session file: %v", err)
 	}
-	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"../outside.txt","contents":"ZXNjYXBl","createParents":true}}`)); err == nil {
+	if _, err := runSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"../outside.txt","contents":"ZXNjYXBl","createParents":true}}`)); err == nil {
 		t.Fatal("escaping Session write succeeded")
 	}
 
@@ -236,7 +236,7 @@ func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
 	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
 	token := sessionGatewayToken(t, run)
 	marker := "gateway-run-log-e2e"
-	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-run-log-e2e"]}}`)); err != nil {
+	if _, err := runSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-run-log-e2e"]}}`)); err != nil {
 		t.Fatalf("write Session log marker: %v", err)
 	}
 	waitForSessionCommandLogs(t, run, marker)
@@ -258,7 +258,7 @@ func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
 	noisyBaseURL := gatewayEndpointURL(t, waitForGatewayPod(t), noisyRun.Status.Endpoint.URL)
 	noisyToken := sessionGatewayToken(t, noisyRun)
 	for range 55 {
-		if _, err := executeSessionOperation(t.Context(), noisyBaseURL, noisyToken, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-run-log-noise"]}}`)); err != nil {
+		if _, err := runSessionOperation(t.Context(), noisyBaseURL, noisyToken, json.RawMessage(`{"command":{"argv":["sh","-c","printf gateway-run-log-noise"]}}`)); err != nil {
 			t.Fatalf("write noisy Session log: %v", err)
 		}
 	}
@@ -618,14 +618,14 @@ func TestSessionGatewaySerializesMutations(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_, err := executeSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 1; printf first > result.txt"]}}`))
+		_, err := runSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 1; printf first > result.txt"]}}`))
 		firstResult <- err
 	}()
 
 	// Reading is not a mutation, so this confirms that the first command is
 	// active before the second mutation is submitted to the owner queue.
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL+"/files/started", token, nil, http.StatusOK)
-	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"result.txt","contents":"c2Vjb25k"}}`)); err != nil {
+	if _, err := runSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"result.txt","contents":"c2Vjb25k"}}`)); err != nil {
 		t.Fatalf("write FIFO result: %v", err)
 	}
 	if err := <-firstResult; err != nil {
@@ -670,7 +670,7 @@ func TestSessionRunCancellationTerminatesActiveGatewayCommand(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_, err := executeSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 20; printf completed > completed"]}}`))
+		_, err := runSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 20; printf completed > completed"]}}`))
 		commandResult <- err
 	}()
 
@@ -710,7 +710,7 @@ func TestSessionRunDrainCompletesAcceptedGatewayCommand(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_, err := executeSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 15; printf completed > completed"]}}`))
+		_, err := runSessionOperation(ctx, baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf started > started; sleep 15; printf completed > completed"]}}`))
 		commandResult <- err
 	}()
 
@@ -719,7 +719,7 @@ func TestSessionRunDrainCompletesAcceptedGatewayCommand(t *testing.T) {
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL+"/files/started", token, nil, http.StatusOK)
 	requestRunDrain(t, run)
 	waitForRunPhase(t, run, 10*time.Second, v1alpha1.RunFinalizing)
-	if _, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"rejected.txt","contents":"cmVqZWN0ZWQ="}}`)); err == nil {
+	if _, err := runSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"writeFile":{"path":"rejected.txt","contents":"cmVqZWN0ZWQ="}}`)); err == nil {
 		t.Fatal("Session mutation succeeded after Drain")
 	}
 	if err := <-commandResult; err != nil {

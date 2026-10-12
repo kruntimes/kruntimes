@@ -37,7 +37,7 @@ durable operation record、idempotent turn submission 和 cursor-based replay �
 Runtime gRPC contract 增加 server-streaming method：
 
 ```proto
-rpc StreamSessionOperation(ExecuteSessionOperationRequest)
+rpc StreamSessionOperation(SessionOperationRequest)
     returns (stream SessionOperationEvent);
 ```
 

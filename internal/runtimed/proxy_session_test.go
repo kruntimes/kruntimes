@@ -27,55 +27,16 @@ import (
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
-// ExecuteSessionOperation is a test-only adapter for legacy focused tests;
-// production SessionRuntime exposes only the streaming RPC.
-func (s *sessionRuntimeProxy) ExecuteSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
-	server := &fakeSessionOperationServer{ctx: ctx}
-	if err := s.StreamSessionOperation(request, server); err != nil {
-		return nil, err
-	}
-	for _, event := range server.events {
-		if event.GetCompleted() != nil {
-			return event.GetCompleted(), nil
-		}
-	}
-	return nil, status.Error(codes.Internal, "operation stream ended without completion")
-}
-
-func TestSessionRuntimeProxyCallsLocalRuntimeServerForOwner(t *testing.T) {
-	t.Skip("covered by stream-only proxy tests")
-	run := proxySessionRun("session-run", "bash", "pod-a", "pod-a-uid")
-	reader := newSessionProxyReader(t, run)
-	local := &sessionRuntimeClient{execute: func(_ context.Context, request *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
-		if request.GetIdentity().GetRunUid() != string(run.UID) {
-			t.Fatalf("Run UID = %q, want %q", request.GetIdentity().GetRunUid(), run.UID)
-		}
-		return &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte("done")}}, nil
-	}}
-	proxy := newSessionRuntimeProxy(reader, reader, local, run.Namespace, "bash", "pod-a", "9093")
-
-	response, err := proxy.ExecuteSessionOperation(t.Context(), &pb.ExecuteSessionOperationRequest{
-		Identity:  &pb.SessionIdentity{RunUid: string(run.UID), AssignedPodUid: "pod-a-uid"},
-		Operation: &pb.ExecuteSessionOperationRequest_Command{Command: &pb.SessionCommand{Argv: []string{"echo", "done"}}},
-	})
-	if err != nil {
-		t.Fatalf("ExecuteSessionOperation() error = %v", err)
-	}
-	if string(response.GetCommand().GetStdout()) != "done" {
-		t.Fatalf("stdout = %q, want done", response.GetCommand().GetStdout())
-	}
-}
-
 func TestSessionRuntimeProxyStreamsOrderedEventsForOwner(t *testing.T) {
 	run := proxySessionRun("session-run", "bash", "pod-a", "pod-a-uid")
 	reader := newSessionProxyReader(t, run)
-	local := &sessionRuntimeClient{stream: func(_ context.Context, request *pb.ExecuteSessionOperationRequest) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+	local := &sessionRuntimeClient{stream: func(_ context.Context, request *pb.SessionOperationRequest) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
 		if request.GetIdentity().GetRunUid() != string(run.UID) {
 			t.Fatalf("Run UID = %q, want %q", request.GetIdentity().GetRunUid(), run.UID)
 		}
 		return &fakeSessionOperationClientStream{events: []*pb.SessionOperationEvent{
 			{Sequence: 99, Event: &pb.SessionOperationEvent_Progress{Progress: &pb.SessionOperationProgress{Kind: pb.SessionOperationProgressKind_SESSION_OPERATION_PROGRESS_KIND_STATUS, Message: "running"}}},
-			{Sequence: 100, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte("done\n")}}}},
+			{Sequence: 100, Event: &pb.SessionOperationEvent_Completed{Completed: &pb.SessionOperationResult{Command: &pb.SessionCommandResult{ExitCode: 0, Stdout: []byte("done\n")}}}},
 		}}, nil
 	}}
 	proxy := newSessionRuntimeProxy(reader, reader, local, run.Namespace, "bash", "pod-a", "9093")
@@ -83,10 +44,10 @@ func TestSessionRuntimeProxyStreamsOrderedEventsForOwner(t *testing.T) {
 	proxy.logWriter = &output
 	server := &fakeSessionOperationServer{ctx: t.Context()}
 
-	err := proxy.StreamSessionOperation(&pb.ExecuteSessionOperationRequest{
+	err := proxy.StreamSessionOperation(&pb.SessionOperationRequest{
 		Identity:       &pb.SessionIdentity{RunUid: string(run.UID), AssignedPodUid: "pod-a-uid"},
 		IdempotencyKey: "stream-test",
-		Operation:      &pb.ExecuteSessionOperationRequest_Command{Command: &pb.SessionCommand{Argv: []string{"echo", "done"}}},
+		Operation:      &pb.SessionOperationRequest_Command{Command: &pb.SessionCommand{Argv: []string{"echo", "done"}}},
 	}, server)
 	if err != nil {
 		t.Fatalf("StreamSessionOperation() error = %v", err)
@@ -133,55 +94,6 @@ func TestSessionRuntimeProxyPreservesFilePageFields(t *testing.T) {
 	}
 }
 
-func TestSessionRuntimeProxyEmitsStructuredCommandAndAuditLogs(t *testing.T) {
-	t.Skip("covered by stream-only proxy tests")
-	run := proxySessionRun("session-run", "bash", "pod-a", "pod-a-uid")
-	reader := newSessionProxyReader(t, run)
-	local := &sessionRuntimeClient{execute: func(_ context.Context, _ *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
-		return &pb.ExecuteSessionOperationResponse{Command: &pb.SessionCommandResult{
-			ExitCode: 7,
-			Stdout:   []byte("first\nsecond\n"),
-			Stderr:   []byte("problem\n"),
-		}}, nil
-	}}
-	proxy := newSessionRuntimeProxy(reader, reader, local, run.Namespace, "bash", "pod-a", "9093")
-	var output bytes.Buffer
-	proxy.logWriter = &output
-
-	_, err := proxy.ExecuteSessionOperation(t.Context(), &pb.ExecuteSessionOperationRequest{
-		Identity:  &pb.SessionIdentity{RunUid: string(run.UID), AssignedPodUid: "pod-a-uid"},
-		Operation: &pb.ExecuteSessionOperationRequest_Command{Command: &pb.SessionCommand{Argv: []string{"sh", "-c", "secret command"}}},
-	})
-	if err != nil {
-		t.Fatalf("ExecuteSessionOperation() error = %v", err)
-	}
-
-	lines := decodeSessionLogLines(t, output.String())
-	if len(lines) != 4 {
-		t.Fatalf("log lines = %#v, want stdout x2, stderr, audit", lines)
-	}
-	for i, line := range lines {
-		if line.RunUID != string(run.UID) || line.AssignedPodUID != run.Status.AssignedPodUID || line.RunName != run.Name || line.Namespace != run.Namespace || line.Runtime != run.Spec.Runtime || line.Pod != "pod-a" {
-			t.Fatalf("line %d metadata = %#v", i, line)
-		}
-		if line.Operation != "command" || line.Outcome != "failed" || line.ExitCode == nil || *line.ExitCode != 7 {
-			t.Fatalf("line %d operation metadata = %#v", i, line)
-		}
-	}
-	if lines[0].Stream != "stdout" || lines[0].Message != "first" || lines[1].Stream != "stdout" || lines[1].Message != "second" {
-		t.Fatalf("stdout lines = %#v", lines[:2])
-	}
-	if lines[2].Stream != "stderr" || lines[2].Message != "problem" {
-		t.Fatalf("stderr line = %#v", lines[2])
-	}
-	if lines[3].Stream != "audit" || lines[3].Message != "session operation completed" {
-		t.Fatalf("audit line = %#v", lines[3])
-	}
-	if strings.Contains(output.String(), "secret command") {
-		t.Fatalf("logs must not contain command text: %s", output.String())
-	}
-}
-
 func decodeSessionLogLines(t *testing.T, output string) []executionLogLine {
 	t.Helper()
 	var lines []executionLogLine
@@ -193,43 +105,6 @@ func decodeSessionLogLines(t *testing.T, output string) []executionLogLine {
 		lines = append(lines, line)
 	}
 	return lines
-}
-
-func TestSessionRuntimeProxyForwardsToAssignedRuntimePod(t *testing.T) {
-	t.Skip("covered by stream-only proxy tests")
-	run := proxySessionRun("session-run", "bash", "pod-b", "pod-b-uid")
-	owner := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "pod-b",
-			Namespace: run.Namespace,
-			UID:       types.UID("pod-b-uid"),
-			Labels:    map[string]string{"runtime": "bash"},
-		},
-		Status: corev1.PodStatus{PodIP: "10.0.0.2"},
-	}
-	reader := newSessionProxyReader(t, run, owner)
-	peer := &sessionRuntimeClient{execute: func(ctx context.Context, _ *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
-		values, ok := metadata.FromOutgoingContext(ctx)
-		if !ok || len(values.Get(sessionForwardedMetadataKey)) == 0 {
-			t.Fatal("forwarded request did not include the forwarding marker")
-		}
-		return &pb.ExecuteSessionOperationResponse{}, nil
-	}}
-	proxy := newSessionRuntimeProxy(reader, reader, &sessionRuntimeClient{}, run.Namespace, "bash", "pod-a", "9093")
-	proxy.dialPeer = func(_ context.Context, address string) (pb.SessionRuntimeClient, io.Closer, error) {
-		if address != net.JoinHostPort(owner.Status.PodIP, "9093") {
-			t.Fatalf("peer address = %q, want %q", address, net.JoinHostPort(owner.Status.PodIP, "9093"))
-		}
-		return peer, nopCloser{}, nil
-	}
-
-	_, err := proxy.ExecuteSessionOperation(t.Context(), &pb.ExecuteSessionOperationRequest{
-		Identity:  &pb.SessionIdentity{RunUid: string(run.UID), AssignedPodUid: "pod-b-uid"},
-		Operation: &pb.ExecuteSessionOperationRequest_Command{Command: &pb.SessionCommand{Argv: []string{"true"}}},
-	})
-	if err != nil {
-		t.Fatalf("ExecuteSessionOperation() error = %v", err)
-	}
 }
 
 func TestSessionRuntimeProxyRejectsOwnerFromAnotherRuntime(t *testing.T) {
@@ -305,9 +180,8 @@ func newSessionProxyReader(t *testing.T, objects ...runtime.Object) client.Clien
 }
 
 type sessionRuntimeClient struct {
-	execute func(context.Context, *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error)
-	stream  func(context.Context, *pb.ExecuteSessionOperationRequest) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error)
-	list    func(context.Context, *pb.ListSessionFilesRequest) (*pb.ListSessionFilesResponse, error)
+	stream func(context.Context, *pb.SessionOperationRequest) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error)
+	list   func(context.Context, *pb.ListSessionFilesRequest) (*pb.ListSessionFilesResponse, error)
 }
 
 func (c *sessionRuntimeClient) RegisterSession(context.Context, *pb.RegisterSessionRequest, ...grpc.CallOption) (*pb.SessionStatus, error) {
@@ -322,14 +196,7 @@ func (c *sessionRuntimeClient) RenewSessionLease(context.Context, *pb.RenewSessi
 	return nil, status.Error(codes.Unimplemented, "RenewSessionLease")
 }
 
-func (c *sessionRuntimeClient) ExecuteSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (*pb.ExecuteSessionOperationResponse, error) {
-	if c.execute == nil {
-		return nil, status.Error(codes.Unimplemented, "ExecuteSessionOperation")
-	}
-	return c.execute(ctx, request)
-}
-
-func (c *sessionRuntimeClient) StreamSessionOperation(ctx context.Context, request *pb.ExecuteSessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
+func (c *sessionRuntimeClient) StreamSessionOperation(ctx context.Context, request *pb.SessionOperationRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pb.SessionOperationEvent], error) {
 	if c.stream != nil {
 		return c.stream(ctx, request)
 	}

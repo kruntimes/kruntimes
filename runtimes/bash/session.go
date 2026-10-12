@@ -90,7 +90,7 @@ func (s *Server) RenewSessionLease(_ context.Context, req *pb.RenewSessionLeaseR
 // applySessionOperation executes a non-streaming workspace mutation. runtimed
 // owns admission and the public gateway exposes these mutations only through
 // the persistent Session WebSocket.
-func (s *Server) applySessionOperation(ctx context.Context, req *pb.ExecuteSessionOperationRequest) (*pb.ExecuteSessionOperationResponse, error) {
+func (s *Server) applySessionOperation(ctx context.Context, req *pb.SessionOperationRequest) (*pb.SessionOperationResult, error) {
 	entry, err := s.matchSession(req.GetIdentity())
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func (s *Server) applySessionOperation(ctx context.Context, req *pb.ExecuteSessi
 		if err != nil {
 			return nil, err
 		}
-		return &pb.ExecuteSessionOperationResponse{Command: result}, nil
+		return &pb.SessionOperationResult{Command: result}, nil
 	case req.GetWriteFile() != nil:
 		if err := s.writeSessionFile(entry, req.GetWriteFile()); err != nil {
 			return nil, err
@@ -121,13 +121,13 @@ func (s *Server) applySessionOperation(ctx context.Context, req *pb.ExecuteSessi
 	default:
 		return nil, status.Error(codes.InvalidArgument, "exactly one session operation is required")
 	}
-	return &pb.ExecuteSessionOperationResponse{}, nil
+	return &pb.SessionOperationResult{}, nil
 }
 
 // StreamSessionOperation emits command output as the process writes it. The
 // owner runtimed wraps these Runtime-local events with accepted, sequence, and
 // failure events before exposing them to a Console caller.
-func (s *Server) StreamSessionOperation(req *pb.ExecuteSessionOperationRequest, server pb.SessionRuntime_StreamSessionOperationServer) error {
+func (s *Server) StreamSessionOperation(req *pb.SessionOperationRequest, server pb.SessionRuntime_StreamSessionOperationServer) error {
 	entry, err := s.matchSession(req.GetIdentity())
 	if err != nil {
 		return err
@@ -145,7 +145,7 @@ func (s *Server) StreamSessionOperation(req *pb.ExecuteSessionOperationRequest, 
 		terminal := proto.Clone(result).(*pb.SessionCommandResult)
 		terminal.Stdout = nil
 		terminal.Stderr = nil
-		return server.Send(&pb.SessionOperationEvent{Event: &pb.SessionOperationEvent_Completed{Completed: &pb.ExecuteSessionOperationResponse{Command: terminal}}})
+		return server.Send(&pb.SessionOperationEvent{Event: &pb.SessionOperationEvent_Completed{Completed: &pb.SessionOperationResult{Command: terminal}}})
 	}
 
 	response, err := s.applySessionOperation(server.Context(), req)

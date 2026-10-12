@@ -580,7 +580,7 @@ type SessionRuntimeClient interface {
 	RenewSessionLease(ctx context.Context, in *RenewSessionLeaseRequest, opts ...grpc.CallOption) (*SessionStatus, error)
 	// StreamSessionOperation executes one mutation and emits ordered progress and
 	// terminal events. The owner runtimed serializes the operation.
-	StreamSessionOperation(ctx context.Context, in *ExecuteSessionOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SessionOperationEvent], error)
+	StreamSessionOperation(ctx context.Context, in *SessionOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SessionOperationEvent], error)
 	// ReadSessionFile returns bounded contents of one workspace-relative file.
 	ReadSessionFile(ctx context.Context, in *ReadSessionFileRequest, opts ...grpc.CallOption) (*ReadSessionFileResponse, error)
 	// ListSessionFiles lists workspace-relative directory entries.
@@ -627,13 +627,13 @@ func (c *sessionRuntimeClient) RenewSessionLease(ctx context.Context, in *RenewS
 	return out, nil
 }
 
-func (c *sessionRuntimeClient) StreamSessionOperation(ctx context.Context, in *ExecuteSessionOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SessionOperationEvent], error) {
+func (c *sessionRuntimeClient) StreamSessionOperation(ctx context.Context, in *SessionOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SessionOperationEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &SessionRuntime_ServiceDesc.Streams[0], SessionRuntime_StreamSessionOperation_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[ExecuteSessionOperationRequest, SessionOperationEvent]{ClientStream: stream}
+	x := &grpc.GenericClientStream[SessionOperationRequest, SessionOperationEvent]{ClientStream: stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -694,7 +694,7 @@ type SessionRuntimeServer interface {
 	RenewSessionLease(context.Context, *RenewSessionLeaseRequest) (*SessionStatus, error)
 	// StreamSessionOperation executes one mutation and emits ordered progress and
 	// terminal events. The owner runtimed serializes the operation.
-	StreamSessionOperation(*ExecuteSessionOperationRequest, grpc.ServerStreamingServer[SessionOperationEvent]) error
+	StreamSessionOperation(*SessionOperationRequest, grpc.ServerStreamingServer[SessionOperationEvent]) error
 	// ReadSessionFile returns bounded contents of one workspace-relative file.
 	ReadSessionFile(context.Context, *ReadSessionFileRequest) (*ReadSessionFileResponse, error)
 	// ListSessionFiles lists workspace-relative directory entries.
@@ -720,7 +720,7 @@ func (UnimplementedSessionRuntimeServer) GetSessionStatus(context.Context, *GetS
 func (UnimplementedSessionRuntimeServer) RenewSessionLease(context.Context, *RenewSessionLeaseRequest) (*SessionStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method RenewSessionLease not implemented")
 }
-func (UnimplementedSessionRuntimeServer) StreamSessionOperation(*ExecuteSessionOperationRequest, grpc.ServerStreamingServer[SessionOperationEvent]) error {
+func (UnimplementedSessionRuntimeServer) StreamSessionOperation(*SessionOperationRequest, grpc.ServerStreamingServer[SessionOperationEvent]) error {
 	return status.Error(codes.Unimplemented, "method StreamSessionOperation not implemented")
 }
 func (UnimplementedSessionRuntimeServer) ReadSessionFile(context.Context, *ReadSessionFileRequest) (*ReadSessionFileResponse, error) {
@@ -808,11 +808,11 @@ func _SessionRuntime_RenewSessionLease_Handler(srv interface{}, ctx context.Cont
 }
 
 func _SessionRuntime_StreamSessionOperation_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ExecuteSessionOperationRequest)
+	m := new(SessionOperationRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(SessionRuntimeServer).StreamSessionOperation(m, &grpc.GenericServerStream[ExecuteSessionOperationRequest, SessionOperationEvent]{ServerStream: stream})
+	return srv.(SessionRuntimeServer).StreamSessionOperation(m, &grpc.GenericServerStream[SessionOperationRequest, SessionOperationEvent]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.

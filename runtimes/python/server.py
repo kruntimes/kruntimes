@@ -443,7 +443,7 @@ class PythonRuntime(
             result.stdout = b""
             result.stderr = b""
             yield runtime_pb2.SessionOperationEvent(
-                completed=runtime_pb2.ExecuteSessionOperationResponse(command=result)
+                completed=runtime_pb2.SessionOperationResult(command=result)
             )
             return
         if operation == "write_file":
@@ -460,7 +460,7 @@ class PythonRuntime(
                 "exactly one session operation is required",
             )
         yield runtime_pb2.SessionOperationEvent(
-            completed=runtime_pb2.ExecuteSessionOperationResponse()
+            completed=runtime_pb2.SessionOperationResult()
         )
 
     @staticmethod

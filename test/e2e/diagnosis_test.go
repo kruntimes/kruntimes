@@ -74,7 +74,7 @@ func TestKubernetesDiagnosisRuntimeCanReadNamespace(t *testing.T) {
 
 	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
 	token := sessionGatewayToken(t, run)
-	operation, err := executeSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["kubectl","get","pods","--namespace","default","--output","json"]}}`))
+	operation, err := runSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["kubectl","get","pods","--namespace","default","--output","json"]}}`))
 	if err != nil || operation.ExitCode != 0 {
 		t.Fatalf("diagnosis kubectl command failed: %s, %v", operation.Stdout, err)
 	}

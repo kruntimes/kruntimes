@@ -28,7 +28,7 @@ class SessionTestStub:
     def __getattr__(self, name):
         return getattr(self._stub, name)
 
-    def ExecuteSessionOperation(self, request):
+    def collect_session_operation(self, request):
         completed = None
         stdout = bytearray()
         stderr = bytearray()
@@ -168,21 +168,21 @@ class TestPythonRuntime(unittest.TestCase):
             assigned_pod_uid="pod-a",
         )
         with self.assertRaises(grpc.RpcError) as ctx:
-            self.session_stub.ExecuteSessionOperation(
-                runtime_pb2.ExecuteSessionOperationRequest(identity=identity)
+            self.session_stub.collect_session_operation(
+                runtime_pb2.SessionOperationRequest(identity=identity)
             )
         self.assertEqual(ctx.exception.code(), grpc.StatusCode.INVALID_ARGUMENT)
 
-        self.session_stub.ExecuteSessionOperation(
-            runtime_pb2.ExecuteSessionOperationRequest(
+        self.session_stub.collect_session_operation(
+            runtime_pb2.SessionOperationRequest(
                 identity=identity,
                 create_directory=runtime_pb2.SessionDirectoryCreate(
                     path="scratch/nested",
                 ),
             )
         )
-        self.session_stub.ExecuteSessionOperation(
-            runtime_pb2.ExecuteSessionOperationRequest(
+        self.session_stub.collect_session_operation(
+            runtime_pb2.SessionOperationRequest(
                 identity=identity,
                 write_file=runtime_pb2.SessionFileWrite(
                     path="notes/hello.txt",
@@ -206,8 +206,8 @@ class TestPythonRuntime(unittest.TestCase):
         notes = next((entry for entry in listed.entries if entry.path == "notes"), None)
         self.assertIsNotNone(notes)
         self.assertTrue(notes.directory)
-        operation = self.session_stub.ExecuteSessionOperation(
-            runtime_pb2.ExecuteSessionOperationRequest(
+        operation = self.session_stub.collect_session_operation(
+            runtime_pb2.SessionOperationRequest(
                 identity=identity,
                 command=runtime_pb2.SessionCommand(
                     argv=["bash", "-c", "printf '%s:%s:' \"$KRUNTIMES_SESSION_DEFAULT\" \"$KRUNTIMES_SESSION_TEST\"; cat notes/hello.txt"],
@@ -218,8 +218,8 @@ class TestPythonRuntime(unittest.TestCase):
         self.assertEqual(operation.command.exit_code, 0)
         self.assertEqual(operation.command.stdout, b"session:environment:hello\n")
         self.assertFalse(operation.command.timed_out)
-        self.session_stub.ExecuteSessionOperation(
-            runtime_pb2.ExecuteSessionOperationRequest(
+        self.session_stub.collect_session_operation(
+            runtime_pb2.SessionOperationRequest(
                 identity=identity,
                 rename_file=runtime_pb2.SessionFileRename(
                     source_path="notes/hello.txt",
@@ -227,8 +227,8 @@ class TestPythonRuntime(unittest.TestCase):
                 ),
             )
         )
-        self.session_stub.ExecuteSessionOperation(
-            runtime_pb2.ExecuteSessionOperationRequest(
+        self.session_stub.collect_session_operation(
+            runtime_pb2.SessionOperationRequest(
                 identity=identity,
                 delete_file=runtime_pb2.SessionFileDelete(
                     path="notes",
@@ -255,7 +255,7 @@ class TestPythonRuntime(unittest.TestCase):
         )
         output_size = SESSION_OPERATION_OUTPUT_CHUNK_BYTES * 2 + 1
         events = list(self.session_stub.StreamSessionOperation(
-            runtime_pb2.ExecuteSessionOperationRequest(
+            runtime_pb2.SessionOperationRequest(
                 identity=identity,
                 command=runtime_pb2.SessionCommand(
                     argv=["python", "-c", f"import sys; sys.stdout.buffer.write(b'x' * {output_size})"],
@@ -272,7 +272,7 @@ class TestPythonRuntime(unittest.TestCase):
         identity = runtime_pb2.SessionIdentity(run_uid="session-run", assigned_pod_uid="pod-a")
         started = time.monotonic()
         stream = self.session_stub.StreamSessionOperation(
-            runtime_pb2.ExecuteSessionOperationRequest(
+            runtime_pb2.SessionOperationRequest(
                 identity=identity,
                 command=runtime_pb2.SessionCommand(argv=["python", "-u", "-c", "import time; print('ready'); time.sleep(2)"]),
             )

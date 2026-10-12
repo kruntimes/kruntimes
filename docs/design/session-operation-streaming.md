@@ -45,7 +45,7 @@ than claiming to solve recovery semantics prematurely.
 The Runtime gRPC contract adds a server-streaming method:
 
 ```proto
-rpc StreamSessionOperation(ExecuteSessionOperationRequest)
+rpc StreamSessionOperation(SessionOperationRequest)
     returns (stream SessionOperationEvent);
 ```
 

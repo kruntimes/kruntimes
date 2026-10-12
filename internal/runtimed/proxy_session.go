@@ -117,7 +117,7 @@ func (s *sessionRuntimeProxy) RenewSessionLease(ctx context.Context, req *pb.Ren
 // StreamSessionOperation forwards one ordered operation event stream. Queue
 // ownership remains with owner runtimed even when this request first reaches a
 // different Runtime Pod through the Runtime Service.
-func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.ExecuteSessionOperationRequest, server pb.SessionRuntime_StreamSessionOperationServer) error {
+func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.SessionOperationRequest, server pb.SessionRuntime_StreamSessionOperationServer) error {
 	route, err := s.route(server.Context(), req.GetIdentity())
 	if err != nil {
 		return err
@@ -157,7 +157,7 @@ func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.ExecuteSessionOpera
 	admitted := false
 	started := time.Now()
 	var streamedStdout, streamedStderr []byte
-	var completed *pb.ExecuteSessionOperationResponse
+	var completed *pb.SessionOperationResult
 	persistAndSend := func(event *pb.SessionOperationEvent) error {
 		persistenceCtx, cancelPersistence := sessionOperationPersistenceContext()
 		err := s.operationStore.Append(persistenceCtx, route.run, operationID, event)
@@ -174,7 +174,7 @@ func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.ExecuteSessionOpera
 		}
 		admitted = true
 		return nil
-	}, func(operationCtx context.Context) (*pb.ExecuteSessionOperationResponse, error) {
+	}, func(operationCtx context.Context) (*pb.SessionOperationResult, error) {
 		stream, err := route.client.StreamSessionOperation(operationCtx, req)
 		if err != nil {
 			return nil, err
@@ -186,12 +186,12 @@ func (s *sessionRuntimeProxy) StreamSessionOperation(req *pb.ExecuteSessionOpera
 			case pb.SessionOperationOutputStream_SESSION_OPERATION_OUTPUT_STREAM_STDERR:
 				streamedStderr = append(streamedStderr, output.GetData()...)
 			}
-		}, func(response *pb.ExecuteSessionOperationResponse) {
+		}, func(response *pb.SessionOperationResult) {
 			// Runtime Servers stream command output so the terminal event remains
 			// small enough for the durable operation journal. Keep a private copy
 			// for the structured runtimed log projection instead of changing the
 			// event persisted for clients.
-			completed = proto.Clone(response).(*pb.ExecuteSessionOperationResponse)
+			completed = proto.Clone(response).(*pb.SessionOperationResult)
 			if command := completed.GetCommand(); command != nil {
 				if len(streamedStdout) > 0 {
 					command.Stdout = streamedStdout
@@ -218,7 +218,7 @@ func forwardSessionOperationEvents(
 	sequence *int64,
 	send func(*pb.SessionOperationEvent) error,
 	onOutput func(*pb.SessionOperationOutput),
-	onCompleted func(*pb.ExecuteSessionOperationResponse),
+	onCompleted func(*pb.SessionOperationResult),
 ) error {
 	if send == nil {
 		return status.Error(codes.FailedPrecondition, "session operation event sender is not configured")
@@ -362,8 +362,8 @@ func sessionOperationFailure(sequence int64, operationErr error) *pb.SessionOper
 
 func (s *sessionRuntimeProxy) emitSessionOperationLog(
 	run *v1alpha1.Run,
-	request *pb.ExecuteSessionOperationRequest,
-	response *pb.ExecuteSessionOperationResponse,
+	request *pb.SessionOperationRequest,
+	response *pb.SessionOperationResult,
 	operationErr error,
 	duration time.Duration,
 ) {
@@ -417,7 +417,7 @@ func (s *sessionRuntimeProxy) emitSessionStream(
 	}
 }
 
-func sessionOperationName(request *pb.ExecuteSessionOperationRequest) string {
+func sessionOperationName(request *pb.SessionOperationRequest) string {
 	switch {
 	case request.GetCommand() != nil:
 		return "command"
@@ -434,7 +434,7 @@ func sessionOperationName(request *pb.ExecuteSessionOperationRequest) string {
 	}
 }
 
-func sessionOperationOutcome(response *pb.ExecuteSessionOperationResponse, operationErr error) (string, string) {
+func sessionOperationOutcome(response *pb.SessionOperationResult, operationErr error) (string, string) {
 	if operationErr != nil {
 		code := status.Code(operationErr)
 		switch code {

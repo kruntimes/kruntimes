@@ -390,9 +390,9 @@ func TestSessionFilePaginationContract(t *testing.T) {
 		t.Fatalf("register Session: %v", err)
 	}
 	for _, name := range []string{"z", "a", "\u00e9", "b"} {
-		stream, err := client.StreamSessionOperation(t.Context(), &pb.ExecuteSessionOperationRequest{
+		stream, err := client.StreamSessionOperation(t.Context(), &pb.SessionOperationRequest{
 			Identity: identity,
-			Operation: &pb.ExecuteSessionOperationRequest_WriteFile{WriteFile: &pb.SessionFileWrite{
+			Operation: &pb.SessionOperationRequest_WriteFile{WriteFile: &pb.SessionFileWrite{
 				Path: "pages/" + name, Contents: []byte(name), CreateParents: true,
 			}},
 		})
