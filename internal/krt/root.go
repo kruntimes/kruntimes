@@ -57,6 +57,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newLogsCmd(configFlags, scheme))
 	root.AddCommand(newCancelCmd(configFlags, scheme))
 	root.AddCommand(newArtifactCmd(configFlags, scheme))
+	root.AddCommand(newSessionCmd(configFlags))
 	root.AddCommand(runtimeCmd)
 	root.AddCommand(workflowCmd)
 	root.AddCommand(newVersionCmd())

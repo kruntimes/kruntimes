@@ -561,6 +561,9 @@ func TestSchedulerReconcile(t *testing.T) {
 			t.Fatalf("get run: %v", err)
 		}
 		if updated.Status.Phase == v1alpha1.RunScheduled && updated.Status.AssignedPod != "" {
+			if updated.Status.Mode != "task" {
+				t.Fatalf("scheduled Run mode = %q, want task", updated.Status.Mode)
+			}
 			t.Logf("Task %s scheduled to pod %s", updated.Name, updated.Status.AssignedPod)
 			return
 		}

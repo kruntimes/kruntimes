@@ -2,6 +2,7 @@ package krt
 
 import (
 	"fmt"
+	"io"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -42,22 +43,7 @@ func newListCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Schem
 				return writeStructuredOutput(cmd.OutOrStdout(), output, &tasks)
 			}
 
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
-			fmt.Fprintln(w, "NAME\tNAMESPACE\tRUNTIME\tPHASE\tASSIGNED POD\tAGE")
-			for _, t := range tasks.Items {
-				age := ""
-				if t.CreationTimestamp.Time.Unix() > 0 {
-					age = fmt.Sprintf("%v", t.CreationTimestamp.Time)
-				}
-				assignedPod := t.Status.AssignedPod
-				if assignedPod == "" {
-					assignedPod = "-"
-				}
-
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-					t.Name, t.Namespace, t.Spec.Runtime, t.Status.Phase, assignedPod, age)
-			}
-			return w.Flush()
+			return writeRunListTable(cmd.OutOrStdout(), &tasks)
 		},
 	}
 
@@ -66,6 +52,28 @@ func newListCmd(getter genericclioptions.RESTClientGetter, scheme *runtime.Schem
 	cmd.Flags().StringVar(&phase, "phase", "", "Filter by run phase")
 	addOutputFlag(cmd, &output)
 	return cmd
+}
+
+func writeRunListTable(output io.Writer, runs *v1alpha1.RunList) error {
+	w := tabwriter.NewWriter(output, 0, 0, 3, ' ', 0)
+	if _, err := fmt.Fprintln(w, "NAME\tNAMESPACE\tRUNTIME\tMODE\tPHASE\tASSIGNED POD\tAGE"); err != nil {
+		return err
+	}
+	for _, run := range runs.Items {
+		age := ""
+		if run.CreationTimestamp.Unix() > 0 {
+			age = fmt.Sprintf("%v", run.CreationTimestamp.Time)
+		}
+		assignedPod := run.Status.AssignedPod
+		if assignedPod == "" {
+			assignedPod = "-"
+		}
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			run.Name, run.Namespace, run.Spec.Runtime, run.Spec.Mode.Name(), run.Status.Phase, assignedPod, age); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
 }
 
 func filterRuns(items []v1alpha1.Run, runtime, phase string) []v1alpha1.Run {

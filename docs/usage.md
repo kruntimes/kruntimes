@@ -55,6 +55,60 @@ spec:
 The scheduler watches Pending Runs and assigns them to healthy Runtime Pods in
 the same namespace.
 
+## Operate a Session Run with krt
+
+Create a Session-mode Run and wait for its phase to become `Ready`:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: shell-session
+spec:
+  runtime: bash
+  mode:
+    session: {}
+```
+
+`krt list` and `kubectl get run` show the Run's `MODE` (`task`, `session`, or
+`function`). The Kubernetes column is filled by the scheduler after it observes
+the Run.
+
+Run one command through the authenticated Session gateway:
+
+```bash
+krt session exec -n default shell-session -- sh -c 'echo hello; echo warning >&2'
+```
+
+Command words are passed as `argv`; use `sh -c` for shell expansion. `exec`
+returns a non-zero CLI status when the operation fails or the command exits
+non-zero. It does not allocate a TTY or stream live stdin.
+
+Use `attach` to submit one shell command per line on the same Session
+connection. Each line is a separate operation:
+
+```bash
+krt session attach -n default shell-session
+```
+
+For scripts, `attach` accepts one JSON operation per input line and can emit
+one JSON event per output line:
+
+```bash
+printf '%s\n' '{"command":{"shell":"echo hello"}}' |
+  krt session attach -n default shell-session --input ndjson --output ndjson
+```
+
+Output events contain base64-encoded `data` fields, as in the gateway wire
+format. The text view writes `stdout` and `stderr` chunks as they arrive and
+reports accepted, progress, completed, and failed events. Ctrl-C requests
+cancellation of the active operation before closing the connection. Session
+commands use the current kubeconfig and the Run endpoint's TLS configuration.
+When an in-cluster Console Service URL cannot be reached directly, `krt`
+opens a temporary Kubernetes port-forward to that Service using the same
+kubeconfig credentials.
+Closing `attach` does not terminate the Session Run.
+
 ## Use Environment Variables
 
 ```yaml

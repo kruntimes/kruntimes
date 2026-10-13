@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -131,6 +132,86 @@ func TestSessionGatewayExecutesAuthorizedOperation(t *testing.T) {
 	waitForRunPhase(t, run, 20*time.Second, v1alpha1.RunCancelled)
 	assertCancelledRun(t, run)
 	_ = waitForGatewayResponse(t, http.MethodGet, baseURL, token, nil, http.StatusConflict)
+}
+
+func TestKRTSessionOperations(t *testing.T) {
+	t.Parallel()
+	runtimeName := fmt.Sprintf("krt-session-%d", time.Now().UnixNano())
+	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-krt-session-", Namespace: testNamespace},
+		Spec:       v1alpha1.RunSpec{Runtime: runtimeName, Mode: v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}}},
+	}
+	if err := k8sClient.Create(t.Context(), run); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), run) })
+	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunReady)
+	if run.Status.Mode != "session" {
+		t.Fatalf("Run status mode = %q, want session", run.Status.Mode)
+	}
+	token := krtSessionToken(t, run)
+
+	execute := func(input string, args ...string) (string, string, error) {
+		cmd := krt.NewRootCmd()
+		cmd.SilenceUsage = true
+		var stdout, stderr bytes.Buffer
+		cmd.SetIn(strings.NewReader(input))
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+		cmd.SetArgs(args)
+		err := cmd.ExecuteContext(t.Context())
+		return stdout.String(), stderr.String(), err
+	}
+	stdout, stderr, err := execute("", "session", "exec", run.Name, "--namespace", testNamespace, "--token", token, "--", "sh", "-c", "printf cli-ok")
+	if err != nil || stdout != "cli-ok" || !strings.Contains(stderr, "accepted") {
+		t.Fatalf("krt session exec = stdout %q, stderr %q, error %v", stdout, stderr, err)
+	}
+	stdout, stderr, err = execute("printf attach-ok\n", "session", "attach", run.Name, "--namespace", testNamespace, "--token", token)
+	if err != nil || stdout != "attach-ok" {
+		t.Fatalf("krt session attach = stdout %q, stderr %q, error %v", stdout, stderr, err)
+	}
+	_, _, err = execute("", "session", "exec", run.Name, "--namespace", testNamespace, "--token", token, "--", "sh", "-c", "exit 7")
+	if err == nil || !strings.Contains(err.Error(), "status 7") {
+		t.Fatalf("krt session command exit = %v, want status 7", err)
+	}
+	stdout, _, err = execute("", "list", "--namespace", testNamespace, "--runtime", runtimeName)
+	if err != nil || !strings.Contains(stdout, "MODE") || !strings.Contains(stdout, "session") {
+		t.Fatalf("krt list = %q, %v", stdout, err)
+	}
+	kubectl := exec.CommandContext(t.Context(), "kubectl", "get", "run", run.Name, "-n", testNamespace)
+	output, err := kubectl.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "MODE") || !strings.Contains(string(output), "session") {
+		t.Fatalf("kubectl get run = %q, %v", output, err)
+	}
+}
+
+func krtSessionToken(t *testing.T, run *v1alpha1.Run) string {
+	t.Helper()
+	serviceAccount, token := newSessionGatewayServiceAccount(t)
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: serviceAccount.Name, Namespace: testNamespace},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"runs"}, ResourceNames: []string{run.Name}, Verbs: []string{"get"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"kruntimes-console"}, Verbs: []string{"get"}},
+			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{""}, Resources: []string{"pods/portforward"}, Verbs: []string{"create"}},
+		},
+	}
+	if err := k8sClient.Create(t.Context(), role); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), role) })
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: role.Name, Namespace: testNamespace},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: role.Name},
+		Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: serviceAccount.Name, Namespace: testNamespace}},
+	}
+	if err := k8sClient.Create(t.Context(), binding); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), binding) })
+	return token
 }
 
 func TestSessionGatewayStreamsCommandOutput(t *testing.T) {

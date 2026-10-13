@@ -55,7 +55,8 @@ Common status fields:
 
 | Field | Description |
 | --- | --- |
-| `status.phase` | `Pending`, `Scheduled`, `Running`, `Ready`, `Succeeded`, `Failed`, `Timeout`, or `Cancelled`. `Ready` is active and non-terminal; it is used by registered function-mode Runs. |
+| `status.phase` | `Pending`, `Scheduled`, `Running`, `Ready`, `Succeeded`, `Failed`, `Timeout`, or `Cancelled`. `Ready` is active and non-terminal; it is used by registered function- and session-mode Runs. |
+| `status.mode` | Scheduler-observed `task`, `session`, or `function` mode, used by the `kubectl get run` printer column. |
 | `status.assignedPod` | Runtime Pod selected by the scheduler. |
 | `status.assignedPodUID` | UID of the assigned Runtime Pod, used to distinguish Pod-name reuse during recovery. |
 | `status.endpoint` | Bounded HTTP or HTTPS gateway endpoint and optional CA bundle for a ready function- or session-mode Run. It is absent for task Runs. |
