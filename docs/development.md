@@ -12,7 +12,9 @@ This guide covers local development for contributors.
 - Python 3.12+ and uv for Python Runtime work
 
 Pinned tool versions are declared in `Makefile`. The Make targets install or
-verify local tools before use.
+verify local tools before use. Targets that download prebuilt binaries (protoc,
+Helm) select the release asset for the host OS and architecture; set
+`PROTOC_ARCH` or `HELM_PLATFORM` to fetch another platform's asset instead.
 
 ## Repository Setup
 

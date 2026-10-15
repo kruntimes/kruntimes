@@ -19,7 +19,6 @@ GOLANGCI_LINT_VERSION ?= v2.12.2
 GOVULNCHECK_VERSION ?= v1.5.0
 GITLEAKS_VERSION ?= v8.30.1
 PROTOC_VERSION ?= 29.3
-PROTOC_ARCH ?= linux-x86_64
 PROTOC_GEN_GO_VERSION ?= v1.36.11
 PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
 HELM_VERSION ?= v3.19.0
@@ -27,6 +26,34 @@ UV_VERSION ?= 0.11.16
 HUGO_VERSION ?= v0.152.2
 HUGO_BIND ?= 127.0.0.1
 HUGO_PORT ?= 1313
+
+# protoc and Helm publish one release asset per host platform. Detect the host
+# instead of assuming Linux so macOS and Linux arm64 contributors do not
+# download a binary that cannot execute. HOST_OS and HOST_ARCH are overridable,
+# which lets any runner exercise every mapping (see test-tool-platform).
+HOST_OS ?= $(shell uname -s)
+HOST_ARCH ?= $(shell uname -m)
+
+ifeq ($(HOST_OS),Darwin)
+PROTOC_OS := osx
+HELM_OS := darwin
+else
+PROTOC_OS := linux
+HELM_OS := linux
+endif
+
+ifneq ($(filter amd64 x86_64,$(HOST_ARCH)),)
+PROTOC_ARCH ?= $(PROTOC_OS)-x86_64
+HELM_ARCH := amd64
+else ifneq ($(filter arm64 aarch64,$(HOST_ARCH)),)
+PROTOC_ARCH ?= $(PROTOC_OS)-aarch_64
+HELM_ARCH := arm64
+else
+PROTOC_ARCH ?= $(PROTOC_OS)-$(HOST_ARCH)
+HELM_ARCH := $(HOST_ARCH)
+endif
+
+HELM_PLATFORM ?= $(HELM_OS)-$(HELM_ARCH)
 
 # NAMESPACE for helm deploy
 NAMESPACE ?= default
@@ -84,7 +111,7 @@ lint: fmt vet golangci-lint ## Run go fmt, go vet, and golangci-lint.
 	$(GOLANGCI_LINT) run ./...
 
 .PHONY: test
-test: generate manifests proto fmt vet ## Run unit tests.
+test: test-tool-platform generate manifests proto fmt vet ## Run unit tests.
 	go test $$(go list ./... | grep -v /test/integration | grep -v /test/e2e) -coverprofile cover.out
 
 .PHONY: test-integration
@@ -407,14 +434,18 @@ docker-push: ## Push Docker images.
 
 .PHONY: helm
 helm: tool-bin-dir ## Install the pinned Helm CLI into GOBIN if it is missing.
-	@if ! test -x "$(GOBIN)/helm" || ! "$(GOBIN)/helm" version --short | grep -q "$(HELM_VERSION)"; then \
+	@if ! test -x "$(GOBIN)/helm" || ! "$(GOBIN)/helm" version --short 2>/dev/null | grep -q "$(HELM_VERSION)"; then \
 		tmp_parent="$${TMPDIR:-/tmp}"; \
 		mkdir -p "$$tmp_parent" && \
 		tmp_dir="$$(mktemp -d "$$tmp_parent/helm.XXXXXX")" && \
 		trap 'rm -rf "$$tmp_dir"' EXIT && \
-		curl --fail --location --silent --show-error -o "$$tmp_dir/helm.tar.gz" https://get.helm.sh/helm-$(HELM_VERSION)-linux-amd64.tar.gz && \
+		curl --fail --location --silent --show-error -o "$$tmp_dir/helm.tar.gz" https://get.helm.sh/helm-$(HELM_VERSION)-$(HELM_PLATFORM).tar.gz && \
 		tar -C "$$tmp_dir" -xzf "$$tmp_dir/helm.tar.gz" && \
-		cp "$$tmp_dir/linux-amd64/helm" "$(GOBIN)/helm" && chmod +x "$(GOBIN)/helm"; \
+		cp "$$tmp_dir/$(HELM_PLATFORM)/helm" "$(GOBIN)/helm" && chmod +x "$(GOBIN)/helm"; \
+	fi; \
+	if ! "$(GOBIN)/helm" version --short 2>/dev/null | grep -q "$(HELM_VERSION)"; then \
+		echo "error: $(GOBIN)/helm is not a runnable $(HELM_VERSION) for $(HELM_PLATFORM); check the download above and HELM_PLATFORM" >&2; \
+		exit 1; \
 	fi
 
 .PHONY: template
@@ -469,6 +500,14 @@ proto: protoc protoc-gen-go protoc-gen-go-grpc ## Generate gRPC code from proto 
 tool-bin-dir: ## Create the caller-configured local tool directory.
 	@mkdir -p "$(GOBIN)"
 
+.PHONY: tool-platform
+tool-platform: ## Print the resolved protoc and Helm host platform identifiers.
+	@printf 'protoc_arch=%s\nhelm_platform=%s\n' '$(PROTOC_ARCH)' '$(HELM_PLATFORM)'
+
+.PHONY: test-tool-platform
+test-tool-platform: ## Verify the pinned tools resolve to the host's release assets.
+	./hack/verify-tool-platform.sh
+
 CONTROLLER_GEN = $(GOBIN)/controller-gen
 .PHONY: controller-gen
 controller-gen: tool-bin-dir ## Download controller-gen locally if not already installed.
@@ -504,15 +543,23 @@ gitleaks: tool-bin-dir ## Install the pinned gitleaks version if not present.
 	fi
 
 .PHONY: protoc
-protoc: tool-bin-dir ## Install protoc compiler if not present.
-	@if ! test -x $(PROTOC) || ! $(PROTOC) --version | grep -q "libprotoc $(PROTOC_VERSION)"; then \
+protoc: tool-bin-dir ## Install a runnable protoc compiler for the host if not present.
+	@if ! test -x $(PROTOC) || ! $(PROTOC) --version 2>/dev/null | grep -q "libprotoc $(PROTOC_VERSION)"; then \
 		tmp_parent="$${TMPDIR:-/tmp}"; \
 		mkdir -p "$$tmp_parent" && \
 		tmp_dir="$$(mktemp -d "$$tmp_parent/protoc.XXXXXX")" && \
 		trap 'rm -rf "$$tmp_dir"' EXIT && \
-		wget -q -O "$$tmp_dir/protoc.zip" https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOC_VERSION)/protoc-$(PROTOC_VERSION)-$(PROTOC_ARCH).zip && \
-		python3 -c "import zipfile,sys;zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$$tmp_dir/protoc.zip" "$$tmp_dir/install" && \
+		curl --fail --location --silent --show-error -o "$$tmp_dir/protoc.zip" "https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOC_VERSION)/protoc-$(PROTOC_VERSION)-$(PROTOC_ARCH).zip" && \
+		if command -v unzip >/dev/null 2>&1; then \
+			unzip -q -o "$$tmp_dir/protoc.zip" -d "$$tmp_dir/install"; \
+		else \
+			python3 -c "import zipfile,sys;zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$$tmp_dir/protoc.zip" "$$tmp_dir/install"; \
+		fi && \
 		cp "$$tmp_dir/install/bin/protoc" $(PROTOC) && chmod +x $(PROTOC); \
+	fi; \
+	if ! $(PROTOC) --version 2>/dev/null | grep -q "libprotoc $(PROTOC_VERSION)"; then \
+		echo "error: $(PROTOC) is not a runnable protoc $(PROTOC_VERSION) for $(HOST_OS)/$(HOST_ARCH); expected release asset protoc-$(PROTOC_VERSION)-$(PROTOC_ARCH).zip" >&2; \
+		exit 1; \
 	fi
 
 .PHONY: protoc-gen-go
@@ -544,6 +591,8 @@ hugo-tool: tool-bin-dir ## Install Hugo locally if not present.
 		go install github.com/gohugoio/hugo@$(HUGO_VERSION); \
 	fi
 
+# BSD sed (macOS) rejects GNU's `sed -i 's/old/new/' file` form, so rewrite the
+# generated file through a temporary file instead of editing in place.
 .PHONY: proto-python
 proto-python: uv ## Generate Python gRPC stubs from proto.
 	@mkdir -p runtimes/python/pb
@@ -553,4 +602,4 @@ proto-python: uv ## Generate Python gRPC stubs from proto.
 		--python_out=pb \
 		--grpc_python_out=pb \
 		../../api/runtime/v1/runtime.proto
-	@cd runtimes/python && sed -i 's/^import runtime_pb2 as/from . import runtime_pb2 as/' pb/runtime_pb2_grpc.py
+	@cd runtimes/python && sed 's/^import runtime_pb2 as/from . import runtime_pb2 as/' pb/runtime_pb2_grpc.py > pb/runtime_pb2_grpc.py.tmp && mv pb/runtime_pb2_grpc.py.tmp pb/runtime_pb2_grpc.py

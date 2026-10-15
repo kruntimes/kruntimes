@@ -14,6 +14,8 @@ title: "开发指南"
 - Python 3.12+ 和 uv（用于 Python Runtime 开发）
 
 锁定的工具版本在 `Makefile` 中声明。Make targets 在使用前安装或验证本地工具。
+下载预编译产物的 targets（protoc、Helm）会按主机的操作系统与架构选择对应的发布
+产物；可通过 `PROTOC_ARCH` 或 `HELM_PLATFORM` 指定其他平台的产物。
 
 ## 仓库设置
 
