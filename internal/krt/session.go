@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -17,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/client-go/rest"
 
 	"github.com/kruntimes/kruntimes/sdk/go/sandbox"
 )
@@ -113,11 +115,11 @@ func openKRTSession(ctx context.Context, getter genericclioptions.RESTClientGett
 	directErr := err
 	endpoint := opened.Run().Status.Endpoint
 	if endpoint == nil {
-		return nil, nil, directErr
+		return nil, nil, explainSessionUnauthorized(directErr, config)
 	}
 	consoleNamespace, consoleService, consolePort, ok := consoleServiceFromEndpoint(endpoint.URL)
 	if !ok || ctx.Err() != nil {
-		return nil, nil, directErr
+		return nil, nil, explainSessionUnauthorized(directErr, config)
 	}
 	forward, err := sandbox.StartConsolePortForward(ctx, config, consoleNamespace, consoleService, consolePort)
 	if err != nil {
@@ -132,9 +134,21 @@ func openKRTSession(ctx context.Context, getter genericclioptions.RESTClientGett
 	}
 	if err != nil {
 		forward.Close()
-		return nil, nil, fmt.Errorf("open Session through Console port-forward: %w", err)
+		return nil, nil, fmt.Errorf("open Session through Console port-forward: %w", explainSessionUnauthorized(err, config))
 	}
 	return session, func() { _ = session.Close(); forward.Close() }, nil
+}
+
+func explainSessionUnauthorized(err error, config *rest.Config) error {
+	var apiError *sandbox.APIError
+	if config == nil || !errors.As(err, &apiError) || apiError.StatusCode != http.StatusUnauthorized {
+		return err
+	}
+	if config.BearerToken != "" || config.BearerTokenFile != "" || config.ExecProvider != nil || config.AuthProvider != nil ||
+		(len(config.CertData) == 0 && config.CertFile == "") {
+		return err
+	}
+	return fmt.Errorf("%w: Console did not authenticate the kubeconfig client certificate; configure console.tls.clientCASecretName with its signing CA, or use --token with a bearer token authorized to get this Run", err)
 }
 
 func consoleServiceFromEndpoint(raw string) (namespace, service string, port int, ok bool) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
@@ -290,5 +292,29 @@ func TestConsoleServiceFromEndpoint(t *testing.T) {
 	}
 	if _, _, _, ok := consoleServiceFromEndpoint("https://gateway.example.com/v1/sessions/uid"); ok {
 		t.Fatal("external endpoint treated as in-cluster Console service")
+	}
+}
+
+func TestSessionUnauthorizedExplainsCertificateOnlyKubeconfig(t *testing.T) {
+	unauthorized := &sandbox.APIError{StatusCode: http.StatusUnauthorized, Message: "open Sandbox Session"}
+	for _, item := range []struct {
+		name   string
+		config *rest.Config
+		want   bool
+	}{
+		{name: "client certificate", config: &rest.Config{TLSClientConfig: rest.TLSClientConfig{CertData: []byte("certificate")}}, want: true},
+		{name: "bearer token", config: &rest.Config{BearerToken: "token", TLSClientConfig: rest.TLSClientConfig{CertData: []byte("certificate")}}},
+		{name: "no client certificate", config: &rest.Config{}},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			err := explainSessionUnauthorized(unauthorized, item.config)
+			if got := strings.Contains(err.Error(), "console.tls.clientCASecretName"); got != item.want {
+				t.Errorf("certificate guidance present = %t, want %t: %v", got, item.want, err)
+			}
+			var apiError *sandbox.APIError
+			if !errors.As(err, &apiError) || apiError != unauthorized {
+				t.Errorf("underlying API error = %v, want %v", apiError, unauthorized)
+			}
+		})
 	}
 }

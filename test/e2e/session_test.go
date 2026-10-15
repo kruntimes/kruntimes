@@ -163,6 +163,13 @@ func TestKRTSessionOperations(t *testing.T) {
 		err := cmd.ExecuteContext(t.Context())
 		return stdout.String(), stderr.String(), err
 	}
+	// The default E2E Console has no client CA configured. The kind kubeconfig
+	// uses a client certificate, so the CLI must explain why that credential
+	// cannot authenticate at the Console even though it works with Kubernetes.
+	_, _, err := execute("", "session", "attach", run.Name, "--namespace", testNamespace)
+	if err == nil || !strings.Contains(err.Error(), "console.tls.clientCASecretName") {
+		t.Fatalf("krt session attach with certificate-only kubeconfig = %v, want client CA guidance", err)
+	}
 	stdout, stderr, err := execute("", "session", "exec", run.Name, "--namespace", testNamespace, "--token", token, "--", "sh", "-c", "printf cli-ok")
 	if err != nil || stdout != "cli-ok" || !strings.Contains(stderr, "accepted") {
 		t.Fatalf("krt session exec = stdout %q, stderr %q, error %v", stdout, stderr, err)

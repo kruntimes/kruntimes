@@ -107,6 +107,13 @@ commands use the current kubeconfig and the Run endpoint's TLS configuration.
 When an in-cluster Console Service URL cannot be reached directly, `krt`
 opens a temporary Kubernetes port-forward to that Service using the same
 kubeconfig credentials.
+The Console Runtime access API accepts Kubernetes bearer tokens, or client
+certificates signed by a CA configured in `console.tls.clientCASecretName`.
+If your kubeconfig uses only a client certificate and the Console has no client
+CA configured, Session commands return HTTP 401. Configure that client CA in
+the platform chart, or pass `--token` with a Kubernetes bearer token that can
+get the Run. The token also needs the Kubernetes permissions required for the
+Console port-forward when the Service is not directly reachable.
 Closing `attach` does not terminate the Session Run.
 
 ## Use Environment Variables
