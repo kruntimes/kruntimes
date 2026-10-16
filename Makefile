@@ -2,7 +2,7 @@
 IMG_SCHEDULER ?= kruntimes-scheduler:latest
 IMG_CONTROLLER ?= kruntimes-controller:latest
 IMG_RUNTIMED ?= kruntimes-runtimed:latest
-IMG_LOG_API ?= kruntimes-runtime-log-apiserver:latest
+IMG_RUN_EXTENSION_API ?= kruntimes-run-extension-apiserver:latest
 IMG_CONSOLE ?= kruntimes-console:latest
 IMG_BASH_RUNTIME ?= kruntimes-bash-runtime:latest
 IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:latest
@@ -169,7 +169,7 @@ E2E_RUN_IMAGE_TAG ?= e2e-$(shell date +%Y%m%d%H%M%S)
 E2E_IMG_SCHEDULER ?= kruntimes-scheduler:$(E2E_IMAGE_TAG)
 E2E_IMG_CONTROLLER ?= kruntimes-controller:$(E2E_IMAGE_TAG)
 E2E_IMG_RUNTIMED ?= kruntimes-runtimed:$(E2E_IMAGE_TAG)
-E2E_IMG_LOG_API ?= kruntimes-runtime-log-apiserver:$(E2E_IMAGE_TAG)
+E2E_IMG_RUN_EXTENSION_API ?= kruntimes-run-extension-apiserver:$(E2E_IMAGE_TAG)
 E2E_IMG_CONSOLE ?= kruntimes-console:$(E2E_IMAGE_TAG)
 E2E_IMG_BASH_RUNTIME ?= kruntimes-bash-runtime:$(E2E_IMAGE_TAG)
 E2E_IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:$(E2E_IMAGE_TAG)
@@ -195,7 +195,7 @@ CERT_MANAGER_VERSION ?= v1.21.1
 e2e-setup: IMG_SCHEDULER = $(E2E_IMG_SCHEDULER)
 e2e-setup: IMG_CONTROLLER = $(E2E_IMG_CONTROLLER)
 e2e-setup: IMG_RUNTIMED = $(E2E_IMG_RUNTIMED)
-e2e-setup: IMG_LOG_API = $(E2E_IMG_LOG_API)
+e2e-setup: IMG_RUN_EXTENSION_API = $(E2E_IMG_RUN_EXTENSION_API)
 e2e-setup: IMG_CONSOLE = $(E2E_IMG_CONSOLE)
 e2e-setup: IMG_BASH_RUNTIME = $(E2E_IMG_BASH_RUNTIME)
 e2e-setup: IMG_PYTHON_RUNTIME = $(E2E_IMG_PYTHON_RUNTIME)
@@ -205,7 +205,7 @@ e2e-setup: manifests docker-build docker-build-diagnosis-runtime ## Create kind 
 	kind load docker-image $(E2E_IMG_SCHEDULER) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_CONTROLLER) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_RUNTIMED) --name $(KIND_CLUSTER_NAME)
-	kind load docker-image $(E2E_IMG_LOG_API) --name $(KIND_CLUSTER_NAME)
+	kind load docker-image $(E2E_IMG_RUN_EXTENSION_API) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_CONSOLE) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_BASH_RUNTIME) --name $(KIND_CLUSTER_NAME)
 	kind load docker-image $(E2E_IMG_PYTHON_RUNTIME) --name $(KIND_CLUSTER_NAME)
@@ -216,7 +216,7 @@ e2e-setup: manifests docker-build docker-build-diagnosis-runtime ## Create kind 
 		--set scheduler.image=$(E2E_IMG_SCHEDULER) \
 		--set controller.image=$(E2E_IMG_CONTROLLER) \
 		--set runtimed.image=$(E2E_IMG_RUNTIMED) \
-		--set logAPI.image=$(E2E_IMG_LOG_API) \
+		--set runExtensionAPI.image=$(E2E_IMG_RUN_EXTENSION_API) \
 		--set console.image=$(E2E_IMG_CONSOLE) \
 		--namespace $(NAMESPACE) --create-namespace --wait --timeout 120s $(E2E_CONSOLE_HELM_ARGS)
 
@@ -343,7 +343,7 @@ build: generate proto console-ui-build ## Build all binaries.
 	go build -o bin/scheduler ./cmd/scheduler
 	go build -o bin/runtimed ./cmd/runtimed
 	go build -o bin/controller ./cmd/controller
-	go build -o bin/runtime-log-apiserver ./cmd/runtime-log-apiserver
+	go build -o bin/run-extension-apiserver ./cmd/run-extension-apiserver
 	go build -o bin/console ./console/cmd
 	go build -o bin/krt ./cmd/krt
 	go build -o bin/bash-runtime ./runtimes/bash/cmd
@@ -383,7 +383,7 @@ run-runtimed: generate manifests proto ## Run runtimed locally (requires kubecon
 ##@ Docker
 
 .PHONY: docker-build
-docker-build: docker-build-scheduler docker-build-controller docker-build-runtimed docker-build-log-api docker-build-console docker-build-bash-runtime docker-build-python-runtime ## Build all Docker images.
+docker-build: docker-build-scheduler docker-build-controller docker-build-runtimed docker-build-run-extension-api docker-build-console docker-build-bash-runtime docker-build-python-runtime ## Build all Docker images.
 
 .PHONY: docker-build-scheduler
 docker-build-scheduler: generate ## Build scheduler Docker image.
@@ -397,9 +397,9 @@ docker-build-controller: generate ## Build controller Docker image.
 docker-build-runtimed: generate proto ## Build runtimed Docker image.
 	$(CONTAINER_TOOL) build -t $(IMG_RUNTIMED) -f Dockerfile.runtimed .
 
-.PHONY: docker-build-log-api
-docker-build-log-api: generate proto ## Build aggregated Run log API Docker image.
-	$(CONTAINER_TOOL) build -t $(IMG_LOG_API) -f Dockerfile.log-api .
+.PHONY: docker-build-run-extension-api
+docker-build-run-extension-api: generate proto ## Build aggregated Run extension API Docker image.
+	$(CONTAINER_TOOL) build -t $(IMG_RUN_EXTENSION_API) -f Dockerfile.run-extension-api .
 
 .PHONY: docker-build-console
 docker-build-console: generate ## Build Kruntimes Console Docker image.
@@ -425,7 +425,7 @@ docker-push: ## Push Docker images.
 	$(CONTAINER_TOOL) push $(IMG_SCHEDULER)
 	$(CONTAINER_TOOL) push $(IMG_CONTROLLER)
 	$(CONTAINER_TOOL) push $(IMG_RUNTIMED)
-	$(CONTAINER_TOOL) push $(IMG_LOG_API)
+	$(CONTAINER_TOOL) push $(IMG_RUN_EXTENSION_API)
 	$(CONTAINER_TOOL) push $(IMG_CONSOLE)
 	$(CONTAINER_TOOL) push $(IMG_BASH_RUNTIME)
 	$(CONTAINER_TOOL) push $(IMG_PYTHON_RUNTIME)

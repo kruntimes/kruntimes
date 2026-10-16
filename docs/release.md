@@ -123,7 +123,7 @@ means the package-level access is missing rather than that a workflow retry is
 needed.
 
 Check every image package that the release publishes: `scheduler`, `controller`,
-`runtimed`, `gateway`, `runtime-log-apiserver`, `dashboard`, `bash-runtime`, and
+`runtimed`, `gateway`, `run-extension-apiserver`, `dashboard`, `bash-runtime`, and
 `python-runtime`. When moving a package from a renamed repository, unlink its
 old repository source and link `kruntimes/kruntimes` before creating the tag.
 Artifact publication failures must be superseded by a new tag.

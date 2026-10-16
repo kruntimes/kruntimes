@@ -1,4 +1,4 @@
-package logapi
+package runextensionapi
 
 import (
 	"encoding/json"
@@ -48,12 +48,23 @@ func TestCursorRoundTripAndEntryIdentity(t *testing.T) {
 
 func TestDiscoveryEndpoints(t *testing.T) {
 	server := &Server{}
-	for _, path := range []string{"/apis/logs.kruntimes.io", "/apis/logs.kruntimes.io/v1alpha1"} {
+	for _, path := range []string{"/apis/logs.kruntimes.io", "/apis/logs.kruntimes.io/v1alpha1", "/apis/sessions.kruntimes.io", "/apis/sessions.kruntimes.io/v1alpha1"} {
 		response := httptest.NewRecorder()
 		server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusOK {
 			t.Fatalf("GET %s = %d, want 200", path, response.Code)
 		}
+	}
+}
+
+func TestAggregatedSessionRejectsUnverifiedIdentity(t *testing.T) {
+	server := &Server{}
+	request := httptest.NewRequest(http.MethodGet, "/apis/sessions.kruntimes.io/v1alpha1/namespaces/team-a/runs/shell/session", nil)
+	request.Header.Set("X-Remote-User", "admin")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("forged aggregation identity status = %d, want 401", response.Code)
 	}
 }
 

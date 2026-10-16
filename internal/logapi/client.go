@@ -15,6 +15,11 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+const (
+	Group   = "logs.kruntimes.io"
+	Version = "v1alpha1"
+)
+
 var groupVersion = schema.GroupVersion{Group: Group, Version: Version}
 
 // RunLogOptions controls a Run-log API request. The returned request supports

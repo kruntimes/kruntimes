@@ -23,7 +23,6 @@ import (
 	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -38,6 +37,7 @@ import (
 	"github.com/kruntimes/kruntimes/internal/krt"
 	"github.com/kruntimes/kruntimes/internal/logapi"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
+	"github.com/kruntimes/kruntimes/internal/runextensionapi"
 	"github.com/kruntimes/kruntimes/internal/runstatus"
 	sandboxsdk "github.com/kruntimes/kruntimes/sdk/go/sandbox"
 )
@@ -164,39 +164,22 @@ func TestKRTSessionOperations(t *testing.T) {
 		err := cmd.ExecuteContext(t.Context())
 		return stdout.String(), stderr.String(), err
 	}
-	console := &appsv1.Deployment{}
-	if err := k8sClient.Get(t.Context(), client.ObjectKey{Namespace: testNamespace, Name: "kruntimes-console"}, console); err != nil {
-		t.Fatalf("get Console deployment: %v", err)
+	stdout, stderr, err := execute("printf cert-auth-ok\n", "session", "attach", run.Name, "--namespace", testNamespace)
+	if err != nil || stdout != "cert-auth-ok" || stderr != "" {
+		t.Fatalf("krt session attach through aggregated API with kubeconfig client certificate = stdout %q, stderr %q, error %v", stdout, stderr, err)
 	}
-	clientCAConfigured := false
-	for _, container := range console.Spec.Template.Spec.Containers {
-		if container.Name != "console" {
-			continue
-		}
-		for _, arg := range container.Args {
-			clientCAConfigured = clientCAConfigured || strings.HasPrefix(arg, "--tls-client-ca-file=")
-		}
-	}
-	if clientCAConfigured {
-		stdout, stderr, err := execute("printf cert-auth-ok\n", "session", "attach", run.Name, "--namespace", testNamespace)
-		if err != nil || stdout != "cert-auth-ok" {
-			t.Fatalf("krt session attach with kubeconfig client certificate = stdout %q, stderr %q, error %v", stdout, stderr, err)
-		}
-	} else {
-		// The kind kubeconfig uses a client certificate. Without its signing CA,
-		// Console must explain why that credential cannot authenticate here.
-		_, _, err := execute("", "session", "attach", run.Name, "--namespace", testNamespace)
-		if err == nil || !strings.Contains(err.Error(), "console.tls.clientCASecretName") {
-			t.Fatalf("krt session attach with certificate-only kubeconfig = %v, want client CA guidance", err)
-		}
-	}
-	stdout, stderr, err := execute("", "session", "exec", run.Name, "--namespace", testNamespace, "--token", token, "--", "sh", "-c", "printf cli-ok")
+	stdout, stderr, err = execute("", "session", "exec", run.Name, "--namespace", testNamespace, "--token", token, "--", "sh", "-c", "printf cli-ok")
 	if err != nil || stdout != "cli-ok" || stderr != "" {
 		t.Fatalf("krt session exec = stdout %q, stderr %q, error %v", stdout, stderr, err)
 	}
 	stdout, stderr, err = execute("printf attach-ok\n", "session", "attach", run.Name, "--namespace", testNamespace, "--token", token)
 	if err != nil || stdout != "attach-ok" || stderr != "" {
 		t.Fatalf("krt session attach = stdout %q, stderr %q, error %v", stdout, stderr, err)
+	}
+	_, _, err = execute("", "session", "exec", run.Name, "--namespace", testNamespace,
+		"--token", sessionGatewayToken(t, run), "--", "sh", "-c", "printf forbidden")
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("krt session exec without runs/session permission = %v, want HTTP 403", err)
 	}
 	_, _, err = execute("", "session", "exec", run.Name, "--namespace", testNamespace, "--token", token, "--", "sh", "-c", "exit 7")
 	if err == nil || !strings.Contains(err.Error(), "status 7") {
@@ -220,9 +203,7 @@ func krtSessionToken(t *testing.T, run *v1alpha1.Run) string {
 		ObjectMeta: metav1.ObjectMeta{Name: serviceAccount.Name, Namespace: testNamespace},
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"runs"}, ResourceNames: []string{run.Name}, Verbs: []string{"get"}},
-			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"kruntimes-console"}, Verbs: []string{"get"}},
-			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{""}, Resources: []string{"pods/portforward"}, Verbs: []string{"create"}},
+			{APIGroups: []string{runextensionapi.SessionGroup}, Resources: []string{"runs/session"}, ResourceNames: []string{run.Name}, Verbs: []string{"get"}},
 		},
 	}
 	if err := k8sClient.Create(t.Context(), role); err != nil {

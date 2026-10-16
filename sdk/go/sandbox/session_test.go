@@ -12,8 +12,40 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 )
+
+func TestOpenSessionViaAPIServerUsesKubeconfigCredentials(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/sessions.kruntimes.io/v1alpha1/namespaces/team-a/runs/shell/session" {
+			http.Error(w, "wrong aggregated Session path", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer caller-token" {
+			http.Error(w, "missing kubeconfig credentials", http.StatusUnauthorized)
+			return
+		}
+		connection, err := upgrader.Upgrade(w, r, nil)
+		if err == nil {
+			_ = connection.Close()
+		}
+	}))
+	defer server.Close()
+	sandbox := &Sandbox{run: &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "shell", Namespace: "team-a"},
+		Spec:       v1alpha1.RunSpec{Mode: v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}}},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunReady},
+	}}
+	config := &rest.Config{Host: server.URL, BearerToken: "caller-token",
+		TLSClientConfig: rest.TLSClientConfig{CAData: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})}}
+	session, err := sandbox.OpenSessionViaAPIServer(t.Context(), config)
+	if err != nil {
+		t.Fatalf("OpenSessionViaAPIServer: %v", err)
+	}
+	_ = session.Close()
+}
 
 func TestRESTSessionDialerUsesTokenFileCredentials(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "token")

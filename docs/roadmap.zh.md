@@ -412,10 +412,10 @@ controller wiring 累积不必要的冲突。
     detail page，并提供可展开且自动加载 step logs 的视图；
   - [x] 在 `kruntimes` chart 中增加可选 Helm installation support；
   - [x] 在标准 E2E environment 中部署 Dashboard。
-  - [x] 通过[聚合 Run-log API](design/runtime-gateway-log-api.zh.md)统一 Dashboard 和
+  - [x] 通过[聚合 Run-log API](design/run-extension-api.zh.md)统一 Dashboard 和
     `krt logs`：
     - [x] 增加专用的 `logs.kruntimes.io/runs/log` APIService、按 UID 过滤的有界
-      structured records，以及最小权限的 Log API ServiceAccount `get pods/log`；
+      structured records，以及最小权限的 Run Extension API ServiceAccount `get pods/log`；
     - [x] 将 Dashboard 和 `krt logs` 迁移到 Kubernetes aggregation API，移除 Gateway、
       Runtime-Pod port-forward 和 direct `pods/log` 路径；
     - [x] 通过 E2E 证明仅有 `get logs.kruntimes.io/runs/log` 即可完成 snapshot 和 follow

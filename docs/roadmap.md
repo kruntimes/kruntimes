@@ -495,7 +495,7 @@ wiring from accumulating avoidable conflicts.
   - [x] add optional Helm installation support in the `kruntimes` chart;
   - [x] deploy the Dashboard in the standard E2E environment.
   - [x] unify Dashboard and `krt logs` behind the [aggregated Run-log
-    API](design/runtime-gateway-log-api.md):
+    API](design/run-extension-api.md):
     - [x] add a dedicated `logs.kruntimes.io/runs/log` APIService, bounded
       UID-filtered structured records, and a least-privilege log API
       ServiceAccount `get pods/log` permission;

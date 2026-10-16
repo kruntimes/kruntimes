@@ -12,7 +12,7 @@ implemented.
 - [Session Mode for Agent Sandboxes](session-mode/)
 - [Session Operation Streaming](session-operation-streaming/)
 - [Runtime Gateway Transport Security and Transfer Bounds](runtime-gateway-transport/)
-- [Aggregated Run Log API](runtime-gateway-log-api/)
+- [Run Extension API](run-extension-api/)
 - [Kruntimes Console](console/)
 - [Runtime Readiness Visibility](runtime-readiness-visibility/)
 - [Function Inline Source Materialization](function-inline-source/)

@@ -76,6 +76,10 @@ spec:
             - --session-close-timeout={{ .Values.runtimed.session.closeTimeout }}
             - --console-namespace={{ .Release.Namespace }}
             - --console-selector-labels=app.kubernetes.io/name={{ include "kruntimes.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=console
+            {{- $runExtensionAPI := include "kruntimes.runExtensionAPI.config" . | fromYaml }}
+            {{- if $runExtensionAPI.enabled }}
+            - --run-extension-api-selector-labels=app.kubernetes.io/name={{ include "kruntimes.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=run-extension-api
+            {{- end }}
             - --console-url=https://{{ include "kruntimes.console.name" . }}.{{ .Release.Namespace }}.svc
             - --console-ca-file=/var/run/kruntimes/console-ca/ca.crt
             {{- if $runtimeMaintainerPullSecrets }}

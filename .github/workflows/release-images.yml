@@ -34,8 +34,8 @@ jobs:
             dockerfile: Dockerfile.controller
           - image: runtimed
             dockerfile: Dockerfile.runtimed
-          - image: runtime-log-apiserver
-            dockerfile: Dockerfile.log-api
+          - image: run-extension-apiserver
+            dockerfile: Dockerfile.run-extension-api
           - image: console
             dockerfile: console/Dockerfile
           - image: bash-runtime

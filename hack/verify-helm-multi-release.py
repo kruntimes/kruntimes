@@ -13,11 +13,11 @@ from pathlib import Path
 CHART = Path("charts/kruntimes")
 NAMESPACE = "kruntimes-system"
 # APIService objects are cluster-scoped and Kubernetes allows only one backend
-# for a group/version.  The aggregated log API is therefore installed by the
-# primary release only; a second platform release must disable logAPI.enabled.
+# for a group/version. The Run extension API is therefore installed by the
+# primary release only; a second platform release must disable runExtensionAPI.enabled.
 RELEASES = (
     ("kruntimes-a", ()),
-    ("kruntimes-b", ("--set", "logAPI.enabled=false")),
+    ("kruntimes-b", ("--set", "runExtensionAPI.enabled=false")),
 )
 
 

@@ -53,6 +53,7 @@ func main() {
 		runtimeMaintainerPullSecrets             string
 		consoleNamespace                         string
 		consoleSelectorLabels                    string
+		runExtensionAPISelectorLabels            string
 		consoleURL                               string
 		consoleCAFile                            string
 		sessionMaxQueueSize                      int
@@ -75,6 +76,7 @@ func main() {
 	flag.StringVar(&runtimeMaintainerPullSecrets, "runtime-maintainer-image-pull-secrets", "", "Comma-separated image pull Secret names for runtime maintainers.")
 	flag.StringVar(&consoleNamespace, "console-namespace", "", "Namespace of the Kruntimes Console. Empty keeps Runtime Pod ingress denied.")
 	flag.StringVar(&consoleSelectorLabels, "console-selector-labels", "", "Comma-separated key=value labels selecting Kruntimes Console Pods.")
+	flag.StringVar(&runExtensionAPISelectorLabels, "run-extension-api-selector-labels", "", "Comma-separated key=value labels selecting Run extension API Pods for Session ingress.")
 	flag.StringVar(&consoleURL, "console-url", "", "Cluster-local Console base URL written to ready Run endpoints.")
 	flag.StringVar(&consoleCAFile, "console-ca-file", "", "PEM trust bundle file for HTTPS Console endpoints.")
 	flag.IntVar(&sessionMaxQueueSize, "session-max-queue-size", 0, "Maximum queued mutations per Session Run. A non-positive value uses runtimed defaults.")
@@ -148,18 +150,19 @@ func main() {
 	)
 
 	reconciler := &controller.RuntimeReconciler{
-		Client:                     mgr.GetClient(),
-		Log:                        ctrl.Log.WithName("controllers").WithName("Runtime"),
-		Scheme:                     mgr.GetScheme(),
-		DefaultDaemonImage:         defaultDaemonImage,
-		RuntimedServiceAccountName: runtimedServiceAccountName,
-		ConsoleNamespace:           consoleNamespace,
-		ConsoleSelectorLabels:      parseLabels(consoleSelectorLabels),
-		ConsoleURL:                 consoleURL,
-		ConsoleCABundle:            consoleCABundle,
-		SessionMaxQueueSize:        sessionMaxQueueSize,
-		SessionMaxOperationTimeout: sessionMaxOperationTimeout,
-		SessionCloseTimeout:        sessionCloseTimeout,
+		Client:                        mgr.GetClient(),
+		Log:                           ctrl.Log.WithName("controllers").WithName("Runtime"),
+		Scheme:                        mgr.GetScheme(),
+		DefaultDaemonImage:            defaultDaemonImage,
+		RuntimedServiceAccountName:    runtimedServiceAccountName,
+		ConsoleNamespace:              consoleNamespace,
+		ConsoleSelectorLabels:         parseLabels(consoleSelectorLabels),
+		RunExtensionAPISelectorLabels: parseLabels(runExtensionAPISelectorLabels),
+		ConsoleURL:                    consoleURL,
+		ConsoleCABundle:               consoleCABundle,
+		SessionMaxQueueSize:           sessionMaxQueueSize,
+		SessionMaxOperationTimeout:    sessionMaxOperationTimeout,
+		SessionCloseTimeout:           sessionCloseTimeout,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Runtime")

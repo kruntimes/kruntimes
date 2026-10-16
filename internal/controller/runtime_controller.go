@@ -53,15 +53,16 @@ type RuntimeReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	DefaultDaemonImage         string
-	RuntimedServiceAccountName string
-	ConsoleNamespace           string
-	ConsoleSelectorLabels      map[string]string
-	ConsoleURL                 string
-	ConsoleCABundle            []byte
-	SessionMaxQueueSize        int
-	SessionMaxOperationTimeout time.Duration
-	SessionCloseTimeout        time.Duration
+	DefaultDaemonImage            string
+	RuntimedServiceAccountName    string
+	ConsoleNamespace              string
+	ConsoleSelectorLabels         map[string]string
+	RunExtensionAPISelectorLabels map[string]string
+	ConsoleURL                    string
+	ConsoleCABundle               []byte
+	SessionMaxQueueSize           int
+	SessionMaxOperationTimeout    time.Duration
+	SessionCloseTimeout           time.Duration
 }
 
 // +kubebuilder:rbac:groups=kruntimes.io,resources=runtimes,verbs=get;list;watch;update;patch
@@ -579,6 +580,17 @@ func (r *RuntimeReconciler) buildNetworkPolicy(rt *v1alpha1.Runtime) *networking
 				}},
 				Ports: sessionRuntimeNetworkPolicyPorts(),
 			},
+		}
+		if len(r.RunExtensionAPISelectorLabels) != 0 {
+			ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+				From: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+						"kubernetes.io/metadata.name": r.ConsoleNamespace,
+					}},
+					PodSelector: &metav1.LabelSelector{MatchLabels: maps.Clone(r.RunExtensionAPISelectorLabels)},
+				}},
+				Ports: sessionRuntimeNetworkPolicyPorts(),
+			})
 		}
 	}
 	return &networkingv1.NetworkPolicy{

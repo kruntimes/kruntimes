@@ -68,11 +68,11 @@ controller:
       cpu: 500m
       memory: 256Mi
 
-# The aggregated Run-log API is independently authenticated through Kubernetes
-# aggregation. kubectl, krt, and the Console use normal kubeconfig credentials.
-logAPI:
+# The Run extension API serves aggregated Run logs and Session operations.
+# kubectl, krt, and Console use normal Kubernetes API credentials.
+runExtensionAPI:
   enabled: true
-  image: ghcr.io/kruntimes/runtime-log-apiserver
+  image: ghcr.io/kruntimes/run-extension-apiserver
   imagePullPolicy: IfNotPresent
   replicas: 2
   bindAddress: ":8445"
@@ -93,6 +93,11 @@ logAPI:
     limits:
       cpu: 500m
       memory: 256Mi
+
+# Compatibility override for charts that configured the former logAPI values.
+# When set, these fields except image override runExtensionAPI. The old image
+# contains a log-only binary and cannot serve Session operations.
+logAPI: null
 
 console:
   image: ghcr.io/kruntimes/console

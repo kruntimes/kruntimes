@@ -9,10 +9,10 @@ ARG TARGETOS
 ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o runtime-log-apiserver ./cmd/runtime-log-apiserver
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o run-extension-apiserver ./cmd/run-extension-apiserver
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=builder /app/runtime-log-apiserver /runtime-log-apiserver
+COPY --from=builder /app/run-extension-apiserver /run-extension-apiserver
 USER 65532
-ENTRYPOINT ["/runtime-log-apiserver"]
+ENTRYPOINT ["/run-extension-apiserver"]

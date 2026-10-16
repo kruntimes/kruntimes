@@ -7,18 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/client-go/rest"
 
 	"github.com/kruntimes/kruntimes/sdk/go/sandbox"
 )
@@ -112,69 +108,11 @@ func openKRTSession(ctx context.Context, getter genericclioptions.RESTClientGett
 	if err != nil {
 		return nil, nil, err
 	}
-	session, err := opened.OpenSession(ctx)
-	if err == nil {
-		return session, func() { _ = session.Close() }, nil
-	}
-	directErr := err
-	endpoint := opened.Run().Status.Endpoint
-	if endpoint == nil {
-		return nil, nil, explainSessionUnauthorized(directErr, config)
-	}
-	consoleNamespace, consoleService, consolePort, ok := consoleServiceFromEndpoint(endpoint.URL)
-	if !ok || ctx.Err() != nil {
-		return nil, nil, explainSessionUnauthorized(directErr, config)
-	}
-	forward, err := sandbox.StartConsolePortForward(ctx, config, consoleNamespace, consoleService, consolePort)
+	session, err := opened.OpenSessionViaAPIServer(ctx, config)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open Session directly: %v; start Console port-forward: %w", directErr, err)
+		return nil, nil, err
 	}
-	forwardClient, err := sandbox.NewFromRESTConfig(config, sandbox.Config{SessionDialer: forward})
-	if err == nil {
-		opened, err = forwardClient.Open(ctx, namespaceFromConfig(getter), runName)
-	}
-	if err == nil {
-		session, err = opened.OpenSession(ctx)
-	}
-	if err != nil {
-		forward.Close()
-		return nil, nil, fmt.Errorf("open Session through Console port-forward: %w", explainSessionUnauthorized(err, config))
-	}
-	return session, func() { _ = session.Close(); forward.Close() }, nil
-}
-
-func explainSessionUnauthorized(err error, config *rest.Config) error {
-	var apiError *sandbox.APIError
-	if config == nil || !errors.As(err, &apiError) || apiError.StatusCode != http.StatusUnauthorized {
-		return err
-	}
-	if config.BearerToken != "" || config.BearerTokenFile != "" || config.ExecProvider != nil || config.AuthProvider != nil ||
-		(len(config.CertData) == 0 && config.CertFile == "") {
-		return err
-	}
-	return fmt.Errorf("%w: Console did not authenticate the kubeconfig client certificate; configure console.tls.clientCASecretName with its signing CA, or use --token with a bearer token authorized to get this Run", err)
-}
-
-func consoleServiceFromEndpoint(raw string) (namespace, service string, port int, ok bool) {
-	endpoint, err := url.Parse(raw)
-	if err != nil || endpoint.Hostname() == "" {
-		return "", "", 0, false
-	}
-	parts := strings.Split(endpoint.Hostname(), ".")
-	if len(parts) < 3 || parts[2] != "svc" || parts[0] == "" || parts[1] == "" {
-		return "", "", 0, false
-	}
-	port = 443
-	if endpoint.Scheme == "http" {
-		port = 80
-	}
-	if endpoint.Port() != "" {
-		port, err = strconv.Atoi(endpoint.Port())
-		if err != nil || port <= 0 || port > 65535 {
-			return "", "", 0, false
-		}
-	}
-	return parts[1], parts[0], port, true
+	return session, func() { _ = session.Close() }, nil
 }
 
 func attachSession(ctx context.Context, session *sandbox.Session, runName string, input io.Reader, stdout, stderr io.Writer, inputFormat, outputFormat string, showEvents bool) error {
