@@ -87,38 +87,50 @@ app.kubernetes.io/component: runtimed
 app: kruntimes-runtimed
 {{- end }}
 
-{{- define "kruntimes.logAPI.name" -}}
-{{- printf "%s-log-api" ((include "kruntimes.fullname" .) | trunc 55 | trimSuffix "-") -}}
+{{- define "kruntimes.runExtensionAPI.config" -}}
+{{- $config := deepCopy .Values.runExtensionAPI -}}
+{{- if .Values.logAPI -}}
+{{- $legacy := deepCopy .Values.logAPI -}}
+{{- $_ := unset $legacy "image" -}}
+{{- $config = mergeOverwrite $config $legacy -}}
+{{- end -}}
+{{- toYaml $config -}}
+{{- end -}}
+
+{{- define "kruntimes.runExtensionAPI.name" -}}
+{{- printf "%s-run-extension-api" ((include "kruntimes.fullname" .) | trunc 55 | trimSuffix "-") -}}
 {{- end }}
-{{- define "kruntimes.logAPI.selectorLabels" -}}
+{{- define "kruntimes.runExtensionAPI.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "kruntimes.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: runtime-log-api
+app.kubernetes.io/component: run-extension-api
 {{- end }}
-{{- define "kruntimes.logAPI.labels" -}}
+{{- define "kruntimes.runExtensionAPI.labels" -}}
 {{ include "kruntimes.labels" . }}
-app.kubernetes.io/component: runtime-log-api
-app: kruntimes-runtime-log-api
+app.kubernetes.io/component: run-extension-api
+app: kruntimes-run-extension-api
 {{- end }}
-{{- define "kruntimes.logAPI.tlsSecretName" -}}
-{{- default (printf "%s-tls" (include "kruntimes.logAPI.name" .)) .Values.logAPI.tls.secretName -}}
+{{- define "kruntimes.runExtensionAPI.tlsSecretName" -}}
+{{- $api := include "kruntimes.runExtensionAPI.config" . | fromYaml -}}
+{{- default (printf "%s-tls" (include "kruntimes.runExtensionAPI.name" .)) $api.tls.secretName -}}
 {{- end }}
-{{- define "kruntimes.logAPI.ensureTLSCertificates" -}}
-{{- if not (hasKey .Values "_logAPICertificates") -}}
-{{- $secretName := include "kruntimes.logAPI.tlsSecretName" . -}}
+{{- define "kruntimes.runExtensionAPI.ensureTLSCertificates" -}}
+{{- $api := include "kruntimes.runExtensionAPI.config" . | fromYaml -}}
+{{- if not (hasKey .Values "_runExtensionAPICertificates") -}}
+{{- $secretName := include "kruntimes.runExtensionAPI.tlsSecretName" . -}}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
 {{- if $existing -}}
-{{- if not (hasKey $existing.data .Values.logAPI.tls.caBundleKey) -}}{{- fail (printf "logAPI TLS Secret %q must contain CA bundle key %q" $secretName .Values.logAPI.tls.caBundleKey) -}}{{- end -}}
-{{- if not (hasKey $existing.data .Values.logAPI.tls.certificateKey) -}}{{- fail (printf "logAPI TLS Secret %q must contain certificate key %q" $secretName .Values.logAPI.tls.certificateKey) -}}{{- end -}}
-{{- if not (hasKey $existing.data .Values.logAPI.tls.privateKeyKey) -}}{{- fail (printf "logAPI TLS Secret %q must contain private key key %q" $secretName .Values.logAPI.tls.privateKeyKey) -}}{{- end -}}
-{{- $_ := set .Values "_logAPICertificates" (dict "caCert" (index $existing.data .Values.logAPI.tls.caBundleKey | b64dec) "tlsCert" (index $existing.data .Values.logAPI.tls.certificateKey | b64dec) "tlsKey" (index $existing.data .Values.logAPI.tls.privateKeyKey | b64dec)) -}}
-{{- else if not .Values.logAPI.tls.secretName -}}
-{{- $name := include "kruntimes.logAPI.name" . -}}
+{{- if not (hasKey $existing.data $api.tls.caBundleKey) -}}{{- fail (printf "runExtensionAPI TLS Secret %q must contain CA bundle key %q" $secretName $api.tls.caBundleKey) -}}{{- end -}}
+{{- if not (hasKey $existing.data $api.tls.certificateKey) -}}{{- fail (printf "runExtensionAPI TLS Secret %q must contain certificate key %q" $secretName $api.tls.certificateKey) -}}{{- end -}}
+{{- if not (hasKey $existing.data $api.tls.privateKeyKey) -}}{{- fail (printf "runExtensionAPI TLS Secret %q must contain private key key %q" $secretName $api.tls.privateKeyKey) -}}{{- end -}}
+{{- $_ := set .Values "_runExtensionAPICertificates" (dict "caCert" (index $existing.data $api.tls.caBundleKey | b64dec) "tlsCert" (index $existing.data $api.tls.certificateKey | b64dec) "tlsKey" (index $existing.data $api.tls.privateKeyKey | b64dec)) -}}
+{{- else if not $api.tls.secretName -}}
+{{- $name := include "kruntimes.runExtensionAPI.name" . -}}
 {{- $dns := list $name (printf "%s.%s" $name .Release.Namespace) (printf "%s.%s.svc" $name .Release.Namespace) (printf "%s.%s.svc.cluster.local" $name .Release.Namespace) -}}
 {{- $ca := genCA (printf "%s-ca" $name) 3650 -}}
 {{- $certificate := genSignedCert $name nil $dns 365 $ca -}}
-{{- $_ := set .Values "_logAPICertificates" (dict "caCert" $ca.Cert "tlsCert" $certificate.Cert "tlsKey" $certificate.Key) -}}
-{{- else -}}{{- fail (printf "logAPI TLS Secret %q was not found" $secretName) -}}{{- end -}}
+{{- $_ := set .Values "_runExtensionAPICertificates" (dict "caCert" $ca.Cert "tlsCert" $certificate.Cert "tlsKey" $certificate.Key) -}}
+{{- else -}}{{- fail (printf "runExtensionAPI TLS Secret %q was not found" $secretName) -}}{{- end -}}
 {{- end -}}
 {{- end }}
 

@@ -294,6 +294,20 @@ type RunMode struct {
 	Session *RunSessionMode `json:"session,omitempty"`
 }
 
+// Name returns the selected execution mode for display.
+func (m RunMode) Name() string {
+	switch {
+	case m.Task != nil:
+		return "task"
+	case m.Session != nil:
+		return "session"
+	case m.Function != nil:
+		return "function"
+	default:
+		return ""
+	}
+}
+
 // +kubebuilder:object:generate=true
 // RunTaskMode configures one-shot process execution.
 type RunTaskMode struct {
@@ -579,6 +593,12 @@ func (s RunSpec) ResourceRequests() (corev1.ResourceList, error) {
 // +kubebuilder:object:generate=true
 // RunStatus defines the observed state of Run.
 type RunStatus struct {
+	// Mode is the observed execution mode, mirrored from the immutable Run spec
+	// so Kubernetes can show it as a printer column.
+	// +optional
+	// +kubebuilder:validation:Enum=task;session;function
+	Mode string `json:"mode,omitempty"`
+
 	// Phase is the current lifecycle phase of the run.
 	// +kubebuilder:default=Pending
 	Phase RunPhase `json:"phase"`
@@ -646,6 +666,7 @@ type RunStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Assigned Pod",type="string",JSONPath=".status.assignedPod"
 // +kubebuilder:printcolumn:name="Runtime",type="string",JSONPath=".spec.runtime"
+// +kubebuilder:printcolumn:name="Mode",type="string",JSONPath=".status.mode"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:resource:path=runs,scope=Namespaced,shortName=rn
 

@@ -1,0 +1,128 @@
+{{- $api := include "kruntimes.runExtensionAPI.config" . | fromYaml }}
+{{- if $api.enabled }}
+{{- include "kruntimes.runExtensionAPI.ensureTLSCertificates" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kruntimes.runExtensionAPI.name" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kruntimes.runExtensionAPI.name" . }}
+rules:
+  - apiGroups: ["kruntimes.io"]
+    resources: ["runs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["extension-apiserver-authentication"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kruntimes.runExtensionAPI.name" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kruntimes.runExtensionAPI.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kruntimes.runExtensionAPI.name" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kruntimes.runExtensionAPI.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kruntimes.runExtensionAPI.labels" . | nindent 4 }}
+spec:
+  replicas: {{ $api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "kruntimes.runExtensionAPI.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kruntimes.runExtensionAPI.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "kruntimes.runExtensionAPI.name" . }}
+      containers:
+        - name: run-extension-api
+          image: {{ include "kruntimes.image" (list . $api.image) }}
+          imagePullPolicy: {{ $api.imagePullPolicy }}
+          command: ["/run-extension-apiserver"]
+          args:
+            - --bind-address={{ $api.bindAddress }}
+            - --tls-certificate-file=/var/run/kruntimes/run-extension-api-tls/{{ $api.tls.certificateKey }}
+            - --tls-private-key-file=/var/run/kruntimes/run-extension-api-tls/{{ $api.tls.privateKeyKey }}
+            - --metrics-bind-address={{ $api.metricsBindAddress }}
+            - --health-probe-bind-address={{ $api.probeBindAddress }}
+          ports:
+            - name: https
+              containerPort: {{ $api.containerPort }}
+          livenessProbe:
+            httpGet: {path: /healthz, port: {{ $api.probePort }}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: {{ $api.probePort }}}
+          resources:
+            {{- toYaml $api.resources | nindent 12 }}
+          volumeMounts:
+            - name: tls
+              mountPath: /var/run/kruntimes/run-extension-api-tls
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ include "kruntimes.runExtensionAPI.tlsSecretName" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kruntimes.runExtensionAPI.name" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    {{- include "kruntimes.runExtensionAPI.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ $api.servicePort }}
+      targetPort: https
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1alpha1.logs.kruntimes.io
+spec:
+  group: logs.kruntimes.io
+  version: v1alpha1
+  groupPriorityMinimum: 1000
+  versionPriority: 15
+  service:
+    name: {{ include "kruntimes.runExtensionAPI.name" . }}
+    namespace: {{ .Release.Namespace }}
+    port: {{ $api.servicePort }}
+  caBundle: {{ index .Values "_runExtensionAPICertificates" "caCert" | b64enc }}
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1alpha1.sessions.kruntimes.io
+spec:
+  group: sessions.kruntimes.io
+  version: v1alpha1
+  groupPriorityMinimum: 1000
+  versionPriority: 15
+  service:
+    name: {{ include "kruntimes.runExtensionAPI.name" . }}
+    namespace: {{ .Release.Namespace }}
+    port: {{ $api.servicePort }}
+  caBundle: {{ index .Values "_runExtensionAPICertificates" "caCert" | b64enc }}
+{{- end }}

@@ -102,7 +102,7 @@ func (s *Server) registerRoutes() {
 		return s.withRequestLimit(s.withSessionRun(handler))
 	}
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}", withSessionRun(s.handleSessionStatus))
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws", s.withSessionConnectionLimit(s.withSessionRun(s.handleSessionWebSocket)))
+	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws", s.withSessionRun(s.handleSessionWebSocket))
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files", withSessionRun(s.handleSessionListFiles))
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files/{path...}", withSessionRun(s.handleSessionReadFile))
 	mux.HandleFunc("/", s.endpointNotFound)
@@ -209,15 +209,35 @@ func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request, run
 }
 
 func (s *Server) handleSessionWebSocket(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	s.StreamSession(w, r, run)
+}
+
+// StreamSession serves a Session Run after the caller has authenticated and
+// authorized the request. The aggregated API uses this same wire protocol.
+func (s *Server) StreamSession(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
 	if r.Method != http.MethodGet {
 		s.methodNotAllowed(w)
+		return
+	}
+	if run == nil || run.Spec.Mode.Session == nil {
+		s.writeError(w, http.StatusNotFound, "Session Run not found")
+		return
+	}
+	if run.Status.Phase != v1alpha1.RunReady || run.Status.AssignedPodUID == "" {
+		s.writeError(w, http.StatusConflict, "Session Run is not Ready")
+		return
+	}
+	if s.Dialer == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Session Runtime dialer is not configured")
 		return
 	}
 	if !websocket.IsWebSocketUpgrade(r) {
 		s.writeError(w, http.StatusUpgradeRequired, "WebSocket upgrade is required")
 		return
 	}
-	s.streamOperationWebSocket(w, r, run)
+	s.withSessionConnectionLimit(func(w http.ResponseWriter, r *http.Request) {
+		s.streamOperationWebSocket(w, r, run)
+	})(w, r)
 }
 
 func (s *Server) handleSessionListFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
@@ -331,7 +351,7 @@ func (s *Server) functionClient(ctx context.Context, run *v1alpha1.Run) (pb.Func
 	if port == 0 {
 		port = defaultRuntimeServicePort
 	}
-	client, closer, err := s.FunctionDialer.DialFunction(ctx, fmt.Sprintf("runtime-%s.%s:%d", run.Spec.Runtime, run.Namespace, port))
+	client, closer, err := s.FunctionDialer.DialFunction(ctx, fmt.Sprintf("runtime-%s.%s.svc:%d", run.Spec.Runtime, run.Namespace, port))
 	if err != nil {
 		return nil, nil, status.Errorf(codes.Unavailable, "dial Runtime Service: %v", err)
 	}
@@ -690,7 +710,7 @@ func (s *Server) runtimeClient(ctx context.Context, run *v1alpha1.Run) (pb.Sessi
 	if port == 0 {
 		port = defaultRuntimeServicePort
 	}
-	address := fmt.Sprintf("runtime-%s.%s:%d", run.Spec.Runtime, run.Namespace, port)
+	address := fmt.Sprintf("runtime-%s.%s.svc:%d", run.Spec.Runtime, run.Namespace, port)
 	client, closer, err := s.Dialer.Dial(ctx, address)
 	if err != nil {
 		return nil, nil, status.Errorf(codes.Unavailable, "dial Runtime Service: %v", err)

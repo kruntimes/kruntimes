@@ -1,9 +1,10 @@
-# Aggregated Run Log API
+# Run Extension API
 
 ## Status
 
-Implemented for v0.x. The Kubernetes aggregated API is the only Run-log
-transport. Runtime Gateway serves Session and Function operations only.
+The Kubernetes aggregated API serves Run logs and CLI Session operations.
+Console's Runtime Gateway remains available for SDK and browser Session access
+and Function operations.
 
 ## Problem
 
@@ -80,11 +81,29 @@ Runtime Gateway has no Run-log route and no `pods/log` RBAC. This keeps its
 Session and Function authorization boundary separate from the Kubernetes
 aggregation boundary.
 
+## Session operations
+
+The same `run-extension-api` Deployment also serves a second APIService:
+
+```
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session
+```
+
+This is a WebSocket endpoint for Session operations. The API server authenticates
+the kubeconfig caller and authorizes `get` on `sessions.kruntimes.io/runs/session`.
+The backend accepts the forwarded identity only over verified aggregation mTLS,
+loads the named ready Session Run, and streams its operations to the assigned
+Runtime. `krt` also reads the Run, so its caller needs `get` on `kruntimes.io/runs`.
+The existing `logs.kruntimes.io` path remains available.
+The Runtime controller's NetworkPolicy permits `run-extension-api` Pods to
+reach the Runtime Service's Session gRPC port.
+
 ## Installation
 
-`logAPI.enabled` defaults to true and is independent of `gateway.enabled`.
-The APIService is cluster-scoped, so exactly one platform release in a cluster
-must own a given group/version. Set `logAPI.enabled: false` for other releases.
+`runExtensionAPI.enabled` defaults to true and is independent of `gateway.enabled`.
+Both APIService objects are cluster-scoped, so exactly one platform release in a
+cluster must own each group/version. Set `runExtensionAPI.enabled: false` for
+other releases.
 
 ## Verification
 

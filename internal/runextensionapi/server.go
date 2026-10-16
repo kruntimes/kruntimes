@@ -1,5 +1,5 @@
-// Package logapi implements the Kubernetes aggregated API used for Run logs.
-package logapi
+// Package runextensionapi serves aggregated Run log and Session APIs.
+package runextensionapi
 
 import (
 	"context"
@@ -23,28 +23,36 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/gateway"
+	"github.com/kruntimes/kruntimes/internal/logapi"
 	"github.com/kruntimes/kruntimes/internal/runlogs"
 )
 
 const (
-	Group                  = "logs.kruntimes.io"
-	Version                = "v1alpha1"
-	defaultTailLines int64 = 100
-	maxTailLines     int64 = 500
-	defaultTimeout         = 30 * time.Second
-	maxTimeout             = 5 * time.Minute
-	maxSnapshotBytes int64 = 1 << 20
-	apiGroupPath           = "/apis/" + Group
-	apiVersionPath         = apiGroupPath + "/" + Version
-	runLogPath             = apiVersionPath + "/namespaces/{namespace}/runs/{name}/log"
+	Group                    = logapi.Group
+	Version                  = logapi.Version
+	SessionGroup             = "sessions.kruntimes.io"
+	defaultTailLines   int64 = 100
+	maxTailLines       int64 = 500
+	defaultTimeout           = 30 * time.Second
+	maxTimeout               = 5 * time.Minute
+	maxSnapshotBytes   int64 = 1 << 20
+	apiGroupPath             = "/apis/" + Group
+	apiVersionPath           = apiGroupPath + "/" + Version
+	runLogPath               = apiVersionPath + "/namespaces/{namespace}/runs/{name}/log"
+	sessionGroupPath         = "/apis/" + SessionGroup
+	sessionVersionPath       = sessionGroupPath + "/" + Version
+	sessionPath              = sessionVersionPath + "/namespaces/{namespace}/runs/{name}/session"
 )
 
 // Server is an aggregated API backend. Kubernetes authenticates callers and
-// authorizes the runs/log resource before proxying here. The server accepts
-// identity headers only over the aggregation layer's verified mTLS connection.
+// authorizes the runs/log or runs/session resource before proxying here. The
+// server accepts identity headers only over verified aggregation mTLS.
 type Server struct {
 	Runs               client.Reader
+	SessionRuns        client.Reader
 	PodLogs            runlogs.PodReader
+	SessionAccess      *gateway.Server
 	Address            string
 	TLSCertificateFile string
 	TLSPrivateKeyFile  string
@@ -67,17 +75,17 @@ type cursor struct {
 
 func (s *Server) Start(ctx context.Context) error {
 	if s.Runs == nil || s.PodLogs == nil {
-		return errors.New("Run log API is not configured")
+		return errors.New("Run extension API is not configured")
 	}
 	if s.TLSCertificateFile == "" || s.TLSPrivateKeyFile == "" {
-		return errors.New("Run log API requires TLS certificate and private key files")
+		return errors.New("Run extension API requires TLS certificate and private key files")
 	}
 	if len(s.RequestHeaderCA) == 0 {
-		return errors.New("Run log API requires the Kubernetes request-header client CA")
+		return errors.New("Run extension API requires the Kubernetes request-header client CA")
 	}
 	certificate, err := tls.LoadX509KeyPair(s.TLSCertificateFile, s.TLSPrivateKeyFile)
 	if err != nil {
-		return fmt.Errorf("load Run log API TLS certificate: %w", err)
+		return fmt.Errorf("load Run extension API TLS certificate: %w", err)
 	}
 	clientCAs := x509.NewCertPool()
 	if !clientCAs.AppendCertsFromPEM(s.RequestHeaderCA) {
@@ -85,7 +93,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	listener, err := net.Listen("tcp", s.Address)
 	if err != nil {
-		return fmt.Errorf("listen for Run log API: %w", err)
+		return fmt.Errorf("listen for Run extension API: %w", err)
 	}
 	server := &http.Server{
 		Handler:           s.Handler(),
@@ -120,6 +128,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+apiGroupPath, s.handleAPIGroup)
 	mux.HandleFunc("GET "+apiVersionPath, s.handleAPIResourceList)
 	mux.HandleFunc(runLogPath, s.handleRunLog)
+	mux.HandleFunc("GET "+sessionGroupPath, s.handleSessionAPIGroup)
+	mux.HandleFunc("GET "+sessionVersionPath, s.handleSessionAPIResourceList)
+	mux.HandleFunc(sessionPath, s.handleSession)
 	mux.HandleFunc("/", s.handleNotFound)
 	return mux
 }
@@ -177,6 +188,53 @@ func (s *Server) handleRunLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.serveRunLog(w, r, r.PathValue("namespace"), r.PathValue("name"))
+}
+
+func (s *Server) handleSessionAPIGroup(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"kind": "APIGroup", "apiVersion": "v1", "name": SessionGroup,
+		"versions":         []map[string]string{{"groupVersion": SessionGroup + "/" + Version, "version": Version}},
+		"preferredVersion": map[string]string{"groupVersion": SessionGroup + "/" + Version, "version": Version},
+	})
+}
+
+func (s *Server) handleSessionAPIResourceList(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"kind": "APIResourceList", "apiVersion": "v1", "groupVersion": SessionGroup + "/" + Version,
+		"resources": []map[string]any{{
+			"name": "runs/session", "singularName": "", "namespaced": true,
+			"kind": "RunSession", "verbs": []string{"get"},
+		}},
+	})
+}
+
+func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if _, err := s.requestUser(r); err != nil {
+		s.writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	reader := s.SessionRuns
+	if reader == nil {
+		reader = s.Runs
+	}
+	if s.SessionAccess == nil || reader == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Session access is not configured")
+		return
+	}
+	run := &v1alpha1.Run{}
+	if err := reader.Get(r.Context(), client.ObjectKey{Namespace: r.PathValue("namespace"), Name: r.PathValue("name")}, run); err != nil {
+		if apierrors.IsNotFound(err) {
+			s.writeError(w, http.StatusNotFound, "Run not found")
+		} else {
+			s.writeError(w, http.StatusServiceUnavailable, "read Run")
+		}
+		return
+	}
+	s.SessionAccess.StreamSession(w, r, run)
 }
 
 func (s *Server) handleNotFound(w http.ResponseWriter, _ *http.Request) {

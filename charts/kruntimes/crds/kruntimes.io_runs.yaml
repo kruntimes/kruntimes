@@ -26,6 +26,9 @@ spec:
     - jsonPath: .spec.runtime
       name: Runtime
       type: string
+    - jsonPath: .status.mode
+      name: Mode
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -1241,6 +1244,15 @@ spec:
                   Message is a human-readable status or error message.
                   Status messages are diagnostic summaries, not execution logs.
                 maxLength: 4096
+                type: string
+              mode:
+                description: |-
+                  Mode is the observed execution mode, mirrored from the immutable Run spec
+                  so Kubernetes can show it as a printer column.
+                enum:
+                - task
+                - session
+                - function
                 type: string
               outputs:
                 additionalProperties:

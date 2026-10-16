@@ -16,7 +16,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
-	"github.com/kruntimes/kruntimes/internal/logapi"
+	"github.com/kruntimes/kruntimes/internal/gateway"
+	"github.com/kruntimes/kruntimes/internal/runextensionapi"
 	"github.com/kruntimes/kruntimes/internal/runlogs"
 )
 
@@ -29,9 +30,9 @@ func init() {
 
 func main() {
 	var address, certificateFile, privateKeyFile, metricsAddress, probeAddress string
-	flag.StringVar(&address, "bind-address", ":8445", "HTTPS address for the aggregated Run log API.")
-	flag.StringVar(&certificateFile, "tls-certificate-file", "", "PEM TLS certificate file for the aggregated Run log API.")
-	flag.StringVar(&privateKeyFile, "tls-private-key-file", "", "PEM TLS private key file for the aggregated Run log API.")
+	flag.StringVar(&address, "bind-address", ":8445", "HTTPS address for the aggregated Run extension API.")
+	flag.StringVar(&certificateFile, "tls-certificate-file", "", "PEM TLS certificate file for the aggregated Run extension API.")
+	flag.StringVar(&privateKeyFile, "tls-private-key-file", "", "PEM TLS private key file for the aggregated Run extension API.")
 	flag.StringVar(&metricsAddress, "metrics-bind-address", ":8085", "Metrics bind address.")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8086", "Health probe bind address.")
 	flag.Parse()
@@ -43,7 +44,7 @@ func main() {
 	config := ctrl.GetConfigOrDie()
 	manager, err := ctrl.NewManager(config, ctrl.Options{Scheme: scheme, Metrics: metricsserver.Options{BindAddress: metricsAddress}, HealthProbeBindAddress: probeAddress})
 	if err != nil {
-		ctrl.Log.WithName("setup").Error(err, "unable to create Run log API manager")
+		ctrl.Log.WithName("setup").Error(err, "unable to create Run extension API manager")
 		os.Exit(1)
 	}
 	if err := manager.AddHealthzCheck("ping", healthz.Ping); err != nil {
@@ -53,17 +54,24 @@ func main() {
 		panic(err)
 	}
 	kube := kubernetes.NewForConfigOrDie(config)
-	requestHeaderCA, allowedNames, usernameHeaders, groupHeaders, err := logapi.RequestHeaderConfig(context.Background(), kube)
+	requestHeaderCA, allowedNames, usernameHeaders, groupHeaders, err := runextensionapi.RequestHeaderConfig(context.Background(), kube)
 	if err != nil {
 		ctrl.Log.WithName("setup").Error(err, "unable to configure Kubernetes aggregation authentication")
 		os.Exit(1)
 	}
-	if err := manager.Add(&logapi.Server{Runs: manager.GetCache(), PodLogs: runlogs.KubernetesPodReader{Client: kube.CoreV1()}, Address: address, TLSCertificateFile: certificateFile, TLSPrivateKeyFile: privateKeyFile, RequestHeaderCA: requestHeaderCA, AllowedClientNames: allowedNames, UsernameHeaders: usernameHeaders, GroupHeaders: groupHeaders}); err != nil {
-		ctrl.Log.WithName("setup").Error(err, "unable to add Run log API server")
+	if err := manager.Add(&runextensionapi.Server{
+		Runs: manager.GetCache(), SessionRuns: manager.GetAPIReader(),
+		PodLogs:       runlogs.KubernetesPodReader{Client: kube.CoreV1()},
+		SessionAccess: &gateway.Server{Dialer: gateway.GRPCDialer{}},
+		Address:       address, TLSCertificateFile: certificateFile, TLSPrivateKeyFile: privateKeyFile,
+		RequestHeaderCA: requestHeaderCA, AllowedClientNames: allowedNames,
+		UsernameHeaders: usernameHeaders, GroupHeaders: groupHeaders,
+	}); err != nil {
+		ctrl.Log.WithName("setup").Error(err, "unable to add Run extension API server")
 		os.Exit(1)
 	}
 	if err := manager.Start(ctrl.SetupSignalHandler()); err != nil {
-		ctrl.Log.WithName("setup").Error(err, "Run log API stopped")
+		ctrl.Log.WithName("setup").Error(err, "Run extension API stopped")
 		os.Exit(1)
 	}
 }

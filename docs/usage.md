@@ -55,6 +55,63 @@ spec:
 The scheduler watches Pending Runs and assigns them to healthy Runtime Pods in
 the same namespace.
 
+## Operate a Session Run with krt
+
+Create a Session-mode Run and wait for its phase to become `Ready`:
+
+```yaml
+apiVersion: kruntimes.io/v1alpha1
+kind: Run
+metadata:
+  name: shell-session
+spec:
+  runtime: bash
+  mode:
+    session: {}
+```
+
+`krt list` and `kubectl get run` show the Run's `MODE` (`task`, `session`, or
+`function`). The Kubernetes column is filled by the scheduler after it observes
+the Run.
+
+Run one command through the authenticated Session gateway:
+
+```bash
+krt session exec -n default shell-session -- sh -c 'echo hello; echo warning >&2'
+```
+
+Command words are passed as `argv`; use `sh -c` for shell expansion. `exec`
+returns a non-zero CLI status when the operation fails or the command exits
+non-zero. It does not allocate a TTY or stream live stdin.
+
+Use `attach` to submit one shell command per line on the same Session
+connection. Each line is a separate operation. The prompt includes the Run
+name, for example `shell-session> `:
+
+```bash
+krt session attach -n default shell-session
+```
+
+For scripts, `attach` accepts one JSON operation per input line and can emit
+one JSON event per output line:
+
+```bash
+printf '%s\n' '{"command":{"shell":"echo hello"}}' |
+  krt session attach -n default shell-session --input ndjson --output ndjson
+```
+
+Output events contain base64-encoded `data` fields, as in the gateway wire
+format. The default text view writes command output as it arrives and reports
+command failures. Use `--show-events` with `exec` or `attach` to see operation
+IDs, progress, and completion messages. NDJSON output always includes every
+event. Ctrl-C requests cancellation of the active operation before closing the
+connection. Session commands connect to the Kubernetes API server using the
+current kubeconfig, then stream through the `sessions.kruntimes.io` aggregated
+API. The caller needs `get` on the named `kruntimes.io/runs` resource and
+`get` on `sessions.kruntimes.io/runs/session`. Client certificates are verified
+by the Kubernetes API server; no Console client CA or port-forward is needed.
+Closing `attach` does not terminate the Session Run.
+
 ## Use Environment Variables
 
 ```yaml

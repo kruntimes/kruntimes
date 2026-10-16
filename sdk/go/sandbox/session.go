@@ -169,6 +169,41 @@ func (s *Sandbox) OpenSession(ctx context.Context) (*Session, error) {
 	return session, nil
 }
 
+// OpenSessionViaAPIServer connects through the Kubernetes aggregated Session
+// API using the caller's kubeconfig credentials. The Run endpoint is not used.
+func (s *Sandbox) OpenSessionViaAPIServer(ctx context.Context, config *rest.Config) (*Session, error) {
+	if s == nil || s.run == nil || s.run.Spec.Mode.Session == nil {
+		return nil, &StateError{Message: "Session Run is not available"}
+	}
+	if config == nil || config.Host == "" {
+		return nil, errors.New("Kubernetes REST config is required for aggregated Session access")
+	}
+	endpoint, err := url.JoinPath(config.Host, "apis", "sessions.kruntimes.io", "v1alpha1", "namespaces", s.run.Namespace, "runs", s.run.Name, "session")
+	if err != nil {
+		return nil, fmt.Errorf("build aggregated Session endpoint: %w", err)
+	}
+	websocketEndpoint, err := sessionWebSocketURL(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	dialer, err := newRESTSessionDialer(config)
+	if err != nil {
+		return nil, err
+	}
+	connection, response, err := dialer.DialSession(ctx, websocketEndpoint, http.Header{})
+	if err != nil {
+		if response != nil {
+			return nil, &APIError{StatusCode: response.StatusCode, Message: "open aggregated Sandbox Session"}
+		}
+		return nil, fmt.Errorf("open aggregated Sandbox Session: %w", err)
+	}
+	session := &Session{connection: connection}
+	if interval := sessionHeartbeatInterval(s.run); interval > 0 {
+		session.startHeartbeat(interval)
+	}
+	return session, nil
+}
+
 func (d restSessionDialer) DialSessionWithCA(ctx context.Context, endpoint string, headers http.Header, bundle []byte) (*websocket.Conn, *http.Response, error) {
 	if d.dialer == nil {
 		return nil, nil, errors.New("Session WebSocket dialer is not configured")

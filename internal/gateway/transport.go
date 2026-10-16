@@ -44,7 +44,9 @@ func (GRPCDialer) DialFunction(ctx context.Context, address string) (pb.Function
 // can become Ready just before kube-proxy publishes its runtimed :9093
 // listener, causing the first gateway operation to fail spuriously.
 func dialReadyRuntime(ctx context.Context, address string) (*grpc.ClientConn, error) {
-	connection, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Runtime Services do not publish gRPC DNS TXT service configs. Skipping the
+	// lookup avoids DNS timeout delays before each new connection becomes ready.
+	connection, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDisableServiceConfig())
 	if err != nil {
 		return nil, err
 	}

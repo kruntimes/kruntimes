@@ -114,7 +114,7 @@ git status --short
 级权限，而不是重试 workflow 可以解决的问题。
 
 检查 release 会发布的每个 image package：`scheduler`、`controller`、`runtimed`、
-`gateway`、`runtime-log-apiserver`、`dashboard`、`bash-runtime` 与 `python-runtime`。
+`gateway`、`run-extension-apiserver`、`dashboard`、`bash-runtime` 与 `python-runtime`。
 从已改名 repository 迁移 package 时，先 unlink 旧 repository source，再关联
 `kruntimes/kruntimes`，然后才创建 tag。artifact 发布失败只能由新 tag supersede。
 

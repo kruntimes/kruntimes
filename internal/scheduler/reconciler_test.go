@@ -84,6 +84,34 @@ func TestReconcileKeepsRunPendingWhenNoRuntimePodAvailable(t *testing.T) {
 	}
 }
 
+func TestReconcileBackfillsModeForTerminalRun(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	run := &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "old-session", Namespace: "default"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash", Mode: v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}}},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunSucceeded},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha1.Run{}).WithObjects(run).Build()
+	reconciler := &RunReconciler{Client: client, Log: logr.Discard()}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: run.Name, Namespace: run.Namespace}}
+	if _, err := reconciler.Reconcile(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	var updated v1alpha1.Run
+	if err := client.Get(t.Context(), req.NamespacedName, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status.Mode != "session" || updated.Status.Phase != v1alpha1.RunSucceeded {
+		t.Fatalf("status = %#v", updated.Status)
+	}
+	if !pendingRunPredicate().Create(event.CreateEvent{Object: run}) {
+		t.Fatal("legacy terminal Run would not be backfilled on startup")
+	}
+}
+
 func TestReconcileKeepsRunPendingWhenWorkspaceIsUnbound(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {

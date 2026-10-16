@@ -146,7 +146,7 @@ browser-visible port-forward or expose Runtime Pods directly. The caller needs
 ServiceAccount performs the narrow Pod-log read. Artifact references are shown
 as Run metadata; artifact downloads are outside the first Dashboard slice. The
 complete endpoint, authorization, bounds, error, and migration contract is in
-the [aggregated Run Log API design](runtime-gateway-log-api.md).
+the [Run Extension API design](run-extension-api.md).
 
 ## Security Model
 

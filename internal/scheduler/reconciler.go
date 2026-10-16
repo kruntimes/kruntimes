@@ -59,6 +59,18 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, fmt.Errorf("get run: %w", err)
 	}
 	r.observeRun(&run)
+	if mode := run.Spec.Mode.Name(); mode != "" && run.Status.Mode != mode {
+		run.Status.Mode = mode
+		if run.Status.Phase == "" {
+			run.Status.Phase = v1alpha1.RunPending
+		}
+		if err := r.Status().Update(ctx, &run); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{Requeue: true}, nil
+			}
+			return ctrl.Result{}, fmt.Errorf("update run mode status: %w", err)
+		}
+	}
 
 	// Treat empty phase (CRD default not yet applied) as Pending.
 	if run.Status.Phase != "" && run.Status.Phase != v1alpha1.RunPending {
@@ -436,11 +448,11 @@ func pendingRunPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			t, ok := e.Object.(*v1alpha1.Run)
-			return ok && (t.Status.Phase == "" || t.Status.Phase == v1alpha1.RunPending)
+			return ok && ((t.Status.Phase == "" || t.Status.Phase == v1alpha1.RunPending) || (t.Spec.Mode.Name() != "" && t.Status.Mode != t.Spec.Mode.Name()))
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			t, ok := e.ObjectNew.(*v1alpha1.Run)
-			return ok && (t.Status.Phase == "" || t.Status.Phase == v1alpha1.RunPending)
+			return ok && ((t.Status.Phase == "" || t.Status.Phase == v1alpha1.RunPending) || (t.Spec.Mode.Name() != "" && t.Status.Mode != t.Spec.Mode.Name()))
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			return false

@@ -88,6 +88,7 @@ runtimes 内提供 per-Run 沙箱隔离。
 | `get`、`list` 或 `watch` `runs` | 读取 Run 对象上存储的源码引用、参数、环境变量值、执行状态、输出和 artifact 元数据。 |
 | `update` 或 `patch` `runs/status` | 控制调度和执行状态。保留给 kruntimes 控制平面 service accounts。 |
 | `get` `logs.kruntimes.io/runs/log` | 通过 Kubernetes 聚合 Run-log API 读取某个 Run 的结构化日志。 |
+| `get` `sessions.kruntimes.io/runs/session` | 通过 Kubernetes 聚合 Run extension API 在指定的 Ready Session Run 中执行命令和文件操作。`krt session` 还需要对该 Run 的 `get` 权限。 |
 | `create` `pods/portforward` 加上 `get` `pods` 和 `runs` | 通过 Kubernetes API 访问 Runtime Pod artifact endpoint，如 artifact 下载所用。 |
 
 Kubernetes 不会将 Run 与引用的 Runtime 作为单独操作授权。如果主体可以在 namespace

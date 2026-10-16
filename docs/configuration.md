@@ -66,29 +66,38 @@ console:
 exclusive choices. The Service is always `ClusterIP`; configure ingress or
 other external exposure separately.
 
-## Aggregated Run-log API
+## Run Extension API
 
-`logAPI.enabled` defaults to `true` independently of the always-installed
-Kruntimes Console. It
-installs the `logs.kruntimes.io/v1alpha1` APIService and a dedicated backend.
+`runExtensionAPI.enabled` defaults to `true` independently of the always-installed
+Kruntimes Console. It installs the `logs.kruntimes.io/v1alpha1` and
+`sessions.kruntimes.io/v1alpha1` APIServices on a dedicated backend.
 This is the default transport for `krt logs` and Console: normal kubeconfig
 authentication, including client certificates, is verified by the Kubernetes
 API server. The caller needs `get` on the `logs.kruntimes.io` `runs/log`
 subresource; it never needs `kruntimes.io/runs get` or `pods/log`.
 
-The APIService is cluster-scoped, so a cluster can have one aggregated log API
-backend for this API group/version. When installing a second kruntimes platform
-release in the same cluster, retain `logAPI.enabled: true` for the release that
+The APIServices are cluster-scoped, so a cluster can have one Run extension API
+backend for these group/versions. When installing a second kruntimes platform
+release in the same cluster, retain `runExtensionAPI.enabled: true` for the release that
 owns the API and set it to `false` for every other release.
 
 ```yaml
-logAPI:
+runExtensionAPI:
   enabled: true
 ```
+
+The former `logAPI` values key still overrides matching fields for existing
+Helm values files, except `image`: the old image contains a log-only binary.
+New configurations should use `runExtensionAPI` and the
+`run-extension-apiserver` image.
 
 Console and `krt logs` always use this aggregated API. Console's embedded
 Runtime access API continues to serve Session and Function endpoints, but does
 not serve Run logs.
+
+`krt session exec` and `krt session attach` use the Session subresource through
+the Kubernetes API server. Callers need `get` on both the named
+`kruntimes.io/runs` resource and `sessions.kruntimes.io/runs/session`.
 
 ### Public resource lists
 

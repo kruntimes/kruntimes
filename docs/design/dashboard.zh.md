@@ -124,9 +124,9 @@ dashboard 也能展示正确的 logs。
 
 Dashboard 使用 in-cluster Kubernetes API Service，不创建 browser-visible port-forward，也不把
 Runtime Pods 直接暴露给 browser。caller 需要 exact `runs/log` subresource 的 `get`，而不是
-`get pods/log`；Log API ServiceAccount 执行极窄的 Pod-log read。artifact references 作为 Run
+`get pods/log`；Run Extension API ServiceAccount 执行极窄的 Pod-log read。artifact references 作为 Run
 metadata 展示；artifact download 不属于第一阶段 Dashboard。完整的 endpoint、authorization、
-bounds、error 和 migration contract 见[聚合 Run Log API 设计](runtime-gateway-log-api.zh.md)。
+bounds、error 和 migration contract 见[Run Extension API 设计](run-extension-api.zh.md)。
 
 ## 安全模型
 

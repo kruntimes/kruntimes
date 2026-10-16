@@ -1,9 +1,9 @@
-# 聚合 Run Log API
+# Run Extension API
 
 ## 状态
 
-v0.x 已实现。Kubernetes 聚合 API 是唯一的 Run-log transport。Runtime Gateway 只提供
-Session 和 Function operation。
+Kubernetes 聚合 API 提供 Run logs 和 CLI Session operation。Console 的 Runtime Gateway
+仍为 SDK 和浏览器提供 Session access，以及 Function operation。
 
 ## 问题
 
@@ -70,11 +70,27 @@ Pod port-forward 权限。
 Runtime Gateway 没有 Run-log route，也没有 `pods/log` RBAC；其 Session 和 Function authorization
 boundary 与 Kubernetes aggregation boundary 保持分离。
 
+## Session operation
+
+同一个 `run-extension-api` Deployment 还提供第二个 APIService：
+
+```
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session
+```
+
+这个 WebSocket endpoint 用于 Session operation。API server 使用 kubeconfig 认证 caller，
+并检查 `sessions.kruntimes.io/runs/session` 的 `get` 权限。backend 只在经过聚合层 mTLS
+验证的连接上接受转发的身份，读取指定的 Ready Session Run，再把 operation 流式转发到
+分配的 Runtime。`krt` 还会读取 Run，所以 caller 也需要 `kruntimes.io/runs` 的 `get` 权限。
+已有的 `logs.kruntimes.io` 路径保持可用。
+Runtime controller 的 NetworkPolicy 允许 `run-extension-api` Pod 访问 Runtime
+Service 的 Session gRPC 端口。
+
 ## 安装
 
-`logAPI.enabled` 默认是 true，且独立于 `gateway.enabled`。APIService 是 cluster-scoped，因此同一
-集群中一个 group/version 必须恰好由一个 platform release 拥有；其它 release 设置
-`logAPI.enabled: false`。
+`runExtensionAPI.enabled` 默认是 true，且独立于 `gateway.enabled`。两个 APIService 都是
+cluster-scoped，因此同一集群中每个 group/version 必须由一个 platform release 拥有；其它 release 设置
+`runExtensionAPI.enabled: false`。
 
 ## 验证
 

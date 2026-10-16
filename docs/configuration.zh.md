@@ -65,25 +65,34 @@ console:
 `selfSigned`、已有 Secret 和 `certManager.enabled` 是互斥选择。Service 始终为 `ClusterIP`；
 ingress 或其它对外暴露需要单独配置。
 
-## 聚合 Run-log API
+## Run Extension API
 
-`logAPI.enabled` 独立于始终安装的 Kruntimes Console，默认是 `true`。它安装
-`logs.kruntimes.io/v1alpha1` APIService 及独立 backend。这是 `krt logs` 和 Console 的默认
+`runExtensionAPI.enabled` 独立于始终安装的 Kruntimes Console，默认是 `true`。它安装
+`logs.kruntimes.io/v1alpha1` 和 `sessions.kruntimes.io/v1alpha1` 两个 APIService 及独立
+backend。这是 `krt logs` 和 Console 的默认
 transport：普通 kubeconfig authentication（包括 client certificate）由 Kubernetes API server 验证。
 caller 只需要 `logs.kruntimes.io` `runs/log` subresource 的 `get`；不需要 `kruntimes.io/runs get` 或
 `pods/log`。
 
-该 APIService 是 cluster-scoped，因此同一集群中一个 API group/version 只能有一个聚合
-Run-log API backend。若在同一集群安装第二个 kruntimes platform release，应保留拥有该 API
-的 release 的 `logAPI.enabled: true`，并将其它 release 设为 `false`。
+这两个 APIService 是 cluster-scoped，因此同一集群中每个 API group/version 只能有一个
+Run extension API backend。若在同一集群安装第二个 kruntimes platform release，应保留拥有该 API
+的 release 的 `runExtensionAPI.enabled: true`，并将其它 release 设为 `false`。
 
 ```yaml
-logAPI:
+runExtensionAPI:
   enabled: true
 ```
 
+旧的 `logAPI` values key 仍可覆盖已有 Helm values 文件中的对应设置，但不包括
+`image`：旧镜像只包含日志 API binary。新配置应使用
+`runExtensionAPI` 和 `run-extension-apiserver` 镜像。
+
 Console 和 `krt logs` 始终使用该聚合 API。Console 内嵌的 Runtime access API 继续提供 Session
 和 Function endpoint，但不再提供 Run logs。
+
+`krt session exec` 和 `krt session attach` 也通过 Kubernetes API server 使用 Session
+subresource。caller 需要指定 `kruntimes.io/runs` 和 `sessions.kruntimes.io/runs/session`
+的 `get` 权限。
 
 ### 公开资源列表
 
