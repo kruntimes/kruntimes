@@ -23,6 +23,7 @@ import (
 	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -163,19 +164,38 @@ func TestKRTSessionOperations(t *testing.T) {
 		err := cmd.ExecuteContext(t.Context())
 		return stdout.String(), stderr.String(), err
 	}
-	// The default E2E Console has no client CA configured. The kind kubeconfig
-	// uses a client certificate, so the CLI must explain why that credential
-	// cannot authenticate at the Console even though it works with Kubernetes.
-	_, _, err := execute("", "session", "attach", run.Name, "--namespace", testNamespace)
-	if err == nil || !strings.Contains(err.Error(), "console.tls.clientCASecretName") {
-		t.Fatalf("krt session attach with certificate-only kubeconfig = %v, want client CA guidance", err)
+	console := &appsv1.Deployment{}
+	if err := k8sClient.Get(t.Context(), client.ObjectKey{Namespace: testNamespace, Name: "kruntimes-console"}, console); err != nil {
+		t.Fatalf("get Console deployment: %v", err)
+	}
+	clientCAConfigured := false
+	for _, container := range console.Spec.Template.Spec.Containers {
+		if container.Name != "console" {
+			continue
+		}
+		for _, arg := range container.Args {
+			clientCAConfigured = clientCAConfigured || strings.HasPrefix(arg, "--tls-client-ca-file=")
+		}
+	}
+	if clientCAConfigured {
+		stdout, stderr, err := execute("printf cert-auth-ok\n", "session", "attach", run.Name, "--namespace", testNamespace)
+		if err != nil || stdout != "cert-auth-ok" {
+			t.Fatalf("krt session attach with kubeconfig client certificate = stdout %q, stderr %q, error %v", stdout, stderr, err)
+		}
+	} else {
+		// The kind kubeconfig uses a client certificate. Without its signing CA,
+		// Console must explain why that credential cannot authenticate here.
+		_, _, err := execute("", "session", "attach", run.Name, "--namespace", testNamespace)
+		if err == nil || !strings.Contains(err.Error(), "console.tls.clientCASecretName") {
+			t.Fatalf("krt session attach with certificate-only kubeconfig = %v, want client CA guidance", err)
+		}
 	}
 	stdout, stderr, err := execute("", "session", "exec", run.Name, "--namespace", testNamespace, "--token", token, "--", "sh", "-c", "printf cli-ok")
-	if err != nil || stdout != "cli-ok" || !strings.Contains(stderr, "accepted") {
+	if err != nil || stdout != "cli-ok" || stderr != "" {
 		t.Fatalf("krt session exec = stdout %q, stderr %q, error %v", stdout, stderr, err)
 	}
 	stdout, stderr, err = execute("printf attach-ok\n", "session", "attach", run.Name, "--namespace", testNamespace, "--token", token)
-	if err != nil || stdout != "attach-ok" {
+	if err != nil || stdout != "attach-ok" || stderr != "" {
 		t.Fatalf("krt session attach = stdout %q, stderr %q, error %v", stdout, stderr, err)
 	}
 	_, _, err = execute("", "session", "exec", run.Name, "--namespace", testNamespace, "--token", token, "--", "sh", "-c", "exit 7")

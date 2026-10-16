@@ -85,7 +85,8 @@ returns a non-zero CLI status when the operation fails or the command exits
 non-zero. It does not allocate a TTY or stream live stdin.
 
 Use `attach` to submit one shell command per line on the same Session
-connection. Each line is a separate operation:
+connection. Each line is a separate operation. The prompt includes the Run
+name, for example `shell-session> `:
 
 ```bash
 krt session attach -n default shell-session
@@ -100,10 +101,12 @@ printf '%s\n' '{"command":{"shell":"echo hello"}}' |
 ```
 
 Output events contain base64-encoded `data` fields, as in the gateway wire
-format. The text view writes `stdout` and `stderr` chunks as they arrive and
-reports accepted, progress, completed, and failed events. Ctrl-C requests
-cancellation of the active operation before closing the connection. Session
-commands use the current kubeconfig and the Run endpoint's TLS configuration.
+format. The default text view writes command output as it arrives and reports
+command failures. Use `--show-events` with `exec` or `attach` to see operation
+IDs, progress, and completion messages. NDJSON output always includes every
+event. Ctrl-C requests cancellation of the active operation before closing the
+connection. Session commands use the current kubeconfig and the Run endpoint's
+TLS configuration.
 When an in-cluster Console Service URL cannot be reached directly, `krt`
 opens a temporary Kubernetes port-forward to that Service using the same
 kubeconfig credentials.

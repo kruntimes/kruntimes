@@ -36,6 +36,7 @@ func newSessionCmd(getter genericclioptions.RESTClientGetter) *cobra.Command {
 
 func newSessionExecCmd(getter genericclioptions.RESTClientGetter) *cobra.Command {
 	var output string
+	var showEvents bool
 	command := &cobra.Command{
 		Use:          "exec <run> -- <command> [args...]",
 		Short:        "Execute one command in a ready Session Run.",
@@ -52,15 +53,17 @@ func newSessionExecCmd(getter genericclioptions.RESTClientGetter) *cobra.Command
 				return err
 			}
 			defer closeSession()
-			return runSessionOperation(ctx, session, sandbox.Operation{Command: &sandbox.Command{Argv: args[1:]}}, output, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runSessionOperation(ctx, session, sandbox.Operation{Command: &sandbox.Command{Argv: args[1:]}}, output, showEvents, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	command.Flags().StringVarP(&output, "output", "o", sessionOutputText, "Event output: text or ndjson")
+	command.Flags().BoolVar(&showEvents, "show-events", false, "Show Session operation IDs, progress, and completion messages in text output")
 	return command
 }
 
 func newSessionAttachCmd(getter genericclioptions.RESTClientGetter) *cobra.Command {
 	var output, input string
+	var showEvents bool
 	command := &cobra.Command{
 		Use:          "attach <run>",
 		Short:        "Submit commands to an existing Session Run, one line at a time.",
@@ -80,11 +83,12 @@ func newSessionAttachCmd(getter genericclioptions.RESTClientGetter) *cobra.Comma
 				return err
 			}
 			defer closeSession()
-			return attachSession(ctx, session, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(), input, output)
+			return attachSession(ctx, session, args[0], cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(), input, output, showEvents)
 		},
 	}
 	command.Flags().StringVarP(&output, "output", "o", sessionOutputText, "Event output: text or ndjson")
 	command.Flags().StringVar(&input, "input", "command", "Input lines: command text or ndjson operations")
+	command.Flags().BoolVar(&showEvents, "show-events", false, "Show Session operation IDs, progress, and completion messages in text output")
 	return command
 }
 
@@ -173,7 +177,7 @@ func consoleServiceFromEndpoint(raw string) (namespace, service string, port int
 	return parts[1], parts[0], port, true
 }
 
-func attachSession(ctx context.Context, session *sandbox.Session, input io.Reader, stdout, stderr io.Writer, inputFormat, outputFormat string) error {
+func attachSession(ctx context.Context, session *sandbox.Session, runName string, input io.Reader, stdout, stderr io.Writer, inputFormat, outputFormat string, showEvents bool) error {
 	type scannedLine struct {
 		value string
 		err   error
@@ -204,7 +208,7 @@ func attachSession(ctx context.Context, session *sandbox.Session, input io.Reade
 	var lastFailure error
 	for {
 		if interactive {
-			if _, err := io.WriteString(stderr, "session> "); err != nil {
+			if _, err := fmt.Fprintf(stderr, "%s> ", runName); err != nil {
 				return err
 			}
 		}
@@ -232,7 +236,7 @@ func attachSession(ctx context.Context, session *sandbox.Session, input io.Reade
 		} else {
 			operation.Command = &sandbox.Command{Shell: line.value}
 		}
-		if err := runSessionOperation(ctx, session, operation, outputFormat, stdout, stderr); err != nil {
+		if err := runSessionOperation(ctx, session, operation, outputFormat, showEvents, stdout, stderr); err != nil {
 			if ctx.Err() != nil || !isSessionOperationFailure(err) {
 				return err
 			}
@@ -253,7 +257,7 @@ func isSessionOperationFailure(err error) bool {
 	return errors.As(err, &failure)
 }
 
-func runSessionOperation(ctx context.Context, session *sandbox.Session, operation sandbox.Operation, format string, stdout, stderr io.Writer) error {
+func runSessionOperation(ctx context.Context, session *sandbox.Session, operation sandbox.Operation, format string, showEvents bool, stdout, stderr io.Writer) error {
 	operationID, err := session.Send(ctx, operation)
 	if err != nil {
 		return fmt.Errorf("submit Session operation: %w", err)
@@ -263,7 +267,7 @@ func runSessionOperation(ctx context.Context, session *sandbox.Session, operatio
 	accepted.Accepted = &struct {
 		OperationID string `json:"operationID"`
 	}{OperationID: operationID}
-	if err := renderSessionEvent(accepted, format, stdout, stderr); err != nil {
+	if err := renderSessionEvent(accepted, format, showEvents, stdout, stderr); err != nil {
 		return err
 	}
 	done := make(chan struct{})
@@ -295,7 +299,7 @@ func runSessionOperation(ctx context.Context, session *sandbox.Session, operatio
 		if err != nil {
 			return fmt.Errorf("receive Session operation: %w", err)
 		}
-		if err := renderSessionEvent(event, format, stdout, stderr); err != nil {
+		if err := renderSessionEvent(event, format, showEvents, stdout, stderr); err != nil {
 			return err
 		}
 		if event.Failed != nil {
@@ -315,12 +319,15 @@ func runSessionOperation(ctx context.Context, session *sandbox.Session, operatio
 	}
 }
 
-func renderSessionEvent(event sandbox.OperationEvent, format string, stdout, stderr io.Writer) error {
+func renderSessionEvent(event sandbox.OperationEvent, format string, showEvents bool, stdout, stderr io.Writer) error {
 	if format == sessionOutputNDJSON {
 		return json.NewEncoder(stdout).Encode(event)
 	}
 	switch event.Type {
 	case "accepted":
+		if !showEvents {
+			return nil
+		}
 		_, err := fmt.Fprintf(stderr, "Session operation accepted: %s\n", event.Accepted.OperationID)
 		return err
 	case "output":
@@ -341,9 +348,15 @@ func renderSessionEvent(event sandbox.OperationEvent, format string, stdout, std
 			_, err := stdout.Write(event.Progress.Data)
 			return err
 		}
+		if !showEvents {
+			return nil
+		}
 		_, err := fmt.Fprintf(stderr, "Session progress (%s): %s\n", event.Progress.Kind, event.Progress.Message)
 		return err
 	case "completed":
+		if !showEvents {
+			return nil
+		}
 		_, err := fmt.Fprintln(stderr, "Session operation completed")
 		return err
 	case "failed":

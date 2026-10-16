@@ -331,7 +331,7 @@ func (s *Server) functionClient(ctx context.Context, run *v1alpha1.Run) (pb.Func
 	if port == 0 {
 		port = defaultRuntimeServicePort
 	}
-	client, closer, err := s.FunctionDialer.DialFunction(ctx, fmt.Sprintf("runtime-%s.%s:%d", run.Spec.Runtime, run.Namespace, port))
+	client, closer, err := s.FunctionDialer.DialFunction(ctx, fmt.Sprintf("runtime-%s.%s.svc:%d", run.Spec.Runtime, run.Namespace, port))
 	if err != nil {
 		return nil, nil, status.Errorf(codes.Unavailable, "dial Runtime Service: %v", err)
 	}
@@ -690,7 +690,7 @@ func (s *Server) runtimeClient(ctx context.Context, run *v1alpha1.Run) (pb.Sessi
 	if port == 0 {
 		port = defaultRuntimeServicePort
 	}
-	address := fmt.Sprintf("runtime-%s.%s:%d", run.Spec.Runtime, run.Namespace, port)
+	address := fmt.Sprintf("runtime-%s.%s.svc:%d", run.Spec.Runtime, run.Namespace, port)
 	client, closer, err := s.Dialer.Dial(ctx, address)
 	if err != nil {
 		return nil, nil, status.Errorf(codes.Unavailable, "dial Runtime Service: %v", err)

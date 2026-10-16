@@ -103,14 +103,34 @@ func TestSessionOperationRendersOutputAndCommandExit(t *testing.T) {
 		}
 	})
 	var stdout, stderr bytes.Buffer
-	err := runSessionOperation(t.Context(), session, sandbox.Operation{Command: &sandbox.Command{Argv: []string{"sh", "-c"}}}, sessionOutputText, &stdout, &stderr)
+	err := runSessionOperation(t.Context(), session, sandbox.Operation{Command: &sandbox.Command{Argv: []string{"sh", "-c"}}}, sessionOutputText, false, &stdout, &stderr)
 	if !isSessionOperationFailure(err) || !strings.Contains(err.Error(), "status 7") {
 		t.Fatalf("operation error = %v", err)
 	}
 	if stdout.String() != "hello" {
 		t.Errorf("stdout = %q", stdout.String())
 	}
-	for _, want := range []string{"accepted: op-1", "warning\n", "working", "completed"} {
+	if stderr.String() != "warning\n" {
+		t.Errorf("stderr = %q, want command stderr only", stderr.String())
+	}
+}
+
+func TestSessionShowEventsDisplaysOperationDetails(t *testing.T) {
+	var stderr bytes.Buffer
+	for _, payload := range []string{
+		`{"sequence":1,"type":"accepted","accepted":{"operationID":"op-1"}}`,
+		`{"sequence":2,"type":"progress","progress":{"kind":"status","message":"working"}}`,
+		`{"sequence":3,"type":"completed","completed":{"command":{"exitCode":0}}}`,
+	} {
+		var event sandbox.OperationEvent
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			t.Fatal(err)
+		}
+		if err := renderSessionEvent(event, sessionOutputText, true, io.Discard, &stderr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, want := range []string{"accepted: op-1", "progress (status): working", "operation completed"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("stderr %q lacks %q", stderr.String(), want)
 		}
@@ -127,7 +147,7 @@ func TestSessionCommandTimeoutIsFailure(t *testing.T) {
 		_ = connection.WriteJSON(map[string]any{"sequence": 1, "type": "accepted", "accepted": map[string]string{"operationID": "op-1"}})
 		_ = connection.WriteJSON(map[string]any{"sequence": 2, "type": "completed", "completed": map[string]any{"command": map[string]any{"exitCode": 0, "timedOut": true}}})
 	})
-	err := runSessionOperation(t.Context(), session, sandbox.Operation{Command: &sandbox.Command{Shell: "sleep 10"}}, sessionOutputText, io.Discard, io.Discard)
+	err := runSessionOperation(t.Context(), session, sandbox.Operation{Command: &sandbox.Command{Shell: "sleep 10"}}, sessionOutputText, false, io.Discard, io.Discard)
 	if !isSessionOperationFailure(err) || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("operation error = %v, want timeout", err)
 	}
@@ -160,7 +180,7 @@ func TestSessionAttachAcceptsNDJSONOperationsAndEmitsEvents(t *testing.T) {
 	})
 	var stdout, stderr bytes.Buffer
 	input := strings.NewReader("{\"command\":{\"shell\":\"echo 1\"}}\n{\"command\":{\"shell\":\"echo 2\"}}\n")
-	if err := attachSession(t.Context(), session, input, &stdout, &stderr, sessionOutputNDJSON, sessionOutputNDJSON); err != nil {
+	if err := attachSession(t.Context(), session, "ready", input, &stdout, &stderr, sessionOutputNDJSON, sessionOutputNDJSON, false); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
@@ -173,7 +193,7 @@ func TestSessionAttachAcceptsNDJSONOperationsAndEmitsEvents(t *testing.T) {
 			t.Fatalf("invalid NDJSON event %q: %v", line, err)
 		}
 	}
-	if strings.Contains(stderr.String(), "session>") {
+	if strings.Contains(stderr.String(), "ready>") {
 		t.Errorf("non-interactive attach printed prompt: %q", stderr.String())
 	}
 }
@@ -195,12 +215,12 @@ func TestSessionAttachKeepsFailureExitAfterLaterSuccess(t *testing.T) {
 		}
 	})
 	var stdout, stderr bytes.Buffer
-	err := attachSession(t.Context(), session, strings.NewReader("exit 7\necho recovered\n"), &stdout, &stderr, "command", sessionOutputText)
+	err := attachSession(t.Context(), session, "ready", strings.NewReader("exit 7\necho recovered\n"), &stdout, &stderr, "command", sessionOutputText, false)
 	if !isSessionOperationFailure(err) || !strings.Contains(err.Error(), "status 7") {
 		t.Fatalf("attach result = %v, want first operation failure", err)
 	}
-	if got := strings.Count(stderr.String(), "Session operation completed"); got != 2 {
-		t.Fatalf("completed operations = %d, want 2: %q", got, stderr.String())
+	if stderr.String() != "Session command exited with status 7\n" {
+		t.Fatalf("stderr = %q, want failed command only", stderr.String())
 	}
 }
 
@@ -239,7 +259,7 @@ func TestSessionInterruptSendsOperationIDBeforeClosing(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	err := runSessionOperation(ctx, session, sandbox.Operation{Command: &sandbox.Command{Shell: "sleep 10"}}, sessionOutputText, io.Discard, sessionCancelWriter{cancel: cancel})
+	err := runSessionOperation(ctx, session, sandbox.Operation{Command: &sandbox.Command{Shell: "sleep 10"}}, sessionOutputText, true, io.Discard, sessionCancelWriter{cancel: cancel})
 	if err == nil {
 		t.Fatal("interrupted operation returned success")
 	}

@@ -43,7 +43,7 @@ func TestGatewayGetsSessionThroughRuntimeService(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if dialer.address != "runtime-bash.default:9093" {
+	if dialer.address != "runtime-bash.default.svc:9093" {
 		t.Fatalf("Runtime Service address = %q", dialer.address)
 	}
 	if !strings.Contains(response.Body.String(), `"state":"SESSION_STATE_READY"`) {
@@ -327,6 +327,9 @@ func TestGatewayInvokesFunctionThroughRuntimedProxy(t *testing.T) {
 	server.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if dialer.address != "runtime-bash.default.svc:9093" {
+		t.Fatalf("Function Runtime Service address = %q", dialer.address)
 	}
 	if !strings.Contains(response.Body.String(), `"invocationId":"caller-id"`) {
 		t.Fatalf("response = %s", response.Body.String())
