@@ -42,7 +42,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - uses: azure/setup-helm@v5.0.1
-      - uses: helm/kind-action@v1.15.0
+      - uses: helm/kind-action@v1.15.1
         with:
           cluster_name: kruntimes-e2e
       - name: Run E2E
