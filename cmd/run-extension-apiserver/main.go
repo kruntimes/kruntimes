@@ -61,9 +61,10 @@ func main() {
 	}
 	if err := manager.Add(&runextensionapi.Server{
 		Runs: manager.GetCache(), SessionRuns: manager.GetAPIReader(),
-		PodLogs:       runlogs.KubernetesPodReader{Client: kube.CoreV1()},
-		SessionAccess: &gateway.Server{Dialer: gateway.GRPCDialer{}},
-		Address:       address, TLSCertificateFile: certificateFile, TLSPrivateKeyFile: privateKeyFile,
+		PodLogs:         runlogs.KubernetesPodReader{Client: kube.CoreV1()},
+		SessionAccess:   &gateway.Server{Dialer: gateway.GRPCDialer{}},
+		SessionRuntimes: gateway.GRPCDialer{},
+		Address:         address, TLSCertificateFile: certificateFile, TLSPrivateKeyFile: privateKeyFile,
 		RequestHeaderCA: requestHeaderCA, AllowedClientNames: allowedNames,
 		UsernameHeaders: usernameHeaders, GroupHeaders: groupHeaders,
 	}); err != nil {

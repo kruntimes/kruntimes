@@ -14,7 +14,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -103,8 +102,6 @@ func (s *Server) registerRoutes() {
 	}
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}", withSessionRun(s.handleSessionStatus))
 	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws", s.withSessionRun(s.handleSessionWebSocket))
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files", withSessionRun(s.handleSessionListFiles))
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files/{path...}", withSessionRun(s.handleSessionReadFile))
 	mux.HandleFunc("/", s.endpointNotFound)
 
 	s.routes = mux
@@ -238,27 +235,6 @@ func (s *Server) StreamSession(w http.ResponseWriter, r *http.Request, run *v1al
 	s.withSessionConnectionLimit(func(w http.ResponseWriter, r *http.Request) {
 		s.streamOperationWebSocket(w, r, run)
 	})(w, r)
-}
-
-func (s *Server) handleSessionListFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	if r.Method != http.MethodGet {
-		s.methodNotAllowed(w)
-		return
-	}
-	s.listFiles(w, r, run)
-}
-
-func (s *Server) handleSessionReadFile(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	if r.Method != http.MethodGet {
-		s.methodNotAllowed(w)
-		return
-	}
-	path := r.PathValue("path")
-	if path == "" {
-		s.endpointNotFound(w, r)
-		return
-	}
-	s.readFile(w, r, run, path)
 }
 
 func (s *Server) serveFunctionInvoke(w http.ResponseWriter, r *http.Request, namespace, runtimeName, runUID string) {
@@ -614,73 +590,6 @@ func sessionOperationID(value string) (string, error) {
 	return value, nil
 }
 
-func (s *Server) listFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	request, err := sessionFileListRequest(r.URL.Query())
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	client, closer, err := s.runtimeClient(r.Context(), run)
-	if err != nil {
-		s.writeGatewayError(w, err)
-		return
-	}
-	defer closer.Close()
-	request.Identity = sessionIdentity(run)
-	response, err := client.ListSessionFiles(r.Context(), request)
-	if err != nil {
-		s.writeGatewayError(w, err)
-		return
-	}
-	entries := make([]sessionFileInfoResponse, 0, len(response.GetEntries()))
-	for _, entry := range response.GetEntries() {
-		entries = append(entries, sessionFileInfoResponse{Path: entry.GetPath(), Directory: entry.GetDirectory(), SizeBytes: entry.GetSizeBytes()})
-	}
-	s.writeJSON(w, http.StatusOK, struct {
-		Entries       []sessionFileInfoResponse `json:"entries"`
-		NextPageToken string                    `json:"nextPageToken"`
-	}{Entries: entries, NextPageToken: response.GetNextPageToken()})
-}
-
-func sessionFileListRequest(query url.Values) (*pb.ListSessionFilesRequest, error) {
-	request := &pb.ListSessionFilesRequest{Path: query.Get("path"), PageToken: query.Get("pageToken")}
-	if value := query.Get("limit"); value != "" {
-		limit, err := strconv.ParseInt(value, 10, 32)
-		if err != nil || limit <= 0 {
-			return nil, errors.New("limit must be a positive integer")
-		}
-		request.Limit = int32(limit)
-	}
-	return request, nil
-}
-
-func (s *Server) readFile(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run, path string) {
-	maxBytes := int64(1 << 20)
-	if value := r.URL.Query().Get("maxBytes"); value != "" {
-		parsed, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || parsed <= 0 {
-			s.writeError(w, http.StatusBadRequest, "maxBytes must be a positive integer")
-			return
-		}
-		maxBytes = parsed
-	}
-	client, closer, err := s.runtimeClient(r.Context(), run)
-	if err != nil {
-		s.writeGatewayError(w, err)
-		return
-	}
-	defer closer.Close()
-	response, err := client.ReadSessionFile(r.Context(), &pb.ReadSessionFileRequest{Identity: sessionIdentity(run), Path: path, MaxBytes: maxBytes})
-	if err != nil {
-		s.writeGatewayError(w, err)
-		return
-	}
-	s.writeJSON(w, http.StatusOK, struct {
-		Contents  []byte `json:"contents"`
-		Truncated bool   `json:"truncated"`
-	}{Contents: response.GetContents(), Truncated: response.GetTruncated()})
-}
-
 func (s *Server) sessionRun(ctx context.Context, namespace, runtimeName, runUID string) (*v1alpha1.Run, error) {
 	if s.Runs == nil || s.Dialer == nil {
 		return nil, status.Error(codes.FailedPrecondition, "gateway is not configured")
@@ -1001,9 +910,4 @@ type functionInvokeResponse struct {
 	Output       []byte            `json:"output,omitempty"`
 	ContentType  string            `json:"contentType,omitempty"`
 	Outputs      map[string]string `json:"outputs,omitempty"`
-}
-type sessionFileInfoResponse struct {
-	Path      string `json:"path"`
-	Directory bool   `json:"directory"`
-	SizeBytes int64  `json:"sizeBytes"`
 }

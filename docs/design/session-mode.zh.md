@@ -285,7 +285,17 @@ gateway server 将下列 HTTP API operation 映射到 `SessionRuntime` gRPC meth
 | --- | --- |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}` | `GetSessionStatus` | 返回 readiness 与 bounded session metadata |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `RenewSessionLease`、`StreamSessionOperation` | 持久 Session connection；认证后的打开和私有 `heartbeat` frame 会续租，client 发送 `send`/`cancel` frame 并接收有序 event frame |
-| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files` | `ReadSessionFile`、`ListSessionFiles` | 有界的 workspace-relative file access |
+
+Session workspace 文件访问通过聚合 Session API（而非 gateway）使用 `ReadSessionFile` 与
+`ListSessionFiles`：
+
+```
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files/{path}
+```
+
+这两个 endpoint 都按 `sessions.kruntimes.io/runs/session` 的 `get` 权限授权，与 Session
+operation 使用同一个权限。
 
 Exec request 必须且只能提供 `argv` 或 `shell`。`argv` 直接执行程序；`shell` 显式选择 Runtime
 shell。二者都支持 bounded stdin、relative working directory、bounded environment overrides 与

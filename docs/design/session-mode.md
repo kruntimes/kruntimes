@@ -354,7 +354,17 @@ gRPC methods:
 | --- | --- |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}` | `GetSessionStatus` | return readiness and bounded session metadata |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `RenewSessionLease`, `StreamSessionOperation` | persistent Session connection; authenticated open and private `heartbeat` frames renew the lease, while clients send `send`/`cancel` frames and receive ordered event frames |
-| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files` | `ReadSessionFile`, `ListSessionFiles` | bounded workspace-relative file access |
+
+Session workspace file access uses `ReadSessionFile` and `ListSessionFiles`
+through the aggregated Session API instead of the gateway:
+
+```
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files/{path}
+```
+
+Both endpoints are authorized as `get` on `sessions.kruntimes.io/runs/session`,
+the same permission that authorizes Session operations.
 
 An exec request supplies exactly one of `argv` or `shell`. `argv` directly
 executes a program. `shell` deliberately opts into the Runtime's shell. Both

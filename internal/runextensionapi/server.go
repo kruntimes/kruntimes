@@ -13,15 +13,19 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/gateway"
 	"github.com/kruntimes/kruntimes/internal/logapi"
@@ -29,21 +33,29 @@ import (
 )
 
 const (
-	Group                    = logapi.Group
-	Version                  = logapi.Version
-	SessionGroup             = "sessions.kruntimes.io"
-	defaultTailLines   int64 = 100
-	maxTailLines       int64 = 500
-	defaultTimeout           = 30 * time.Second
-	maxTimeout               = 5 * time.Minute
-	maxSnapshotBytes   int64 = 1 << 20
-	apiGroupPath             = "/apis/" + Group
-	apiVersionPath           = apiGroupPath + "/" + Version
-	runLogPath               = apiVersionPath + "/namespaces/{namespace}/runs/{name}/log"
-	sessionGroupPath         = "/apis/" + SessionGroup
-	sessionVersionPath       = sessionGroupPath + "/" + Version
-	sessionPath              = sessionVersionPath + "/namespaces/{namespace}/runs/{name}/session"
+	Group                           = logapi.Group
+	Version                         = logapi.Version
+	SessionGroup                    = "sessions.kruntimes.io"
+	defaultTailLines          int64 = 100
+	maxTailLines              int64 = 500
+	defaultTimeout                  = 30 * time.Second
+	maxTimeout                      = 5 * time.Minute
+	maxSnapshotBytes          int64 = 1 << 20
+	defaultRuntimeServicePort       = 9093
+	apiGroupPath                    = "/apis/" + Group
+	apiVersionPath                  = apiGroupPath + "/" + Version
+	runLogPath                      = apiVersionPath + "/namespaces/{namespace}/runs/{name}/log"
+	sessionGroupPath                = "/apis/" + SessionGroup
+	sessionVersionPath              = sessionGroupPath + "/" + Version
+	sessionPath                     = sessionVersionPath + "/namespaces/{namespace}/runs/{name}/session"
+	sessionFilesPath                = sessionPath + "/files"
+	sessionFilePath                 = sessionPath + "/files/{path...}"
 )
+
+// RuntimeDialer creates a SessionRuntime client for a Runtime Service.
+type RuntimeDialer interface {
+	Dial(context.Context, string) (pb.SessionRuntimeClient, io.Closer, error)
+}
 
 // Server is an aggregated API backend. Kubernetes authenticates callers and
 // authorizes the runs/log or runs/session resource before proxying here. The
@@ -53,6 +65,7 @@ type Server struct {
 	SessionRuns        client.Reader
 	PodLogs            runlogs.PodReader
 	SessionAccess      *gateway.Server
+	SessionRuntimes    RuntimeDialer
 	Address            string
 	TLSCertificateFile string
 	TLSPrivateKeyFile  string
@@ -131,6 +144,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+sessionGroupPath, s.handleSessionAPIGroup)
 	mux.HandleFunc("GET "+sessionVersionPath, s.handleSessionAPIResourceList)
 	mux.HandleFunc(sessionPath, s.handleSession)
+	mux.HandleFunc(sessionFilesPath, s.handleSessionFiles)
+	mux.HandleFunc(sessionFilePath, s.handleSessionFile)
 	mux.HandleFunc("/", s.handleNotFound)
 	return mux
 }
@@ -209,21 +224,181 @@ func (s *Server) handleSessionAPIResourceList(w http.ResponseWriter, _ *http.Req
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.sessionRun(w, r)
+	if !ok {
+		return
+	}
+	if s.SessionAccess == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Session operation access is not configured")
+		return
+	}
+	s.SessionAccess.StreamSession(w, r, run)
+}
+
+// handleSessionFiles serves one bounded, paginated page of a ready Session
+// Run's workspace. The file routes stay inside the aggregated Session
+// subresource, so kube-apiserver authorizes them as
+// sessions.kruntimes.io/runs/session get.
+func (s *Server) handleSessionFiles(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.readySessionRun(w, r)
+	if !ok {
+		return
+	}
+	s.listSessionFiles(w, r, run)
+}
+
+// handleSessionFile serves one bounded workspace-relative file from a ready
+// Session Run.
+func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.readySessionRun(w, r)
+	if !ok {
+		return
+	}
+	path := r.PathValue("path")
+	if path == "" {
+		s.writeError(w, http.StatusNotFound, "endpoint not found")
+		return
+	}
+	s.readSessionFile(w, r, run, path)
+}
+
+// listSessionFiles reads one bounded page of a Session Run's direct workspace
+// children from the owning runtimed.
+func (s *Server) listSessionFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	request, err := sessionFileListRequest(r.URL.Query())
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	client, closer, err := s.sessionRuntimeClient(r.Context(), run)
+	if err != nil {
+		s.writeRPCError(w, err)
+		return
+	}
+	defer closer.Close()
+	request.Identity = sessionIdentity(run)
+	response, err := client.ListSessionFiles(r.Context(), request)
+	if err != nil {
+		s.writeRPCError(w, err)
+		return
+	}
+	entries := make([]sessionFileInfoResponse, 0, len(response.GetEntries()))
+	for _, entry := range response.GetEntries() {
+		entries = append(entries, sessionFileInfoResponse{Path: entry.GetPath(), Directory: entry.GetDirectory(), SizeBytes: entry.GetSizeBytes()})
+	}
+	s.writeJSON(w, http.StatusOK, struct {
+		Entries       []sessionFileInfoResponse `json:"entries"`
+		NextPageToken string                    `json:"nextPageToken"`
+	}{Entries: entries, NextPageToken: response.GetNextPageToken()})
+}
+
+// readSessionFile reads one bounded workspace-relative file from the owning
+// runtimed.
+func (s *Server) readSessionFile(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run, path string) {
+	maxBytes := int64(1 << 20)
+	if value := r.URL.Query().Get("maxBytes"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed <= 0 {
+			s.writeError(w, http.StatusBadRequest, "maxBytes must be a positive integer")
+			return
+		}
+		maxBytes = parsed
+	}
+	client, closer, err := s.sessionRuntimeClient(r.Context(), run)
+	if err != nil {
+		s.writeRPCError(w, err)
+		return
+	}
+	defer closer.Close()
+	response, err := client.ReadSessionFile(r.Context(), &pb.ReadSessionFileRequest{Identity: sessionIdentity(run), Path: path, MaxBytes: maxBytes})
+	if err != nil {
+		s.writeRPCError(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, struct {
+		Contents  []byte `json:"contents"`
+		Truncated bool   `json:"truncated"`
+	}{Contents: response.GetContents(), Truncated: response.GetTruncated()})
+}
+
+// sessionRuntimeClient dials the Runtime Service that owns the Session Run.
+func (s *Server) sessionRuntimeClient(ctx context.Context, run *v1alpha1.Run) (pb.SessionRuntimeClient, io.Closer, error) {
+	if s.SessionRuntimes == nil {
+		return nil, nil, status.Error(codes.Unavailable, "Session Runtime dialer is not configured")
+	}
+	address := fmt.Sprintf("runtime-%s.%s.svc:%d", run.Spec.Runtime, run.Namespace, defaultRuntimeServicePort)
+	client, closer, err := s.SessionRuntimes.Dial(ctx, address)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Unavailable, "dial Runtime Service: %v", err)
+	}
+	return client, closer, nil
+}
+
+func sessionIdentity(run *v1alpha1.Run) *pb.SessionIdentity {
+	return &pb.SessionIdentity{RunUid: string(run.UID), AssignedPodUid: run.Status.AssignedPodUID}
+}
+
+func sessionFileListRequest(query url.Values) (*pb.ListSessionFilesRequest, error) {
+	request := &pb.ListSessionFilesRequest{Path: query.Get("path"), PageToken: query.Get("pageToken")}
+	if value := query.Get("limit"); value != "" {
+		limit, err := strconv.ParseInt(value, 10, 32)
+		if err != nil || limit <= 0 {
+			return nil, errors.New("limit must be a positive integer")
+		}
+		request.Limit = int32(limit)
+	}
+	return request, nil
+}
+
+// writeRPCError maps a gRPC status to the aggregated API's metav1.Status
+// response.
+func (s *Server) writeRPCError(w http.ResponseWriter, err error) {
+	httpStatus := http.StatusInternalServerError
+	switch status.Code(err) {
+	case codes.InvalidArgument:
+		httpStatus = http.StatusBadRequest
+	case codes.Unauthenticated:
+		httpStatus = http.StatusUnauthorized
+	case codes.PermissionDenied:
+		httpStatus = http.StatusForbidden
+	case codes.NotFound:
+		httpStatus = http.StatusNotFound
+	case codes.FailedPrecondition:
+		httpStatus = http.StatusConflict
+	case codes.ResourceExhausted:
+		httpStatus = http.StatusTooManyRequests
+	case codes.DeadlineExceeded:
+		httpStatus = http.StatusGatewayTimeout
+	case codes.Unavailable:
+		httpStatus = http.StatusServiceUnavailable
+	}
+	s.writeError(w, httpStatus, status.Convert(err).Message())
+}
+
+type sessionFileInfoResponse struct {
+	Path      string `json:"path"`
+	Directory bool   `json:"directory"`
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
+// sessionRun authenticates the aggregation identity and loads the named Run for
+// a Session data-plane request.
+func (s *Server) sessionRun(w http.ResponseWriter, r *http.Request) (*v1alpha1.Run, bool) {
 	if r.Method != http.MethodGet {
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
+		return nil, false
 	}
 	if _, err := s.requestUser(r); err != nil {
 		s.writeError(w, http.StatusUnauthorized, err.Error())
-		return
+		return nil, false
 	}
 	reader := s.SessionRuns
 	if reader == nil {
 		reader = s.Runs
 	}
-	if s.SessionAccess == nil || reader == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "Session access is not configured")
-		return
+	if reader == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Session API is not configured")
+		return nil, false
 	}
 	run := &v1alpha1.Run{}
 	if err := reader.Get(r.Context(), client.ObjectKey{Namespace: r.PathValue("namespace"), Name: r.PathValue("name")}, run); err != nil {
@@ -232,9 +407,27 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.writeError(w, http.StatusServiceUnavailable, "read Run")
 		}
-		return
+		return nil, false
 	}
-	s.SessionAccess.StreamSession(w, r, run)
+	return run, true
+}
+
+// readySessionRun loads the named Run and rejects Runs that cannot serve
+// Session data-plane requests.
+func (s *Server) readySessionRun(w http.ResponseWriter, r *http.Request) (*v1alpha1.Run, bool) {
+	run, ok := s.sessionRun(w, r)
+	if !ok {
+		return nil, false
+	}
+	if run.Spec.Mode.Session == nil {
+		s.writeError(w, http.StatusNotFound, "Session Run not found")
+		return nil, false
+	}
+	if run.Status.Phase != v1alpha1.RunReady || run.Status.AssignedPodUID == "" {
+		s.writeError(w, http.StatusConflict, "Session Run is not Ready")
+		return nil, false
+	}
+	return run, true
 }
 
 func (s *Server) handleNotFound(w http.ResponseWriter, _ *http.Request) {

@@ -86,6 +86,19 @@ GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/sess
 Runtime controller 的 NetworkPolicy 允许 `run-extension-api` Pod 访问 Runtime
 Service 的 Session gRPC 端口。
 
+backend 还在同一个 Session subresource 下提供有界的 workspace 文件读取：
+
+```
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files/{path}
+```
+
+list endpoint 通过 `path`、`limit` 和 `pageToken` 选择一页有界的 direct children，返回
+`entries` 与 `nextPageToken`。read endpoint 返回 base64 `contents` 与 `truncated`，并由
+`maxBytes` 限制大小。`files` 段位于 `session` subresource 段之下，因此 API server 对这两个
+endpoint 使用同一个 `sessions.kruntimes.io/runs/session` `get` 权限授权，无需额外权限。
+backend 读取指定的 Ready Session Run，并从 owner runtimed 读取文件，与 Session operation 一致。
+
 ## 安装
 
 `runExtensionAPI.enabled` 默认是 true，且独立于 `gateway.enabled`。两个 APIService 都是

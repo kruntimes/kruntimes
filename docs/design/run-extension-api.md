@@ -98,6 +98,23 @@ The existing `logs.kruntimes.io` path remains available.
 The Runtime controller's NetworkPolicy permits `run-extension-api` Pods to
 reach the Runtime Service's Session gRPC port.
 
+The backend also serves bounded workspace file reads for the same Session
+subresource:
+
+```
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files/{path}
+```
+
+The list endpoint selects one bounded page of direct children with `path`,
+`limit`, and `pageToken` and returns `entries` and `nextPageToken`. The read
+endpoint returns base64 `contents` and `truncated`, bounded by `maxBytes`. The
+`files` segment stays below the `session` subresource segment, so the API server
+authorizes both endpoints with the same `get` on
+`sessions.kruntimes.io/runs/session`; no additional permission is required. The
+backend resolves the ready Session Run and reads the file from the owning
+runtimed, exactly like a Session operation.
+
 ## Installation
 
 `runExtensionAPI.enabled` defaults to true and is independent of `gateway.enabled`.

@@ -353,53 +353,6 @@ func TestGatewayRejectsOversizedFunctionInputBeforeDialingRuntime(t *testing.T) 
 	}
 }
 
-func TestGatewayListsSessionFilesInPages(t *testing.T) {
-	run := readySessionRun()
-	client := &fakeSessionRuntimeClient{list: func(_ context.Context, request *pb.ListSessionFilesRequest, _ ...grpc.CallOption) (*pb.ListSessionFilesResponse, error) {
-		if request.GetIdentity().GetRunUid() != string(run.UID) || request.GetPath() != "notes" || request.GetLimit() != 2 || request.GetPageToken() != "after-notes" {
-			t.Fatalf("list request = %#v", request)
-		}
-		return &pb.ListSessionFilesResponse{
-			Entries:       []*pb.SessionFileInfo{{Path: "build.log", SizeBytes: 12}},
-			NextPageToken: "next-notes",
-		}, nil
-	}}
-	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
-
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/files?path=notes&limit=2&pageToken=after-notes", nil))
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-	if got, want := response.Body.String(), `{"entries":[{"path":"build.log","directory":false,"sizeBytes":12}],"nextPageToken":"next-notes"}`+"\n"; got != want {
-		t.Fatalf("response = %q, want %q", got, want)
-	}
-
-	invalid := httptest.NewRecorder()
-	server.ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/files?limit=0", nil))
-	if invalid.Code != http.StatusBadRequest {
-		t.Fatalf("invalid limit status = %d, body = %s", invalid.Code, invalid.Body.String())
-	}
-}
-
-func TestGatewayReadsNestedSessionFilePath(t *testing.T) {
-	run := readySessionRun()
-	client := &fakeSessionRuntimeClient{read: func(_ context.Context, request *pb.ReadSessionFileRequest, _ ...grpc.CallOption) (*pb.ReadSessionFileResponse, error) {
-		if request.GetIdentity().GetRunUid() != string(run.UID) || request.GetPath() != "artifacts/test/output.log" {
-			t.Fatalf("read request = %#v", request)
-		}
-		return &pb.ReadSessionFileResponse{Contents: []byte("done\n")}, nil
-	}}
-	server := testServer(t, run, allowAuthorizer{}, &fakeDialer{client: client})
-
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/namespaces/default/runtimes/bash/sessions/session-uid/files/artifacts/test/output.log", nil))
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-}
-
 func TestGatewayLimitsConcurrentRequests(t *testing.T) {
 	run := readySessionRun()
 	started := make(chan struct{})
