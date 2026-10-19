@@ -23,7 +23,21 @@ import (
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
+	"github.com/kruntimes/kruntimes/internal/runextensionapi/dataplane"
 )
+
+type testSessionOperationEvent struct {
+	Sequence int64  `json:"sequence"`
+	Type     string `json:"type"`
+	Accepted *struct {
+		OperationID string `json:"operationID"`
+	} `json:"accepted,omitempty"`
+	Completed *struct {
+		Command *struct {
+			Stdout []byte `json:"stdout"`
+		} `json:"command,omitempty"`
+	} `json:"completed,omitempty"`
+}
 
 func TestGatewayGetsSessionThroughRuntimeService(t *testing.T) {
 	run := readySessionRun()
@@ -98,14 +112,14 @@ func TestGatewayStreamsSessionOperationOverWebSocket(t *testing.T) {
 		t.Fatalf("write send frame: %v", err)
 	}
 	connection.SetReadDeadline(time.Now().Add(time.Second))
-	var accepted sessionOperationEventResponse
+	var accepted testSessionOperationEvent
 	if err := connection.ReadJSON(&accepted); err != nil {
 		t.Fatalf("read accepted event: %v", err)
 	}
 	if accepted.Type != "accepted" || accepted.Sequence != 1 || accepted.Accepted == nil || accepted.Accepted.OperationID != "operation-1" {
 		t.Fatalf("accepted event = %#v", accepted)
 	}
-	var completed sessionOperationEventResponse
+	var completed testSessionOperationEvent
 	if err := connection.ReadJSON(&completed); err != nil {
 		t.Fatalf("read completed event: %v", err)
 	}
@@ -115,14 +129,14 @@ func TestGatewayStreamsSessionOperationOverWebSocket(t *testing.T) {
 	if err := connection.WriteJSON(map[string]any{"type": "send", "idempotencyKey": "operation-2", "operation": map[string]any{"command": map[string]any{"argv": []string{"echo", "again"}}}}); err != nil {
 		t.Fatalf("write second send frame: %v", err)
 	}
-	var secondAccepted sessionOperationEventResponse
+	var secondAccepted testSessionOperationEvent
 	if err := connection.ReadJSON(&secondAccepted); err != nil {
 		t.Fatalf("read second accepted event: %v", err)
 	}
 	if secondAccepted.Type != "accepted" || secondAccepted.Accepted == nil || secondAccepted.Accepted.OperationID != "operation-2" {
 		t.Fatalf("second accepted event = %#v", secondAccepted)
 	}
-	var secondCompleted sessionOperationEventResponse
+	var secondCompleted testSessionOperationEvent
 	if err := connection.ReadJSON(&secondCompleted); err != nil {
 		t.Fatalf("read second completed event: %v", err)
 	}
@@ -174,14 +188,14 @@ func TestGatewayKeepsSessionWebSocketOpenAfterOperationError(t *testing.T) {
 			}
 			continue
 		}
-		var accepted sessionOperationEventResponse
+		var accepted testSessionOperationEvent
 		if err := connection.ReadJSON(&accepted); err != nil {
 			t.Fatalf("read accepted event: %v", err)
 		}
 		if accepted.Type != "accepted" || accepted.Accepted == nil || accepted.Accepted.OperationID != "operation-2" {
 			t.Fatalf("accepted event = %#v", accepted)
 		}
-		var completed sessionOperationEventResponse
+		var completed testSessionOperationEvent
 		if err := connection.ReadJSON(&completed); err != nil {
 			t.Fatalf("read completed event: %v", err)
 		}
@@ -218,11 +232,11 @@ func TestGatewayCancelsOperationStreamBeforeClosingClient(t *testing.T) {
 	if err := connection.WriteJSON(map[string]any{"type": "send", "operation": map[string]any{"command": map[string]any{"argv": []string{"true"}}}}); err != nil {
 		t.Fatalf("write send frame: %v", err)
 	}
-	var accepted sessionOperationEventResponse
+	var accepted testSessionOperationEvent
 	if err := connection.ReadJSON(&accepted); err != nil {
 		t.Fatalf("read accepted event: %v", err)
 	}
-	var completed sessionOperationEventResponse
+	var completed testSessionOperationEvent
 	if err := connection.ReadJSON(&completed); err != nil {
 		t.Fatalf("read completed event: %v", err)
 	}
@@ -470,14 +484,14 @@ func TestGatewayRejectsInactiveCancelWithoutClosingSession(t *testing.T) {
 	}
 }
 
-func testServer(t *testing.T, run *v1alpha1.Run, authorizer Authorizer, dialer SessionRuntimeDialer) *Server {
+func testServer(t *testing.T, run *v1alpha1.Run, authorizer Authorizer, dialer dataplane.SessionRuntimeDialer) *Server {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()
-	return &Server{Runs: reader, Authorizer: authorizer, Dialer: dialer, FunctionDialer: dialer.(FunctionRuntimeDialer)}
+	return &Server{Runs: reader, Authorizer: authorizer, Dialer: dialer, FunctionDialer: dialer.(dataplane.FunctionRuntimeDialer)}
 }
 
 func readyFunctionRun() *v1alpha1.Run {

@@ -16,8 +16,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
-	"github.com/kruntimes/kruntimes/internal/gateway"
 	"github.com/kruntimes/kruntimes/internal/runextensionapi"
+	"github.com/kruntimes/kruntimes/internal/runextensionapi/dataplane"
 	"github.com/kruntimes/kruntimes/internal/runlogs"
 )
 
@@ -61,10 +61,12 @@ func main() {
 	}
 	if err := manager.Add(&runextensionapi.Server{
 		Runs: manager.GetCache(), SessionRuns: manager.GetAPIReader(),
-		PodLogs:         runlogs.KubernetesPodReader{Client: kube.CoreV1()},
-		SessionAccess:   &gateway.Server{Dialer: gateway.GRPCDialer{}},
-		SessionRuntimes: gateway.GRPCDialer{},
-		Address:         address, TLSCertificateFile: certificateFile, TLSPrivateKeyFile: privateKeyFile,
+		PodLogs: runlogs.KubernetesPodReader{Client: kube.CoreV1()},
+		DataPlane: &dataplane.Server{
+			Dialer:         dataplane.GRPCDialer{},
+			FunctionDialer: dataplane.GRPCDialer{},
+		},
+		Address: address, TLSCertificateFile: certificateFile, TLSPrivateKeyFile: privateKeyFile,
 		RequestHeaderCA: requestHeaderCA, AllowedClientNames: allowedNames,
 		UsernameHeaders: usernameHeaders, GroupHeaders: groupHeaders,
 	}); err != nil {
