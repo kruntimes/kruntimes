@@ -42,12 +42,16 @@ Authorization headers from `krt` and SDK clients take precedence.
 
 ## Session operations in the browser
 
-The detail page for a ready Session Run provides a shell-command panel. It
-opens the same-origin, authenticated
-`operations:ws` connection, sends the command as its first client frame, and
-renders ordered accepted, output, progress, and terminal events as they
-arrive. Binary output is decoded from the protocol's JSON base64
-representation before display.
+The detail page for a ready Session Run provides a shell-command panel. Console
+relays the same-origin Session WebSocket to the Kubernetes aggregated Session
+API at
+`/apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session`
+using the caller's Kubernetes credential. kube-apiserver authenticates the
+caller and authorizes `get` on `sessions.kruntimes.io/runs/session`; Console
+performs no Session-operation authorization decision itself. The panel sends
+the command as its first client frame and renders ordered accepted, output,
+progress, and terminal events as they arrive. Binary output is decoded from the
+protocol's JSON base64 representation before display.
 
 The panel is disabled until the Session Run is `Ready`. Its Cancel control
 sends `{"type":"cancel","operationID":"..."}` over the WebSocket. The Console client sends

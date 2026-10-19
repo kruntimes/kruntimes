@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -55,6 +56,9 @@ type Server struct {
 	// RuntimeAccess serves the versioned Runtime access API. It shares Console's
 	// listener and is deliberately not exposed as a separate Deployment.
 	RuntimeAccess http.Handler
+	// RunExtensionAPI relays caller-authenticated requests to the Kubernetes
+	// aggregated Run extension API. It performs no authorization itself.
+	RunExtensionAPI *RunExtensionAPIProxy
 
 	routesOnce sync.Once
 	routes     http.Handler
@@ -62,6 +66,28 @@ type Server struct {
 
 type errorResponse struct {
 	Error string `json:"error"`
+}
+
+// runExtensionAPIRoute maps one Console browser route to its Kubernetes
+// aggregated Run extension API path. The target function resolves ServeMux
+// wildcards from the incoming request, so adding a proxied endpoint is one
+// table entry with an explicit mapping.
+type runExtensionAPIRoute struct {
+	consolePattern string
+	targetPath     func(*http.Request) string
+}
+
+var runExtensionAPIRoutes = []runExtensionAPIRoute{
+	{
+		consolePattern: "GET /api/namespaces/{namespace}/runs/{name}/session",
+		targetPath: func(request *http.Request) string {
+			return fmt.Sprintf(
+				"/apis/sessions.kruntimes.io/v1alpha1/namespaces/%s/runs/%s/session",
+				request.PathValue("namespace"),
+				request.PathValue("name"),
+			)
+		},
+	},
 }
 
 type namespaceListResponse struct {
@@ -181,6 +207,9 @@ func (s *Server) registerRoutes() {
 	mux.HandleFunc("GET /api/namespaces/{namespace}/runtimes/{name}", s.withRequestClient(s.getRuntime))
 	mux.HandleFunc("GET /api/namespaces/{namespace}/workflowruns", s.withReadClient(s.listWorkflowRuns))
 	mux.HandleFunc("GET /api/namespaces/{namespace}/workflowruns/{name}", s.withRequestClient(s.getWorkflowRun))
+	for _, route := range runExtensionAPIRoutes {
+		mux.HandleFunc(route.consolePattern, s.withRunExtensionAPI(route.targetPath))
+	}
 	if s.RuntimeAccess != nil {
 		runtimeAccessHandler := s.withRuntimeAccessCredential(s.RuntimeAccess)
 		mux.Handle("GET /v1/", runtimeAccessHandler)
@@ -203,6 +232,32 @@ func (s *Server) withRuntimeAccessCredential(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(writer, request)
 	})
+}
+
+// withRunExtensionAPI relays one browser request to the aggregated Run
+// extension API. Origin checking stays at the Console boundary because the
+// aggregated backend only sees the forwarded Kubernetes identity.
+func (s *Server) withRunExtensionAPI(targetPath func(*http.Request) string) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		if s.RunExtensionAPI == nil {
+			s.writeError(writer, http.StatusServiceUnavailable, "Run extension API proxy is not configured")
+			return
+		}
+		if !sameOriginRunExtensionAPIRequest(request) {
+			s.writeError(writer, http.StatusForbidden, "cross-origin Run extension API request is not allowed")
+			return
+		}
+		s.RunExtensionAPI.Proxy(writer, request, targetPath(request))
+	}
+}
+
+func sameOriginRunExtensionAPIRequest(request *http.Request) bool {
+	origin := request.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host == request.Host
 }
 
 func (s *Server) getSession(writer http.ResponseWriter, request *http.Request) {

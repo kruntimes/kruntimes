@@ -37,10 +37,13 @@ Authorization header 始终优先。
 
 ## 浏览器中的 Session operation
 
-Ready Session Run 的详情页提供 shell command 面板。它建立同源、已认证的
-`operations:ws` 连接，将 command 作为第一个 client frame 发送，并在到达时按顺序渲染
-accepted、output、progress 与 terminal event。协议中 JSON base64 representation 的二进制
-输出会先解码再显示。
+Ready Session Run 的详情页提供 shell command 面板。Console 使用 caller 的 Kubernetes
+credential，把同源的 Session WebSocket 转发到 Kubernetes 聚合 Session API：
+`/apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session`。
+kube-apiserver 负责认证 caller 并授权 `sessions.kruntimes.io/runs/session` 的 `get`；
+Console 自身不做 Session operation 的授权决策。面板将 command 作为第一个 client frame
+发送，并在到达时按顺序渲染 accepted、output、progress 与 terminal event。协议中 JSON
+base64 representation 的二进制输出会先解码再显示。
 
 Session Run 进入 `Ready` 前，该面板保持禁用。Cancel 控件会通过 WebSocket 发送
 `{"type":"cancel","operationID":"..."}`。Console client 在连接打开时发送

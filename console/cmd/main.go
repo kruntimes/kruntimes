@@ -102,11 +102,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "configure Console authorization client: %v\n", err)
 		os.Exit(1)
 	}
+	extensionAPIProxy, err := console.NewRunExtensionAPIProxy(rest.AnonymousClientConfig(config))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "configure Console Run extension API proxy: %v\n", err)
+		os.Exit(1)
+	}
 	consoleServer := &console.Server{
-		Clients:       factory,
-		Authenticator: authenticator,
-		Logs:          logClient,
-		Assets:        os.DirFS(assetsDirectory),
+		Clients:         factory,
+		Authenticator:   authenticator,
+		Logs:            logClient,
+		RunExtensionAPI: extensionAPIProxy,
+		Assets:          os.DirFS(assetsDirectory),
 		RuntimeAccess: &gateway.Server{
 			Runs: runClient,
 			Authorizer: gateway.NewCachingAuthorizer(

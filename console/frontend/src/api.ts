@@ -110,14 +110,13 @@ export class ConsoleAPI {
 
   openSessionOperation(
     namespace: string,
-    runtime: string,
-    runUID: string,
+    runName: string,
     request: SessionOperationRequest,
     handlers: SessionOperationSocketHandlers,
     leaseTimeoutSeconds?: number,
   ): SessionOperationSocket {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-    const endpoint = `${scheme}//${location.host}/v1/namespaces/${encodeURIComponent(namespace)}/runtimes/${encodeURIComponent(runtime)}/sessions/${encodeURIComponent(runUID)}/operations:ws`;
+    const endpoint = `${scheme}//${location.host}/api/namespaces/${encodeURIComponent(namespace)}/runs/${encodeURIComponent(runName)}/session`;
     const socket = new WebSocket(endpoint);
     let lastSequence = 0;
     let closed = false;
