@@ -2,9 +2,10 @@
 
 ## Status
 
-The Kubernetes aggregated API serves Run logs and CLI Session operations.
-Console's Runtime Gateway remains available for SDK and browser Session access
-and Function operations.
+The Kubernetes aggregated API serves Run logs, Session operations and files,
+and Function invocation. Console relays browser Session operations to it;
+Console's Runtime Gateway remains available for SDK Session and Function
+clients until those clients migrate.
 
 ## Problem
 
@@ -115,10 +116,32 @@ authorizes both endpoints with the same `get` on
 backend resolves the ready Session Run and reads the file from the owning
 runtimed, exactly like a Session operation.
 
+## Function invocation
+
+The same backend also serves a third APIService:
+
+```
+POST /apis/functions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/function
+```
+
+The API server authenticates the caller and authorizes `create` on
+`functions.kruntimes.io/runs/function` for the named Run. The request body is one
+bounded JSON value and the optional `X-Kruntime-Invocation-ID` header carries an
+idempotency key bounded to 128 bytes. The backend loads the ready Function Run,
+invokes the runtimed FunctionRuntime proxy, and returns:
+
+```json
+{"invocationId":"...","output":"<base64>","contentType":"...","outputs":{}}
+```
+
+Request and response sizes use the backend's bounded limits. A request that
+cannot be authorized or admitted fails with an HTTP error before any invocation
+is admitted.
+
 ## Installation
 
 `runExtensionAPI.enabled` defaults to true and is independent of `gateway.enabled`.
-Both APIService objects are cluster-scoped, so exactly one platform release in a
+All APIService objects are cluster-scoped, so exactly one platform release in a
 cluster must own each group/version. Set `runExtensionAPI.enabled: false` for
 other releases.
 

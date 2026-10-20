@@ -29,27 +29,32 @@ import (
 )
 
 const (
-	Group                    = logapi.Group
-	Version                  = logapi.Version
-	SessionGroup             = "sessions.kruntimes.io"
-	defaultTailLines   int64 = 100
-	maxTailLines       int64 = 500
-	defaultTimeout           = 30 * time.Second
-	maxTimeout               = 5 * time.Minute
-	maxSnapshotBytes   int64 = 1 << 20
-	apiGroupPath             = "/apis/" + Group
-	apiVersionPath           = apiGroupPath + "/" + Version
-	runLogPath               = apiVersionPath + "/namespaces/{namespace}/runs/{name}/log"
-	sessionGroupPath         = "/apis/" + SessionGroup
-	sessionVersionPath       = sessionGroupPath + "/" + Version
-	sessionPath              = sessionVersionPath + "/namespaces/{namespace}/runs/{name}/session"
-	sessionFilesPath         = sessionPath + "/files"
-	sessionFilePath          = sessionPath + "/files/{path...}"
+	Group                     = logapi.Group
+	Version                   = logapi.Version
+	SessionGroup              = "sessions.kruntimes.io"
+	FunctionGroup             = "functions.kruntimes.io"
+	defaultTailLines    int64 = 100
+	maxTailLines        int64 = 500
+	defaultTimeout            = 30 * time.Second
+	maxTimeout                = 5 * time.Minute
+	maxSnapshotBytes    int64 = 1 << 20
+	apiGroupPath              = "/apis/" + Group
+	apiVersionPath            = apiGroupPath + "/" + Version
+	runLogPath                = apiVersionPath + "/namespaces/{namespace}/runs/{name}/log"
+	sessionGroupPath          = "/apis/" + SessionGroup
+	sessionVersionPath        = sessionGroupPath + "/" + Version
+	sessionPath               = sessionVersionPath + "/namespaces/{namespace}/runs/{name}/session"
+	sessionFilesPath          = sessionPath + "/files"
+	sessionFilePath           = sessionPath + "/files/{path...}"
+	functionGroupPath         = "/apis/" + FunctionGroup
+	functionVersionPath       = functionGroupPath + "/" + Version
+	functionPath              = functionVersionPath + "/namespaces/{namespace}/runs/{name}/function"
 )
 
 // Server is an aggregated API backend. Kubernetes authenticates callers and
-// authorizes the runs/log or runs/session resource before proxying here. The
-// server accepts identity headers only over verified aggregation mTLS.
+// authorizes the runs/log, runs/session, or runs/function resource before
+// proxying here. The server accepts identity headers only over verified
+// aggregation mTLS.
 type Server struct {
 	Runs               client.Reader
 	SessionRuns        client.Reader
@@ -135,6 +140,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(sessionPath, s.handleSession)
 	mux.HandleFunc(sessionFilesPath, s.handleSessionFiles)
 	mux.HandleFunc(sessionFilePath, s.handleSessionFile)
+	mux.HandleFunc("GET "+functionGroupPath, s.handleFunctionAPIGroup)
+	mux.HandleFunc("GET "+functionVersionPath, s.handleFunctionAPIResourceList)
+	mux.HandleFunc(functionPath, s.handleFunction)
 	mux.HandleFunc("/", s.handleNotFound)
 	return mux
 }
@@ -212,8 +220,30 @@ func (s *Server) handleSessionAPIResourceList(w http.ResponseWriter, _ *http.Req
 	})
 }
 
+func (s *Server) handleFunctionAPIGroup(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"kind": "APIGroup", "apiVersion": "v1", "name": FunctionGroup,
+		"versions":         []map[string]string{{"groupVersion": FunctionGroup + "/" + Version, "version": Version}},
+		"preferredVersion": map[string]string{"groupVersion": FunctionGroup + "/" + Version, "version": Version},
+	})
+}
+
+func (s *Server) handleFunctionAPIResourceList(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"kind": "APIResourceList", "apiVersion": "v1", "groupVersion": FunctionGroup + "/" + Version,
+		"resources": []map[string]any{{
+			"name": "runs/function", "singularName": "", "namespaced": true,
+			"kind": "RunFunction", "verbs": []string{"create"},
+		}},
+	})
+}
+
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	run, ok := s.sessionRun(w, r)
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	run, ok := s.readRun(w, r)
 	if !ok {
 		return
 	}
@@ -259,13 +289,35 @@ func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
 	s.DataPlane.ServeSessionFile(w, r, run, path)
 }
 
-// sessionRun authenticates the aggregation identity and loads the named Run for
-// a Session data-plane request.
-func (s *Server) sessionRun(w http.ResponseWriter, r *http.Request) (*v1alpha1.Run, bool) {
-	if r.Method != http.MethodGet {
+// readRun authenticates the aggregation identity and loads the named Run for a
+// data-plane request.
+// handleFunction invokes one ready Function Run through the aggregated
+// Run extension API.
+func (s *Server) handleFunction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return nil, false
+		return
 	}
+	run, ok := s.readRun(w, r)
+	if !ok {
+		return
+	}
+	if s.DataPlane == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Function invocation access is not configured")
+		return
+	}
+	if run.Spec.Mode.Function == nil {
+		s.writeError(w, http.StatusNotFound, "Function Run not found")
+		return
+	}
+	if run.Status.Phase != v1alpha1.RunReady || run.Status.AssignedPodUID == "" {
+		s.writeError(w, http.StatusConflict, "Function Run is not Ready")
+		return
+	}
+	s.DataPlane.ServeFunction(w, r, run)
+}
+
+func (s *Server) readRun(w http.ResponseWriter, r *http.Request) (*v1alpha1.Run, bool) {
 	if _, err := s.requestUser(r); err != nil {
 		s.writeError(w, http.StatusUnauthorized, err.Error())
 		return nil, false
@@ -293,7 +345,11 @@ func (s *Server) sessionRun(w http.ResponseWriter, r *http.Request) (*v1alpha1.R
 // readySessionRun loads the named Run and rejects Runs that cannot serve
 // Session data-plane requests.
 func (s *Server) readySessionRun(w http.ResponseWriter, r *http.Request) (*v1alpha1.Run, bool) {
-	run, ok := s.sessionRun(w, r)
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return nil, false
+	}
+	run, ok := s.readRun(w, r)
 	if !ok {
 		return nil, false
 	}

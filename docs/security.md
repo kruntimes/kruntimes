@@ -96,7 +96,8 @@ the Kubernetes resource name.
 | `get`, `list`, or `watch` `runs` | Read source references, arguments, environment values, execution status, outputs, and artifact metadata stored on the Run object. |
 | `update` or `patch` `runs/status` | Control scheduling and execution state. Reserve this for kruntimes control-plane service accounts. |
 | `get` `logs.kruntimes.io/runs/log` | Read a specific Run's structured logs through the Kubernetes aggregated Run-log API. |
-| `get` `sessions.kruntimes.io/runs/session` | Execute commands and file operations in a specific ready Session Run through the Kubernetes aggregated Run extension API. `krt session` also needs `get` on that Run. |
+| `get` `sessions.kruntimes.io/runs/session` | Execute commands, read files, and list files in a specific ready Session Run through the Ku  bernetes aggregated Run extension API. `krt session` also needs `get` on that Run. |
+| `create` `functions.kruntimes.io/runs/function` | Invoke a specific ready Function Run through the Kubernetes aggregated Run extension API. |
 | `create` `pods/portforward` plus `get` `pods` and `runs` | Reach a Runtime Pod artifact endpoint through the Kubernetes API, as used by artifact downloads. |
 
 Kubernetes does not authorize a Run against the referenced Runtime as a

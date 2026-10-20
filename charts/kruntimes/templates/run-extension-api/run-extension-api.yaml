@@ -125,4 +125,19 @@ spec:
     namespace: {{ .Release.Namespace }}
     port: {{ $api.servicePort }}
   caBundle: {{ index .Values "_runExtensionAPICertificates" "caCert" | b64enc }}
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1alpha1.functions.kruntimes.io
+spec:
+  group: functions.kruntimes.io
+  version: v1alpha1
+  groupPriorityMinimum: 1000
+  versionPriority: 15
+  service:
+    name: {{ include "kruntimes.runExtensionAPI.name" . }}
+    namespace: {{ .Release.Namespace }}
+    port: {{ $api.servicePort }}
+  caBundle: {{ index .Values "_runExtensionAPICertificates" "caCert" | b64enc }}
 {{- end }}

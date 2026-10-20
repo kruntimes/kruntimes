@@ -2,8 +2,9 @@
 
 ## 状态
 
-Kubernetes 聚合 API 提供 Run logs 和 CLI Session operation。Console 的 Runtime Gateway
-仍为 SDK 和浏览器提供 Session access，以及 Function operation。
+Kubernetes 聚合 API 提供 Run logs、Session operation 与文件访问，以及 Function
+invocation。Console 把浏览器的 Session operation 转发给它；Console 的 Runtime Gateway 仍为
+尚未迁移的 SDK Session 和 Function client 提供 access。
 
 ## 问题
 
@@ -99,9 +100,29 @@ list endpoint 通过 `path`、`limit` 和 `pageToken` 选择一页有界的 dire
 endpoint 使用同一个 `sessions.kruntimes.io/runs/session` `get` 权限授权，无需额外权限。
 backend 读取指定的 Ready Session Run，并从 owner runtimed 读取文件，与 Session operation 一致。
 
+## Function invocation
+
+同一个 backend 还提供第三个 APIService：
+
+```
+POST /apis/functions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/function
+```
+
+API server 认证 caller，并授权指定 Run 的 `functions.kruntimes.io/runs/function` 的
+`create`。request body 是一个 bounded JSON value；可选的 `X-Kruntime-Invocation-ID` header
+携带最长 128 字节的 idempotency key。backend 读取 Ready Function Run，调用 runtimed 的
+FunctionRuntime proxy，返回：
+
+```json
+{"invocationId":"...","output":"<base64>","contentType":"...","outputs":{}}
+```
+
+request 与 response 大小受 backend 的 bounded limit 限制；无法授权或无法 admit 的请求会在任何
+invocation 被接收前返回 HTTP error。
+
 ## 安装
 
-`runExtensionAPI.enabled` 默认是 true，且独立于 `gateway.enabled`。两个 APIService 都是
+`runExtensionAPI.enabled` 默认是 true，且独立于 `gateway.enabled`。所有 APIService 都是
 cluster-scoped，因此同一集群中每个 group/version 必须由一个 platform release 拥有；其它 release 设置
 `runExtensionAPI.enabled: false`。
 

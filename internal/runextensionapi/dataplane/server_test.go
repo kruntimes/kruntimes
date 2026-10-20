@@ -164,13 +164,20 @@ func readySessionRun() *v1alpha1.Run {
 }
 
 type fakeRuntimeDialer struct {
-	address string
-	client  pb.SessionRuntimeClient
+	address         string
+	client          pb.SessionRuntimeClient
+	functionAddress string
+	functionClient  pb.FunctionRuntimeClient
 }
 
 func (d *fakeRuntimeDialer) Dial(_ context.Context, address string) (pb.SessionRuntimeClient, io.Closer, error) {
 	d.address = address
 	return d.client, io.NopCloser(strings.NewReader("")), nil
+}
+
+func (d *fakeRuntimeDialer) DialFunction(_ context.Context, address string) (pb.FunctionRuntimeClient, io.Closer, error) {
+	d.functionAddress = address
+	return d.functionClient, io.NopCloser(strings.NewReader("")), nil
 }
 
 type fakeSessionRuntimeClient struct {
@@ -191,4 +198,107 @@ func (c *fakeSessionRuntimeClient) ReadSessionFile(ctx context.Context, request 
 		return nil, status.Error(codes.Unimplemented, "ReadSessionFile")
 	}
 	return c.read(ctx, request)
+}
+
+func TestFunctionInvokeForwardsInputAndResponse(t *testing.T) {
+	run := readyFunctionRun()
+	dialer := &fakeRuntimeDialer{functionClient: &fakeFunctionRuntimeClient{invoke: func(_ context.Context, request *pb.InvokeFunctionRequest) (*pb.InvokeFunctionResponse, error) {
+		if request.GetRegistration().GetRunUid() != string(run.UID) {
+			t.Fatalf("registration = %#v", request.GetRegistration())
+		}
+		if request.GetInvocationId() != "inv-1" || request.GetContentType() != "application/json" || string(request.GetInput()) != `{"payload":true}` {
+			t.Fatalf("invoke request = %#v", request)
+		}
+		return &pb.InvokeFunctionResponse{InvocationId: "inv-1", Output: []byte("done"), ContentType: "text/plain"}, nil
+	}}}
+	server := &Server{FunctionDialer: dialer}
+
+	request := httptest.NewRequest(http.MethodPost, "/apis/functions.kruntimes.io/v1alpha1/namespaces/team-a/runs/handler/function", strings.NewReader(`{"payload":true}`))
+	request.Header.Set("X-Kruntime-Invocation-ID", "inv-1")
+	response := httptest.NewRecorder()
+	server.ServeFunction(response, request, run)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if dialer.functionAddress != "runtime-bash.team-a.svc:9093" {
+		t.Fatalf("Runtime Service address = %q", dialer.functionAddress)
+	}
+	var invoked struct {
+		InvocationID string `json:"invocationId"`
+		Output       []byte `json:"output"`
+		ContentType  string `json:"contentType"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&invoked); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if invoked.InvocationID != "inv-1" || string(invoked.Output) != "done" || invoked.ContentType != "text/plain" {
+		t.Fatalf("response = %#v", invoked)
+	}
+}
+
+func TestFunctionInvokeRejectsInvalidInput(t *testing.T) {
+	run := readyFunctionRun()
+	for _, test := range []struct {
+		name string
+		body string
+		code int
+	}{
+		{name: "invalid JSON", body: "not-json", code: http.StatusBadRequest},
+		{name: "oversized", body: `{"payload":true}`, code: http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := &Server{FunctionDialer: &fakeRuntimeDialer{}}
+			if test.name == "oversized" {
+				server.MaxRequestBodyBytes = 8
+			}
+			request := httptest.NewRequest(http.MethodPost, "/apis/functions.kruntimes.io/v1alpha1/namespaces/team-a/runs/handler/function", strings.NewReader(test.body))
+			response := httptest.NewRecorder()
+			server.ServeFunction(response, request, run)
+			if response.Code != test.code {
+				t.Fatalf("status = %d, want %d", response.Code, test.code)
+			}
+		})
+	}
+}
+
+func TestFunctionInvokeRequiresReadyFunctionRun(t *testing.T) {
+	run := readyFunctionRun()
+	run.Status.Phase = v1alpha1.RunScheduled
+	request := httptest.NewRequest(http.MethodPost, "/apis/functions.kruntimes.io/v1alpha1/namespaces/team-a/runs/handler/function", strings.NewReader(`{}`))
+	response := httptest.NewRecorder()
+	(&Server{FunctionDialer: &fakeRuntimeDialer{}}).ServeFunction(response, request, run)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", response.Code)
+	}
+}
+
+func TestFunctionInvokeRejectsNonPost(t *testing.T) {
+	run := readyFunctionRun()
+	request := httptest.NewRequest(http.MethodGet, "/apis/functions.kruntimes.io/v1alpha1/namespaces/team-a/runs/handler/function", nil)
+	response := httptest.NewRecorder()
+	(&Server{}).ServeFunction(response, request, run)
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", response.Code)
+	}
+}
+
+func readyFunctionRun() *v1alpha1.Run {
+	return &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "handler", Namespace: "team-a", UID: "function-uid"},
+		Spec:       v1alpha1.RunSpec{Runtime: "bash", Mode: v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "handler.invoke"}}},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunReady, AssignedPodUID: "pod-uid"},
+	}
+}
+
+type fakeFunctionRuntimeClient struct {
+	pb.FunctionRuntimeClient
+	invoke func(context.Context, *pb.InvokeFunctionRequest) (*pb.InvokeFunctionResponse, error)
+}
+
+func (c *fakeFunctionRuntimeClient) InvokeFunction(ctx context.Context, request *pb.InvokeFunctionRequest, _ ...grpc.CallOption) (*pb.InvokeFunctionResponse, error) {
+	if c.invoke == nil {
+		return nil, status.Error(codes.Unimplemented, "InvokeFunction")
+	}
+	return c.invoke(ctx, request)
 }

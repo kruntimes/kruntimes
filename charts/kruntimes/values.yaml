@@ -68,8 +68,9 @@ controller:
       cpu: 500m
       memory: 256Mi
 
-# The Run extension API serves aggregated Run logs and Session operations.
-# kubectl, krt, and Console use normal Kubernetes API credentials.
+# The Run extension API serves aggregated Run logs, Session operations and files,
+# and Function invocation. kubectl, krt, and Console use normal Kubernetes API
+# credentials.
 runExtensionAPI:
   enabled: true
   image: ghcr.io/kruntimes/run-extension-apiserver
