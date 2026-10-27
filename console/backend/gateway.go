@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/kruntimes/kruntimes/internal/logapi"
+	"github.com/kruntimes/kruntimes/api/runextensionapi"
 )
 
 // RunLogClient reads one Run's logs through the Kubernetes aggregation API.
@@ -15,10 +15,10 @@ type RunLogClient interface {
 }
 
 type AggregatedRunLogClient struct {
-	client *logapi.RESTClient
+	client *runextensionapi.Client
 }
 
-func NewAggregatedRunLogClient(client *logapi.RESTClient) (*AggregatedRunLogClient, error) {
+func NewAggregatedRunLogClient(client *runextensionapi.Client) (*AggregatedRunLogClient, error) {
 	if client == nil {
 		return nil, errors.New("Console aggregated Run log API client is not configured")
 	}
@@ -29,7 +29,7 @@ func (c *AggregatedRunLogClient) RunLogs(ctx context.Context, token, namespace, 
 	if c == nil || c.client == nil {
 		return nil, errors.New("Console aggregated Run log API client is not configured")
 	}
-	stream, err := c.client.WithBearerToken(token).GetLogs(namespace, runName, &logapi.RunLogOptions{
+	stream, err := c.client.WithBearerToken(token).GetRunLogs(namespace, runName, &runextensionapi.RunLogOptions{
 		TailLines: tailLines,
 		Follow:    follow,
 	}).Stream(ctx)

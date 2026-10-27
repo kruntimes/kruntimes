@@ -28,8 +28,8 @@ import (
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 
+	"github.com/kruntimes/kruntimes/api/runextensionapi"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
-	"github.com/kruntimes/kruntimes/internal/logapi"
 	"github.com/kruntimes/kruntimes/sdk/go/sandbox"
 )
 
@@ -531,11 +531,11 @@ func certificateReady(certificate *unstructured.Unstructured) bool {
 	return false
 }
 
-func assertAggregatedRunLogFollow(t *testing.T, logs logapi.Client, run *v1alpha1.Run, marker string) {
+func assertAggregatedRunLogFollow(t *testing.T, logs *runextensionapi.Client, run *v1alpha1.Run, marker string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	stream, err := logs.GetLogs(run.Namespace, run.Name, &logapi.RunLogOptions{TailLines: 100, Follow: true}).Stream(ctx)
+	stream, err := logs.GetRunLogs(run.Namespace, run.Name, &runextensionapi.RunLogOptions{TailLines: 100, Follow: true}).Stream(ctx)
 	if err != nil {
 		t.Fatalf("open aggregated Run log follow stream: %v", err)
 	}

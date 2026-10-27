@@ -52,13 +52,18 @@ HTTP error。
 和可操作的 message，供 `krt` 与 Dashboard 展示。特别地，`409 Conflict` 表示该 Run 分配的
 Runtime Pod 已不存在，因此其 ephemeral container logs 无法恢复。
 
-Go caller 使用与 client-go log request 类似的 `internal/logapi.Client`：
+Go caller 使用 `api/runextensionapi.Client`，所有 Run extension API group 都遵循
+client-go 的 request 风格：
 
 ```go
-request := logs.GetLogs(namespace, runName, &logapi.RunLogOptions{Follow: true})
-stream, err := request.Stream(ctx)
+client, err := runextensionapi.NewForConfig(restConfig)
 
-raw, err := logs.GetLogs(namespace, runName, options).Do(ctx).Raw()
+request := client.GetRunLogs(namespace, runName, &runextensionapi.RunLogOptions{Follow: true})
+stream, err := request.Stream(ctx)
+raw, err := client.GetRunLogs(namespace, runName, options).Do(ctx).Raw()
+
+// 也可以直接使用 client-go 的 request builder。
+url := client.Sessions().Get().Namespace(namespace).Resource("runs").Name(runName).SubResource("session").URL()
 ```
 
 ## Consumers

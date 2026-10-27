@@ -60,14 +60,18 @@ its HTTP code, reason, and actionable message for `krt` and Dashboard. In
 particular, a `409 Conflict` means the Run's assigned Runtime Pod no longer
 exists, so its ephemeral container logs cannot be recovered.
 
-Go callers use `internal/logapi.Client` in the same shape as client-go log
-requests:
+Go callers use `api/runextensionapi.Client`, which follows client-go request
+shapes for every Run extension API group:
 
 ```go
-request := logs.GetLogs(namespace, runName, &logapi.RunLogOptions{Follow: true})
-stream, err := request.Stream(ctx)
+client, err := runextensionapi.NewForConfig(restConfig)
 
-raw, err := logs.GetLogs(namespace, runName, options).Do(ctx).Raw()
+request := client.GetRunLogs(namespace, runName, &runextensionapi.RunLogOptions{Follow: true})
+stream, err := request.Stream(ctx)
+raw, err := client.GetRunLogs(namespace, runName, options).Do(ctx).Raw()
+
+// Raw client-go request builders are also available.
+url := client.Sessions().Get().Namespace(namespace).Resource("runs").Name(runName).SubResource("session").URL()
 ```
 
 ## Consumers

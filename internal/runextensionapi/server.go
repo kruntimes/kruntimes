@@ -22,17 +22,17 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/kruntimes/kruntimes/api/runextensionapi"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
-	"github.com/kruntimes/kruntimes/internal/logapi"
 	"github.com/kruntimes/kruntimes/internal/runextensionapi/dataplane"
 	"github.com/kruntimes/kruntimes/internal/runlogs"
 )
 
 const (
-	Group                     = logapi.Group
-	Version                   = logapi.Version
-	SessionGroup              = "sessions.kruntimes.io"
-	FunctionGroup             = "functions.kruntimes.io"
+	Group                     = runextensionapi.GroupLogs
+	Version                   = runextensionapi.Version
+	SessionGroup              = runextensionapi.GroupSessions
+	FunctionGroup             = runextensionapi.GroupFunctions
 	defaultTailLines    int64 = 100
 	maxTailLines        int64 = 500
 	defaultTimeout            = 30 * time.Second

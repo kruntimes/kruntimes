@@ -21,10 +21,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/kruntimes/kruntimes/api/runextensionapi"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	console "github.com/kruntimes/kruntimes/console/backend"
 	"github.com/kruntimes/kruntimes/internal/gateway"
-	"github.com/kruntimes/kruntimes/internal/logapi"
 )
 
 func main() {
@@ -82,7 +82,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "configure Console TokenReview client: %v\n", err)
 		os.Exit(1)
 	}
-	logs, err := logapi.NewClient(rest.AnonymousClientConfig(config))
+	logs, err := runextensionapi.NewForConfig(rest.AnonymousClientConfig(config))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "configure Console aggregated Run log API: %v\n", err)
 		os.Exit(1)
