@@ -1,5 +1,9 @@
 # Function Mode Lifecycle and Invoke Dataplane
 
+> The shared Runtime Gateway and `Run.status.endpoint` were removed. Invoke a
+> ready Function Run through the aggregated `functions.kruntimes.io`
+> `runs/function` API; see [Run extension API](run-extension-api.md).
+
 Status: **Accepted; implemented**
 
 This document refines the function-mode target in

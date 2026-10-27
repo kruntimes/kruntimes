@@ -4,7 +4,7 @@
 
 Kubernetes 聚合 API 为所有 client 提供 Run logs、Session operation 与文件访问，以及
 Function invocation。Console 把浏览器的 Session operation 转发给它，不再内嵌或暴露 Runtime
-gateway。
+gateway。controller 不再写入 `Run.status.endpoint`；该字段已废弃。
 
 ## 问题
 

@@ -4,7 +4,8 @@
 
 The Kubernetes aggregated API serves Run logs, Session operations and files,
 and Function invocation for every client. Console relays browser Session
-operations to it and no longer embeds or exposes a Runtime gateway.
+operations to it and no longer embeds or exposes a Runtime gateway. The
+controller no longer populates `Run.status.endpoint`; that field is deprecated.
 
 ## Problem
 

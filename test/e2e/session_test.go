@@ -509,7 +509,6 @@ func TestConsoleServesCertManagerTLS(t *testing.T) {
 }
 
 func TestAggregatedSessionRunCancellationTerminatesActiveCommand(t *testing.T) {
-	t.Parallel()
 	runtimeName := fmt.Sprintf("session-cancel-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 
@@ -554,7 +553,7 @@ func TestAggregatedSessionRunCancellationTerminatesActiveCommand(t *testing.T) {
 		}
 	}()
 
-	waitForSessionFile(t, client, run, "started")
+	waitForSessionCommandFile(t, client, run, "started", commandErr)
 	requestRunCancel(t, run)
 	waitForRunPhase(t, run, 20*time.Second, v1alpha1.RunCancelled)
 	assertCancelledRun(t, run)
@@ -567,7 +566,6 @@ func TestAggregatedSessionRunCancellationTerminatesActiveCommand(t *testing.T) {
 }
 
 func TestAggregatedSessionRunDrainCompletesAcceptedCommand(t *testing.T) {
-	t.Parallel()
 	runtimeName := fmt.Sprintf("session-drain-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 

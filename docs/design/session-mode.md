@@ -268,7 +268,11 @@ incomplete workspace.
 
 ## Services and Request Flow
 
-The following terms are distinct:
+> The shared Runtime gateway Deployment and Service were removed. Function and
+> Session clients use the aggregated Run extension API, and the controller no
+> longer populates `Run.status.endpoint`. The terms below are historical.
+
+The following terms are historical but explain the Run/Session model:
 
 - **Runtime gateway** is one shared `runtime-gateway` Deployment installed by
   the Helm chart when `gateway.enabled` is true. Its Pods run the gateway server

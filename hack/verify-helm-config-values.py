@@ -179,10 +179,6 @@ def main() -> int:
                 "topologySpreadConstraints:",
                 "priorityClassName: system-cluster-critical",
                 "port: probes",
-                "--console-url=https://kruntimes-console.kruntimes-system.svc",
-                "--console-ca-file=/var/run/kruntimes/console-ca/ca.crt",
-                "mountPath: /var/run/kruntimes/console-ca",
-                "secretName: kruntimes-console-tls",
             ],
         ),
     ]

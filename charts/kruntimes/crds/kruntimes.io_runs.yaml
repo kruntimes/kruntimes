@@ -1216,6 +1216,9 @@ spec:
                 description: |-
                   Endpoint is the stable Console Runtime access endpoint for a ready function or session
                   Run. It is absent for one-shot task Runs.
+
+                  Deprecated: Console no longer serves Runtime endpoints and the controller
+                  stops populating this field. Use the aggregated Run extension API.
                 properties:
                   caBundle:
                     description: |-

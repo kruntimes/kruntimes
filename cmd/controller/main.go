@@ -29,8 +29,6 @@ var (
 	setupLog = ctrl.Log.WithName("setup")
 )
 
-const maxConsoleCABundleBytes = 64 << 10
-
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(v1alpha1.AddToScheme(scheme))
@@ -53,8 +51,6 @@ func main() {
 		runtimeMaintainerPullSecrets             string
 		runExtensionAPINamespace                 string
 		runExtensionAPISelectorLabels            string
-		consoleURL                               string
-		consoleCAFile                            string
 		sessionMaxQueueSize                      int
 		sessionMaxOperationTimeout               time.Duration
 		sessionCloseTimeout                      time.Duration
@@ -75,25 +71,10 @@ func main() {
 	flag.StringVar(&runtimeMaintainerPullSecrets, "runtime-maintainer-image-pull-secrets", "", "Comma-separated image pull Secret names for runtime maintainers.")
 	flag.StringVar(&runExtensionAPINamespace, "run-extension-api-namespace", "", "Namespace of the Run extension API. Empty keeps Runtime Pod ingress denied to it.")
 	flag.StringVar(&runExtensionAPISelectorLabels, "run-extension-api-selector-labels", "", "Comma-separated key=value labels selecting Run extension API Pods for Session ingress.")
-	flag.StringVar(&consoleURL, "console-url", "", "Cluster-local Console base URL written to ready Run endpoints.")
-	flag.StringVar(&consoleCAFile, "console-ca-file", "", "PEM trust bundle file for HTTPS Console endpoints.")
 	flag.IntVar(&sessionMaxQueueSize, "session-max-queue-size", 0, "Maximum queued mutations per Session Run. A non-positive value uses runtimed defaults.")
 	flag.DurationVar(&sessionMaxOperationTimeout, "session-max-operation-timeout", 0, "Maximum duration of one Session operation. A non-positive value uses runtimed defaults.")
 	flag.DurationVar(&sessionCloseTimeout, "session-close-timeout", 0, "Maximum time runtimed waits for a Session Runtime to close. A non-positive value uses runtimed defaults.")
 	flag.Parse()
-	var consoleCABundle []byte
-	if consoleCAFile != "" {
-		var err error
-		consoleCABundle, err = os.ReadFile(consoleCAFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "read console CA file: %v\n", err)
-			os.Exit(1)
-		}
-		if len(consoleCABundle) > maxConsoleCABundleBytes {
-			fmt.Fprintf(os.Stderr, "console CA file exceeds %d bytes\n", maxConsoleCABundleBytes)
-			os.Exit(1)
-		}
-	}
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 	if webhookControllerServiceAccountName == "" || webhookControllerServiceAccountNamespace == "" {
@@ -155,8 +136,6 @@ func main() {
 		RuntimedServiceAccountName:    runtimedServiceAccountName,
 		RunExtensionAPINamespace:      runExtensionAPINamespace,
 		RunExtensionAPISelectorLabels: parseLabels(runExtensionAPISelectorLabels),
-		ConsoleURL:                    consoleURL,
-		ConsoleCABundle:               consoleCABundle,
 		SessionMaxQueueSize:           sessionMaxQueueSize,
 		SessionMaxOperationTimeout:    sessionMaxOperationTimeout,
 		SessionCloseTimeout:           sessionCloseTimeout,

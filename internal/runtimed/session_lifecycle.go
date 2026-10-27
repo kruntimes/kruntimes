@@ -3,8 +3,6 @@ package runtimed
 import (
 	"context"
 	"fmt"
-	"slices"
-	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -149,9 +147,6 @@ func (c *Controller) applySessionReady(ctx context.Context, ar *activeRun) (ctrl
 	}
 	run.Status.Phase = v1alpha1.RunReady
 	run.Status.Message = "session registered"
-	if endpoint := c.sessionEndpoint(run); endpoint != nil {
-		run.Status.Endpoint = endpoint
-	}
 	meta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
 		Type:               runstatus.ConditionReady,
 		Status:             metav1.ConditionTrue,
@@ -168,30 +163,6 @@ func (c *Controller) applySessionReady(ctx context.Context, ar *activeRun) (ctrl
 		}
 	}
 	return ctrl.Result{RequeueAfter: activeRunRequeueAfter(ar)}, nil
-}
-
-func (c *Controller) sessionEndpoint(run *v1alpha1.Run) *v1alpha1.RunEndpoint {
-	if run == nil || c.ConsoleURL == "" {
-		return nil
-	}
-	protocol := v1alpha1.RunEndpointProtocolHTTP
-	if strings.HasPrefix(strings.ToLower(c.ConsoleURL), "https://") {
-		protocol = v1alpha1.RunEndpointProtocolHTTPS
-	}
-	endpoint := &v1alpha1.RunEndpoint{
-		Protocol: protocol,
-		URL: fmt.Sprintf(
-			"%s/v1/namespaces/%s/runtimes/%s/sessions/%s",
-			strings.TrimRight(c.ConsoleURL, "/"),
-			run.Namespace,
-			run.Spec.Runtime,
-			run.UID,
-		),
-	}
-	if protocol == v1alpha1.RunEndpointProtocolHTTPS {
-		endpoint.CABundle = slices.Clone(c.ConsoleCABundle)
-	}
-	return endpoint
 }
 
 func (c *Controller) reconcileSessionRecovery(ctx context.Context, run *v1alpha1.Run) (ctrl.Result, error) {

@@ -220,6 +220,9 @@ ArtifactStore transport failure 会使 Run 保持 `Finalizing`，保留 local wo
 
 ## 服务与请求路径
 
+> 共享 Runtime gateway Deployment 与 Service 已删除。Function 与 Session client 使用聚合
+> Run extension API，controller 也不再写入 `Run.status.endpoint`。以下术语为历史说明。
+
 以下概念必须区分：
 
 - **Runtime gateway**：当 Helm chart 的 `gateway.enabled` 为 true 时安装的共享

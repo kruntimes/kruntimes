@@ -211,11 +211,37 @@ func sessionOptions(run *v1alpha1.Run) *runextensionapi.SessionOptions {
 	return &runextensionapi.SessionOptions{HeartbeatInterval: time.Duration(*run.Spec.Mode.Session.LeaseTimeoutSeconds) * time.Second / 3}
 }
 
+// waitForSessionCommandFile retries a Session file read while a command writes
+// it, failing early when the command channel reports an error.
+func waitForSessionCommandFile(t *testing.T, client *runextensionapi.Client, run *v1alpha1.Run, path string, commandErr <-chan error) []byte {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	lastError := ""
+	for {
+		select {
+		case err := <-commandErr:
+			t.Fatalf("Session command ended before writing %q: %v", path, err)
+		default:
+		}
+		contents, _, err := client.ReadSessionFile(ctx, run.Namespace, run.Name, path, 0)
+		if err == nil {
+			return contents
+		}
+		lastError = err.Error()
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out reading Session file %q: %s", path, lastError)
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
 // waitForSessionFile retries a Session file read while a running command writes
 // it.
 func waitForSessionFile(t *testing.T, client *runextensionapi.Client, run *v1alpha1.Run, path string) []byte {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	lastError := ""
 	for {

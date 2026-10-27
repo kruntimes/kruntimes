@@ -1,5 +1,8 @@
 # Function Mode 生命周期与 Invoke Dataplane
 
+> 共享 Runtime Gateway 与 `Run.status.endpoint` 已删除。ready Function Run 通过聚合的
+> `functions.kruntimes.io` `runs/function` API 调用；见 [Run extension API](run-extension-api.zh.md)。
+
 状态：**已接受；已实现**
 
 本文细化 [Function Mode 和 Agent Sandboxes](../function-mode/) 中的 function-mode 目标，

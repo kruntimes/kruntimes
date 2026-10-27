@@ -296,8 +296,6 @@ func TestRuntimeReadyReplicasTracksDeploymentStatus(t *testing.T) {
 		Log:                ctrl.Log.WithName("runtime-controller"),
 		Scheme:             testMgr.GetScheme(),
 		DefaultDaemonImage: "runtimed:integration",
-		ConsoleURL:         "https://console.integration",
-		ConsoleCABundle:    []byte("test-ca"),
 	}
 	namespace := testNamespace(t, "runtime-readiness-")
 	runtimeResource := &v1alpha1.Runtime{

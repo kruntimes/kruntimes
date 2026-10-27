@@ -79,8 +79,6 @@ spec:
             - --run-extension-api-namespace={{ .Release.Namespace }}
             - --run-extension-api-selector-labels=app.kubernetes.io/name={{ include "kruntimes.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=run-extension-api
             {{- end }}
-            - --console-url=https://{{ include "kruntimes.console.name" . }}.{{ .Release.Namespace }}.svc
-            - --console-ca-file=/var/run/kruntimes/console-ca/ca.crt
             {{- if $runtimeMaintainerPullSecrets }}
             - --runtime-maintainer-image-pull-secrets={{ join "," $runtimeMaintainerPullSecrets }}
             {{- end }}
@@ -112,9 +110,6 @@ spec:
             - name: webhook-tls
               mountPath: {{ .Values.controller.webhookCertDir }}
               readOnly: true
-            - name: console-ca
-              mountPath: /var/run/kruntimes/console-ca
-              readOnly: true
       volumes:
         - name: webhook-tls
           secret:
@@ -124,9 +119,3 @@ spec:
                 path: tls.crt
               - key: tls.key
                 path: tls.key
-        - name: console-ca
-          secret:
-            secretName: {{ include "kruntimes.console.tlsSecretName" . }}
-            items:
-              - key: {{ .Values.console.tls.caBundleKey }}
-                path: ca.crt

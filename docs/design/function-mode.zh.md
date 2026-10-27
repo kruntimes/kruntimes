@@ -1,5 +1,8 @@
 # Function Mode
 
+> 共享 Runtime Gateway 与 `Run.status.endpoint` 已删除。ready Function Run 通过聚合的
+> `functions.kruntimes.io` `runs/function` API 调用；见 [Run extension API](run-extension-api.zh.md)。
+
 本文描述 v0.x Function-mode 设计及已经实现的 control-plane 和 invoke-dataplane 基线；延后
 工作见 [roadmap](../roadmap/)。Agent sandbox 使用独立的
 [Agent Sandbox 的 Session Mode](../session-mode/) 设计。

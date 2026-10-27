@@ -838,32 +838,6 @@ func TestBuildDeploymentOmitsUnsetS3ArtifactStoreOptions(t *testing.T) {
 	}
 }
 
-func TestBuildDeploymentAddsConsoleCABundleWithoutTemplateAnnotations(t *testing.T) {
-	rt := &v1alpha1.Runtime{
-		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
-		Spec: v1alpha1.RuntimeSpec{
-			Template: runtimePodTemplate("bash-runtime:latest"),
-		},
-	}
-
-	deploy := (&RuntimeReconciler{ConsoleCABundle: []byte("test-ca")}).buildDeployment(rt)
-	if got := deploy.Spec.Template.Annotations[consoleCAAnnotation]; got != "test-ca" {
-		t.Fatalf("gateway CA annotation = %q, want test-ca", got)
-	}
-	if !slices.ContainsFunc(deploy.Spec.Template.Spec.Volumes, func(volume corev1.Volume) bool {
-		return volume.Name == consoleCAVolume && volume.DownwardAPI != nil
-	}) {
-		t.Fatalf("volumes = %#v, want gateway CA downward API volume", deploy.Spec.Template.Spec.Volumes)
-	}
-	defaultDeploymentForComparison(deploy)
-	if got := deploy.Spec.Template.Spec.Volumes[1].DownwardAPI.DefaultMode; got == nil || *got != 420 {
-		t.Fatalf("gateway CA default mode = %v, want 420", got)
-	}
-	if got := deploy.Spec.Template.Spec.Volumes[1].DownwardAPI.Items[0].FieldRef.APIVersion; got != "v1" {
-		t.Fatalf("gateway CA fieldRef apiVersion = %q, want v1", got)
-	}
-}
-
 func runtimePodTemplate(image string) corev1.PodTemplateSpec {
 	return corev1.PodTemplateSpec{
 		Spec: corev1.PodSpec{

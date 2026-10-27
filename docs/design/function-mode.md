@@ -1,5 +1,9 @@
 # Function Mode
 
+> The shared Runtime Gateway and `Run.status.endpoint` were removed. Invoke a
+> ready Function Run through the aggregated `functions.kruntimes.io`
+> `runs/function` API; see [Run extension API](run-extension-api.md).
+
 This document describes the v0.x Function-mode design and its implemented
 control-plane and invoke-dataplane baseline. Deferred work is called out in
 the [roadmap](../roadmap/).

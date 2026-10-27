@@ -59,8 +59,6 @@ func main() {
 		statusAddr          string
 		workers             int
 		runtimeName         string
-		consoleURL          string
-		consoleCAFile       string
 		artifactStoreDriver string
 		artifactStoreRoot   string
 		artifactVolumeClaim string
@@ -84,8 +82,6 @@ func main() {
 	flag.StringVar(&statusAddr, "status-addr", ":9093", "gRPC address for the status proxy (for krt logs).")
 	flag.StringVar(&runtimeEndpoint, "runtime-endpoint", "localhost:9091", "gRPC endpoint of the runtime server.")
 	flag.StringVar(&runtimeName, "runtime-name", "", "Runtime resource name served by this pod.")
-	flag.StringVar(&consoleURL, "console-url", "", "Cluster-local Kruntimes Console base URL for Run endpoints.")
-	flag.StringVar(&consoleCAFile, "console-ca-file", "", "PEM trust bundle file for HTTPS Console endpoints.")
 	flag.IntVar(&workers, "workers", int(v1alpha1.RuntimeDefaultRunsCapacity), "Max concurrent run executions.")
 	flag.StringVar(&artifactStoreDriver, "artifact-store-driver", "", "Artifact store driver: filesystem or s3.")
 	flag.StringVar(&artifactStoreRoot, "artifact-store-root", "", "Filesystem artifact store root. Empty disables artifact collection.")
@@ -105,15 +101,6 @@ func main() {
 	flag.DurationVar(&sessionCloseTimeout, "session-close-timeout", 0, "Maximum time to wait for a Session Runtime to close. Non-positive uses the default.")
 	klog.InitFlags(nil)
 	flag.Parse()
-	var consoleCABundle []byte
-	if consoleCAFile != "" {
-		var err error
-		consoleCABundle, err = os.ReadFile(consoleCAFile)
-		if err != nil {
-			setupLog.Error(err, "read console CA file", "path", consoleCAFile)
-			os.Exit(1)
-		}
-	}
 
 	podName := os.Getenv("POD_NAME")
 	if podName == "" {
@@ -257,8 +244,6 @@ func main() {
 		MaxArtifactsBytes:   maxArtifactsBytes,
 		SessionOperations:   sessionOperations,
 		SessionCloseTimeout: sessionCloseTimeout,
-		ConsoleURL:          consoleURL,
-		ConsoleCABundle:     consoleCABundle,
 		Recorder:            mgr.GetEventRecorderFor("runtimed"),
 	}
 
