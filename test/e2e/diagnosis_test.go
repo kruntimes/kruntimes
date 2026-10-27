@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/kruntimes/kruntimes/api/runextensionapi"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
@@ -72,9 +73,8 @@ func TestKubernetesDiagnosisRuntimeCanReadNamespace(t *testing.T) {
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), run) })
 	waitForRunPhase(t, run, 45*time.Second, v1alpha1.RunReady)
 
-	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
-	token := sessionGatewayToken(t, run)
-	operation, err := runSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["kubectl","get","pods","--namespace","default","--output","json"]}}`))
+	client := aggregatedAPIClient(t, sessionGatewayToken(t, run))
+	operation, err := runSessionOperation(t.Context(), client, run, runextensionapi.Operation{Command: &runextensionapi.Command{Argv: []string{"kubectl", "get", "pods", "--namespace", "default", "--output", "json"}}})
 	if err != nil || operation.ExitCode != 0 {
 		t.Fatalf("diagnosis kubectl command failed: %s, %v", operation.Stdout, err)
 	}

@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/kruntimes/kruntimes/api/runextensionapi"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/krt"
 )
@@ -129,9 +129,8 @@ func TestSessionRunExportsArtifactsOnDrain(t *testing.T) {
 	}
 	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunReady)
 
-	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
-	token := sessionGatewayToken(t, run)
-	operation, err := runSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf session-report > \"$KRUNTIME_ARTIFACTS_DIR/report.txt\"; printf done"]}}`))
+	client := aggregatedAPIClient(t, sessionGatewayToken(t, run))
+	operation, err := runSessionOperation(t.Context(), client, run, runextensionapi.Operation{Command: &runextensionapi.Command{Shell: `printf session-report > "$KRUNTIME_ARTIFACTS_DIR/report.txt"; printf done`}})
 	if err != nil || operation.ExitCode != 0 || string(operation.Stdout) != "done" {
 		t.Fatalf("Session artifact command = %#v, %v; want successful done output", operation, err)
 	}
@@ -219,9 +218,8 @@ func TestRunStagesArtifactInputs(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), sessionConsumer) })
 	waitForRunPhase(t, sessionConsumer, 30*time.Second, v1alpha1.RunReady)
-	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), sessionConsumer.Status.Endpoint.URL)
-	token := sessionGatewayToken(t, sessionConsumer)
-	operation, err := runSessionOperation(t.Context(), baseURL, token, json.RawMessage(`{"command":{"argv":["sh","-c","printf '%s:%s' \"$(cat inputs/report.txt)\" \"$(cat inputs/bundle/data.txt)\""]}}`))
+	inputClient := aggregatedAPIClient(t, sessionGatewayToken(t, sessionConsumer))
+	operation, err := runSessionOperation(t.Context(), inputClient, sessionConsumer, runextensionapi.Operation{Command: &runextensionapi.Command{Shell: `printf '%s:%s' "$(cat inputs/report.txt)" "$(cat inputs/bundle/data.txt)"`}})
 	if err != nil || operation.ExitCode != 0 || string(operation.Stdout) != "report:nested" {
 		t.Fatalf("Session artifact input result = %#v, %v; want report:nested", operation, err)
 	}
