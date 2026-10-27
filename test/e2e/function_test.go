@@ -1,6 +1,6 @@
 package e2e
 
-// Function mode scenarios: gateway invocation, idle/total timeout expiry, capacity release, and pod loss.
+// Function mode scenarios: aggregated invocation, idle/total timeout expiry, capacity release, and pod loss.
 
 import (
 	"context"

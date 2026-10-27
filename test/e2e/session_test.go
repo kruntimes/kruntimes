@@ -1,6 +1,6 @@
 package e2e
 
-// Session mode scenarios: Console gateway authorization, streaming, TLS, bounds, and run exhaustion.
+// Session mode scenarios: aggregated API authorization, streaming, TLS, and run exhaustion.
 
 import (
 	"bytes"
@@ -626,7 +626,7 @@ func TestAggregatedSessionRunDrainCompletesAcceptedCommand(t *testing.T) {
 
 func TestSandboxSDKUsesAggregatedSessionAPI(t *testing.T) {
 	t.Parallel()
-	runtimeName := fmt.Sprintf("sdk-session-gateway-%d", time.Now().UnixNano())
+	runtimeName := fmt.Sprintf("sdk-session-api-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
 
 	serviceAccount, token := newSessionGatewayServiceAccount(t)

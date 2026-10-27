@@ -3,7 +3,7 @@ package e2e
 // Shared E2E test bootstrap: Kubernetes clients, image references, and the enabled-feature switches.
 //
 // This file owns process-wide setup only. Runtime fixtures, condition waits,
-// gateway helpers, and the scenario suites live in sibling files so each
+// aggregated API helpers, and the scenario suites live in sibling files so each
 // responsibility can evolve independently.
 
 import (

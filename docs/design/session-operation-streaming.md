@@ -16,8 +16,8 @@ progress reporting, or interactive agent turns.
   events as an operation runs.
 - Preserve the owner runtimed's FIFO queue and existing cancellation,
   authorization, assignment fencing, and operation timeout semantics.
-- Keep Runtime Server and runtimed ports private; the Runtime gateway is the
-  only public data-plane endpoint.
+- Keep Runtime Server and runtimed ports private; the aggregated Session API is
+  the only public data-plane endpoint.
 - Use browser- and CLI-friendly streaming transports that work with bearer
   authentication.
 - Bound every Runtime-emitted event without introducing an unbounded event
@@ -61,15 +61,15 @@ and a `oneof` payload:
   operation, when applicable;
 - `failed`: a terminal gRPC-compatible code and safe message.
 
-The owner runtimed—not the gateway—assigns the sequence numbers. It forwards
+The owner runtimed—not the transport—assigns the sequence numbers. It forwards
 the Runtime Server event stream while its queue entry is active. This keeps the
-queue's mutation ordering intact even when a gateway request lands on a
-non-owner Runtime Pod and is forwarded once to the owner.
+queue's mutation ordering intact even when a request lands on a non-owner
+Runtime Pod and is forwarded once to the owner.
 
-The public endpoint is:
+The public endpoint is the aggregated Session WebSocket:
 
-```
-GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws
+```text
+wss://<kubernetes-api>/apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session
 Upgrade: websocket
 ```
 
@@ -77,27 +77,21 @@ Clients submit a JSON `send` frame with one operation and receive JSON event
 frames in sequence order. `cancel` cancels the active operation and
 `heartbeat` renews an enabled lease.
 
-Clients use `fetch` and consume `response.body` as a `ReadableStream`, which
-allows the same bearer-token headers used by all other gateway operations. A
-CLI consumes JSON lines directly. A request that cannot be authorized or
-admitted fails before any response event with the existing HTTP error mapping.
-Once event bytes have been written, a terminal failure is represented by a
-`failed` event because HTTP status cannot safely change mid-stream.
+Native clients use the same bearer token, client certificate, and CA as every
+other Kubernetes API request. Browser clients cannot set WebSocket headers, so
+Console exposes a same-origin proxy at
+`/api/namespaces/{namespace}/runs/{name}/session` and forwards the session
+cookie token. A request that cannot be authenticated or authorized fails before
+any event is returned with the Kubernetes HTTP error mapping. Once event bytes
+have been written, a terminal failure is represented by a `failed` event
+because HTTP status cannot safely change mid-stream.
 
-The Session connection's internal transport is the existing operation WebSocket:
-
-```text
-GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws
-Upgrade: websocket
-```
-
-The HTTP upgrade is authenticated and authorized before the connection is
-accepted. Browser requests with an `Origin` header must be same-origin; native
-clients without `Origin` continue to use bearer-token or client-certificate
-authentication in the upgrade request. Opening a connection does not submit an
-operation. The first version allows one in-flight operation per connection;
-this matches one agent turn at a time and does not invent operation
-multiplexing semantics.
+The HTTP upgrade is authenticated and authorized by kube-apiserver before the
+proxied connection is accepted. Browser requests must be same-origin at
+Console; native clients use normal kubeconfig credentials. Opening a connection
+does not submit an operation. The first version allows one in-flight operation
+per connection; this matches one agent turn at a time and does not invent
+operation multiplexing semantics.
 
 The SDK's `Send` writes an internal frame like this:
 
@@ -111,7 +105,7 @@ The SDK's `Send` writes an internal frame like this:
 }
 ```
 
-The gateway forwards `operation` through the existing operation admission path.
+The Run extension API forwards `operation` through the existing operation admission path.
 It returns an ordered `SessionOperationEvent` in each server text frame. The
 first `accepted` event provides the server-generated operation ID, which the
 SDK returns from `Send`; `Receive` exposes subsequent events without exposing
@@ -126,7 +120,7 @@ frames or WebSocket details:
 ```
 
 During the operation, `Cancel(operationID)` writes the internal frame
-`{"type":"cancel","operationID":"op-7b7b"}`. The gateway rejects a
+`{"type":"cancel","operationID":"op-7b7b"}`. The Run extension API rejects a
 cancellation whose ID is not the current operation. A second `send` before a
 terminal event is a connection protocol error. The SDK sends
 `{"type":"heartbeat"}` application frames to renew a configured lease.
@@ -198,7 +192,7 @@ Durable operation replay is separate from this live-connection contract.
 
 kube-apiserver authenticates the caller and authorizes `get` on
 `sessions.kruntimes.io/runs/session` for the target Session Run. `Cancel`,
-gateway shutdown, immediate Session termination, and the
+Run extension API shutdown, immediate Session termination, and the
 effective operation timeout cancel an active Runtime Server operation and free
 the queue entry. Closing the SDK Session connection only detaches the event
 consumer; it does not cancel admitted work or release Session capacity. The
@@ -211,16 +205,16 @@ than accumulating an unbounded response buffer. An over-limit or malformed
 event terminates the operation with a resource-limit failure. Runtime-provided
 progress must not contain credentials, command stdin, or unbounded tool output.
 The existing response-size limit continues to apply to terminal command
-results and each gateway JSON line.
+results and each API JSON line.
 
 ## Compatibility and rollout
 
 This is a breaking Session API change: `ExecuteSessionOperation`,
 `operations:execute`, `operations:stream`, and operation-resume HTTP endpoints
-are removed. Built-in Runtimes implement `StreamSessionOperation`; the gateway
-maps an unavailable implementation to a capability error.
+are removed. Built-in Runtimes implement `StreamSessionOperation`; the Run
+extension API maps an unavailable implementation to a capability error.
 
 The Go and Python Session SDKs expose `AcquireSandbox`, `OpenSession`, `Send`,
 `Receive`, `Cancel`, `Session.Close`, and `Sandbox.Release` rather than
-transport-specific streaming helpers. Console opens the Session connection for
-agent turns and renders events incrementally.
+transport-specific streaming helpers. Console proxies the browser Session
+connection for agent turns and renders events incrementally.

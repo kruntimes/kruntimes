@@ -19,17 +19,17 @@ service, which provides four Pod-local operations called only by runtimed:
 - `UnregisterFunction` drains or cancels work and removes local state.
 
 The Runtime Server does not read Kubernetes objects, authenticate callers,
-route gateway requests, upload artifacts, or schedule capacity. Those concerns
-remain with runtimed, the Runtime gateway, and the control plane. Invocation
+route Run extension API requests, upload artifacts, or schedule capacity. Those concerns
+remain with runtimed, the Run extension API, and the control plane. Invocation
 artifacts are out of scope for v0.x.
 
 The same `FunctionRuntime` service is also implemented by runtimed on the
-Runtime Service port for gateway traffic. For that proxy hop only,
+Runtime Service port for Run extension API traffic. For that proxy hop only,
 `InvokeFunctionRequest.registration` supplies `run_uid` with an empty
 `registration_id`. runtimed resolves the current assigned owner and its private
 active registration, fills the opaque ID, and calls the colocated Runtime
 Server. A Runtime Server itself always requires a non-empty registration ID;
-the gateway neither sees nor supplies it.
+the Run extension API neither sees nor supplies it.
 
 Function support is opt-in for custom Runtimes: a Runtime that supports only
 one-shot execution implements and registers `Runtime` only. The exact shape
@@ -63,7 +63,7 @@ credential.
 ### Example Calls and Registration Fence
 
 The following illustrates the Pod-local calls made by runtimed. It is an
-example of the proposed protocol, not a public gateway command.
+example of the proposed protocol, not a public Run extension API command.
 
 1. A function Run with UID `2b5d...` starts its first registration on Runtime
    Pod A. `Run.status.attempt` is `1`, so runtimed A registers the function:
@@ -91,7 +91,7 @@ example of the proposed protocol, not a public gateway command.
    }
    ```
 
-2. A gateway request is routed to runtimed A. It assigns an invocation ID and
+2. A Run extension API request is routed to runtimed A. It assigns an invocation ID and
    sends the payload without creating another Kubernetes object:
 
    ```console
@@ -118,7 +118,7 @@ example of the proposed protocol, not a public gateway command.
    after the newer registration supersedes it; it cannot affect the new
    registration.
 
-The gateway and runtimed also fence routing using assigned Pod identity. The
+The Run extension API and runtimed also fence routing using assigned Pod identity. The
 registration ID protects the Runtime Server's local registration state; it does
 not make an invocation exactly once.
 
@@ -205,7 +205,7 @@ enum FunctionRegistrationState {
 }
 ```
 
-The gateway initially accepts JSON and sets `content_type` to
+The Run extension API initially accepts JSON and sets `content_type` to
 `application/json`. The local protocol uses opaque bytes so trusted custom
 Runtimes can use another representation later. Inputs and response bytes are
 never written to `Run.status`.
@@ -251,9 +251,9 @@ allows one in-flight invocation per function Run and does not queue requests.
 - It is not a deduplication key. Retrying after an unknown result can execute
   work again; no component automatically retries after dispatch.
 - `timeout_millis` is bounded by runtimed to the remaining Run lifetime and
-  gateway deadline. Zero means the bounded gateway default, never unlimited
+  Run extension API deadline. Zero means the bounded Run extension API default, never unlimited
   runtime work.
-- `ResourceExhausted` maps to gateway HTTP 429. `DeadlineExceeded` affects
+- `ResourceExhausted` maps to Run extension API HTTP 429. `DeadlineExceeded` affects
   only this invocation, not the function Run lifecycle. `FailedPrecondition`
   maps to HTTP 503 for draining, stale, or unready registration.
 
@@ -338,10 +338,10 @@ there is no fallback that emulates function invocation through `Execute`.
    use the Runtime Server-generated registration ID for subsequent local calls
    and stale-operation fencing.
 2. Use opaque bytes plus content type for local invoke payloads; JSON is the
-   first gateway encoding.
+   first Run extension API encoding.
 3. Keep invocation artifacts out of scope for v0.x.
 4. Do not promise invocation-ID deduplication or automatic execution retry.
 5. Limit v0.x to one in-flight invocation per registered function Run.
 
 After approval, implementation can be split into protobuf/stub generation,
-Bash and Python adapters, and runtimed registration lifecycle/gateway work.
+Bash and Python adapters, and runtimed registration lifecycle/Run extension API work.
