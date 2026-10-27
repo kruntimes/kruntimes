@@ -1,5 +1,4 @@
 import json
-import base64
 import time
 import unittest
 from types import SimpleNamespace
@@ -15,7 +14,7 @@ from kruntimes.sandbox import (
     SandboxClient,
     SandboxStateError,
 )
-from kruntimes.kubernetes import PortForwardGatewayTransport, UrllibGatewayTransport
+from kruntimes.kubernetes import UrllibAPITransport
 
 
 class FakeRuns:
@@ -42,7 +41,7 @@ class FakeRuns:
         self.deleted = (namespace, name)
 
 
-class FakeGateway:
+class FakeAPI:
     def __init__(self):
         self.requests = []
         self.response = HTTPResponse(200, b"{}")
@@ -82,6 +81,10 @@ class FakeLogs:
         return '{"run_uid":"run-uid","stream":"audit","message":"command"}\n{"run_uid":"other","stream":"audit","message":"ignored"}'
 
 
+def sandbox_client(runs, transport, **kwargs):
+    return SandboxClient(runs, transport, api_server="https://kube.example", **kwargs)
+
+
 def ready_run():
     return {
         "metadata": {"name": "sandbox", "namespace": "default", "uid": "run-uid"},
@@ -89,7 +92,6 @@ def ready_run():
         "status": {
             "phase": "Ready",
             "assignedPod": "runtime-pod",
-            "endpoint": {"url": "https://gateway/v1/namespaces/default/runtimes/python/sessions/run-uid"},
         },
     }
 
@@ -98,29 +100,27 @@ class SandboxTests(unittest.TestCase):
     def test_session_timeout_only_bounds_upgrade(self):
         connection = mock.Mock()
         dial = mock.Mock(return_value=connection)
+        transport = UrllibAPITransport(api_server="https://kube.example")
         with mock.patch.dict("sys.modules", {"websocket": SimpleNamespace(create_connection=dial)}):
-            self.assertIs(connection, UrllibGatewayTransport().open_session("ws://gateway/session", {}, 3))
+            self.assertIs(connection, transport.open_session("wss://kube.example/session", {}, 3))
         self.assertEqual(3, dial.call_args.kwargs["timeout"])
         connection.settimeout.assert_called_once_with(None)
 
-    def test_session_uses_run_endpoint_ca_bundle(self):
-        run = ready_run()
-        run["status"]["endpoint"]["caBundle"] = base64.b64encode(b"test CA").decode()
+    def test_transport_uses_kubernetes_tls_context(self):
         connection = mock.Mock()
         context = mock.Mock()
         dial = mock.Mock(return_value=connection)
-        with mock.patch.dict("sys.modules", {"websocket": SimpleNamespace(create_connection=dial)}), \
-                mock.patch("ssl.create_default_context", return_value=context) as create_context:
-            sandbox = SandboxClient(FakeRuns(run), UrllibGatewayTransport()).open("default", "sandbox")
-            session = sandbox.open_session(timeout_seconds=3)
-        create_context.assert_called_once_with(cadata="test CA")
+        transport = UrllibAPITransport(api_server="https://kube.example", ssl_context=context)
+        with mock.patch.dict("sys.modules", {"websocket": SimpleNamespace(create_connection=dial)}):
+            session = transport.open_session("wss://kube.example/session", {}, 3)
         self.assertIs(context, dial.call_args.kwargs["sslopt"]["context"])
-        session.close()
+        self.assertIs(connection, session)
+        connection.settimeout.assert_called_once_with(None)
 
     def test_acquire_sorts_environment(self):
         runs = FakeRuns(ready_run())
-        gateway = FakeGateway()
-        client = SandboxClient(runs, gateway, bearer_token="token")
+        api = FakeAPI()
+        client = sandbox_client(runs, api, bearer_token="token")
         sandbox = client.runtime("default", "python").acquire_sandbox(AcquireOptions(name="sandbox", env={"B": "2", "A": "1"}))
         self.assertEqual([{"name": "A", "value": "1"}, {"name": "B", "value": "2"}], runs.created[1]["spec"]["env"])
 
@@ -129,26 +129,26 @@ class SandboxTests(unittest.TestCase):
         run["status"]["phase"] = "Failed"
         runs = FakeRuns(run)
         with self.assertRaises(SandboxStateError):
-            SandboxClient(runs, FakeGateway()).runtime("default", "python").acquire_sandbox(AcquireOptions(name="sandbox"))
+            sandbox_client(runs, FakeAPI()).runtime("default", "python").acquire_sandbox(AcquireOptions(name="sandbox"))
         self.assertEqual(("default", "sandbox"), runs.deleted)
 
     def test_release_deletes_closed_sandbox(self):
         run = ready_run()
         run["status"]["phase"] = "Succeeded"
         runs = FakeRuns(run)
-        SandboxClient(runs, FakeGateway()).open("default", "sandbox").release()
+        sandbox_client(runs, FakeAPI()).open("default", "sandbox").release()
         self.assertEqual(("default", "sandbox"), runs.deleted)
 
     def test_session_sends_receives_and_closes_without_releasing_sandbox(self):
-        gateway = FakeGateway()
+        api = FakeAPI()
         connection = FakeSessionConnection([
             {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}},
             {"sequence": 2, "type": "output", "output": {"stdout": "b2s="}},
             {"sequence": 3, "type": "completed", "completed": {"exitCode": 0}},
         ])
-        gateway.connection = connection
+        api.connection = connection
         runs = FakeRuns(ready_run())
-        sandbox = SandboxClient(runs, gateway, bearer_token="token").open("default", "sandbox")
+        sandbox = sandbox_client(runs, api, bearer_token="token").open("default", "sandbox")
         session = sandbox.open_session(timeout_seconds=3)
 
         operation_id = session.send(Operation(command=Command(argv=["echo", "ok"])), idempotency_key="operation-1")
@@ -164,14 +164,18 @@ class SandboxTests(unittest.TestCase):
         self.assertEqual(["echo", "ok"], connection.sent[0]["operation"]["command"]["argv"])
         self.assertTrue(connection.closed)
         self.assertIsNone(runs.deleted)
-        self.assertEqual("Bearer token", gateway.requests[0][3]["Authorization"])
-        self.assertTrue(gateway.requests[0][1].startswith("wss://gateway/"))
+        self.assertEqual("Bearer token", api.requests[0][3]["Authorization"])
+        self.assertTrue(
+            api.requests[0][1].startswith(
+                "wss://kube.example/apis/sessions.kruntimes.io/v1alpha1/namespaces/default/runs/sandbox/session"
+            )
+        )
 
     def test_session_cancels_only_active_operation(self):
-        gateway = FakeGateway()
+        api = FakeAPI()
         connection = FakeSessionConnection([{"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}}])
-        gateway.connection = connection
-        session = SandboxClient(FakeRuns(ready_run()), gateway).open("default", "sandbox").open_session()
+        api.connection = connection
+        session = sandbox_client(FakeRuns(ready_run()), api).open("default", "sandbox").open_session()
         operation_id = session.send(Operation(command=Command(shell="sleep 60")))
         session.cancel(operation_id)
 
@@ -180,25 +184,25 @@ class SandboxTests(unittest.TestCase):
             session.cancel("operation-2")
 
     def test_session_error_frame_clears_active_operation(self):
-        gateway = FakeGateway()
-        gateway.connection = FakeSessionConnection([
+        api = FakeAPI()
+        api.connection = FakeSessionConnection([
             {"type": "accepted", "accepted": {"operationID": "operation-1"}},
             {"type": "error", "error": "admission rejected"},
             {"type": "accepted", "accepted": {"operationID": "operation-2"}},
         ])
-        session = SandboxClient(FakeRuns(ready_run()), gateway).open("default", "sandbox").open_session()
+        session = sandbox_client(FakeRuns(ready_run()), api).open("default", "sandbox").open_session()
         session.send(Operation(command=Command(shell="true")))
         with self.assertRaisesRegex(RuntimeError, "admission rejected"):
             session.receive()
         self.assertEqual("operation-2", session.send(Operation(command=Command(shell="true"))))
 
     def test_session_maintains_configured_lease_heartbeat(self):
-        gateway = FakeGateway()
+        api = FakeAPI()
         connection = FakeSessionConnection([])
-        gateway.connection = connection
+        api.connection = connection
         run = ready_run()
         run["spec"]["mode"]["session"] = {"leaseTimeoutSeconds": 1}
-        session = SandboxClient(FakeRuns(run), gateway).open("default", "sandbox").open_session()
+        session = sandbox_client(FakeRuns(run), api).open("default", "sandbox").open_session()
         try:
             deadline = time.monotonic() + 1
             while time.monotonic() < deadline and not connection.sent:
@@ -208,31 +212,31 @@ class SandboxTests(unittest.TestCase):
             session.close()
 
     def test_read_file_preserves_path_for_runtime_boundary_validation(self):
-        gateway = FakeGateway()
-        gateway.response = HTTPResponse(200, b'{"contents":"b2s=","truncated":false}')
-        sandbox = SandboxClient(FakeRuns(ready_run()), gateway).open("default", "sandbox")
+        api = FakeAPI()
+        api.response = HTTPResponse(200, b'{"contents":"b2s=","truncated":false}')
+        sandbox = sandbox_client(FakeRuns(ready_run()), api).open("default", "sandbox")
 
         contents, truncated = sandbox.read_file("../outside.txt")
 
         self.assertEqual(b"ok", contents)
         self.assertFalse(truncated)
-        self.assertTrue(gateway.requests[0][1].endswith("/files/../outside.txt"))
+        self.assertTrue(api.requests[0][1].endswith("/files/../outside.txt"))
 
     def test_list_files_uses_explicit_page_options(self):
-        gateway = FakeGateway()
-        gateway.response = HTTPResponse(200, b'{"entries":[{"path":"build.log","sizeBytes":12}],"nextPageToken":"next"}')
-        sandbox = SandboxClient(FakeRuns(ready_run()), gateway).open("default", "sandbox")
+        api = FakeAPI()
+        api.response = HTTPResponse(200, b'{"entries":[{"path":"build.log","sizeBytes":12}],"nextPageToken":"next"}')
+        sandbox = sandbox_client(FakeRuns(ready_run()), api).open("default", "sandbox")
 
         page = sandbox.list_files(ListFilesOptions(directory="notes", limit=2, page_token="after-notes"))
 
         self.assertEqual(["build.log"], [entry.path for entry in page.entries])
         self.assertEqual("next", page.next_page_token)
-        self.assertTrue(gateway.requests[0][1].endswith("/files?path=notes&limit=2&pageToken=after-notes"))
+        self.assertTrue(api.requests[0][1].endswith("/files?path=notes&limit=2&pageToken=after-notes"))
         with self.assertRaises(ValueError):
             sandbox.list_files(ListFilesOptions(limit=-1))
 
     def test_logs_filter_run_uid(self):
-        sandbox = SandboxClient(FakeRuns(ready_run()), FakeGateway(), logs=FakeLogs()).open("default", "sandbox")
+        sandbox = sandbox_client(FakeRuns(ready_run()), FakeAPI(), logs=FakeLogs()).open("default", "sandbox")
         lines = sandbox.logs()
         self.assertEqual(1, len(lines))
         self.assertEqual("command", lines[0].message)
@@ -241,12 +245,12 @@ class SandboxTests(unittest.TestCase):
         run = ready_run()
         run["spec"] = {"mode": {"task": {}}}
         with self.assertRaises(SandboxStateError):
-            SandboxClient(FakeRuns(run), FakeGateway()).open("default", "sandbox")
+            sandbox_client(FakeRuns(run), FakeAPI()).open("default", "sandbox")
 
-    def test_gateway_error_is_typed(self):
-        gateway = FakeGateway()
-        gateway.response = HTTPResponse(403, b'{"error":"forbidden"}')
-        sandbox = SandboxClient(FakeRuns(ready_run()), gateway).open("default", "sandbox")
+    def test_api_error_is_typed(self):
+        api = FakeAPI()
+        api.response = HTTPResponse(403, b'{"error":"forbidden"}')
+        sandbox = sandbox_client(FakeRuns(ready_run()), api).open("default", "sandbox")
         with self.assertRaises(APIError) as error:
             sandbox.read_file("forbidden")
         self.assertEqual(403, error.exception.status_code)
@@ -255,7 +259,7 @@ class SandboxTests(unittest.TestCase):
         run = ready_run()
         run["status"]["phase"] = "Succeeded"
         runs = FakeRuns(run)
-        sandbox = SandboxClient(runs, FakeGateway()).open("default", "sandbox")
+        sandbox = sandbox_client(runs, FakeAPI()).open("default", "sandbox")
 
         sandbox.close()
 
@@ -266,7 +270,7 @@ class SandboxTests(unittest.TestCase):
         run["status"]["phase"] = "Cancelled"
         run["spec"]["termination"] = {"mode": "Drain"}
         runs = FakeRuns(run)
-        sandbox = SandboxClient(runs, FakeGateway()).open("default", "sandbox")
+        sandbox = sandbox_client(runs, FakeAPI()).open("default", "sandbox")
 
         sandbox.cancel()
 
@@ -277,7 +281,7 @@ class SandboxTests(unittest.TestCase):
         run["status"]["phase"] = "Succeeded"
         run["spec"]["termination"] = {"mode": "Immediate"}
         runs = FakeRuns(run)
-        sandbox = SandboxClient(runs, FakeGateway()).open("default", "sandbox")
+        sandbox = sandbox_client(runs, FakeAPI()).open("default", "sandbox")
 
         sandbox.close()
 
@@ -287,33 +291,13 @@ class SandboxTests(unittest.TestCase):
         failed = ready_run()
         failed["status"]["phase"] = "Failed"
         with self.assertRaises(SandboxStateError):
-            SandboxClient(FakeRuns(failed), FakeGateway()).open("default", "sandbox").close()
+            sandbox_client(FakeRuns(failed), FakeAPI()).open("default", "sandbox").close()
 
         succeeded = ready_run()
         succeeded["status"]["phase"] = "Succeeded"
         with self.assertRaises(SandboxStateError):
-            SandboxClient(FakeRuns(succeeded), FakeGateway()).open("default", "sandbox").cancel()
+            sandbox_client(FakeRuns(succeeded), FakeAPI()).open("default", "sandbox").cancel()
 
-    def test_port_forward_preserves_endpoint_path(self):
-        gateway = FakeGateway()
-        transport = PortForwardGatewayTransport(gateway, "http://127.0.0.1:19090")
-
-        transport.request("GET", "https://gateway/v1/namespaces/default/runtimes/python/sessions/run-uid/files?maxBytes=10", None, {})
-
-        self.assertEqual(
-            "http://127.0.0.1:19090/v1/namespaces/default/runtimes/python/sessions/run-uid/files?maxBytes=10",
-            gateway.requests[0][1],
-        )
-
-    def test_port_forward_rewrites_websocket_endpoint(self):
-        gateway = FakeGateway()
-        gateway.connection = FakeSessionConnection([])
-        transport = PortForwardGatewayTransport(gateway, "http://127.0.0.1:19090")
-
-        connection = transport.open_session("wss://gateway/v1/namespaces/default/runtimes/python/sessions/run-uid/operations:ws", {}, 2)
-
-        self.assertIs(connection, gateway.connection)
-        self.assertEqual("ws://127.0.0.1:19090/v1/namespaces/default/runtimes/python/sessions/run-uid/operations:ws", gateway.requests[0][1])
 
 
 if __name__ == "__main__":

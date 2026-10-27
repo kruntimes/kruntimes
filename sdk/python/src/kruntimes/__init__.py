@@ -2,6 +2,7 @@
 
 from .sandbox import (
     APIError,
+    APITransport,
     Command,
     CommandResult,
     Operation,
@@ -21,8 +22,7 @@ try:
     from .kubernetes import (
         KubernetesLogReader,
         KubernetesRunClient,
-        PortForwardGatewayTransport,
-        UrllibGatewayTransport,
+        UrllibAPITransport,
         from_incluster,
         from_kube_config,
     )
@@ -32,6 +32,7 @@ except ImportError:
 
 __all__ = [
     "APIError",
+    "APITransport",
     "Command",
     "CommandResult",
     "Runtime",

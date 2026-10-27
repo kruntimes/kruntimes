@@ -9,7 +9,7 @@ import os
 from typing import Any
 
 from diagnostics import TOOL, command_for
-from kruntimes.kubernetes import PortForwardGatewayTransport, from_incluster, from_kube_config
+from kruntimes.kubernetes import from_incluster, from_kube_config
 from kruntimes.sandbox import AcquireOptions, Command, Operation
 
 _MAX_TOOL_CALLS = 8
@@ -21,9 +21,6 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--runtime", default="diagnosis-python", help="Session Runtime name")
     parser.add_argument("--model", default=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
     parser.add_argument("--in-cluster", action="store_true")
-    parser.add_argument("--gateway-namespace", default="default")
-    parser.add_argument("--gateway-service", default="kruntimes-console")
-    parser.add_argument("--gateway-port", type=int, default=443)
     return parser.parse_args()
 
 
@@ -33,13 +30,8 @@ def main() -> None:
         client = from_incluster()
         run_diagnosis(client, arguments.namespace, arguments.runtime, arguments.model)
         return
-    with PortForwardGatewayTransport.start(
-        namespace=arguments.gateway_namespace,
-        service=arguments.gateway_service,
-        service_port=arguments.gateway_port,
-    ) as gateway:
-        client = from_kube_config(gateway=gateway)
-        run_diagnosis(client, arguments.namespace, arguments.runtime, arguments.model)
+    client = from_kube_config()
+    run_diagnosis(client, arguments.namespace, arguments.runtime, arguments.model)
 
 
 def run_diagnosis(client: Any, namespace: str, runtime: str, model: str) -> None:

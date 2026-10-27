@@ -34,8 +34,8 @@ class RunClient(Protocol):
     def delete(self, namespace: str, name: str) -> None: ...
 
 
-class GatewayTransport(Protocol):
-    """HTTP boundary used for the shared Runtime gateway."""
+class APITransport(Protocol):
+    """HTTP and WebSocket boundary for the aggregated Run extension API."""
 
     def request(
         self, method: str, url: str, body: bytes | None, headers: Mapping[str, str]
@@ -45,7 +45,7 @@ class GatewayTransport(Protocol):
 
 
 class SessionConnection(Protocol):
-    """One bidirectional Runtime gateway WebSocket connection."""
+    """One bidirectional aggregated Session API WebSocket connection."""
 
     def send(self, payload: str) -> None: ...
 
@@ -63,7 +63,7 @@ class LogReader(Protocol):
 
 @dataclass(frozen=True)
 class HTTPResponse:
-    """A bounded Runtime gateway HTTP response."""
+    """A bounded Run extension API HTTP response."""
 
     status_code: int
     body: bytes = b""
@@ -71,12 +71,12 @@ class HTTPResponse:
 
 
 class APIError(Exception):
-    """A non-success Runtime gateway response."""
+    """A non-success Run extension API response."""
 
     def __init__(self, status_code: int, message: str) -> None:
         self.status_code = status_code
         self.message = message
-        super().__init__(f"Runtime gateway returned HTTP {status_code}: {message}")
+        super().__init__(f"Run extension API returned HTTP {status_code}: {message}")
 
 
 class SandboxStateError(Exception):
@@ -214,16 +214,20 @@ class SandboxClient:
     def __init__(
         self,
         runs: RunClient,
-        gateway: GatewayTransport,
+        transport: APITransport,
         *,
+        api_server: str,
         logs: LogReader | None = None,
         bearer_token: str = "",
         poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS,
     ) -> None:
+        if not api_server:
+            raise ValueError("Kubernetes API server URL is required")
         if poll_interval_seconds <= 0:
             poll_interval_seconds = _DEFAULT_POLL_INTERVAL_SECONDS
         self._runs = runs
-        self._gateway = gateway
+        self._transport = transport
+        self._api_server = api_server.rstrip("/")
         self._logs = logs
         self._bearer_token = bearer_token
         self._poll_interval_seconds = poll_interval_seconds
@@ -365,23 +369,18 @@ class Sandbox:
         Closing the returned connection does not close this Sandbox or release
         its Runtime capacity. One command may be active on a Session at a time.
         """
-        endpoint = _websocket_url(self._endpoint("operations:ws"))
+        endpoint = _websocket_url(self._session_base())
         headers: dict[str, str] = {}
         if self._client._bearer_token:
             headers["Authorization"] = "Bearer " + self._client._bearer_token
         try:
-            ca_bundle = self._endpoint_ca_bundle()
-            dial_with_ca = getattr(self._client._gateway, "open_session_with_ca", None)
-            if ca_bundle and callable(dial_with_ca):
-                connection = dial_with_ca(endpoint, headers, timeout_seconds, ca_bundle)
-            else:
-                connection = self._client._gateway.open_session(endpoint, headers, timeout_seconds)
+            connection = self._client._transport.open_session(endpoint, headers, timeout_seconds)
         except Exception as error:
             raise RuntimeError("open Sandbox Session") from error
         return Session(connection, _session_heartbeat_interval(self._run))
 
     def read_file(self, path: str, *, max_bytes: int = 0) -> tuple[bytes, bool]:
-        endpoint = self._endpoint("files")
+        endpoint = self._session_base() + "/files"
         parsed = urlparse(endpoint)
         query = dict()
         if max_bytes > 0:
@@ -396,7 +395,7 @@ class Sandbox:
         if options.limit < 0:
             raise ValueError("file page limit cannot be negative")
 
-        endpoint = self._endpoint("files")
+        endpoint = self._session_base() + "/files"
         query: dict[str, str] = {}
         if options.directory:
             query["path"] = options.directory
@@ -409,7 +408,7 @@ class Sandbox:
         response = self._request("GET", endpoint)
         entries = response.get("entries", [])
         if not isinstance(entries, list):
-            raise ValueError("gateway response did not include file entries")
+            raise ValueError("Run extension API response did not include file entries")
         return FilePage(
             entries=[FileInfo(path=str(entry.get("path", "")), directory=bool(entry.get("directory", False)), size_bytes=int(entry.get("sizeBytes", 0))) for entry in entries if isinstance(entry, Mapping)],
             next_page_token=str(response.get("nextPageToken", "")),
@@ -444,18 +443,14 @@ class Sandbox:
             ))
         return result
 
-    def _endpoint(self, suffix: str) -> str:
-        status = self._run.get("status", {})
-        endpoint = status.get("endpoint", {}) if isinstance(status, Mapping) else {}
-        url = endpoint.get("url", "") if isinstance(endpoint, Mapping) else ""
-        if _phase(self._run) != "Ready" or not isinstance(url, str) or not url:
+    def _session_base(self) -> str:
+        metadata = _metadata(self._run)
+        if _phase(self._run) != "Ready":
             raise SandboxStateError(self._run, "Session Run is not ready")
-        parsed = urlparse(url)
-        uid = str(_metadata(self._run).get("uid", ""))
-        components = [value for value in parsed.path.split("/") if value]
-        if not parsed.scheme or not parsed.netloc or len(components) < 2 or components[-2:] != ["sessions", uid]:
-            raise SandboxStateError(self._run, "Session Run endpoint does not match its UID")
-        return urlunparse(parsed._replace(path=parsed.path.rstrip("/") + "/" + suffix))
+        return (
+            f"{self._client._api_server}/apis/sessions.kruntimes.io/v1alpha1"
+            f"/namespaces/{_namespace(metadata)}/runs/{_name(metadata)}/session"
+        )
 
     def _request(self, method: str, url: str, body: Mapping[str, Any] | None = None) -> dict[str, Any]:
         headers = {"Accept": "application/json"}
@@ -465,12 +460,7 @@ class Sandbox:
             encoded = json.dumps(body, separators=(",", ":")).encode()
         if self._client._bearer_token:
             headers["Authorization"] = "Bearer " + self._client._bearer_token
-        ca_bundle = self._endpoint_ca_bundle()
-        request_with_ca = getattr(self._client._gateway, "request_with_ca", None)
-        if ca_bundle and callable(request_with_ca):
-            response = request_with_ca(method, url, encoded, headers, ca_bundle)
-        else:
-            response = self._client._gateway.request(method, url, encoded, headers)
+        response = self._client._transport.request(method, url, encoded, headers)
         if not 200 <= response.status_code < 300:
             message = ""
             try:
@@ -485,15 +475,10 @@ class Sandbox:
         try:
             value = json.loads(response.body)
         except json.JSONDecodeError as error:
-            raise ValueError("decode gateway response") from error
+            raise ValueError("decode Run extension API response") from error
         if not isinstance(value, dict):
-            raise ValueError("gateway response must be an object")
+            raise ValueError("Run extension API response must be an object")
         return value
-
-    def _endpoint_ca_bundle(self) -> bytes:
-        status = self._run.get("status", {})
-        endpoint = status.get("endpoint", {}) if isinstance(status, Mapping) else {}
-        return _decode_bytes(endpoint.get("caBundle", "")) if isinstance(endpoint, Mapping) else b""
 
 
 class Session:
