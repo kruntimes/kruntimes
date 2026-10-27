@@ -658,7 +658,9 @@ func TestSandboxSDKUsesAggregatedSessionAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Sandbox SDK client: %v", err)
 	}
-	leaseTimeout := int32(15)
+	// Keep the lease longer than a loaded kind cluster's Runtime Service dial
+	// window; the dedicated lease test owns expiry coverage.
+	leaseTimeout := int32(60)
 	sandbox, err := sdk.Runtime(testNamespace, runtimeName).AcquireSandbox(t.Context(), sandboxsdk.AcquireOptions{
 		GenerateName: "e2e-sdk-session-",
 		Session:      &v1alpha1.RunSessionMode{LeaseTimeoutSeconds: &leaseTimeout},
