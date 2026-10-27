@@ -115,9 +115,12 @@ Use namespaced `Role` and `RoleBinding` objects for application users:
 - **Run submitters** may create and read `runs`. Grant `update` or `patch` only
   when they also need cancellation; those verbs currently permit broader Run
   mutation.
-- **Run observers** may receive read-only access to `runs`, which includes
-  per-Run logs through the Runtime Gateway. Add `pods/portforward` only when
-  they are allowed to download artifacts directly from Runtime Pods.
+- **Run observers** may receive read-only access to `runs`, which does not by
+  itself allow logs, Session operations, or Function invocation. Grant the
+  matching `logs.kruntimes.io/runs/log`,
+  `sessions.kruntimes.io/runs/session`, or `functions.kruntimes.io/runs/function`
+  subresource for those capabilities. Add `pods/portforward` only when they are
+  allowed to download artifacts directly from Runtime Pods.
 - **Control-plane service accounts** own status mutation. Do not grant users
   write access to `runs/status` or `runtimes/status`.
 

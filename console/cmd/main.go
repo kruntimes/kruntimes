@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,7 +14,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -24,46 +22,24 @@ import (
 	"github.com/kruntimes/kruntimes/api/runextensionapi"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	console "github.com/kruntimes/kruntimes/console/backend"
-	"github.com/kruntimes/kruntimes/internal/gateway"
 )
 
 func main() {
 	var (
-		address                    string
-		assetsDirectory            string
-		certificateFile            string
-		privateKeyFile             string
-		clientCAFile               string
-		publicRead                 bool
-		authorizationCacheTTL      time.Duration
-		authorizationCacheCapacity int
-		maxConcurrentRequests      int
-		maxSessionConnections      int
-		maxRequestBodyBytes        int64
-		maxResponseBodyBytes       int64
-		maxHeaderBytes             int
+		address         string
+		assetsDirectory string
+		certificateFile string
+		privateKeyFile  string
+		publicRead      bool
 	)
 	flag.StringVar(&address, "bind-address", ":8443", "The HTTPS address the Kruntimes Console binds to.")
 	flag.StringVar(&assetsDirectory, "assets-dir", "/console/assets", "Directory containing the Console frontend assets.")
 	flag.StringVar(&certificateFile, "tls-certificate-file", "", "PEM TLS certificate file for the Console. Required.")
 	flag.StringVar(&privateKeyFile, "tls-private-key-file", "", "PEM TLS private key file for the Console. Required.")
-	flag.StringVar(&clientCAFile, "tls-client-ca-file", "", "Optional PEM client CA bundle for Kubernetes client-certificate authentication.")
 	flag.BoolVar(&publicRead, "public-read", true, "Allow unauthenticated namespace and Run list requests using the Console ServiceAccount.")
-	defaultAuthorizationCache := gateway.DefaultAuthorizationCacheOptions()
-	flag.DurationVar(&authorizationCacheTTL, "authorization-cache-ttl", defaultAuthorizationCache.TTL, "How long successful access authorization decisions remain cached; zero disables caching.")
-	flag.IntVar(&authorizationCacheCapacity, "authorization-cache-capacity", defaultAuthorizationCache.Capacity, "Maximum successful authorization decisions retained; zero disables caching.")
-	flag.IntVar(&maxConcurrentRequests, "max-concurrent-requests", gateway.DefaultMaxConcurrentRequests, "Maximum Runtime access API requests handled by one Console Pod.")
-	flag.IntVar(&maxSessionConnections, "max-session-connections", gateway.DefaultMaxSessionConnections, "Maximum persistent Session WebSocket connections handled by one Console Pod.")
-	flag.Int64Var(&maxRequestBodyBytes, "max-request-body-bytes", gateway.DefaultMaxRequestBodyBytes, "Maximum Runtime access API JSON request body size in bytes.")
-	flag.Int64Var(&maxResponseBodyBytes, "max-response-body-bytes", gateway.DefaultMaxResponseBodyBytes, "Maximum Runtime access API JSON response size in bytes.")
-	flag.IntVar(&maxHeaderBytes, "max-header-bytes", gateway.DefaultMaxHeaderBytes, "Maximum HTTP request header size in bytes.")
 	flag.Parse()
 	if certificateFile == "" || privateKeyFile == "" {
 		fmt.Fprintln(os.Stderr, "both --tls-certificate-file and --tls-private-key-file are required")
-		os.Exit(2)
-	}
-	if maxRequestBodyBytes <= 0 || maxResponseBodyBytes <= 0 || maxHeaderBytes <= 0 {
-		fmt.Fprintln(os.Stderr, "Console Runtime access API request body, response body, and header limits must be positive")
 		os.Exit(2)
 	}
 
@@ -92,16 +68,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "configure Console aggregated Run log API: %v\n", err)
 		os.Exit(1)
 	}
-	runClient, err := client.New(config, client.Options{Scheme: scheme})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "configure Console Runtime access client: %v\n", err)
-		os.Exit(1)
-	}
-	kubernetesClient, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "configure Console authorization client: %v\n", err)
-		os.Exit(1)
-	}
 	extensionAPIProxy, err := console.NewRunExtensionAPIProxy(rest.AnonymousClientConfig(config))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "configure Console Run extension API proxy: %v\n", err)
@@ -113,20 +79,6 @@ func main() {
 		Logs:            logClient,
 		RunExtensionAPI: extensionAPIProxy,
 		Assets:          os.DirFS(assetsDirectory),
-		RuntimeAccess: &gateway.Server{
-			Runs: runClient,
-			Authorizer: gateway.NewCachingAuthorizer(
-				gateway.KubernetesAuthorizer{Client: kubernetesClient},
-				gateway.AuthorizationCacheOptions{Capacity: authorizationCacheCapacity, TTL: authorizationCacheTTL},
-			),
-			Dialer:                gateway.GRPCDialer{},
-			FunctionDialer:        gateway.GRPCDialer{},
-			MaxConcurrentRequests: maxConcurrentRequests,
-			MaxSessionConnections: maxSessionConnections,
-			MaxRequestBodyBytes:   maxRequestBodyBytes,
-			MaxResponseBodyBytes:  maxResponseBodyBytes,
-			MaxHeaderBytes:        maxHeaderBytes,
-		},
 	}
 	if publicRead {
 		publicClient, err := client.New(config, client.Options{Scheme: scheme})
@@ -136,7 +88,7 @@ func main() {
 		}
 		consoleServer.PublicReadClient = publicClient
 	}
-	tlsConfig, err := consoleTLSConfig(certificateFile, privateKeyFile, clientCAFile)
+	tlsConfig, err := consoleTLSConfig(certificateFile, privateKeyFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "configure Console TLS: %v\n", err)
 		os.Exit(1)
@@ -145,7 +97,7 @@ func main() {
 		Addr:              address,
 		Handler:           consoleServer,
 		ReadHeaderTimeout: 5 * time.Second,
-		MaxHeaderBytes:    maxHeaderBytes,
+		MaxHeaderBytes:    consoleMaxHeaderBytes,
 		TLSConfig:         tlsConfig,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -163,24 +115,13 @@ func main() {
 	}
 }
 
-func consoleTLSConfig(certificateFile, privateKeyFile, clientCAFile string) (*tls.Config, error) {
+const consoleMaxHeaderBytes = 1 << 20
+
+func consoleTLSConfig(certificateFile, privateKeyFile string) (*tls.Config, error) {
 	certificate, err := tls.LoadX509KeyPair(certificateFile, privateKeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("load TLS certificate: %w", err)
 	}
 	config := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}
-	if clientCAFile == "" {
-		return config, nil
-	}
-	clientCA, err := os.ReadFile(clientCAFile)
-	if err != nil {
-		return nil, fmt.Errorf("read TLS client CA: %w", err)
-	}
-	clientCAs := x509.NewCertPool()
-	if !clientCAs.AppendCertsFromPEM(clientCA) {
-		return nil, errors.New("TLS client CA contains no certificates")
-	}
-	config.ClientAuth = tls.VerifyClientCertIfGiven
-	config.ClientCAs = clientCAs
 	return config, nil
 }

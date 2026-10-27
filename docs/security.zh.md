@@ -104,8 +104,11 @@ Kubernetes 不会将 Run 与引用的 Runtime 作为单独操作授权。如果�
   `spec.daemonImage` 和 artifact 凭据会影响生成的 Runtime Pods。
 - **Run 提交者** 可以创建和读取 `runs`。仅当他们也需取消时才授予 `update` 或 `patch`；
   这些 verbs 目前允许更广泛的 Run 变更。
-- **Run 观察者** 可以接收 `runs` 的只读访问，其中包括经 Runtime Gateway 查看单个 Run
-  的日志。仅当允许他们直接从 Runtime Pods 下载 artifacts 时才添加 `pods/portforward`。
+- **Run 观察者** 可以接收 `runs` 的只读访问，但这本身不允许查看日志、执行 Session
+  operation 或调用 Function。需要这些能力时，授予对应的
+  `logs.kruntimes.io/runs/log`、`sessions.kruntimes.io/runs/session` 或
+  `functions.kruntimes.io/runs/function` subresource。仅当允许他们直接从 Runtime Pods
+  下载 artifacts 时才添加 `pods/portforward`。
 - **控制平面 service accounts** 拥有状态变更权限。不要授予用户对 `runs/status` 或
   `runtimes/status` 的写入访问。
 

@@ -89,8 +89,7 @@ runExtensionAPI:
 `runExtensionAPI` 和 `run-extension-apiserver` 镜像。
 
 Run logs、浏览器 Session operation、Session 文件读取和 Function invocation 使用该聚合 API。
-Console 内嵌的 Runtime access API 继续为尚未迁移的 SDK Session 和 Function client 提供
-endpoint。
+Console 仅把浏览器 Session operation 转发给它，自身不再持有 Runtime data plane。
 
 `krt session exec` 和 `krt session attach` 也通过 Kubernetes API server 使用 Session
 subresource。caller 需要指定 `kruntimes.io/runs` 和 `sessions.kruntimes.io/runs/session`

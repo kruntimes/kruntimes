@@ -105,10 +105,6 @@ controller:
           app.kubernetes.io/component: controller
   priorityClassName: system-cluster-critical
 console:
-  access:
-    maxRequestBodyBytes: "2097152"
-    maxResponseBodyBytes: "3145728"
-    maxHeaderBytes: "4194304"
   tls:
     certificateKey: certificate.pem
     privateKeyKey: private-key.pem
@@ -156,9 +152,6 @@ def main() -> int:
             [
                 "--tls-certificate-file=/var/run/kruntimes/console-tls/certificate.pem",
                 "--tls-private-key-file=/var/run/kruntimes/console-tls/private-key.pem",
-                "--max-request-body-bytes=2097152",
-                "--max-response-body-bytes=3145728",
-                "--max-header-bytes=4194304",
                 "name: https",
                 "mountPath: /var/run/kruntimes/console-tls",
                 "secretName: kruntimes-console-tls",

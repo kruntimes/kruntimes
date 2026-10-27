@@ -61,16 +61,6 @@ spec:
             - --tls-certificate-file=/var/run/kruntimes/console-tls/{{ .Values.console.tls.certificateKey }}
             - --tls-private-key-file=/var/run/kruntimes/console-tls/{{ .Values.console.tls.privateKeyKey }}
             - --public-read={{ .Values.console.publicRead.enabled }}
-            - --authorization-cache-ttl={{ .Values.console.access.authorizationCacheTTL }}
-            - --authorization-cache-capacity={{ .Values.console.access.authorizationCacheCapacity }}
-            - --max-concurrent-requests={{ .Values.console.access.maxConcurrentRequests }}
-            - --max-session-connections={{ .Values.console.access.maxSessionConnections }}
-            - --max-request-body-bytes={{ int64 .Values.console.access.maxRequestBodyBytes }}
-            - --max-response-body-bytes={{ int64 .Values.console.access.maxResponseBodyBytes }}
-            - --max-header-bytes={{ int64 .Values.console.access.maxHeaderBytes }}
-            {{- if .Values.console.tls.clientCASecretName }}
-            - --tls-client-ca-file=/var/run/kruntimes/console-client-ca/{{ .Values.console.tls.clientCAKey }}
-            {{- end }}
           ports:
             - containerPort: {{ .Values.console.containerPort }}
               name: https
@@ -95,17 +85,7 @@ spec:
             - name: console-tls
               mountPath: /var/run/kruntimes/console-tls
               readOnly: true
-            {{- if .Values.console.tls.clientCASecretName }}
-            - name: console-client-ca
-              mountPath: /var/run/kruntimes/console-client-ca
-              readOnly: true
-            {{- end }}
       volumes:
         - name: console-tls
           secret:
             secretName: {{ include "kruntimes.console.tlsSecretName" . }}
-        {{- if .Values.console.tls.clientCASecretName }}
-        - name: console-client-ca
-          secret:
-            secretName: {{ .Values.console.tls.clientCASecretName }}
-        {{- end }}

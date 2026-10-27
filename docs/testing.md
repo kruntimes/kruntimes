@@ -149,8 +149,8 @@ The following scenarios stay serial and intentionally omit `t.Parallel()`:
   Runtime pod to exercise restart recovery.
 - The `scheduler_test.go` scenarios assert scheduling latency, capacity, and
   wake-up ordering, which parallel load would distort.
-- `TestSessionGatewayServesCertManagerTLS` runs in the dedicated
-  `e2e-cert-manager-run` and `e2e-console-bounds-run` jobs.
+- `TestConsoleServesCertManagerTLS` runs in the dedicated
+  `e2e-cert-manager-run` job.
 
 Parallelism is bounded by cluster capacity, not by the tests: each parallel
 scenario may create its own Runtime pod, and the shared warm pools are created

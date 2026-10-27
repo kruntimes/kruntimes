@@ -2,9 +2,9 @@
 
 ## 状态
 
-Kubernetes 聚合 API 提供 Run logs、Session operation 与文件访问，以及 Function
-invocation。Console 把浏览器的 Session operation 转发给它；Console 的 Runtime Gateway 仍为
-尚未迁移的 SDK Session 和 Function client 提供 access。
+Kubernetes 聚合 API 为所有 client 提供 Run logs、Session operation 与文件访问，以及
+Function invocation。Console 把浏览器的 Session operation 转发给它，不再内嵌或暴露 Runtime
+gateway。
 
 ## 问题
 

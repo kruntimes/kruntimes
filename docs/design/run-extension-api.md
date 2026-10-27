@@ -3,9 +3,8 @@
 ## Status
 
 The Kubernetes aggregated API serves Run logs, Session operations and files,
-and Function invocation. Console relays browser Session operations to it;
-Console's Runtime Gateway remains available for SDK Session and Function
-clients until those clients migrate.
+and Function invocation for every client. Console relays browser Session
+operations to it and no longer embeds or exposes a Runtime gateway.
 
 ## Problem
 
@@ -82,9 +81,9 @@ in an HttpOnly cookie and forwards it server-side to the aggregated API. Neither
 client needs `runs get`, Pod discovery, `pods/log`, or Pod port-forward access
 to retrieve logs.
 
-Runtime Gateway has no Run-log route and no `pods/log` RBAC. This keeps its
-Session and Function authorization boundary separate from the Kubernetes
-aggregation boundary.
+Console has no Runtime access route and no Runtime Pod network access. Every
+Run data-plane request is authorized by kube-apiserver against the matching
+aggregated Run subresource.
 
 ## Session operations
 

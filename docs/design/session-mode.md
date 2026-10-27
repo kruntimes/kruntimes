@@ -339,16 +339,15 @@ authorization errors. Set either `--authorization-cache-ttl=0` or
 can take up to the configured TTL to affect an already cached successful
 decision.
 
-Each Console Pod accepts at most 128 concurrent Runtime access HTTP requests by
-default. Admission is non-blocking: a request above the per-Pod limit receives
-`429 Too Many Requests` instead of waiting in an unbounded gateway queue.
-Health checks do not consume a request slot. The Helm value
-`console.access.maxConcurrentRequests` configures the limit for every Console Pod.
-Persistent Session WebSockets have a separate `console.access.maxSessionConnections`
-limit, so idle connections cannot consume the ordinary HTTP request quota.
+The removed Console Runtime gateway applied per-Pod Runtime access limits and
+mapped HTTP requests to `SessionRuntime` gRPC methods. Clients now use the
+aggregated Session API (`sessions.kruntimes.io`), and the Run extension API
+enforces its own bounded request handling. The tables below are retained as the
+historical gateway protocol description; [Run extension API](run-extension-api.md)
+documents the current public API.
 
-The gateway server maps the following HTTP API operations to `SessionRuntime`
-gRPC methods:
+The former gateway server mapped the following HTTP API operations to
+`SessionRuntime` gRPC methods:
 
 | HTTP API | `SessionRuntime` method | Behavior |
 | --- | --- |

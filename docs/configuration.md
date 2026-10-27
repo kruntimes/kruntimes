@@ -93,9 +93,8 @@ New configurations should use `runExtensionAPI` and the
 `run-extension-apiserver` image.
 
 Run logs, browser Session operations, Session file reads, and Function
-invocation use this aggregated API. Console's embedded Runtime access API
-continues to serve SDK Session and Function endpoints until those clients
-migrate.
+invocation use this aggregated API. Console relays browser Session operations
+to it and holds no Runtime data plane.
 
 `krt session exec` and `krt session attach` use the Session subresource through
 the Kubernetes API server. Callers need `get` on both the named

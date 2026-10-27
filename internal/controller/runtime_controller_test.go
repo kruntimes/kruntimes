@@ -601,7 +601,7 @@ func TestRuntimedRoleBindingNameTruncatesLongServiceAccountNames(t *testing.T) {
 	}
 }
 
-func TestBuildNetworkPolicyDeniesRuntimePodIngressByDefault(t *testing.T) {
+func TestBuildNetworkPolicyAllowsOnlyRuntimePeersByDefault(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "default"},
 		Spec: v1alpha1.RuntimeSpec{
@@ -613,8 +613,11 @@ func TestBuildNetworkPolicyDeniesRuntimePodIngressByDefault(t *testing.T) {
 	if networkPolicy.Name != "runtime-bash" || networkPolicy.Namespace != "default" {
 		t.Fatalf("networkPolicy metadata = %s/%s, want default/runtime-bash", networkPolicy.Namespace, networkPolicy.Name)
 	}
-	if len(networkPolicy.Spec.Ingress) != 0 {
-		t.Fatalf("networkPolicy ingress = %v, want default deny ingress", networkPolicy.Spec.Ingress)
+	if len(networkPolicy.Spec.Ingress) != 1 {
+		t.Fatalf("networkPolicy ingress = %v, want only the Runtime peer", networkPolicy.Spec.Ingress)
+	}
+	if got := networkPolicy.Spec.Ingress[0].From[0].PodSelector.MatchLabels; !maps.Equal(got, map[string]string{runtimeLabel: "bash", "app": "kruntimes-bash"}) {
+		t.Fatalf("Runtime peer selector = %v", got)
 	}
 	if !slices.Equal(networkPolicy.Spec.PolicyTypes, []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}) {
 		t.Fatalf("networkPolicy policyTypes = %v, want ingress only", networkPolicy.Spec.PolicyTypes)
@@ -627,36 +630,25 @@ func TestBuildNetworkPolicyDeniesRuntimePodIngressByDefault(t *testing.T) {
 	}
 }
 
-func TestBuildNetworkPolicyAllowsSessionGatewayAndRuntimePeers(t *testing.T) {
+func TestBuildNetworkPolicyAllowsRuntimeAndExtensionAPIPeers(t *testing.T) {
 	rt := &v1alpha1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: "bash", Namespace: "workloads"},
 		Spec:       v1alpha1.RuntimeSpec{Template: runtimePodTemplate("bash-runtime:latest")},
 	}
 	networkPolicy := (&RuntimeReconciler{
-		ConsoleNamespace: "platform",
-		ConsoleSelectorLabels: map[string]string{
-			"app.kubernetes.io/instance":  "kruntimes",
-			"app.kubernetes.io/component": "runtime-gateway",
-		},
+		RunExtensionAPINamespace: "platform",
 		RunExtensionAPISelectorLabels: map[string]string{
 			"app.kubernetes.io/instance":  "kruntimes",
 			"app.kubernetes.io/component": "run-extension-api",
 		},
 	}).buildNetworkPolicy(rt)
-	if len(networkPolicy.Spec.Ingress) != 3 {
-		t.Fatalf("ingress rules = %v, want Runtime, gateway, and extension API rules", networkPolicy.Spec.Ingress)
+	if len(networkPolicy.Spec.Ingress) != 2 {
+		t.Fatalf("ingress rules = %v, want Runtime and extension API rules", networkPolicy.Spec.Ingress)
 	}
 	if got := networkPolicy.Spec.Ingress[0].From[0].PodSelector.MatchLabels; !maps.Equal(got, map[string]string{runtimeLabel: "bash", "app": "kruntimes-bash"}) {
 		t.Fatalf("Runtime peer selector = %v", got)
 	}
-	gateway := networkPolicy.Spec.Ingress[1].From[0]
-	if gateway.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "platform" {
-		t.Fatalf("gateway namespace selector = %v", gateway.NamespaceSelector)
-	}
-	if !maps.Equal(gateway.PodSelector.MatchLabels, map[string]string{"app.kubernetes.io/instance": "kruntimes", "app.kubernetes.io/component": "runtime-gateway"}) {
-		t.Fatalf("gateway Pod selector = %v", gateway.PodSelector)
-	}
-	extensionAPI := networkPolicy.Spec.Ingress[2].From[0]
+	extensionAPI := networkPolicy.Spec.Ingress[1].From[0]
 	if extensionAPI.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "platform" {
 		t.Fatalf("extension API namespace selector = %v", extensionAPI.NamespaceSelector)
 	}

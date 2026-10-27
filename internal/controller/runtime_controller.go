@@ -55,8 +55,7 @@ type RuntimeReconciler struct {
 
 	DefaultDaemonImage            string
 	RuntimedServiceAccountName    string
-	ConsoleNamespace              string
-	ConsoleSelectorLabels         map[string]string
+	RunExtensionAPINamespace      string
 	RunExtensionAPISelectorLabels map[string]string
 	ConsoleURL                    string
 	ConsoleCABundle               []byte
@@ -562,36 +561,24 @@ func (r *RuntimeReconciler) buildNetworkPolicy(rt *v1alpha1.Runtime) *networking
 		runtimeLabel: rt.Name,
 		"app":        "kruntimes-" + rt.Name,
 	}
-	ingress := []networkingv1.NetworkPolicyIngressRule(nil)
-	if r.ConsoleNamespace != "" {
-		ingress = []networkingv1.NetworkPolicyIngressRule{
-			{
-				From: []networkingv1.NetworkPolicyPeer{{
-					PodSelector: &metav1.LabelSelector{MatchLabels: labels},
+	// Runtime Pods may forward one request to the owner runtimed in the same
+	// Runtime. The Run extension API is the only external caller.
+	ingress := []networkingv1.NetworkPolicyIngressRule{{
+		From: []networkingv1.NetworkPolicyPeer{{
+			PodSelector: &metav1.LabelSelector{MatchLabels: labels},
+		}},
+		Ports: sessionRuntimeNetworkPolicyPorts(),
+	}}
+	if r.RunExtensionAPINamespace != "" && len(r.RunExtensionAPISelectorLabels) != 0 {
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{{
+				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"kubernetes.io/metadata.name": r.RunExtensionAPINamespace,
 				}},
-				Ports: sessionRuntimeNetworkPolicyPorts(),
-			},
-			{
-				From: []networkingv1.NetworkPolicyPeer{{
-					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-						"kubernetes.io/metadata.name": r.ConsoleNamespace,
-					}},
-					PodSelector: &metav1.LabelSelector{MatchLabels: r.consoleSelectorLabels()},
-				}},
-				Ports: sessionRuntimeNetworkPolicyPorts(),
-			},
-		}
-		if len(r.RunExtensionAPISelectorLabels) != 0 {
-			ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
-				From: []networkingv1.NetworkPolicyPeer{{
-					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-						"kubernetes.io/metadata.name": r.ConsoleNamespace,
-					}},
-					PodSelector: &metav1.LabelSelector{MatchLabels: maps.Clone(r.RunExtensionAPISelectorLabels)},
-				}},
-				Ports: sessionRuntimeNetworkPolicyPorts(),
-			})
-		}
+				PodSelector: &metav1.LabelSelector{MatchLabels: maps.Clone(r.RunExtensionAPISelectorLabels)},
+			}},
+			Ports: sessionRuntimeNetworkPolicyPorts(),
+		})
 	}
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
@@ -609,13 +596,6 @@ func (r *RuntimeReconciler) buildNetworkPolicy(rt *v1alpha1.Runtime) *networking
 			Ingress: ingress,
 		},
 	}
-}
-
-func (r *RuntimeReconciler) consoleSelectorLabels() map[string]string {
-	if len(r.ConsoleSelectorLabels) != 0 {
-		return maps.Clone(r.ConsoleSelectorLabels)
-	}
-	return map[string]string{"app.kubernetes.io/component": "console"}
 }
 
 func sessionRuntimeNetworkPolicyPorts() []networkingv1.NetworkPolicyPort {

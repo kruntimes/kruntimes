@@ -53,9 +53,6 @@ type Server struct {
 	PublicReadClient client.Client
 	Logs             RunLogClient
 	Assets           fs.FS
-	// RuntimeAccess serves the versioned Runtime access API. It shares Console's
-	// listener and is deliberately not exposed as a separate Deployment.
-	RuntimeAccess http.Handler
 	// RunExtensionAPI relays caller-authenticated requests to the Kubernetes
 	// aggregated Run extension API. It performs no authorization itself.
 	RunExtensionAPI *RunExtensionAPIProxy
@@ -183,7 +180,7 @@ type sessionResponse struct {
 }
 
 func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet && !(request.URL.Path == "/api/session" && (request.Method == http.MethodPost || request.Method == http.MethodDelete)) && !strings.HasPrefix(request.URL.Path, "/v1/") {
+	if request.Method != http.MethodGet && !(request.URL.Path == "/api/session" && (request.Method == http.MethodPost || request.Method == http.MethodDelete)) {
 		s.writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
@@ -210,28 +207,8 @@ func (s *Server) registerRoutes() {
 	for _, route := range runExtensionAPIRoutes {
 		mux.HandleFunc(route.consolePattern, s.withRunExtensionAPI(route.targetPath))
 	}
-	if s.RuntimeAccess != nil {
-		runtimeAccessHandler := s.withRuntimeAccessCredential(s.RuntimeAccess)
-		mux.Handle("GET /v1/", runtimeAccessHandler)
-		mux.Handle("POST /v1/", runtimeAccessHandler)
-	}
 	mux.HandleFunc("GET /", s.serveFrontend)
 	s.routes = mux
-}
-
-// withRuntimeAccessCredential lets browser callers use the Console's HttpOnly
-// session cookie without exposing its Kubernetes bearer token to JavaScript.
-// Explicit Authorization headers from krt and SDK clients always win.
-func (s *Server) withRuntimeAccessCredential(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") == "" {
-			if cookie, err := request.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
-				request = request.Clone(request.Context())
-				request.Header.Set("Authorization", "Bearer "+cookie.Value)
-			}
-		}
-		next.ServeHTTP(writer, request)
-	})
 }
 
 // withRunExtensionAPI relays one browser request to the aggregated Run
