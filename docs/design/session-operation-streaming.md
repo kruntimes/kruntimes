@@ -176,17 +176,18 @@ The SDK does not expose `Stream`, `Resume`, `StreamWebSocket`, NDJSON, or
 WebSocket names. Internally it maintains a persistent, authenticated,
 bidirectional WebSocket connection. Client messages carry an operation request
 or cancellation; server messages carry the ordered `SessionOperationEvent` and
-its operation ID. A gateway error after upgrade is surfaced as a typed SDK
+its operation ID. An aggregated API error after upgrade is surfaced as a typed SDK
 transport error rather than as an event.
 
-SDK constructors derived from a Kubernetes REST configuration use its TLS CA
-bundle and optional client certificate/key for the connection, trust the
-`Run.status.endpoint.caBundle` when provided, and apply
-Kubernetes REST authentication wrappers (including rotating token files and
-exec credentials) before the upgrade. A custom SDK transport must implement
-this connection boundary itself; an HTTP `RoundTripper` alone cannot upgrade a
-WebSocket. Scoped Console port-forward adapters rewrite the connection endpoint
-as they do regular HTTP endpoints and preserve caller credentials.
+SDK constructors derived from a Kubernetes REST configuration open the Session
+WebSocket against the Kubernetes aggregated Session API at
+`/apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session`,
+using its TLS CA bundle, optional client certificate/key, and Kubernetes REST
+authentication wrappers (including rotating token files and exec credentials)
+for the upgrade. The SDK does not read `Run.status.endpoint` and does not use
+Console or Runtime Pod port-forwards. It manages the WebSocket upgrade
+internally; an HTTP `RoundTripper` alone cannot upgrade a WebSocket, so the SDK
+does not expose a separate custom transport hook.
 
 The first version does not automatically retry or replay an operation after a
 transport failure. The operation outcome is then unknown; the caller may open a
@@ -195,7 +196,8 @@ Durable operation replay is separate from this live-connection contract.
 
 ## Lifecycle, cancellation, and bounds
 
-The gateway authorizes the connection against its Session Run. `Cancel`,
+kube-apiserver authenticates the caller and authorizes `get` on
+`sessions.kruntimes.io/runs/session` for the target Session Run. `Cancel`,
 gateway shutdown, immediate Session termination, and the
 effective operation timeout cancel an active Runtime Server operation and free
 the queue entry. Closing the SDK Session connection only detaches the event

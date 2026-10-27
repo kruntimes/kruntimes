@@ -5,16 +5,14 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/intstr"
-	kubernetesfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -26,14 +24,8 @@ func TestSandboxCreatesSessionRun(t *testing.T) {
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	doer := httpDoer(func(r *http.Request) (*http.Response, error) {
-		if r.Header.Get("Authorization") != "Bearer token" {
-			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
-		}
-		return nil, errors.New("no HTTP operation should be sent")
-	})
 	runs := fake.NewClientBuilder().WithScheme(scheme).Build()
-	client, err := New(Config{Runs: runs, HTTPClient: doer, BearerToken: "token"})
+	client, err := New(Config{RESTConfig: &rest.Config{Host: "http://api-server"}, Runs: runs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,9 +40,9 @@ func TestSandboxCreatesSessionRun(t *testing.T) {
 
 func TestSandboxReadFilePreservesPathForRuntimeValidation(t *testing.T) {
 	paths := []string{}
-	sandbox := readySandbox(t, httpDoer(func(request *http.Request) (*http.Response, error) {
+	sandbox := readySandbox(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		paths = append(paths, request.URL.EscapedPath())
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"contents":""}`))}, nil
+		_, _ = io.WriteString(writer, `{"contents":""}`)
 	}))
 	if _, _, err := sandbox.ReadFile(t.Context(), "notes/file.txt", 64); err != nil {
 		t.Fatal(err)
@@ -58,16 +50,16 @@ func TestSandboxReadFilePreservesPathForRuntimeValidation(t *testing.T) {
 	if _, _, err := sandbox.ReadFile(t.Context(), "../outside.txt", 0); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(paths, ",") != "/v1/namespaces/default/runtimes/bash/sessions/run-uid/files/notes/file.txt,/v1/namespaces/default/runtimes/bash/sessions/run-uid/files/../outside.txt" {
+	if strings.Join(paths, ",") != "/apis/sessions.kruntimes.io/v1alpha1/namespaces/default/runs/session/session/files/notes/file.txt,/apis/sessions.kruntimes.io/v1alpha1/namespaces/default/runs/session/session/files/../outside.txt" {
 		t.Fatalf("paths = %v", paths)
 	}
 }
 
 func TestSandboxListFilesUsesExplicitPageOptions(t *testing.T) {
 	requests := []string{}
-	sandbox := readySandbox(t, httpDoer(func(request *http.Request) (*http.Response, error) {
+	sandbox := readySandbox(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests = append(requests, request.URL.String())
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"entries":[{"path":"build.log","sizeBytes":12}],"nextPageToken":"next"}`))}, nil
+		_, _ = io.WriteString(writer, `{"entries":[{"path":"build.log","sizeBytes":12}],"nextPageToken":"next"}`)
 	}))
 	page, err := sandbox.ListFiles(t.Context(), ListFilesOptions{Directory: "notes", Limit: 2, PageToken: "after-notes"})
 	if err != nil {
@@ -76,8 +68,8 @@ func TestSandboxListFilesUsesExplicitPageOptions(t *testing.T) {
 	if len(page.Entries) != 1 || page.Entries[0].Path != "build.log" || page.NextPageToken != "next" {
 		t.Fatalf("page = %#v", page)
 	}
-	if got, want := strings.Join(requests, ","), "http://gateway/v1/namespaces/default/runtimes/bash/sessions/run-uid/files?limit=2&pageToken=after-notes&path=notes"; got != want {
-		t.Fatalf("request = %q, want %q", got, want)
+	if !strings.Contains(requests[0], "/apis/sessions.kruntimes.io/v1alpha1/namespaces/default/runs/session/session/files") || !strings.Contains(requests[0], "limit=2") || !strings.Contains(requests[0], "pageToken=after-notes") || !strings.Contains(requests[0], "path=notes") {
+		t.Fatalf("request = %q", requests[0])
 	}
 	if _, err := sandbox.ListFiles(t.Context(), ListFilesOptions{Limit: -1}); err == nil {
 		t.Fatal("ListFiles accepted a negative limit")
@@ -88,7 +80,7 @@ func TestSandboxLogsFilterRunUID(t *testing.T) {
 	reader := logReader(func(context.Context, string, string, string) (io.ReadCloser, error) {
 		return io.NopCloser(strings.NewReader("not-json\n{\"run_uid\":\"other\",\"stream\":\"stdout\"}\n{\"run_uid\":\"run-uid\",\"stream\":\"audit\",\"message\":\"session operation completed\",\"operation\":\"command\"}\n")), nil
 	})
-	sandbox := readySandbox(t, httpDoer(func(*http.Request) (*http.Response, error) { return nil, nil }))
+	sandbox := readySandbox(t, nil)
 	sandbox.client.logReader = reader
 	sandbox.run.Name = "session"
 	sandbox.run.Namespace = "default"
@@ -121,7 +113,7 @@ func TestRuntimeAcquiresReadySandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	runs := fake.NewClientBuilder().WithScheme(scheme).Build()
-	client, err := New(Config{Runs: runs, HTTPClient: httpDoer(func(*http.Request) (*http.Response, error) { return nil, nil }), PollInterval: time.Millisecond})
+	client, err := New(Config{RESTConfig: &rest.Config{Host: "http://api-server"}, Runs: runs, PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +144,7 @@ func TestRuntimeDeletesRunWhenAcquireFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	runs := fake.NewClientBuilder().WithScheme(scheme).Build()
-	sandboxClient, err := New(Config{Runs: runs, HTTPClient: httpDoer(func(*http.Request) (*http.Response, error) { return nil, nil }), PollInterval: time.Millisecond})
+	sandboxClient, err := New(Config{RESTConfig: &rest.Config{Host: "http://api-server"}, Runs: runs, PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,27 +222,42 @@ func TestSandboxTerminationReportsUnexpectedTerminalPhase(t *testing.T) {
 	}
 }
 
-type httpDoer func(*http.Request) (*http.Response, error)
-
-func (do httpDoer) Do(request *http.Request) (*http.Response, error) { return do(request) }
-
-type logReader func(context.Context, string, string, string) (io.ReadCloser, error)
-
-func (read logReader) Open(ctx context.Context, namespace, pod, container string) (io.ReadCloser, error) {
-	return read(ctx, namespace, pod, container)
+func testServerClient(t *testing.T, handler http.Handler, runs client.Client) *Client {
+	t.Helper()
+	if handler == nil {
+		handler = http.NewServeMux()
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	client, err := New(Config{RESTConfig: &rest.Config{Host: server.URL, BearerToken: "token"}, Runs: runs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
 }
 
-func readySandbox(t *testing.T, doer HTTPDoer) *Sandbox {
+func readySandbox(t *testing.T, handler http.Handler) *Sandbox {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	client, err := New(Config{Runs: fake.NewClientBuilder().WithScheme(scheme).Build(), HTTPClient: doer})
-	if err != nil {
-		t.Fatal(err)
+	client := testServerClient(t, handler, fake.NewClientBuilder().WithScheme(scheme).Build())
+	return &Sandbox{client: client, run: readySessionRun()}
+}
+
+func readySessionRun() *v1alpha1.Run {
+	return &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default", UID: "run-uid"},
+		Spec:       v1alpha1.RunSpec{Mode: v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}}},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunReady},
 	}
-	return &Sandbox{client: client, run: &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{UID: "run-uid"}, Status: v1alpha1.RunStatus{Phase: v1alpha1.RunReady, Endpoint: &v1alpha1.RunEndpoint{URL: "http://gateway/v1/namespaces/default/runtimes/bash/sessions/run-uid"}}}}
+}
+
+type logReader func(context.Context, string, string, string) (io.ReadCloser, error)
+
+func (read logReader) Open(ctx context.Context, namespace, pod, container string) (io.ReadCloser, error) {
+	return read(ctx, namespace, pod, container)
 }
 
 func terminalSandbox(t *testing.T, termination *v1alpha1.RunTermination) *Sandbox {
@@ -272,67 +279,9 @@ func terminalSandboxWithPhase(t *testing.T, termination *v1alpha1.RunTermination
 		Status: v1alpha1.RunStatus{Phase: phase},
 	}
 	runs := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()
-	client, err := New(Config{Runs: runs, HTTPClient: httpDoer(func(*http.Request) (*http.Response, error) { return nil, nil })})
+	client, err := New(Config{RESTConfig: &rest.Config{Host: "http://api-server"}, Runs: runs})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return &Sandbox{client: client, run: run.DeepCopy()}
-}
-
-func TestSandboxRejectsEndpointForAnotherRun(t *testing.T) {
-	sandbox := &Sandbox{run: &v1alpha1.Run{ObjectMeta: metav1.ObjectMeta{UID: "run-uid"}, Status: v1alpha1.RunStatus{Phase: v1alpha1.RunReady, Endpoint: &v1alpha1.RunEndpoint{URL: "http://gateway/v1/namespaces/default/runtimes/bash/sessions/other"}}}}
-	if _, err := sandbox.endpoint("files"); err == nil {
-		t.Fatal("endpoint() error = nil, want UID fencing error")
-	}
-}
-
-func TestConsolePortForwardPreservesRunEndpointPath(t *testing.T) {
-	forward := &ConsolePortForward{
-		httpClient: httpDoer(func(request *http.Request) (*http.Response, error) {
-			if request.URL.String() != "http://127.0.0.1:19090/v1/namespaces/default/runtimes/bash/sessions/run-uid/files?maxBytes=10" {
-				t.Fatalf("forwarded URL = %q", request.URL)
-			}
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{}"))}, nil
-		}),
-		localURL: &url.URL{Scheme: "http", Host: "127.0.0.1:19090"},
-	}
-	request, err := http.NewRequest(http.MethodGet, "https://gateway/v1/namespaces/default/runtimes/bash/sessions/run-uid/files?maxBytes=10", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := forward.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response.Body.Close()
-}
-
-func TestReadyConsolePodSelectsReadyServiceBackend(t *testing.T) {
-	clientset := kubernetesfake.NewSimpleClientset(
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "platform"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "gateway"}}},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "gateway-z", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "gateway-a", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "not-ready", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodPending}},
-	)
-	pod, err := readyConsolePod(t.Context(), clientset.CoreV1(), "platform", "gateway")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pod != "gateway-a" {
-		t.Fatalf("gateway Pod = %q, want gateway-a", pod)
-	}
-}
-
-func TestReadyConsoleBackendUsesServiceTargetPort(t *testing.T) {
-	clientset := kubernetesfake.NewSimpleClientset(
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "platform"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "gateway"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(8084)}}}},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: "platform", Labels: map[string]string{"app": "gateway"}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
-	)
-	pod, port, tlsEnabled, err := readyConsoleBackend(t.Context(), clientset.CoreV1(), "platform", "gateway", 80)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pod != "gateway" || port != 8084 || tlsEnabled {
-		t.Fatalf("gateway backend = %q:%d TLS=%t, want gateway:8084 TLS=false", pod, port, tlsEnabled)
-	}
 }

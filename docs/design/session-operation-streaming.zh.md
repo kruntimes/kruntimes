@@ -140,12 +140,12 @@ SDK 不暴露 `Stream`、`Resume`、`StreamWebSocket`、NDJSON 或 WebSocket 名
 message 携带有序的 `SessionOperationEvent` 及 operation ID。upgrade 后的 gateway error 会转换为 typed
 SDK transport error，而不是普通 event。
 
-由 Kubernetes REST configuration 构造的 SDK 会为该 connection 使用其中的 TLS CA bundle 和可选的
-client certificate/key，在 endpoint 提供 `Run.status.endpoint.caBundle` 时信任该证书，并在 upgrade 前应用
-Kubernetes REST 认证 wrapper（包括轮换的 token file 和
-exec credential）。custom SDK transport 必须自行实现这一
-connection boundary；仅有 HTTP `RoundTripper` 无法完成 WebSocket upgrade。受限的 Console
-port-forward adapter 会像改写普通 HTTP endpoint 一样改写 connection endpoint，并保留 caller credential。
+由 Kubernetes REST configuration 构造的 SDK 会把 Session WebSocket 建立到 Kubernetes 聚合 Session
+API：`/apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session`，并在 upgrade
+时使用其中的 TLS CA bundle、可选的 client certificate/key 以及 Kubernetes REST 认证 wrapper
+（包括轮换的 token file 和 exec credential）。SDK 不读取 `Run.status.endpoint`，也不使用
+Console 或 Runtime Pod port-forward。WebSocket upgrade 由 SDK 内部管理；仅有 HTTP
+`RoundTripper` 无法完成 WebSocket upgrade，因此 SDK 不暴露单独的自定义 transport hook。
 
 首个版本不会在 transport failure 后自动 retry 或 replay operation；此时 operation outcome 未知，caller
 可以在 Session lease 到期前打开新 connection 并读取 Session state。durable operation replay 不属于该
@@ -153,7 +153,8 @@ live-connection contract。
 
 ## Lifecycle、cancellation 与边界
 
-gateway 会对 connection 的目标 Session Run 授权。`Cancel`、gateway shutdown、Immediate
+kube-apiserver 认证 caller，并授权目标 Session Run 的
+`sessions.kruntimes.io/runs/session` `get` 权限。`Cancel`、gateway shutdown、Immediate
 Session termination 和 effective operation timeout 会取消 active Runtime Server operation 并释放 queue entry。
 关闭 SDK Session connection 只会 detach event consumer，不会取消已 admission 的 work，也不会 release
 Session capacity。owner runtimed 继续强制 operation timeout 与 Session lease。`Drain` 允许已 admission 的

@@ -32,12 +32,11 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/kruntimes/kruntimes/api/runextensionapi"
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/internal/krt"
-	"github.com/kruntimes/kruntimes/internal/logapi"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
-	"github.com/kruntimes/kruntimes/internal/runextensionapi"
 	"github.com/kruntimes/kruntimes/internal/runstatus"
 	sandboxsdk "github.com/kruntimes/kruntimes/sdk/go/sandbox"
 )
@@ -203,7 +202,7 @@ func krtSessionToken(t *testing.T, run *v1alpha1.Run) string {
 		ObjectMeta: metav1.ObjectMeta{Name: serviceAccount.Name, Namespace: testNamespace},
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"runs"}, ResourceNames: []string{run.Name}, Verbs: []string{"get"}},
-			{APIGroups: []string{runextensionapi.SessionGroup}, Resources: []string{"runs/session"}, ResourceNames: []string{run.Name}, Verbs: []string{"get"}},
+			{APIGroups: []string{runextensionapi.GroupSessions}, Resources: []string{"runs/session"}, ResourceNames: []string{run.Name}, Verbs: []string{"get"}},
 		},
 	}
 	if err := k8sClient.Create(t.Context(), role); err != nil {
@@ -398,7 +397,7 @@ func TestAggregatedRunLogAPIFollowsOneShotRunBeforeCompletion(t *testing.T) {
 	logConfig := rest.CopyConfig(restConfig)
 	logConfig.BearerToken = aggregatedLogToken(t, run)
 	logConfig.BearerTokenFile = ""
-	logs, err := logapi.NewClient(logConfig)
+	logs, err := runextensionapi.NewForConfig(logConfig)
 	if err != nil {
 		t.Fatalf("create aggregated Run log API client: %v", err)
 	}
@@ -817,7 +816,7 @@ func TestSessionRunDrainCompletesAcceptedGatewayCommand(t *testing.T) {
 	waitForRunPhase(t, run, 20*time.Second, v1alpha1.RunSucceeded)
 }
 
-func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
+func TestSandboxSDKUsesAggregatedSessionAPI(t *testing.T) {
 	t.Parallel()
 	runtimeName := fmt.Sprintf("sdk-session-gateway-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, bashRuntimeImage(), 9091, 1)
@@ -827,8 +826,7 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: serviceAccount.Name, Namespace: testNamespace},
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"runs"}, Verbs: []string{"create", "get", "update", "delete"}},
-			{APIGroups: []string{""}, Resources: []string{"services"}, Verbs: []string{"get"}},
-			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{runextensionapi.GroupSessions}, Resources: []string{"runs/session"}, Verbs: []string{"get"}},
 		},
 	}
 	if err := k8sClient.Create(t.Context(), role); err != nil {
@@ -848,12 +846,7 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	sdkConfig := rest.CopyConfig(restConfig)
 	sdkConfig.BearerToken = token
 	sdkConfig.BearerTokenFile = ""
-	forward, err := sandboxsdk.StartConsolePortForward(t.Context(), sdkConfig, testNamespace, "kruntimes-console", 443)
-	if err != nil {
-		t.Fatalf("start SDK Runtime gateway port-forward: %v", err)
-	}
-	t.Cleanup(forward.Close)
-	sdk, err := sandboxsdk.NewFromRESTConfig(sdkConfig, sandboxsdk.Config{HTTPClient: forward, SessionDialer: forward})
+	sdk, err := sandboxsdk.NewFromRESTConfig(sdkConfig, sandboxsdk.Config{})
 	if err != nil {
 		t.Fatalf("create Sandbox SDK client: %v", err)
 	}
@@ -872,7 +865,7 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open SDK Session connection: %v", err)
 	}
-	operationID, err := connection.Send(ctx, sandboxsdk.Operation{Command: &sandboxsdk.Command{Argv: []string{"sh", "-c", "printf sdk-port-forward"}}})
+	operationID, err := connection.Send(ctx, sandboxsdk.Operation{Command: &sandboxsdk.Command{Argv: []string{"sh", "-c", "printf sdk-aggregated"}}})
 	if err != nil {
 		t.Fatalf("send SDK Session command: %v", err)
 	}
@@ -895,8 +888,8 @@ func TestSandboxSDKUsesGatewayServicePortForward(t *testing.T) {
 			t.Fatalf("SDK Session operation %s failed: %#v", operationID, event.Failed)
 		}
 	}
-	if output.String() != "sdk-port-forward" {
-		t.Fatalf("SDK Session output = %q, want sdk-port-forward", output.String())
+	if output.String() != "sdk-aggregated" {
+		t.Fatalf("SDK Session output = %q, want sdk-aggregated", output.String())
 	}
 	// The SDK heartbeat must retain the Session Run beyond its lease interval
 	// without issuing an artificial operation.

@@ -3,21 +3,14 @@ package sandbox
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
-	"path"
 	"sort"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,21 +18,11 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/kruntimes/kruntimes/api/runextensionapi"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
 const defaultPollInterval = 500 * time.Millisecond
-
-// HTTPDoer is the HTTP transport used for Console Runtime access requests.
-type HTTPDoer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-
-// SessionDialer opens the SDK's internal persistent Session connection.
-// Implementations may rewrite the endpoint for a scoped Console port-forward.
-type SessionDialer interface {
-	DialSession(context.Context, string, http.Header) (*websocket.Conn, *http.Response, error)
-}
 
 // LogReader opens the runtimed container log for one assigned Runtime Pod.
 type LogReader interface {
@@ -48,44 +31,46 @@ type LogReader interface {
 
 // Client creates and manages Sandboxes backed by Session-mode Runs.
 type Client struct {
-	runs          client.Client
-	httpClient    HTTPDoer
-	sessionDialer SessionDialer
-	logReader     LogReader
-	bearerToken   string
-	pollInterval  time.Duration
+	runs         client.Client
+	extension    *runextensionapi.Client
+	logReader    LogReader
+	pollInterval time.Duration
 }
 
-// Config supplies the explicit Kubernetes and Console dependencies for Client.
-// Callers may use a Kubernetes-configured HTTP client that injects credentials
-// instead of BearerToken.
+// Config supplies the Kubernetes dependencies for Client.
+//
+// RESTConfig is required. The SDK uses it for Kubernetes API access and for the
+// aggregated Run extension API that serves Session operations and Session
+// files. Runs, LogReader, and PollInterval are optional overrides.
 type Config struct {
-	Runs          client.Client
-	HTTPClient    HTTPDoer
-	SessionDialer SessionDialer
-	LogReader     LogReader
-	BearerToken   string
-	PollInterval  time.Duration
+	RESTConfig   *rest.Config
+	Runs         client.Client
+	LogReader    LogReader
+	PollInterval time.Duration
 }
 
-// New constructs a Sandbox client. Kubernetes and Console dependencies are
-// explicit so the same client works for in-cluster, local, and test transports.
+// New constructs a Sandbox client. RESTConfig is required.
 func New(config Config) (*Client, error) {
+	if config.RESTConfig == nil || config.RESTConfig.Host == "" {
+		return nil, errors.New("Kubernetes REST config is required")
+	}
 	if config.Runs == nil {
 		return nil, errors.New("sandbox Run client is required")
-	}
-	if config.HTTPClient == nil {
-		return nil, errors.New("sandbox HTTP client is required")
 	}
 	interval := config.PollInterval
 	if interval <= 0 {
 		interval = defaultPollInterval
 	}
-	dialer := config.SessionDialer
-	if dialer == nil {
-		dialer = defaultSessionDialer{}
+	extension, err := runextensionapi.NewForConfig(config.RESTConfig)
+	if err != nil {
+		return nil, err
 	}
-	return &Client{runs: config.Runs, httpClient: config.HTTPClient, sessionDialer: dialer, logReader: config.LogReader, bearerToken: config.BearerToken, pollInterval: interval}, nil
+	return &Client{
+		runs:         config.Runs,
+		extension:    extension,
+		logReader:    config.LogReader,
+		pollInterval: interval,
+	}, nil
 }
 
 // NewFromRESTConfig constructs a Client from Kubernetes REST credentials.
@@ -93,6 +78,7 @@ func NewFromRESTConfig(config *rest.Config, options Config) (*Client, error) {
 	if config == nil {
 		return nil, errors.New("Kubernetes REST config is required")
 	}
+	options.RESTConfig = config
 	scheme := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("add kruntimes API scheme: %w", err)
@@ -103,23 +89,6 @@ func NewFromRESTConfig(config *rest.Config, options Config) (*Client, error) {
 			return nil, fmt.Errorf("create Kubernetes Run client: %w", err)
 		}
 		options.Runs = runs
-	}
-	if options.HTTPClient == nil {
-		httpClient, err := rest.HTTPClientFor(config)
-		if err != nil {
-			return nil, fmt.Errorf("create Console HTTP client: %w", err)
-		}
-		options.HTTPClient = httpClient
-	}
-	if options.BearerToken == "" {
-		options.BearerToken = config.BearerToken
-	}
-	if options.SessionDialer == nil {
-		dialer, err := newRESTSessionDialer(config)
-		if err != nil {
-			return nil, err
-		}
-		options.SessionDialer = dialer
 	}
 	if options.LogReader == nil {
 		pods, err := corev1client.NewForConfig(config)
@@ -292,158 +261,48 @@ func shouldRequestTermination(current *v1alpha1.RunTermination, requested v1alph
 	return current.Mode == v1alpha1.RunTerminationDrain && requested == v1alpha1.RunTerminationImmediate
 }
 
-// Command defines one workspace-relative process execution request.
-type Command struct {
-	Argv             []string          `json:"argv,omitempty"`
-	Shell            string            `json:"shell,omitempty"`
-	WorkingDirectory string            `json:"workingDirectory,omitempty"`
-	Env              map[string]string `json:"env,omitempty"`
-	Stdin            []byte            `json:"stdin,omitempty"`
-	TimeoutMillis    int64             `json:"timeoutMillis,omitempty"`
-}
-
-// Operation is one mutation submitted over a persistent Session connection.
-// Exactly one field must be set.
-type Operation struct {
-	Command         *Command         `json:"command,omitempty"`
-	WriteFile       *FileWrite       `json:"writeFile,omitempty"`
-	CreateDirectory *DirectoryCreate `json:"createDirectory,omitempty"`
-	DeleteFile      *FileDelete      `json:"deleteFile,omitempty"`
-	RenameFile      *FileRename      `json:"renameFile,omitempty"`
-}
-
-type FileWrite struct {
-	Path          string `json:"path"`
-	Contents      []byte `json:"contents"`
-	CreateParents bool   `json:"createParents,omitempty"`
-}
-type DirectoryCreate struct {
-	Path string `json:"path"`
-}
-type FileDelete struct {
-	Path      string `json:"path"`
-	Recursive bool   `json:"recursive,omitempty"`
-}
-type FileRename struct {
-	SourcePath      string `json:"sourcePath"`
-	DestinationPath string `json:"destinationPath"`
-	Overwrite       bool   `json:"overwrite,omitempty"`
-}
-
-// CommandResult is the bounded result of one command operation.
-type CommandResult struct {
-	ExitCode int32  `json:"exitCode"`
-	Stdout   []byte `json:"stdout,omitempty"`
-	Stderr   []byte `json:"stderr,omitempty"`
-	TimedOut bool   `json:"timedOut,omitempty"`
-}
-
-// OperationEvent is one ordered event emitted by a streaming Session operation.
-type OperationEvent struct {
-	Sequence int64  `json:"sequence"`
-	Type     string `json:"type"`
-	Accepted *struct {
-		OperationID string `json:"operationID"`
-	} `json:"accepted,omitempty"`
-	Output    *OperationOutput   `json:"output,omitempty"`
-	Progress  *OperationProgress `json:"progress,omitempty"`
-	Completed *struct {
-		Command *CommandResult `json:"command,omitempty"`
-	} `json:"completed,omitempty"`
-	Failed *OperationFailure `json:"failed,omitempty"`
-}
-
-type OperationOutput struct {
-	Stream string `json:"stream"`
-	Data   []byte `json:"data,omitempty"`
-}
-type OperationProgress struct {
-	Kind        string `json:"kind"`
-	Message     string `json:"message,omitempty"`
-	ToolCallID  string `json:"toolCallID,omitempty"`
-	ToolName    string `json:"toolName,omitempty"`
-	Data        []byte `json:"data,omitempty"`
-	ContentType string `json:"contentType,omitempty"`
-}
-type OperationFailure struct {
-	Code    int32  `json:"code"`
-	Message string `json:"message"`
-}
+// Command, Operation, and the other Session wire types are aliases of the
+// reusable Run extension API client types.
+type Command = runextensionapi.Command
+type Operation = runextensionapi.Operation
+type FileWrite = runextensionapi.FileWrite
+type DirectoryCreate = runextensionapi.DirectoryCreate
+type FileDelete = runextensionapi.FileDelete
+type FileRename = runextensionapi.FileRename
+type CommandResult = runextensionapi.CommandResult
+type OperationEvent = runextensionapi.OperationEvent
+type OperationOutput = runextensionapi.OperationOutput
+type OperationProgress = runextensionapi.OperationProgress
+type OperationFailure = runextensionapi.OperationFailure
 
 // ReadFile returns bounded content at a workspace-relative path.
 func (s *Sandbox) ReadFile(ctx context.Context, path string, maxBytes int64) ([]byte, bool, error) {
-	endpoint, err := s.endpoint("files")
-	if err != nil {
-		return nil, false, err
+	if s == nil || s.client == nil {
+		return nil, false, &StateError{Message: "Sandbox is not available"}
 	}
-	endpointURL, err := url.Parse(endpoint)
-	if err != nil {
-		return nil, false, fmt.Errorf("parse Session file endpoint: %w", err)
-	}
-	endpointURL.Path = strings.TrimRight(endpointURL.Path, "/") + "/" + path
-	if maxBytes > 0 {
-		query := endpointURL.Query()
-		query.Set("maxBytes", fmt.Sprint(maxBytes))
-		endpointURL.RawQuery = query.Encode()
-	}
-	var response struct {
-		Contents  []byte `json:"contents"`
-		Truncated bool   `json:"truncated"`
-	}
-	if err := s.request(ctx, http.MethodGet, endpointURL.String(), nil, &response); err != nil {
-		return nil, false, err
-	}
-	return response.Contents, response.Truncated, nil
+	return s.client.extension.ReadSessionFile(ctx, s.run.Namespace, s.run.Name, path, maxBytes)
 }
 
 // FileInfo identifies one direct child of a workspace-relative directory.
-type FileInfo struct {
-	Path      string `json:"path"`
-	Directory bool   `json:"directory"`
-	SizeBytes int64  `json:"sizeBytes"`
-}
+type FileInfo = runextensionapi.SessionFileInfo
 
 // ListFilesOptions selects one bounded page of direct workspace-relative children.
 // A zero Limit lets the Runtime Server apply its default page size.
-type ListFilesOptions struct {
-	Directory string
-	Limit     int
-	PageToken string
-}
+type ListFilesOptions = runextensionapi.ListSessionFilesOptions
 
 // FilePage is one bounded directory listing response.
-type FilePage struct {
-	Entries       []FileInfo `json:"entries"`
-	NextPageToken string     `json:"nextPageToken"`
-}
+type FilePage = runextensionapi.SessionFilePage
 
 // ListFiles returns one bounded page of direct children below a workspace-relative path.
 func (s *Sandbox) ListFiles(ctx context.Context, options ListFilesOptions) (FilePage, error) {
-	endpoint, err := s.endpoint("files")
+	if s == nil || s.client == nil {
+		return FilePage{}, &StateError{Message: "Sandbox is not available"}
+	}
+	page, err := s.client.extension.ListSessionFiles(ctx, s.run.Namespace, s.run.Name, &options)
 	if err != nil {
 		return FilePage{}, err
 	}
-	if options.Limit < 0 {
-		return FilePage{}, errors.New("file page limit cannot be negative")
-	}
-	query := url.Values{}
-	if options.Directory != "" {
-		query.Set("path", options.Directory)
-	}
-	if options.Limit > 0 {
-		query.Set("limit", strconv.Itoa(options.Limit))
-	}
-	if options.PageToken != "" {
-		query.Set("pageToken", options.PageToken)
-	}
-	if encoded := query.Encode(); encoded != "" {
-		endpoint += "?" + encoded
-	}
-	var response FilePage
-	if err := s.request(ctx, http.MethodGet, endpoint, nil, &response); err != nil {
-		return FilePage{}, err
-	}
-	return response, nil
+	return *page, nil
 }
 
 // LogLine is one structured output or audit record emitted by owner runtimed.
@@ -491,15 +350,8 @@ func (s *Sandbox) Logs(ctx context.Context) ([]LogLine, error) {
 	return lines, nil
 }
 
-// APIError reports a non-success Console Runtime access API response.
-type APIError struct {
-	StatusCode int
-	Message    string
-}
-
-func (e *APIError) Error() string {
-	return fmt.Sprintf("Console Runtime access API returned HTTP %d: %s", e.StatusCode, e.Message)
-}
+// APIError reports a non-success Run extension API response.
+type APIError = runextensionapi.APIError
 
 // StateError reports an invalid Session Run lifecycle state.
 type StateError struct {
@@ -508,61 +360,6 @@ type StateError struct {
 }
 
 func (e *StateError) Error() string { return e.Message }
-
-func (s *Sandbox) endpoint(suffix string) (string, error) {
-	if s.run.Status.Phase != v1alpha1.RunReady || s.run.Status.Endpoint == nil || s.run.Status.Endpoint.URL == "" {
-		return "", &StateError{Run: s.run.DeepCopy(), Message: "Session Run is not ready"}
-	}
-	endpoint, err := url.Parse(s.run.Status.Endpoint.URL)
-	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" {
-		return "", &StateError{Run: s.run.DeepCopy(), Message: "Session Run has an invalid endpoint"}
-	}
-	parts := strings.Split(strings.Trim(endpoint.Path, "/"), "/")
-	if len(parts) < 7 || parts[len(parts)-2] != "sessions" || parts[len(parts)-1] != string(s.run.UID) {
-		return "", &StateError{Run: s.run.DeepCopy(), Message: "Session Run endpoint does not match its UID"}
-	}
-	endpoint.Path = path.Join(endpoint.Path, suffix)
-	return endpoint.String(), nil
-}
-
-func (s *Sandbox) request(ctx context.Context, method, endpoint string, body, response any) error {
-	var content io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("encode Console request: %w", err)
-		}
-		content = bytes.NewReader(encoded)
-	}
-	request, err := http.NewRequestWithContext(ctx, method, endpoint, content)
-	if err != nil {
-		return fmt.Errorf("build Console request: %w", err)
-	}
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	if s.client.bearerToken != "" {
-		request.Header.Set("Authorization", "Bearer "+s.client.bearerToken)
-	}
-	result, err := s.client.httpClient.Do(request)
-	if err != nil {
-		return fmt.Errorf("call Console Runtime access API: %w", err)
-	}
-	defer result.Body.Close()
-	if result.StatusCode < http.StatusOK || result.StatusCode >= http.StatusMultipleChoices {
-		var responseError struct {
-			Error string `json:"error"`
-		}
-		_ = json.NewDecoder(io.LimitReader(result.Body, 1<<20)).Decode(&responseError)
-		return &APIError{StatusCode: result.StatusCode, Message: responseError.Error}
-	}
-	if response != nil {
-		if err := json.NewDecoder(io.LimitReader(result.Body, 1<<20)).Decode(response); err != nil {
-			return fmt.Errorf("decode Console response: %w", err)
-		}
-	}
-	return nil
-}
 
 func isTerminal(phase v1alpha1.RunPhase) bool {
 	return phase == v1alpha1.RunSucceeded || phase == v1alpha1.RunFailed || phase == v1alpha1.RunTimeout || phase == v1alpha1.RunCancelled

@@ -4,19 +4,36 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/kruntimes/kruntimes/api/v1alpha1"
 )
 
-func TestOpenSessionViaAPIServerUsesKubeconfigCredentials(t *testing.T) {
+func sandboxForServer(t *testing.T, serverURL string) *Sandbox {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	client, err := New(Config{RESTConfig: &rest.Config{Host: serverURL, BearerToken: "token"}, Runs: fake.NewClientBuilder().WithScheme(scheme).Build()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Sandbox{client: client, run: &v1alpha1.Run{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default", UID: "run-uid"},
+		Spec:       v1alpha1.RunSpec{Mode: v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}}},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunReady},
+	}}
+}
+
+func TestOpenSessionUsesKubeconfigCredentials(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/apis/sessions.kruntimes.io/v1alpha1/namespaces/team-a/runs/shell/session" {
@@ -33,67 +50,24 @@ func TestOpenSessionViaAPIServerUsesKubeconfigCredentials(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	sandbox := &Sandbox{run: &v1alpha1.Run{
+	config := &rest.Config{Host: server.URL, BearerToken: "caller-token",
+		TLSClientConfig: rest.TLSClientConfig{CAData: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})}}
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	client, err := New(Config{RESTConfig: config, Runs: fake.NewClientBuilder().WithScheme(scheme).Build()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sandbox := &Sandbox{client: client, run: &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{Name: "shell", Namespace: "team-a"},
 		Spec:       v1alpha1.RunSpec{Mode: v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}}},
 		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunReady},
 	}}
-	config := &rest.Config{Host: server.URL, BearerToken: "caller-token",
-		TLSClientConfig: rest.TLSClientConfig{CAData: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})}}
-	session, err := sandbox.OpenSessionViaAPIServer(t.Context(), config)
-	if err != nil {
-		t.Fatalf("OpenSessionViaAPIServer: %v", err)
-	}
-	_ = session.Close()
-}
-
-func TestRESTSessionDialerUsesTokenFileCredentials(t *testing.T) {
-	tokenFile := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(tokenFile, []byte("dynamic-token"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	upgrader := websocket.Upgrader{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer dynamic-token" {
-			http.Error(w, "missing token-file credentials", http.StatusUnauthorized)
-			return
-		}
-		connection, err := upgrader.Upgrade(w, r, nil)
-		if err == nil {
-			_ = connection.Close()
-		}
-	}))
-	defer server.Close()
-	dialer, err := newRESTSessionDialer(&rest.Config{BearerTokenFile: tokenFile})
-	if err != nil {
-		t.Fatal(err)
-	}
-	connection, response, err := dialer.DialSession(t.Context(), "ws"+strings.TrimPrefix(server.URL, "http"), http.Header{})
-	if err != nil {
-		t.Fatalf("dial with token-file credentials: %v (response = %#v)", err, response)
-	}
-	_ = connection.Close()
-}
-
-func TestRESTSessionDialerTrustsRunEndpointCABundle(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		connection, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
-		if err == nil {
-			_ = connection.Close()
-		}
-	}))
-	defer server.Close()
-	sandbox := readySandbox(t, httpDoer(func(*http.Request) (*http.Response, error) { return nil, nil }))
-	sandbox.run.Status.Endpoint.URL = server.URL + "/v1/namespaces/default/runtimes/bash/sessions/run-uid"
-	sandbox.run.Status.Endpoint.CABundle = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
-	dialer, err := newRESTSessionDialer(&rest.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sandbox.client.sessionDialer = dialer
 	session, err := sandbox.OpenSession(t.Context())
 	if err != nil {
-		t.Fatalf("OpenSession with Run endpoint CA: %v", err)
+		t.Fatalf("OpenSession: %v", err)
 	}
 	_ = session.Close()
 }
@@ -101,7 +75,7 @@ func TestRESTSessionDialerTrustsRunEndpointCABundle(t *testing.T) {
 func TestSandboxSessionSendsReceivesAndCloses(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/namespaces/default/runtimes/bash/sessions/run-uid/operations:ws" {
+		if r.URL.Path != "/apis/sessions.kruntimes.io/v1alpha1/namespaces/default/runs/session/session" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
 		if r.Header.Get("Authorization") != "Bearer token" {
@@ -131,9 +105,7 @@ func TestSandboxSessionSendsReceivesAndCloses(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sandbox := readySandbox(t, httpDoer(func(*http.Request) (*http.Response, error) { return nil, nil }))
-	sandbox.client.bearerToken = "token"
-	sandbox.run.Status.Endpoint.URL = server.URL + "/v1/namespaces/default/runtimes/bash/sessions/run-uid"
+	sandbox := sandboxForServer(t, server.URL)
 	session, err := sandbox.OpenSession(t.Context())
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
@@ -176,8 +148,7 @@ func TestSandboxSessionCancelUsesActiveOperationID(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sandbox := readySandbox(t, httpDoer(func(*http.Request) (*http.Response, error) { return nil, nil }))
-	sandbox.run.Status.Endpoint.URL = server.URL + "/v1/namespaces/default/runtimes/bash/sessions/run-uid"
+	sandbox := sandboxForServer(t, server.URL)
 	session, err := sandbox.OpenSession(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -220,9 +191,8 @@ func TestSandboxSessionMaintainsConfiguredLeaseHeartbeat(t *testing.T) {
 	defer server.Close()
 
 	leaseTimeout := int32(1)
-	sandbox := readySandbox(t, httpDoer(func(*http.Request) (*http.Response, error) { return nil, nil }))
+	sandbox := sandboxForServer(t, server.URL)
 	sandbox.run.Spec.Mode.Session = &v1alpha1.RunSessionMode{LeaseTimeoutSeconds: &leaseTimeout}
-	sandbox.run.Status.Endpoint.URL = server.URL + "/v1/namespaces/default/runtimes/bash/sessions/run-uid"
 	session, err := sandbox.OpenSession(t.Context())
 	if err != nil {
 		t.Fatal(err)

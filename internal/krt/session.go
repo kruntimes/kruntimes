@@ -108,7 +108,7 @@ func openKRTSession(ctx context.Context, getter genericclioptions.RESTClientGett
 	if err != nil {
 		return nil, nil, err
 	}
-	session, err := opened.OpenSessionViaAPIServer(ctx, config)
+	session, err := opened.OpenSession(ctx)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -67,23 +67,15 @@ for {
 }
 ```
 
-For local development, forward only the shared Console Service. Pass
-the returned forward as both `Config.HTTPClient` and `Config.SessionDialer`; it preserves the endpoint path and
-does not expose runtimed or Runtime Server gRPC ports:
+Session operations and Session file access use the Kubernetes aggregated Run
+extension API (`sessions.kruntimes.io/v1alpha1`) through the caller's kubeconfig
+credentials. The SDK does not use `Run.status.endpoint`, a Console port-forward,
+or any Runtime Pod port-forward. API-server authentication applies as usual:
+bearer tokens, client certificates, token files, and exec credentials.
 
-```go
-forward, err := sdk.StartConsolePortForward(
-    ctx, restConfig, "kruntimes-system", "kruntimes-console", 443,
-)
-if err != nil {
-    return err
-}
-defer forward.Close()
-
-client, err := sdk.NewFromRESTConfig(restConfig, sdk.Config{HTTPClient: forward, SessionDialer: forward})
-```
-
-`OpenSession` uses that same `ConsolePortForward` without exposing a separate WebSocket endpoint.
+The caller needs `get` on the named `kruntimes.io/runs` resource to read the Run
+and `get` on `sessions.kruntimes.io/runs/session` for Session operations and
+file access.
 
 The SDK never retries commands, file mutations, or `Close` after a transport
 failure. Refresh the Run and read structured owner-runtimed logs to determine
@@ -98,6 +90,6 @@ return Runtime capacity. `Close` returns successfully only after the Run
 reaches `Succeeded`; `Cancel` returns successfully only after `Cancelled`.
 Any other terminal phase is a typed `StateError` that retains the current Run.
 
-The local caller needs `get` on the target Run for Console authorization. A
-port-forward client also needs `get` on the shared Console Service and `get`,
-`list` on its Pods in the Console namespace.
+The caller does not need `pods`, `pods/portforward`, `pods/log`, or Console
+access to operate a Sandbox. Run logs still use the aggregated Run-log API (or a
+custom `LogReader`).
