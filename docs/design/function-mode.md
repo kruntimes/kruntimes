@@ -187,7 +187,7 @@ Top-level `handler`, `entrypoint`, and `args` fields are not part of the target
 Run API. Task mode keeps `entrypoint` and `args` under `mode.task`, while
 function mode keeps `handler` under `mode.function`.
 
-## Runtime Gateway
+## Runtime Gateway (removed)
 
 The detailed gateway routing and authorization contract is defined in
 [Function Mode Lifecycle and Invoke Dataplane](../function-mode-lifecycle/).

@@ -208,7 +208,7 @@ terminal status，以免与 stale-recovery controller 竞争；后者观察到 d
 Cancellation 保留 Run object 并记录 terminal status。Deletion 是独立的 user request，使用
 finalizer path。两种操作在 controller 和 runtimed restart 后都必须保持幂等。
 
-## Runtime Gateway
+## Runtime Gateway（已删除）
 
 Helm chart 可选安装一个面向所有 Runtime 的共享 `runtime-gateway` Deployment 和 ClusterIP Service。
 `gateway.enabled` 控制是否安装。Deployment 运行 stateless HTTP gateway server。Service 只将 client

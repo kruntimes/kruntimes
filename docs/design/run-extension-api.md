@@ -77,8 +77,8 @@ url := client.Sessions().Get().Namespace(namespace).Resource("runs").Name(runNam
 ## Consumers
 
 `krt logs` always uses the current kubeconfig's Kubernetes API endpoint; it has
-no Gateway URL, Gateway CA, or TLS-skip flags. Dashboard keeps the login token
-in an HttpOnly cookie and forwards it server-side to the aggregated API. Neither
+no separate gateway URL, CA, or TLS-skip flags. Console keeps the login token in
+an HttpOnly cookie and forwards it server-side to the aggregated API. Neither
 client needs `runs get`, Pod discovery, `pods/log`, or Pod port-forward access
 to retrieve logs.
 
@@ -144,7 +144,7 @@ is admitted.
 
 ## Installation
 
-`runExtensionAPI.enabled` defaults to true and is independent of `gateway.enabled`.
+`runExtensionAPI.enabled` defaults to true.
 All APIService objects are cluster-scoped, so exactly one platform release in a
 cluster must own each group/version. Set `runExtensionAPI.enabled: false` for
 other releases.

@@ -69,12 +69,12 @@ url := client.Sessions().Get().Namespace(namespace).Resource("runs").Name(runNam
 ## Consumers
 
 `krt logs` 始终使用当前 kubeconfig 的 Kubernetes API endpoint，不再有 Gateway URL、Gateway CA 或
-跳过 TLS verification 的 flags。Dashboard 将 login token 保存在 HttpOnly cookie 中，并只在 server
+跳过 TLS verification 的 flags。Console 将 login token 保存在 HttpOnly cookie 中，并只在 server
 side 转发给聚合 API。两个 client 读取日志均不需要 `runs get`、Pod discovery、`pods/log` 或
 Pod port-forward 权限。
 
-Runtime Gateway 没有 Run-log route，也没有 `pods/log` RBAC；其 Session 和 Function authorization
-boundary 与 Kubernetes aggregation boundary 保持分离。
+Console 没有 Runtime access route，也没有 Runtime Pod 网络访问权限；所有 Run data-plane
+request 都由 kube-apiserver 针对对应聚合 Run subresource 授权。
 
 ## Session operation
 
@@ -127,7 +127,7 @@ invocation 被接收前返回 HTTP error。
 
 ## 安装
 
-`runExtensionAPI.enabled` 默认是 true，且独立于 `gateway.enabled`。所有 APIService 都是
+`runExtensionAPI.enabled` 默认是 true。所有 APIService 都是
 cluster-scoped，因此同一集群中每个 group/version 必须由一个 platform release 拥有；其它 release 设置
 `runExtensionAPI.enabled: false`。
 

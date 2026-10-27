@@ -242,10 +242,10 @@ Cancellation keeps the Run object and records a terminal status. Deletion is a
 separate user request and uses the finalizer path. Both operations are
 idempotent across controller and runtimed restarts.
 
-## Runtime Gateway
+## Runtime Gateway (removed)
 
 The Helm chart optionally installs one shared `runtime-gateway` Deployment and
-ClusterIP Service for all Runtimes. `gateway.enabled` controls installation.
+ClusterIP Service for all Runtimes. The chart no longer ships `gateway.enabled`; this gateway was removed.
 The Deployment runs stateless HTTP gateway servers. The Service forwards client
 traffic only to gateway Pods, never directly to Runtime Pods. A gateway server
 reads the namespace, Runtime, and Run UID from the endpoint path, calls the

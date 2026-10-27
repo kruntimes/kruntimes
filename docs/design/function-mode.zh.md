@@ -174,7 +174,7 @@ Top-level `handler`、`entrypoint` 和 `args` 不属于目标 Run API。Task mod
 `entrypoint` 和 `args` 放在 `mode.task` 下，function mode 把 `handler` 放在
 `mode.function` 下。
 
-## Runtime Gateway
+## Runtime Gateway（已删除）
 
 详细 gateway routing 和 authorization contract 见
 [Function Mode 生命周期与 Invoke Dataplane](../function-mode-lifecycle/)。
