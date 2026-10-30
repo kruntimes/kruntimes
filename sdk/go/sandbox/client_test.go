@@ -38,7 +38,7 @@ func TestSandboxCreatesSessionRun(t *testing.T) {
 	}
 }
 
-func TestSandboxReadFilePreservesPathForRuntimeValidation(t *testing.T) {
+func TestSandboxReadFileRejectsWorkspaceEscape(t *testing.T) {
 	paths := []string{}
 	sandbox := readySandbox(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		paths = append(paths, request.URL.EscapedPath())
@@ -47,10 +47,10 @@ func TestSandboxReadFilePreservesPathForRuntimeValidation(t *testing.T) {
 	if _, _, err := sandbox.ReadFile(t.Context(), "notes/file.txt", 64); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := sandbox.ReadFile(t.Context(), "../outside.txt", 0); err != nil {
-		t.Fatal(err)
+	if _, _, err := sandbox.ReadFile(t.Context(), "../outside.txt", 0); err == nil {
+		t.Fatal("ReadFile accepted an escaping path")
 	}
-	if strings.Join(paths, ",") != "/apis/sessions.kruntimes.io/v1alpha1/namespaces/default/runs/session/session/files/notes/file.txt,/apis/sessions.kruntimes.io/v1alpha1/namespaces/default/runs/session/session/files/../outside.txt" {
+	if len(paths) != 1 || !strings.HasSuffix(paths[0], "/session/files/notes/file.txt") {
 		t.Fatalf("paths = %v", paths)
 	}
 }

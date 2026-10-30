@@ -12,14 +12,14 @@
 package runextensionapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -48,11 +48,12 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("Run extension API returned HTTP %d: %s", e.StatusCode, e.Message)
 }
 
-// Client talks to the aggregated Run extension API. The group accessors expose
-// client-go REST interfaces so callers can build requests the same way they do
-// for built-in Kubernetes APIs; the typed helpers wrap the common operations.
+// Client talks to the aggregated Run extension API. All HTTP requests execute
+// through client-go REST clients built from the caller's Kubernetes REST
+// configuration, so authentication, TLS, proxies, exec credentials, and token
+// rotation behave exactly like built-in Kubernetes clients.
 type Client struct {
-	httpClient    *http.Client
+	config        *rest.Config
 	logs          rest.Interface
 	sessions      rest.Interface
 	functions     rest.Interface
@@ -70,11 +71,7 @@ func NewForConfig(config *rest.Config) (*Client, error) {
 	if configured.UserAgent == "" {
 		configured.UserAgent = rest.DefaultKubernetesUserAgent()
 	}
-	httpClient, err := rest.HTTPClientFor(configured)
-	if err != nil {
-		return nil, fmt.Errorf("configure Run extension API HTTP client: %w", err)
-	}
-	dialer, err := newSessionDialer(configured)
+	sessionDialer, err := newSessionDialer(configured)
 	if err != nil {
 		return nil, err
 	}
@@ -91,24 +88,22 @@ func NewForConfig(config *rest.Config) (*Client, error) {
 		return nil, err
 	}
 	return &Client{
-		httpClient:    httpClient,
+		config:        configured,
 		logs:          logs,
 		sessions:      sessions,
 		functions:     functions,
-		sessionDialer: dialer,
+		sessionDialer: sessionDialer,
 	}, nil
 }
 
-// Logs returns the client-go REST interface for the logs.kruntimes.io group.
-func (c *Client) Logs() rest.Interface { return c.logs }
+// Runs returns the Run-scoped extension API operations.
+func (c *Client) Runs() RunsInterface { return RunsInterface{client: c} }
 
-// Sessions returns the client-go REST interface for the
-// sessions.kruntimes.io group.
-func (c *Client) Sessions() rest.Interface { return c.sessions }
+// Sessions returns the Session extension API operations.
+func (c *Client) Sessions() SessionsInterface { return SessionsInterface{client: c} }
 
-// Functions returns the client-go REST interface for the
-// functions.kruntimes.io group.
-func (c *Client) Functions() rest.Interface { return c.functions }
+// Functions returns the Function extension API operations.
+func (c *Client) Functions() FunctionsInterface { return FunctionsInterface{client: c} }
 
 // WithBearerToken returns a client copy that forwards token as the request
 // credential. It is intended for server-side relays such as the Console; the
@@ -146,62 +141,72 @@ func (c *Client) functionRequest(namespace, runName string) *rest.Request {
 	return c.functions.Post().Namespace(namespace).Resource("runs").Name(runName).SubResource("function")
 }
 
-// execute performs one bounded request against a URL built by a client-go REST
-// request. Requests deliberately execute through the plain HTTP client so both
-// the Kubernetes metav1.Status and the backend JSON error body are preserved.
-func (c *Client) execute(ctx context.Context, method, endpoint string, body []byte, headers http.Header, response any) error {
-	var content io.Reader
-	if body != nil {
-		content = bytes.NewReader(body)
-	}
-	request, err := http.NewRequestWithContext(ctx, method, endpoint, content)
+// do executes request through client-go and returns the raw response body.
+// Raw bodies are kept so both Kubernetes metav1.Status responses and the
+// backend JSON error shape can be mapped to APIError.
+func (c *Client) do(ctx context.Context, request *rest.Request) ([]byte, error) {
+	c.authorize(request)
+	result := request.Do(ctx)
+	body, err := result.Raw()
+	statusCode := 0
+	result.StatusCode(&statusCode)
 	if err != nil {
-		return fmt.Errorf("build Run extension API request: %w", err)
+		return nil, newAPIError(statusCode, body, err)
 	}
-	for name, values := range headers {
-		for _, value := range values {
-			request.Header.Add(name, value)
-		}
-	}
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	request.Header.Set("Accept", "application/json")
+	return body, nil
+}
+
+// stream executes request through client-go and returns the unbounded response
+// body for follow-style APIs.
+func (c *Client) stream(ctx context.Context, request *rest.Request) (io.ReadCloser, error) {
+	c.authorize(request)
+	return request.Stream(ctx)
+}
+
+func (c *Client) authorize(request *rest.Request) {
 	if c.bearerToken != "" {
-		request.Header.Set("Authorization", "Bearer "+c.bearerToken)
+		request.SetHeader("Authorization", "Bearer "+c.bearerToken)
 	}
-	result, err := c.httpClient.Do(request)
-	if err != nil {
-		return fmt.Errorf("call Run extension API: %w", err)
+}
+
+func decodeResponse(body []byte, response any) error {
+	if response == nil || len(body) == 0 {
+		return nil
 	}
-	defer result.Body.Close()
-	if result.StatusCode < http.StatusOK || result.StatusCode >= http.StatusMultipleChoices {
-		return decodeAPIError(result)
-	}
-	if response != nil {
-		if err := json.NewDecoder(io.LimitReader(result.Body, 1<<20)).Decode(response); err != nil {
-			return fmt.Errorf("decode Run extension API response: %w", err)
-		}
+	if err := json.Unmarshal(body, response); err != nil {
+		return fmt.Errorf("decode Run extension API response: %w", err)
 	}
 	return nil
 }
 
-// decodeAPIError maps both the Kubernetes metav1.Status used for API-server
+// newAPIError maps both the Kubernetes metav1.Status used for API-server
 // rejections and the backend JSON error body to APIError.
-func decodeAPIError(result *http.Response) error {
-	payload, _ := io.ReadAll(io.LimitReader(result.Body, 1<<20))
-	var statusError struct {
-		Kind    string `json:"kind"`
-		Message string `json:"message"`
+func newAPIError(statusCode int, body []byte, requestErr error) error {
+	if statusCode == 0 && requestErr != nil {
+		return fmt.Errorf("call Run extension API: %w", requestErr)
 	}
-	if json.Unmarshal(payload, &statusError) == nil && statusError.Kind == "Status" && statusError.Message != "" {
-		return &APIError{StatusCode: result.StatusCode, Message: statusError.Message}
+	var status metav1.Status
+	if json.Unmarshal(body, &status) == nil && status.Message != "" {
+		return &APIError{StatusCode: statusCode, Message: status.Message}
 	}
 	var responseError struct {
 		Error string `json:"error"`
 	}
-	_ = json.Unmarshal(payload, &responseError)
-	return &APIError{StatusCode: result.StatusCode, Message: responseError.Error}
+	if json.Unmarshal(body, &responseError) == nil && responseError.Error != "" {
+		return &APIError{StatusCode: statusCode, Message: responseError.Error}
+	}
+	var statusErr *apierrors.StatusError
+	if errors.As(requestErr, &statusErr) {
+		code := int(statusErr.ErrStatus.Code)
+		if code == 0 {
+			code = statusCode
+		}
+		return &APIError{StatusCode: code, Message: statusErr.ErrStatus.Message}
+	}
+	if statusCode == 0 {
+		return fmt.Errorf("call Run extension API: %w", requestErr)
+	}
+	return &APIError{StatusCode: statusCode, Message: requestErr.Error()}
 }
 
 // newGroupRESTClient builds a client-go REST client for one aggregated group.

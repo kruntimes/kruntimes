@@ -55,7 +55,7 @@ func newLogsCmd(getter genericclioptions.RESTClientGetter, _ *runtime.Scheme) *c
 			if follow {
 				return followAggregatedRunLogs(cmd.Context(), logs, namespace, runName, tailLines, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
-			raw, err := logs.GetRunLogs(namespace, runName, &runextensionapi.RunLogOptions{TailLines: int64(tailLines)}).Do(cmd.Context()).Raw()
+			raw, err := logs.Runs().Logs(namespace, runName, &runextensionapi.RunLogOptions{TailLines: int64(tailLines)}).Do(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -74,7 +74,7 @@ func newLogsCmd(getter genericclioptions.RESTClientGetter, _ *runtime.Scheme) *c
 func followAggregatedRunLogs(ctx context.Context, api *runextensionapi.Client, namespace, runName string, tailLines int, stdout, stderr io.Writer) error {
 	cursor := ""
 	for {
-		response, err := api.GetRunLogs(namespace, runName, &runextensionapi.RunLogOptions{TailLines: int64(tailLines), Follow: true, Cursor: cursor}).Stream(ctx)
+		response, err := api.Runs().Logs(namespace, runName, &runextensionapi.RunLogOptions{TailLines: int64(tailLines), Follow: true, Cursor: cursor}).Stream(ctx)
 		if err != nil {
 			return err
 		}

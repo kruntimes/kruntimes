@@ -141,7 +141,7 @@ func invokeFunctionEventually(t *testing.T, client *runextensionapi.Client, run 
 	defer cancel()
 	lastError := ""
 	for {
-		result, err := client.InvokeFunction(ctx, run.Namespace, run.Name, &runextensionapi.FunctionInvocationOptions{Input: input})
+		result, err := client.Functions().Invoke(ctx, run.Namespace, run.Name, &runextensionapi.FunctionInvocationOptions{Input: input})
 		if err == nil {
 			return result
 		}
@@ -167,7 +167,7 @@ type sessionOperationResult struct {
 // runSessionOperation submits one operation through the aggregated Session
 // WebSocket and collects its bounded command result.
 func runSessionOperation(ctx context.Context, client *runextensionapi.Client, run *v1alpha1.Run, operation runextensionapi.Operation) (sessionOperationResult, error) {
-	session, err := client.OpenSession(ctx, run.Namespace, run.Name, sessionOptions(run))
+	session, err := client.Sessions().NewExecutor(ctx, run.Namespace, run.Name, sessionOptions(run))
 	if err != nil {
 		return sessionOperationResult{}, err
 	}
@@ -224,7 +224,7 @@ func waitForSessionCommandFile(t *testing.T, client *runextensionapi.Client, run
 			t.Fatalf("Session command ended before writing %q: %v", path, err)
 		default:
 		}
-		contents, _, err := client.ReadSessionFile(ctx, run.Namespace, run.Name, path, 0)
+		contents, _, err := client.Sessions().ReadFile(ctx, run.Namespace, run.Name, path, 0)
 		if err == nil {
 			return contents
 		}
@@ -245,7 +245,7 @@ func waitForSessionFile(t *testing.T, client *runextensionapi.Client, run *v1alp
 	defer cancel()
 	lastError := ""
 	for {
-		contents, _, err := client.ReadSessionFile(ctx, run.Namespace, run.Name, path, 0)
+		contents, _, err := client.Sessions().ReadFile(ctx, run.Namespace, run.Name, path, 0)
 		if err == nil {
 			return contents
 		}
@@ -513,7 +513,7 @@ func assertAggregatedRunLogFollow(t *testing.T, logs *runextensionapi.Client, ru
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	stream, err := logs.GetRunLogs(run.Namespace, run.Name, &runextensionapi.RunLogOptions{TailLines: 100, Follow: true}).Stream(ctx)
+	stream, err := logs.Runs().Logs(run.Namespace, run.Name, &runextensionapi.RunLogOptions{TailLines: 100, Follow: true}).Stream(ctx)
 	if err != nil {
 		t.Fatalf("open aggregated Run log follow stream: %v", err)
 	}

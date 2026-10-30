@@ -29,7 +29,7 @@ func (c *AggregatedRunLogClient) RunLogs(ctx context.Context, token, namespace, 
 	if c == nil || c.client == nil {
 		return nil, errors.New("Console aggregated Run log API client is not configured")
 	}
-	stream, err := c.client.WithBearerToken(token).GetRunLogs(namespace, runName, &runextensionapi.RunLogOptions{
+	stream, err := c.client.WithBearerToken(token).Runs().Logs(namespace, runName, &runextensionapi.RunLogOptions{
 		TailLines: tailLines,
 		Follow:    follow,
 	}).Stream(ctx)

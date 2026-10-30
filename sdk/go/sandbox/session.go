@@ -11,7 +11,7 @@ import (
 // Session is one replaceable, persistent connection to a ready Sandbox. It is
 // the reusable Run extension API Session type. Closing it does not terminate
 // the Sandbox or release Runtime capacity.
-type Session = runextensionapi.Session
+type Session = runextensionapi.SessionExecutor
 
 // OpenSession opens a persistent, authenticated connection to this ready
 // Sandbox through the Kubernetes aggregated Session API. It does not create a
@@ -26,7 +26,7 @@ func (s *Sandbox) OpenSession(ctx context.Context) (*Session, error) {
 	if s.run.Status.Phase != v1alpha1.RunReady {
 		return nil, &StateError{Run: s.run.DeepCopy(), Message: "Session Run is not ready"}
 	}
-	return s.client.extension.OpenSession(ctx, s.run.Namespace, s.run.Name, &runextensionapi.SessionOptions{
+	return s.client.extension.Sessions().NewExecutor(ctx, s.run.Namespace, s.run.Name, &runextensionapi.SessionOptions{
 		HeartbeatInterval: sessionHeartbeatInterval(s.run),
 	})
 }

@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 )
+
+// FunctionsInterface exposes Function Run operations.
+type FunctionsInterface struct {
+	client *Client
+}
 
 // FunctionInvocationOptions is one bounded Function invocation request.
 type FunctionInvocationOptions struct {
@@ -16,9 +20,8 @@ type FunctionInvocationOptions struct {
 	InvocationID string
 }
 
-// InvokeFunction invokes one ready Function Run through the aggregated
-// Function API.
-func (c *Client) InvokeFunction(ctx context.Context, namespace, runName string, options *FunctionInvocationOptions) (*FunctionInvocationResult, error) {
+// Invoke invokes one ready Function Run through the aggregated Function API.
+func (f FunctionsInterface) Invoke(ctx context.Context, namespace, runName string, options *FunctionInvocationOptions) (*FunctionInvocationResult, error) {
 	if options == nil || len(options.Input) == 0 {
 		return nil, errors.New("Function invocation input is required")
 	}
@@ -31,13 +34,21 @@ func (c *Client) InvokeFunction(ctx context.Context, namespace, runName string, 
 	if err := requireRun(namespace, runName); err != nil {
 		return nil, err
 	}
-	request := c.functionRequest(namespace, runName)
-	headers := http.Header{}
+	if f.client == nil || f.client.functions == nil {
+		return nil, errors.New("Run extension API Function client is not configured")
+	}
+	request := f.client.functionRequest(namespace, runName)
+	request.Body(options.Input)
+	request.SetHeader("Content-Type", "application/json")
 	if options.InvocationID != "" {
-		headers.Set("X-Kruntime-Invocation-ID", options.InvocationID)
+		request.SetHeader("X-Kruntime-Invocation-ID", options.InvocationID)
+	}
+	body, err := f.client.do(ctx, request)
+	if err != nil {
+		return nil, err
 	}
 	var result FunctionInvocationResult
-	if err := c.execute(ctx, http.MethodPost, request.URL().String(), options.Input, headers, &result); err != nil {
+	if err := decodeResponse(body, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

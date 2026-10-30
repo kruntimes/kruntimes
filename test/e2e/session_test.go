@@ -57,13 +57,13 @@ func TestAggregatedSessionAPIAuthorizesOperations(t *testing.T) {
 	token := sessionGatewayToken(t, run)
 
 	// kube-apiserver authenticates and authorizes every Session operation.
-	if _, err := invalidCredentialClient(t).OpenSession(t.Context(), run.Namespace, run.Name, nil); apiErrorStatus(err) != http.StatusUnauthorized {
+	if _, err := invalidCredentialClient(t).Sessions().NewExecutor(t.Context(), run.Namespace, run.Name, nil); apiErrorStatus(err) != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated Session open status = %d, want 401 (%v)", apiErrorStatus(err), err)
 	}
-	if _, err := aggregatedAPIClient(t, sessionGatewayTokenWithoutRunAccess(t)).OpenSession(t.Context(), run.Namespace, run.Name, nil); apiErrorStatus(err) != http.StatusForbidden {
+	if _, err := aggregatedAPIClient(t, sessionGatewayTokenWithoutRunAccess(t)).Sessions().NewExecutor(t.Context(), run.Namespace, run.Name, nil); apiErrorStatus(err) != http.StatusForbidden {
 		t.Fatalf("unauthorized Session open status = %d, want 403 (%v)", apiErrorStatus(err), err)
 	}
-	if _, err := aggregatedAPIClient(t, sessionGatewayTokenWithoutSessionAccess(t, run)).OpenSession(t.Context(), run.Namespace, run.Name, nil); apiErrorStatus(err) != http.StatusForbidden {
+	if _, err := aggregatedAPIClient(t, sessionGatewayTokenWithoutSessionAccess(t, run)).Sessions().NewExecutor(t.Context(), run.Namespace, run.Name, nil); apiErrorStatus(err) != http.StatusForbidden {
 		t.Fatalf("Session open without runs/session status = %d, want 403 (%v)", apiErrorStatus(err), err)
 	}
 
@@ -89,14 +89,14 @@ func TestAggregatedSessionAPIAuthorizesOperations(t *testing.T) {
 		t.Fatal("escaping Session write succeeded")
 	}
 
-	page, err := client.ListSessionFiles(t.Context(), run.Namespace, run.Name, &runextensionapi.ListSessionFilesOptions{Directory: "notes"})
+	page, err := client.Sessions().ListFiles(t.Context(), run.Namespace, run.Name, &runextensionapi.ListSessionFilesOptions{Directory: "notes"})
 	if err != nil {
 		t.Fatalf("list Session files: %v", err)
 	}
 	if !containsSessionFile(page.Entries, "result.txt") {
 		t.Fatalf("Session files = %#v, want result.txt", page.Entries)
 	}
-	contents, _, err := client.ReadSessionFile(t.Context(), run.Namespace, run.Name, "notes/result.txt", 0)
+	contents, _, err := client.Sessions().ReadFile(t.Context(), run.Namespace, run.Name, "notes/result.txt", 0)
 	if err != nil || string(contents) != "api-file" {
 		t.Fatalf("Session file contents = %q, %v; want api-file", contents, err)
 	}
@@ -110,14 +110,14 @@ func TestAggregatedSessionAPIAuthorizesOperations(t *testing.T) {
 		t.Fatalf("create pending Session Run: %v", err)
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), pending) })
-	if _, err := aggregatedAPIClient(t, sessionGatewayToken(t, pending)).OpenSession(t.Context(), pending.Namespace, pending.Name, nil); apiErrorStatus(err) != http.StatusConflict {
+	if _, err := aggregatedAPIClient(t, sessionGatewayToken(t, pending)).Sessions().NewExecutor(t.Context(), pending.Namespace, pending.Name, nil); apiErrorStatus(err) != http.StatusConflict {
 		t.Fatalf("pending Session open status = %d, want 409 (%v)", apiErrorStatus(err), err)
 	}
 
 	requestRunCancel(t, run)
 	waitForRunPhase(t, run, 20*time.Second, v1alpha1.RunCancelled)
 	assertCancelledRun(t, run)
-	if _, err := client.OpenSession(t.Context(), run.Namespace, run.Name, nil); apiErrorStatus(err) != http.StatusConflict {
+	if _, err := client.Sessions().NewExecutor(t.Context(), run.Namespace, run.Name, nil); apiErrorStatus(err) != http.StatusConflict {
 		t.Fatalf("cancelled Session open status = %d, want 409 (%v)", apiErrorStatus(err), err)
 	}
 }
@@ -226,7 +226,7 @@ func TestAggregatedSessionAPIStreamsCommandOutput(t *testing.T) {
 	client := aggregatedAPIClient(t, sessionGatewayToken(t, run))
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
-	session, err := client.OpenSession(ctx, run.Namespace, run.Name, sessionOptions(run))
+	session, err := client.Sessions().NewExecutor(ctx, run.Namespace, run.Name, sessionOptions(run))
 	if err != nil {
 		t.Fatalf("open Session connection: %v", err)
 	}
@@ -525,7 +525,7 @@ func TestAggregatedSessionRunCancellationTerminatesActiveCommand(t *testing.T) {
 	client := aggregatedAPIClient(t, sessionGatewayToken(t, run))
 	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
 	defer cancel()
-	session, err := client.OpenSession(ctx, run.Namespace, run.Name, sessionOptions(run))
+	session, err := client.Sessions().NewExecutor(ctx, run.Namespace, run.Name, sessionOptions(run))
 	if err != nil {
 		t.Fatalf("open Session connection: %v", err)
 	}
@@ -560,7 +560,7 @@ func TestAggregatedSessionRunCancellationTerminatesActiveCommand(t *testing.T) {
 	if err := <-commandErr; err == nil {
 		t.Fatal("active Session command succeeded after its Run was cancelled")
 	}
-	if _, err := client.OpenSession(t.Context(), run.Namespace, run.Name, nil); apiErrorStatus(err) != http.StatusConflict {
+	if _, err := client.Sessions().NewExecutor(t.Context(), run.Namespace, run.Name, nil); apiErrorStatus(err) != http.StatusConflict {
 		t.Fatalf("cancelled Session open status = %d, want 409 (%v)", apiErrorStatus(err), err)
 	}
 }
@@ -582,7 +582,7 @@ func TestAggregatedSessionRunDrainCompletesAcceptedCommand(t *testing.T) {
 	client := aggregatedAPIClient(t, sessionGatewayToken(t, run))
 	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
 	defer cancel()
-	session, err := client.OpenSession(ctx, run.Namespace, run.Name, sessionOptions(run))
+	session, err := client.Sessions().NewExecutor(ctx, run.Namespace, run.Name, sessionOptions(run))
 	if err != nil {
 		t.Fatalf("open Session connection: %v", err)
 	}
@@ -615,7 +615,7 @@ func TestAggregatedSessionRunDrainCompletesAcceptedCommand(t *testing.T) {
 	waitForSessionFile(t, client, run, "started")
 	requestRunDrain(t, run)
 	waitForRunPhase(t, run, 10*time.Second, v1alpha1.RunFinalizing)
-	if _, err := client.OpenSession(t.Context(), run.Namespace, run.Name, nil); err == nil {
+	if _, err := client.Sessions().NewExecutor(t.Context(), run.Namespace, run.Name, nil); err == nil {
 		t.Fatal("Session connection opened after Drain")
 	}
 	if err := <-commandErr; err != nil {
@@ -794,7 +794,7 @@ func TestSessionRunLeaseExpiresAfterConnectionHeartbeatsStop(t *testing.T) {
 	apiClient := aggregatedAPIClient(t, sessionGatewayToken(t, run))
 	// The client maintains the lease with private heartbeat frames while the
 	// connection is open.
-	session, err := apiClient.OpenSession(t.Context(), run.Namespace, run.Name, &runextensionapi.SessionOptions{HeartbeatInterval: 4 * time.Second})
+	session, err := apiClient.Sessions().NewExecutor(t.Context(), run.Namespace, run.Name, &runextensionapi.SessionOptions{HeartbeatInterval: 4 * time.Second})
 	if err != nil {
 		t.Fatalf("open lease Session connection: %v", err)
 	}

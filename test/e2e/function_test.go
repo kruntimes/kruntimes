@@ -61,10 +61,10 @@ def handler(event):
 		t.Fatalf("repeated Function invocation = %#v, want successful JSON response", repeat)
 	}
 
-	if _, err := invalidCredentialClient(t).InvokeFunction(t.Context(), run.Namespace, run.Name, &runextensionapi.FunctionInvocationOptions{Input: []byte(`{"value":"unauthenticated"}`)}); apiErrorStatus(err) != http.StatusUnauthorized {
+	if _, err := invalidCredentialClient(t).Functions().Invoke(t.Context(), run.Namespace, run.Name, &runextensionapi.FunctionInvocationOptions{Input: []byte(`{"value":"unauthenticated"}`)}); apiErrorStatus(err) != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated Function invocation status = %d, want 401 (%v)", apiErrorStatus(err), err)
 	}
-	if _, err := aggregatedAPIClient(t, sessionGatewayToken(t, run)).InvokeFunction(t.Context(), run.Namespace, run.Name, &runextensionapi.FunctionInvocationOptions{Input: []byte(`{"value":"unauthorized"}`)}); apiErrorStatus(err) != http.StatusForbidden {
+	if _, err := aggregatedAPIClient(t, sessionGatewayToken(t, run)).Functions().Invoke(t.Context(), run.Namespace, run.Name, &runextensionapi.FunctionInvocationOptions{Input: []byte(`{"value":"unauthorized"}`)}); apiErrorStatus(err) != http.StatusForbidden {
 		t.Fatalf("unauthorized Function invocation status = %d, want 403 (%v)", apiErrorStatus(err), err)
 	}
 }

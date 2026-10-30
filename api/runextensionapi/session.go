@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
+	gwebsocket "github.com/gorilla/websocket"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -20,13 +24,73 @@ const (
 	sessionFrameTypeHeartbeat = "heartbeat"
 )
 
-// SessionDialer opens the persistent Session WebSocket.
+// SessionsInterface exposes Session operations and Session workspace files.
+type SessionsInterface struct {
+	client *Client
+}
+
+// SessionOptions configures a Session executor.
+type SessionOptions struct {
+	// HeartbeatInterval enables application heartbeat frames that renew a
+	// Session lease. Zero disables heartbeats.
+	HeartbeatInterval time.Duration
+}
+
+// NewExecutor opens a persistent Session connection to a ready Session Run
+// through the aggregated Session API.
+func (s SessionsInterface) NewExecutor(ctx context.Context, namespace, runName string, options *SessionOptions) (*SessionExecutor, error) {
+	if s.client == nil || s.client.sessions == nil || s.client.sessionDialer == nil {
+		return nil, errors.New("Run extension API Session connection is not configured")
+	}
+	if err := requireRun(namespace, runName); err != nil {
+		return nil, err
+	}
+	endpoint, err := sessionWebSocketURL(s.client.sessionRequest(namespace, runName).URL().String())
+	if err != nil {
+		return nil, err
+	}
+	headers := http.Header{}
+	if s.client.bearerToken != "" {
+		headers.Set("Authorization", "Bearer "+s.client.bearerToken)
+	}
+	connection, response, err := s.client.sessionDialer.DialSession(ctx, endpoint, headers)
+	if err != nil {
+		if response != nil {
+			return nil, sessionHandshakeError(response)
+		}
+		return nil, fmt.Errorf("open Session connection: %w", err)
+	}
+	executor := &SessionExecutor{connection: connection}
+	if options != nil && options.HeartbeatInterval > 0 {
+		executor.startHeartbeat(options.HeartbeatInterval)
+	}
+	return executor, nil
+}
+
+func sessionWebSocketURL(endpoint string) (string, error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" {
+		return "", errors.New("Session endpoint is invalid")
+	}
+	switch parsed.Scheme {
+	case "http":
+		parsed.Scheme = "ws"
+	case "https":
+		parsed.Scheme = "wss"
+	default:
+		return "", errors.New("Session endpoint must use HTTP or HTTPS")
+	}
+	return parsed.String(), nil
+}
+
+// SessionDialer opens the persistent Session WebSocket using the caller's
+// Kubernetes transport configuration.
 type SessionDialer interface {
-	DialSession(context.Context, string, http.Header) (*websocket.Conn, *http.Response, error)
+	DialSession(context.Context, string, http.Header) (*gwebsocket.Conn, *http.Response, error)
 }
 
 type restSessionDialer struct {
-	dialer *websocket.Dialer
+	dialer *gwebsocket.Dialer
 	config *rest.Config
 }
 
@@ -35,7 +99,7 @@ func newSessionDialer(config *rest.Config) (SessionDialer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create Session TLS config: %w", err)
 	}
-	return restSessionDialer{dialer: &websocket.Dialer{
+	return restSessionDialer{dialer: &gwebsocket.Dialer{
 		TLSClientConfig:  tlsConfig,
 		HandshakeTimeout: 15 * time.Second,
 		Proxy:            config.Proxy,
@@ -43,7 +107,7 @@ func newSessionDialer(config *rest.Config) (SessionDialer, error) {
 	}, config: rest.CopyConfig(config)}, nil
 }
 
-func (d restSessionDialer) DialSession(ctx context.Context, endpoint string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+func (d restSessionDialer) DialSession(ctx context.Context, endpoint string, headers http.Header) (*gwebsocket.Conn, *http.Response, error) {
 	if d.dialer == nil || d.config == nil {
 		return nil, nil, errors.New("Session WebSocket dialer is not configured")
 	}
@@ -82,9 +146,9 @@ func (d restSessionDialer) DialSession(ctx context.Context, endpoint string, hea
 }
 
 type websocketHandshakeTransport struct {
-	dialer     *websocket.Dialer
+	dialer     *gwebsocket.Dialer
 	endpoint   string
-	connection *websocket.Conn
+	connection *gwebsocket.Conn
 }
 
 func (t *websocketHandshakeTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -99,64 +163,105 @@ func (t *websocketHandshakeTransport) RoundTrip(request *http.Request) (*http.Re
 	return response, nil
 }
 
-// SessionOptions configures OpenSession.
-type SessionOptions struct {
-	// HeartbeatInterval enables application heartbeat frames that renew a
-	// Session lease. Zero disables heartbeats.
-	HeartbeatInterval time.Duration
+// sessionHandshakeError maps the HTTP response that rejected the WebSocket
+// upgrade to APIError, preserving the Kubernetes status or backend error body.
+func sessionHandshakeError(response *http.Response) error {
+	defer response.Body.Close()
+	payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	var status metav1.Status
+	if json.Unmarshal(payload, &status) == nil && status.Message != "" {
+		return &APIError{StatusCode: response.StatusCode, Message: status.Message}
+	}
+	var responseError struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(payload, &responseError) == nil && responseError.Error != "" {
+		return &APIError{StatusCode: response.StatusCode, Message: responseError.Error}
+	}
+	return &APIError{StatusCode: response.StatusCode, Message: http.StatusText(response.StatusCode)}
 }
 
-// OpenSession opens a persistent Session connection to a ready Session Run
-// through the aggregated Session API.
-func (c *Client) OpenSession(ctx context.Context, namespace, runName string, options *SessionOptions) (*Session, error) {
-	if c == nil || c.sessionDialer == nil {
-		return nil, errors.New("Run extension API Session connection is not configured")
+// ListFiles returns one bounded page of direct children below a
+// workspace-relative path.
+func (s SessionsInterface) ListFiles(ctx context.Context, namespace, runName string, options *ListSessionFilesOptions) (*SessionFilePage, error) {
+	if options == nil {
+		options = &ListSessionFilesOptions{}
+	}
+	if options.Limit < 0 {
+		return nil, errors.New("file page limit cannot be negative")
 	}
 	if err := requireRun(namespace, runName); err != nil {
 		return nil, err
 	}
-	websocketEndpoint, err := sessionWebSocketURL(c.sessionRequest(namespace, runName).URL().String())
+	request := s.client.sessionFilesRequest(namespace, runName)
+	if options.Directory != "" {
+		request.Param("path", options.Directory)
+	}
+	if options.Limit > 0 {
+		request.Param("limit", strconv.Itoa(options.Limit))
+	}
+	if options.PageToken != "" {
+		request.Param("pageToken", options.PageToken)
+	}
+	body, err := s.client.do(ctx, request)
 	if err != nil {
 		return nil, err
 	}
-	headers := http.Header{}
-	if c.bearerToken != "" {
-		headers.Set("Authorization", "Bearer "+c.bearerToken)
+	var page SessionFilePage
+	if err := decodeResponse(body, &page); err != nil {
+		return nil, err
 	}
-	connection, response, err := c.sessionDialer.DialSession(ctx, websocketEndpoint, headers)
+	return &page, nil
+}
+
+// ReadFile returns bounded content at a workspace-relative path.
+func (s SessionsInterface) ReadFile(ctx context.Context, namespace, runName, path string, maxBytes int64) ([]byte, bool, error) {
+	if path == "" {
+		return nil, false, errors.New("Session file path is required")
+	}
+	if err := requireRun(namespace, runName); err != nil {
+		return nil, false, err
+	}
+	request := s.client.sessionFilesRequest(namespace, runName)
+	if maxBytes > 0 {
+		request.Param("maxBytes", strconv.FormatInt(maxBytes, 10))
+	}
+	// Suffix is the client-go canonical way to address one file below the
+	// files collection. Reject traversal before the request is sent: client-go
+	// normalizes the URL, which would otherwise silently address a different
+	// endpoint instead of the intended workspace file.
+	cleanPath, err := sessionFilePath(path)
 	if err != nil {
-		if response != nil {
-			return nil, &APIError{StatusCode: response.StatusCode, Message: "open Session connection"}
+		return nil, false, err
+	}
+	request.Suffix(cleanPath)
+	body, err := s.client.do(ctx, request)
+	if err != nil {
+		return nil, false, err
+	}
+	var response struct {
+		Contents  []byte `json:"contents"`
+		Truncated bool   `json:"truncated"`
+	}
+	if err := decodeResponse(body, &response); err != nil {
+		return nil, false, err
+	}
+	return response.Contents, response.Truncated, nil
+}
+
+func sessionFilePath(path string) (string, error) {
+	for _, segment := range strings.Split(path, "/") {
+		if segment == ".." {
+			return "", fmt.Errorf("Session file path %q escapes the workspace", path)
 		}
-		return nil, fmt.Errorf("open Session connection: %w", err)
 	}
-	session := &Session{connection: connection}
-	if options != nil && options.HeartbeatInterval > 0 {
-		session.startHeartbeat(options.HeartbeatInterval)
-	}
-	return session, nil
+	return strings.TrimPrefix(path, "/"), nil
 }
 
-func sessionWebSocketURL(endpoint string) (string, error) {
-	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Host == "" {
-		return "", errors.New("Session endpoint is invalid")
-	}
-	switch parsed.Scheme {
-	case "http":
-		parsed.Scheme = "ws"
-	case "https":
-		parsed.Scheme = "wss"
-	default:
-		return "", errors.New("Session endpoint must use HTTP or HTTPS")
-	}
-	return parsed.String(), nil
-}
-
-// Session is one replaceable, persistent connection to a ready Session Run.
-// Closing it does not terminate the Run or release Runtime capacity.
-type Session struct {
-	connection *websocket.Conn
+// SessionExecutor is one replaceable, persistent connection to a ready Session
+// Run. Closing it does not terminate the Run or release Runtime capacity.
+type SessionExecutor struct {
+	connection *gwebsocket.Conn
 
 	writeMu sync.Mutex
 	readMu  sync.Mutex
@@ -177,7 +282,7 @@ type sessionSendFrame struct {
 
 // Send submits one operation and waits for its accepted event. Only one
 // operation may be active on one Session connection at a time.
-func (s *Session) Send(ctx context.Context, operation Operation, idempotencyKey ...string) (string, error) {
+func (s *SessionExecutor) Send(ctx context.Context, operation Operation, idempotencyKey ...string) (string, error) {
 	if s == nil || s.connection == nil {
 		return "", errors.New("Session connection is not configured")
 	}
@@ -208,24 +313,7 @@ func (s *Session) Send(ctx context.Context, operation Operation, idempotencyKey 
 	if err != nil {
 		return "", fmt.Errorf("encode Session send: %w", err)
 	}
-	s.writeMu.Lock()
-	deadline := deadlineFromContext(ctx)
-	if deadline.IsZero() {
-		deadline = time.Now().Add(30 * time.Second)
-	}
-	_ = s.connection.SetWriteDeadline(deadline)
-	callbackDone := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() {
-		defer close(callbackDone)
-		_ = s.connection.SetWriteDeadline(time.Now())
-	})
-	err = s.connection.WriteMessage(websocket.TextMessage, payload)
-	if !stop() {
-		<-callbackDone
-	}
-	_ = s.connection.SetWriteDeadline(time.Time{})
-	s.writeMu.Unlock()
-	if err != nil {
+	if err := s.writeText(ctx, payload); err != nil {
 		return "", fmt.Errorf("send Session operation: %w", err)
 	}
 	event, err := s.readEvent(ctx)
@@ -243,7 +331,7 @@ func (s *Session) Send(ctx context.Context, operation Operation, idempotencyKey 
 
 // Receive returns the next event after Send. It returns a transport error for
 // post-upgrade API errors rather than presenting them as operation events.
-func (s *Session) Receive(ctx context.Context) (OperationEvent, error) {
+func (s *SessionExecutor) Receive(ctx context.Context) (OperationEvent, error) {
 	if s == nil || s.connection == nil {
 		return OperationEvent{}, errors.New("Session connection is not configured")
 	}
@@ -265,7 +353,7 @@ func (s *Session) Receive(ctx context.Context) (OperationEvent, error) {
 }
 
 // Cancel requests cancellation of the active operation.
-func (s *Session) Cancel(ctx context.Context, operationID string) error {
+func (s *SessionExecutor) Cancel(ctx context.Context, operationID string) error {
 	if s == nil || s.connection == nil {
 		return errors.New("Session connection is not configured")
 	}
@@ -282,13 +370,7 @@ func (s *Session) Cancel(ctx context.Context, operationID string) error {
 	if err != nil {
 		return fmt.Errorf("encode Session cancellation: %w", err)
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.connection.SetWriteDeadline(deadlineFromContext(ctx)); err != nil {
-		return fmt.Errorf("set Session write deadline: %w", err)
-	}
-	defer s.connection.SetWriteDeadline(time.Time{})
-	if err := s.connection.WriteMessage(websocket.TextMessage, payload); err != nil {
+	if err := s.writeText(ctx, payload); err != nil {
 		return fmt.Errorf("cancel Session operation: %w", err)
 	}
 	return nil
@@ -296,7 +378,7 @@ func (s *Session) Cancel(ctx context.Context, operationID string) error {
 
 // Close closes only the persistent connection. It does not terminate the
 // backing Session Run or release capacity.
-func (s *Session) Close() error {
+func (s *SessionExecutor) Close() error {
 	if s == nil || s.connection == nil {
 		return nil
 	}
@@ -315,7 +397,31 @@ func (s *Session) Close() error {
 	return err
 }
 
-func (s *Session) startHeartbeat(interval time.Duration) {
+func (s *SessionExecutor) writeText(ctx context.Context, payload []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	deadline := deadlineFromContext(ctx)
+	if deadline.IsZero() {
+		deadline = time.Now().Add(30 * time.Second)
+	}
+	if err := s.connection.SetWriteDeadline(deadline); err != nil {
+		return err
+	}
+	callbackDone := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(callbackDone)
+		_ = s.connection.SetWriteDeadline(time.Now())
+	})
+	defer func() {
+		if !stop() {
+			<-callbackDone
+		}
+		_ = s.connection.SetWriteDeadline(time.Time{})
+	}()
+	return s.connection.WriteMessage(gwebsocket.TextMessage, payload)
+}
+
+func (s *SessionExecutor) startHeartbeat(interval time.Duration) {
 	s.heartbeatStop = make(chan struct{})
 	s.heartbeatDone = make(chan struct{})
 	go func() {
@@ -339,7 +445,7 @@ func (s *Session) startHeartbeat(interval time.Duration) {
 	}()
 }
 
-func (s *Session) writeHeartbeat() error {
+func (s *SessionExecutor) writeHeartbeat() error {
 	s.stateMu.Lock()
 	closed := s.closed
 	s.stateMu.Unlock()
@@ -360,7 +466,7 @@ func (s *Session) writeHeartbeat() error {
 	return nil
 }
 
-func (s *Session) readEvent(ctx context.Context) (OperationEvent, error) {
+func (s *SessionExecutor) readEvent(ctx context.Context) (OperationEvent, error) {
 	s.readMu.Lock()
 	defer s.readMu.Unlock()
 	if err := s.connection.SetReadDeadline(deadlineFromContext(ctx)); err != nil {

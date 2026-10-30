@@ -52,18 +52,24 @@ HTTP error。
 和可操作的 message，供 `krt` 与 Dashboard 展示。特别地，`409 Conflict` 表示该 Run 分配的
 Runtime Pod 已不存在，因此其 ephemeral container logs 无法恢复。
 
-Go caller 使用 `api/runextensionapi.Client`，所有 Run extension API group 都遵循
-client-go 的 request 风格：
+Go caller 使用 `api/runextensionapi.Client`；所有 request 都通过基于 kubeconfig 构建的
+client-go REST client 执行：
 
 ```go
 client, err := runextensionapi.NewForConfig(restConfig)
 
-request := client.GetRunLogs(namespace, runName, &runextensionapi.RunLogOptions{Follow: true})
-stream, err := request.Stream(ctx)
-raw, err := client.GetRunLogs(namespace, runName, options).Do(ctx).Raw()
+// Run logs：follow 用 Stream，bounded snapshot 用 Do。
+stream, err := client.Runs().Logs(namespace, runName, &runextensionapi.RunLogOptions{Follow: true}).Stream(ctx)
+raw, err := client.Runs().Logs(namespace, runName, options).Do(ctx)
 
-// 也可以直接使用 client-go 的 request builder。
-url := client.Sessions().Get().Namespace(namespace).Resource("runs").Name(runName).SubResource("session").URL()
+// Session operation：每个 connection 一个 persistent executor。
+executor, err := client.Sessions().NewExecutor(ctx, namespace, runName, &runextensionapi.SessionOptions{HeartbeatInterval: 5 * time.Second})
+operationID, err := executor.Send(ctx, operation)
+event, err := executor.Receive(ctx)
+contents, truncated, err := client.Sessions().ReadFile(ctx, namespace, runName, "notes/report.txt", 0)
+
+// Function invocation。
+result, err := client.Functions().Invoke(ctx, namespace, runName, &runextensionapi.FunctionInvocationOptions{Input: []byte(`{"value":1}`)})
 ```
 
 ## Consumers

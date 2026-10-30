@@ -60,18 +60,24 @@ its HTTP code, reason, and actionable message for `krt` and Dashboard. In
 particular, a `409 Conflict` means the Run's assigned Runtime Pod no longer
 exists, so its ephemeral container logs cannot be recovered.
 
-Go callers use `api/runextensionapi.Client`, which follows client-go request
-shapes for every Run extension API group:
+Go callers use `api/runextensionapi.Client`, which executes every request
+through client-go REST clients built from the kubeconfig:
 
 ```go
 client, err := runextensionapi.NewForConfig(restConfig)
 
-request := client.GetRunLogs(namespace, runName, &runextensionapi.RunLogOptions{Follow: true})
-stream, err := request.Stream(ctx)
-raw, err := client.GetRunLogs(namespace, runName, options).Do(ctx).Raw()
+// Run logs: Stream for follow, Do for a bounded snapshot.
+stream, err := client.Runs().Logs(namespace, runName, &runextensionapi.RunLogOptions{Follow: true}).Stream(ctx)
+raw, err := client.Runs().Logs(namespace, runName, options).Do(ctx)
 
-// Raw client-go request builders are also available.
-url := client.Sessions().Get().Namespace(namespace).Resource("runs").Name(runName).SubResource("session").URL()
+// Session operations: one persistent executor per connection.
+executor, err := client.Sessions().NewExecutor(ctx, namespace, runName, &runextensionapi.SessionOptions{HeartbeatInterval: 5 * time.Second})
+operationID, err := executor.Send(ctx, operation)
+event, err := executor.Receive(ctx)
+contents, truncated, err := client.Sessions().ReadFile(ctx, namespace, runName, "notes/report.txt", 0)
+
+// Function invocation.
+result, err := client.Functions().Invoke(ctx, namespace, runName, &runextensionapi.FunctionInvocationOptions{Input: []byte(`{"value":1}`)})
 ```
 
 ## Consumers

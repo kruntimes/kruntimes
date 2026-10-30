@@ -280,7 +280,7 @@ func (s *Sandbox) ReadFile(ctx context.Context, path string, maxBytes int64) ([]
 	if s == nil || s.client == nil {
 		return nil, false, &StateError{Message: "Sandbox is not available"}
 	}
-	return s.client.extension.ReadSessionFile(ctx, s.run.Namespace, s.run.Name, path, maxBytes)
+	return s.client.extension.Sessions().ReadFile(ctx, s.run.Namespace, s.run.Name, path, maxBytes)
 }
 
 // FileInfo identifies one direct child of a workspace-relative directory.
@@ -298,7 +298,7 @@ func (s *Sandbox) ListFiles(ctx context.Context, options ListFilesOptions) (File
 	if s == nil || s.client == nil {
 		return FilePage{}, &StateError{Message: "Sandbox is not available"}
 	}
-	page, err := s.client.extension.ListSessionFiles(ctx, s.run.Namespace, s.run.Name, &options)
+	page, err := s.client.extension.Sessions().ListFiles(ctx, s.run.Namespace, s.run.Name, &options)
 	if err != nil {
 		return FilePage{}, err
 	}
