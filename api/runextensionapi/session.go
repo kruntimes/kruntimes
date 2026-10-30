@@ -369,9 +369,15 @@ func (s *SessionExecutor) Send(ctx context.Context, operation Operation, idempot
 	if err := s.writeText(ctx, payload); err != nil {
 		return "", fmt.Errorf("send Session operation: %w", err)
 	}
-	select {
-	case event := <-s.accepted:
-		if event.Accepted == nil || event.Accepted.OperationID == "" {
+	for {
+		select {
+		case event := <-s.accepted:
+			// The read loop records the active operation before publishing
+			// accepted, so a fast terminal event cannot clear it before Send
+			// observes the ID.
+			if operationID := acceptedOperationID(event); operationID != "" {
+				return operationID, nil
+			}
 			if err := s.Err(); err != nil {
 				return "", err
 			}
@@ -379,18 +385,31 @@ func (s *SessionExecutor) Send(ctx context.Context, operation Operation, idempot
 				return "", s.ctx.Err()
 			}
 			return "", errors.New("Session connection is closed")
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-s.readerDone:
+			// The server may close the connection immediately after writing
+			// accepted; prefer the buffered accepted frame over the EOF.
+			select {
+			case event := <-s.accepted:
+				if operationID := acceptedOperationID(event); operationID != "" {
+					return operationID, nil
+				}
+			default:
+			}
+			if err := s.Err(); err != nil {
+				return "", err
+			}
+			return "", errors.New("Session connection is closed")
 		}
-		// The read loop records the active operation before publishing accepted,
-		// so a fast terminal event cannot clear it before Send observes the ID.
-		return event.Accepted.OperationID, nil
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case <-s.readerDone:
-		if err := s.Err(); err != nil {
-			return "", err
-		}
-		return "", errors.New("Session connection is closed")
 	}
+}
+
+func acceptedOperationID(event OperationEvent) string {
+	if event.Accepted == nil {
+		return ""
+	}
+	return event.Accepted.OperationID
 }
 
 // Cancel requests cancellation of the active operation.
