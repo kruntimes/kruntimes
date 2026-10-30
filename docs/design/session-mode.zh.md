@@ -106,14 +106,13 @@ operationID, err := session.Send(ctx, sandbox.Operation{Command: &sandbox.Comman
 if err != nil {
 	return err
 }
-for {
-	event, err := session.Receive(ctx)
-	if err != nil {
-		return err
-	}
+for event := range session.Receive() {
 	if event.Completed != nil || event.Failed != nil {
 		break
 	}
+}
+if err := session.Err(); err != nil {
+	return err
 }
 ```
 

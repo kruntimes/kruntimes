@@ -31,14 +31,13 @@ if err != nil {
     return err
 }
 _ = operationID // retain this ID to call session.Cancel when needed
-for {
-    event, err := session.Receive(ctx)
-    if err != nil {
-        return err
-    }
+for event := range session.Receive() {
     if event.Completed != nil || event.Failed != nil {
         break
     }
+}
+if err := session.Err(); err != nil {
+    return err
 }
 ```
 

@@ -73,7 +73,10 @@ raw, err := client.Runs().Logs(namespace, runName, options).Do(ctx)
 // Session operations: one persistent executor per connection.
 executor, err := client.Sessions().NewExecutor(ctx, namespace, runName, &runextensionapi.SessionOptions{HeartbeatInterval: 5 * time.Second})
 operationID, err := executor.Send(ctx, operation)
-event, err := executor.Receive(ctx)
+for event := range executor.Receive() {
+	// output, progress, completed, or failed
+}
+if err := executor.Err(); err != nil { /* stream failure */ }
 contents, truncated, err := client.Sessions().ReadFile(ctx, namespace, runName, "notes/report.txt", 0)
 
 // Function invocation.

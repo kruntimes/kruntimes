@@ -237,11 +237,7 @@ func TestAggregatedSessionAPIStreamsCommandOutput(t *testing.T) {
 	var stdout strings.Builder
 	var firstOutputAt, completedAt time.Time
 	lastSequence := int64(1) // Send consumes the accepted event with sequence 1.
-	for {
-		event, err := session.Receive(ctx)
-		if err != nil {
-			t.Fatalf("receive streaming event: %v", err)
-		}
+	for event := range session.Receive() {
 		if event.Sequence != lastSequence+1 {
 			t.Fatalf("event sequence = %d after %d", event.Sequence, lastSequence)
 		}
@@ -269,6 +265,10 @@ func TestAggregatedSessionAPIStreamsCommandOutput(t *testing.T) {
 			return
 		}
 	}
+	if err := session.Err(); err != nil {
+		t.Fatalf("receive streaming event: %v", err)
+	}
+	t.Fatal("Session stream closed before completion")
 }
 
 func TestAggregatedRunLogAPIServesAuthorizedRunLogs(t *testing.T) {
@@ -536,12 +536,7 @@ func TestAggregatedSessionRunCancellationTerminatesActiveCommand(t *testing.T) {
 			commandErr <- err
 			return
 		}
-		for {
-			event, err := session.Receive(ctx)
-			if err != nil {
-				commandErr <- err
-				return
-			}
+		for event := range session.Receive() {
 			if event.Failed != nil {
 				commandErr <- fmt.Errorf("Session operation failed: %s", event.Failed.Message)
 				return
@@ -551,6 +546,7 @@ func TestAggregatedSessionRunCancellationTerminatesActiveCommand(t *testing.T) {
 				return
 			}
 		}
+		commandErr <- session.Err()
 	}()
 
 	waitForSessionCommandFile(t, client, run, "started", commandErr)
@@ -593,12 +589,7 @@ func TestAggregatedSessionRunDrainCompletesAcceptedCommand(t *testing.T) {
 			commandErr <- err
 			return
 		}
-		for {
-			event, err := session.Receive(ctx)
-			if err != nil {
-				commandErr <- err
-				return
-			}
+		for event := range session.Receive() {
 			if event.Failed != nil {
 				commandErr <- fmt.Errorf("Session operation failed: %s", event.Failed.Message)
 				return
@@ -608,6 +599,7 @@ func TestAggregatedSessionRunDrainCompletesAcceptedCommand(t *testing.T) {
 				return
 			}
 		}
+		commandErr <- session.Err()
 	}()
 
 	// A successful read proves runtimed accepted the command before Drain
@@ -680,11 +672,7 @@ func TestSandboxSDKUsesAggregatedSessionAPI(t *testing.T) {
 		t.Fatalf("send SDK Session command: %v", err)
 	}
 	var output bytes.Buffer
-	for {
-		event, err := connection.Receive(ctx)
-		if err != nil {
-			t.Fatalf("receive SDK Session event: %v", err)
-		}
+	for event := range connection.Receive() {
 		if event.Output != nil && event.Output.Stream == "stdout" {
 			output.Write(event.Output.Data)
 		}
@@ -697,6 +685,9 @@ func TestSandboxSDKUsesAggregatedSessionAPI(t *testing.T) {
 		if event.Failed != nil {
 			t.Fatalf("SDK Session operation %s failed: %#v", operationID, event.Failed)
 		}
+	}
+	if err := connection.Err(); err != nil {
+		t.Fatalf("receive SDK Session event: %v", err)
 	}
 	if output.String() != "sdk-aggregated" {
 		t.Fatalf("SDK Session output = %q, want sdk-aggregated", output.String())
@@ -726,15 +717,14 @@ func TestSandboxSDKUsesAggregatedSessionAPI(t *testing.T) {
 			operationCancel()
 			t.Fatalf("send SDK Session file operation %q: %v", name, err)
 		}
-		for {
-			event, err := connection.Receive(operationCtx)
-			if err != nil {
-				operationCancel()
-				t.Fatalf("receive SDK Session file operation %q: %v", name, err)
-			}
+		for event := range connection.Receive() {
 			if event.Completed != nil {
 				break
 			}
+		}
+		if err := connection.Err(); err != nil {
+			operationCancel()
+			t.Fatalf("receive SDK Session file operation %q: %v", name, err)
 		}
 		operationCancel()
 		t.Logf("SDK Session file operation %q completed in %s", name, time.Since(started))

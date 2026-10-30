@@ -124,9 +124,13 @@ func TestNewExecutorUsesAggregatedPath(t *testing.T) {
 	if err != nil || operationID != "op-1" {
 		t.Fatalf("Send() = %q, %v", operationID, err)
 	}
-	event, err := executor.Receive(t.Context())
-	if err != nil || event.Completed == nil {
-		t.Fatalf("Receive() = %#v, %v", event, err)
+	select {
+	case event := <-executor.Receive():
+		if event.Completed == nil {
+			t.Fatalf("Receive event = %#v, want completed", event)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for a Session event")
 	}
 }
 

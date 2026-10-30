@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -177,11 +178,7 @@ func runSessionOperation(ctx context.Context, client *runextensionapi.Client, ru
 		return sessionOperationResult{}, err
 	}
 	var result sessionOperationResult
-	for {
-		event, err := session.Receive(ctx)
-		if err != nil {
-			return sessionOperationResult{}, err
-		}
+	for event := range session.Receive() {
 		if event.Output != nil {
 			switch event.Output.Stream {
 			case "stdout":
@@ -202,6 +199,10 @@ func runSessionOperation(ctx context.Context, client *runextensionapi.Client, ru
 			return result, nil
 		}
 	}
+	if err := session.Err(); err != nil {
+		return sessionOperationResult{}, err
+	}
+	return sessionOperationResult{}, errors.New("Session stream closed before completion")
 }
 
 func sessionOptions(run *v1alpha1.Run) *runextensionapi.SessionOptions {

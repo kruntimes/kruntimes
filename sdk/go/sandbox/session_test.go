@@ -115,9 +115,13 @@ func TestSandboxSessionSendsReceivesAndCloses(t *testing.T) {
 	if err != nil || operationID != "operation-1" {
 		t.Fatalf("Send = %q, %v", operationID, err)
 	}
-	event, err := session.Receive(t.Context())
-	if err != nil || event.Type != "completed" || event.Completed == nil {
-		t.Fatalf("Receive = %#v, %v", event, err)
+	select {
+	case event := <-session.Receive():
+		if event.Type != "completed" || event.Completed == nil {
+			t.Fatalf("Receive = %#v", event)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for a Session event")
 	}
 }
 

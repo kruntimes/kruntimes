@@ -22,6 +22,7 @@ const (
 	sessionFrameTypeSend      = "send"
 	sessionFrameTypeCancel    = "cancel"
 	sessionFrameTypeHeartbeat = "heartbeat"
+	sessionEventBufferSize    = 64
 )
 
 // SessionsInterface exposes Session operations and Session workspace files.
@@ -37,7 +38,8 @@ type SessionOptions struct {
 }
 
 // NewExecutor opens a persistent Session connection to a ready Session Run
-// through the aggregated Session API.
+// through the aggregated Session API. The context bounds the executor's
+// lifetime; Receive closes when that context is done or Close is called.
 func (s SessionsInterface) NewExecutor(ctx context.Context, namespace, runName string, options *SessionOptions) (*SessionExecutor, error) {
 	if s.client == nil || s.client.sessions == nil || s.client.sessionDialer == nil {
 		return nil, errors.New("Run extension API Session connection is not configured")
@@ -60,10 +62,19 @@ func (s SessionsInterface) NewExecutor(ctx context.Context, namespace, runName s
 		}
 		return nil, fmt.Errorf("open Session connection: %w", err)
 	}
-	executor := &SessionExecutor{connection: connection}
+	executorContext, cancel := context.WithCancel(ctx)
+	executor := &SessionExecutor{
+		connection: connection,
+		ctx:        executorContext,
+		cancel:     cancel,
+		events:     make(chan OperationEvent, sessionEventBufferSize),
+		accepted:   make(chan OperationEvent, 1),
+		readerDone: make(chan struct{}),
+	}
 	if options != nil && options.HeartbeatInterval > 0 {
 		executor.startHeartbeat(options.HeartbeatInterval)
 	}
+	go executor.readLoop()
 	return executor, nil
 }
 
@@ -260,8 +271,23 @@ func sessionFilePath(path string) (string, error) {
 
 // SessionExecutor is one replaceable, persistent connection to a ready Session
 // Run. Closing it does not terminate the Run or release Runtime capacity.
+//
+// Send submits one operation and Receive exposes the ordered event channel:
+//
+//	executor, err := client.Sessions().NewExecutor(ctx, namespace, runName, nil)
+//	operationID, err := executor.Send(ctx, operation)
+//	for event := range executor.Receive() {
+//	    // output, progress, completed, or failed
+//	}
+//	if err := executor.Err(); err != nil { ... }
 type SessionExecutor struct {
 	connection *gwebsocket.Conn
+	ctx        context.Context
+	cancel     context.CancelFunc
+
+	events     chan OperationEvent
+	accepted   chan OperationEvent
+	readerDone chan struct{}
 
 	writeMu sync.Mutex
 	readMu  sync.Mutex
@@ -269,6 +295,7 @@ type SessionExecutor struct {
 	active  string
 	sending bool
 	closed  bool
+	err     error
 
 	heartbeatStop chan struct{}
 	heartbeatDone chan struct{}
@@ -280,8 +307,34 @@ type sessionSendFrame struct {
 	IdempotencyKey string    `json:"idempotencyKey,omitempty"`
 }
 
+// Receive returns the ordered event stream. The channel closes when the
+// connection ends; call Err after it closes to distinguish a normal Close from
+// a transport failure.
+func (s *SessionExecutor) Receive() <-chan OperationEvent {
+	if s == nil {
+		closed := make(chan OperationEvent)
+		close(closed)
+		return closed
+	}
+	return s.events
+}
+
+// Err returns the terminal stream error. It is nil after a normal Close.
+func (s *SessionExecutor) Err() error {
+	if s == nil {
+		return nil
+	}
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if s.closed {
+		return nil
+	}
+	return s.err
+}
+
 // Send submits one operation and waits for its accepted event. Only one
-// operation may be active on one Session connection at a time.
+// operation may be active on one Session connection at a time. The accepted
+// event is consumed by Send; Receive yields the remaining stream events.
 func (s *SessionExecutor) Send(ctx context.Context, operation Operation, idempotencyKey ...string) (string, error) {
 	if s == nil || s.connection == nil {
 		return "", errors.New("Session connection is not configured")
@@ -316,40 +369,28 @@ func (s *SessionExecutor) Send(ctx context.Context, operation Operation, idempot
 	if err := s.writeText(ctx, payload); err != nil {
 		return "", fmt.Errorf("send Session operation: %w", err)
 	}
-	event, err := s.readEvent(ctx)
-	if err != nil {
-		return "", err
+	select {
+	case event := <-s.accepted:
+		if event.Accepted == nil || event.Accepted.OperationID == "" {
+			if err := s.Err(); err != nil {
+				return "", err
+			}
+			if s.ctx.Err() != nil {
+				return "", s.ctx.Err()
+			}
+			return "", errors.New("Session connection is closed")
+		}
+		// The read loop records the active operation before publishing accepted,
+		// so a fast terminal event cannot clear it before Send observes the ID.
+		return event.Accepted.OperationID, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-s.readerDone:
+		if err := s.Err(); err != nil {
+			return "", err
+		}
+		return "", errors.New("Session connection is closed")
 	}
-	if event.Type != "accepted" || event.Accepted == nil || event.Accepted.OperationID == "" {
-		return "", errors.New("Session did not return an accepted operation")
-	}
-	s.stateMu.Lock()
-	s.active = event.Accepted.OperationID
-	s.stateMu.Unlock()
-	return event.Accepted.OperationID, nil
-}
-
-// Receive returns the next event after Send. It returns a transport error for
-// post-upgrade API errors rather than presenting them as operation events.
-func (s *SessionExecutor) Receive(ctx context.Context) (OperationEvent, error) {
-	if s == nil || s.connection == nil {
-		return OperationEvent{}, errors.New("Session connection is not configured")
-	}
-	event, err := s.readEvent(ctx)
-	if err != nil {
-		// An API error terminates the active operation but not necessarily the
-		// persistent Session connection. Permit another operation.
-		s.stateMu.Lock()
-		s.active = ""
-		s.stateMu.Unlock()
-		return OperationEvent{}, err
-	}
-	if event.Completed != nil || event.Failed != nil {
-		s.stateMu.Lock()
-		s.active = ""
-		s.stateMu.Unlock()
-	}
-	return event, nil
 }
 
 // Cancel requests cancellation of the active operation.
@@ -389,11 +430,13 @@ func (s *SessionExecutor) Close() error {
 	}
 	s.closed = true
 	s.stateMu.Unlock()
-	err := s.connection.Close()
 	if s.heartbeatStop != nil {
 		close(s.heartbeatStop)
 		<-s.heartbeatDone
 	}
+	s.cancel()
+	err := s.connection.Close()
+	<-s.readerDone
 	return err
 }
 
@@ -432,6 +475,8 @@ func (s *SessionExecutor) startHeartbeat(interval time.Duration) {
 			select {
 			case <-s.heartbeatStop:
 				return
+			case <-s.ctx.Done():
+				return
 			case <-ticker.C:
 				if err := s.writeHeartbeat(); err != nil {
 					s.stateMu.Lock()
@@ -464,6 +509,48 @@ func (s *SessionExecutor) writeHeartbeat() error {
 		return fmt.Errorf("send Session heartbeat: %w", err)
 	}
 	return nil
+}
+
+func (s *SessionExecutor) readLoop() {
+	defer func() {
+		close(s.events)
+		close(s.accepted)
+		close(s.readerDone)
+	}()
+	for {
+		event, err := s.readEvent(s.ctx)
+		if err != nil {
+			s.stateMu.Lock()
+			if !s.closed {
+				s.err = err
+			}
+			s.stateMu.Unlock()
+			return
+		}
+		if event.Type == "accepted" {
+			if event.Accepted != nil {
+				s.stateMu.Lock()
+				s.active = event.Accepted.OperationID
+				s.stateMu.Unlock()
+			}
+			select {
+			case s.accepted <- event:
+			case <-s.ctx.Done():
+				return
+			}
+			continue
+		}
+		if event.Completed != nil || event.Failed != nil {
+			s.stateMu.Lock()
+			s.active = ""
+			s.stateMu.Unlock()
+		}
+		select {
+		case s.events <- event:
+		case <-s.ctx.Done():
+			return
+		}
+	}
 }
 
 func (s *SessionExecutor) readEvent(ctx context.Context) (OperationEvent, error) {
