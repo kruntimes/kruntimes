@@ -316,3 +316,35 @@ func TestInvokeSendsInputAndInvocationID(t *testing.T) {
 		t.Fatal("Invoke accepted invalid JSON input")
 	}
 }
+
+func TestSessionStreamFailureSurfacesInErr(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	client, _ := newTestClient(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := upgrader.Upgrade(writer, request, nil)
+		if err != nil {
+			return
+		}
+		_ = connection.Close()
+	}))
+	executor, err := client.Sessions().NewExecutor(t.Context(), "team-a", "shell", &SessionOptions{HeartbeatInterval: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("NewExecutor() error = %v", err)
+	}
+	defer executor.Close()
+
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case _, ok := <-executor.Receive():
+			if ok {
+				continue
+			}
+			if executor.Err() == nil {
+				t.Fatal("Err() = nil after the Session transport failed")
+			}
+			return
+		case <-timeout:
+			t.Fatal("timed out waiting for the Session stream to close")
+		}
+	}
+}

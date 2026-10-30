@@ -319,16 +319,14 @@ func (s *SessionExecutor) Receive() <-chan OperationEvent {
 	return s.events
 }
 
-// Err returns the terminal stream error. It is nil after a normal Close.
+// Err returns the terminal stream error. It is nil after a normal Close and
+// retains heartbeat or read failures otherwise.
 func (s *SessionExecutor) Err() error {
 	if s == nil {
 		return nil
 	}
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	if s.closed {
-		return nil
-	}
 	return s.err
 }
 
@@ -499,7 +497,9 @@ func (s *SessionExecutor) startHeartbeat(interval time.Duration) {
 			case <-ticker.C:
 				if err := s.writeHeartbeat(); err != nil {
 					s.stateMu.Lock()
-					s.closed = true
+					if s.err == nil {
+						s.err = fmt.Errorf("send Session heartbeat: %w", err)
+					}
 					s.stateMu.Unlock()
 					_ = s.connection.Close()
 					return
@@ -540,7 +540,7 @@ func (s *SessionExecutor) readLoop() {
 		event, err := s.readEvent(s.ctx)
 		if err != nil {
 			s.stateMu.Lock()
-			if !s.closed {
+			if !s.closed && s.err == nil {
 				s.err = err
 			}
 			s.stateMu.Unlock()
