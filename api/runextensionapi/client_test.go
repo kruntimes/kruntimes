@@ -3,6 +3,7 @@ package runextensionapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -101,39 +102,88 @@ func TestNewExecutorUsesAggregatedPath(t *testing.T) {
 			return
 		}
 		defer connection.Close()
-		var send struct {
-			Type      string    `json:"type"`
-			Operation Operation `json:"operation"`
+		sequence := int64(0)
+		write := func(value map[string]any) bool {
+			sequence++
+			value["sequence"] = sequence
+			if err := connection.WriteJSON(value); err != nil {
+				t.Errorf("write event: %v", err)
+				return false
+			}
+			return true
 		}
-		if err := connection.ReadJSON(&send); err != nil {
-			t.Errorf("read send: %v", err)
-			return
+		for index := 1; index <= 2; index++ {
+			var send struct {
+				Type      string    `json:"type"`
+				Operation Operation `json:"operation"`
+			}
+			if err := connection.ReadJSON(&send); err != nil {
+				t.Errorf("read send %d: %v", index, err)
+				return
+			}
+			expected := fmt.Sprintf("echo %d", index)
+			if send.Type != "send" || send.Operation.Command == nil || send.Operation.Command.Shell != expected {
+				t.Errorf("send frame %d = %#v, want shell %q", index, send, expected)
+				return
+			}
+			operationID := fmt.Sprintf("op-%d", index)
+			if !write(map[string]any{"type": "accepted", "accepted": map[string]string{"operationID": operationID}}) {
+				return
+			}
+			if !write(map[string]any{"type": "output", "output": map[string]any{"stream": "stdout", "data": []byte(fmt.Sprintf("result-%d", index))}}) {
+				return
+			}
+			if !write(map[string]any{"type": "completed", "completed": map[string]any{"command": map[string]any{"exitCode": index - 1}}}) {
+				return
+			}
 		}
-		if send.Type != "send" || send.Operation.Command == nil || send.Operation.Command.Shell != "echo ok" {
-			t.Errorf("send frame = %#v", send)
-		}
-		_ = connection.WriteJSON(map[string]any{"sequence": 1, "type": "accepted", "accepted": map[string]string{"operationID": "op-1"}})
-		_ = connection.WriteJSON(map[string]any{"sequence": 2, "type": "completed", "completed": map[string]any{"command": map[string]any{"exitCode": 0}}})
 	}))
 	executor, err := client.Sessions().NewExecutor(t.Context(), "team-a", "shell", nil)
 	if err != nil {
 		t.Fatalf("NewExecutor() error = %v", err)
 	}
 	defer executor.Close()
-	operationID, err := executor.Send(t.Context(), Operation{Command: &Command{Shell: "echo ok"}})
-	if err != nil || operationID != "op-1" {
-		t.Fatalf("Send() = %q, %v", operationID, err)
-	}
-	select {
-	case event := <-executor.Receive():
-		if event.Completed == nil {
-			t.Fatalf("Receive event = %#v, want completed", event)
+	for index := 1; index <= 2; index++ {
+		operationID, err := executor.Send(t.Context(), Operation{Command: &Command{Shell: fmt.Sprintf("echo %d", index)}})
+		if err != nil || operationID != fmt.Sprintf("op-%d", index) {
+			t.Fatalf("Send(%d) = %q, %v", index, operationID, err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for a Session event")
+		output, exitCode := receiveCompletedOperation(t, executor.Receive())
+		if string(output) != fmt.Sprintf("result-%d", index) || exitCode != int32(index-1) {
+			t.Fatalf("operation %d output = %q exitCode = %d", index, output, exitCode)
+		}
 	}
 }
 
+// receiveCompletedOperation drains events until the terminal completion event.
+func receiveCompletedOperation(t *testing.T, events <-chan OperationEvent) ([]byte, int32) {
+	t.Helper()
+	var stdout []byte
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				t.Fatal("Session event channel closed before completion")
+			}
+			if event.Output != nil && event.Output.Stream == "stdout" {
+				stdout = append(stdout, event.Output.Data...)
+			}
+			if event.Failed != nil {
+				t.Fatalf("Session operation failed: %s", event.Failed.Message)
+			}
+			if event.Completed != nil {
+				exitCode := int32(0)
+				if event.Completed.Command != nil {
+					exitCode = event.Completed.Command.ExitCode
+				}
+				return stdout, exitCode
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for Session completion")
+		}
+	}
+}
 func TestSessionHeartbeatUsesConfiguredInterval(t *testing.T) {
 	heartbeats := make(chan struct{}, 1)
 	upgrader := websocket.Upgrader{}
