@@ -158,13 +158,9 @@ app: kruntimes-console
 {{- if not .Values.console.tls.certificateKey -}}{{- fail "console.tls.certificateKey is required" -}}{{- end -}}
 {{- if not .Values.console.tls.privateKeyKey -}}{{- fail "console.tls.privateKeyKey is required" -}}{{- end -}}
 {{- if not .Values.console.tls.caBundleKey -}}{{- fail "console.tls.caBundleKey is required" -}}{{- end -}}
-{{- if le (int64 .Values.console.access.maxRequestBodyBytes) 0 -}}{{- fail "console.access.maxRequestBodyBytes must be positive" -}}{{- end -}}
-{{- if le (int64 .Values.console.access.maxResponseBodyBytes) 0 -}}{{- fail "console.access.maxResponseBodyBytes must be positive" -}}{{- end -}}
-{{- if le (int64 .Values.console.access.maxHeaderBytes) 0 -}}{{- fail "console.access.maxHeaderBytes must be positive" -}}{{- end -}}
 {{- if and .Values.console.tls.selfSigned .Values.console.tls.certManager.enabled -}}{{- fail "console.tls.selfSigned and console.tls.certManager.enabled are mutually exclusive" -}}{{- end -}}
 {{- if and (not .Values.console.tls.selfSigned) (not .Values.console.tls.certManager.enabled) (not .Values.console.tls.secretName) -}}{{- fail "console.tls.secretName is required when using an existing TLS Secret" -}}{{- end -}}
 {{- if and .Values.console.tls.certManager.enabled (not .Values.console.tls.certManager.issuerRef.name) -}}{{- fail "console.tls.certManager.issuerRef.name is required when console.tls.certManager.enabled is true" -}}{{- end -}}
-{{- if and .Values.console.tls.clientCASecretName (not .Values.console.tls.clientCAKey) -}}{{- fail "console.tls.clientCAKey is required when console.tls.clientCASecretName is set" -}}{{- end -}}
 {{- end }}
 
 {{- define "kruntimes.console.ensureTLSCertificates" -}}

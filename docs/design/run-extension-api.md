@@ -2,9 +2,10 @@
 
 ## Status
 
-The Kubernetes aggregated API serves Run logs and CLI Session operations.
-Console's Runtime Gateway remains available for SDK and browser Session access
-and Function operations.
+The Kubernetes aggregated API serves Run logs, Session operations and files,
+and Function invocation for every client. Console relays browser Session
+operations to it and no longer embeds or exposes a Runtime gateway. The
+controller no longer populates `Run.status.endpoint`; that field is deprecated.
 
 ## Problem
 
@@ -59,27 +60,40 @@ its HTTP code, reason, and actionable message for `krt` and Dashboard. In
 particular, a `409 Conflict` means the Run's assigned Runtime Pod no longer
 exists, so its ephemeral container logs cannot be recovered.
 
-Go callers use `internal/logapi.Client` in the same shape as client-go log
-requests:
+Go callers use `api/runextensionapi.Client`, which executes every request
+through client-go REST clients built from the kubeconfig:
 
 ```go
-request := logs.GetLogs(namespace, runName, &logapi.RunLogOptions{Follow: true})
-stream, err := request.Stream(ctx)
+client, err := runextensionapi.NewForConfig(restConfig)
 
-raw, err := logs.GetLogs(namespace, runName, options).Do(ctx).Raw()
+// Run logs: Stream for follow, Do for a bounded snapshot.
+stream, err := client.Runs().Logs(namespace, runName, &runextensionapi.RunLogOptions{Follow: true}).Stream(ctx)
+raw, err := client.Runs().Logs(namespace, runName, options).Do(ctx)
+
+// Session operations: one persistent executor per connection.
+executor, err := client.Sessions().NewExecutor(ctx, namespace, runName, &runextensionapi.SessionOptions{HeartbeatInterval: 5 * time.Second})
+operationID, err := executor.Send(ctx, operation)
+for event := range executor.Receive() {
+	// output, progress, completed, or failed
+}
+if err := executor.Err(); err != nil { /* stream failure */ }
+contents, truncated, err := client.Sessions().ReadFile(ctx, namespace, runName, "notes/report.txt", 0)
+
+// Function invocation.
+result, err := client.Functions().Invoke(ctx, namespace, runName, &runextensionapi.FunctionInvocationOptions{Input: []byte(`{"value":1}`)})
 ```
 
 ## Consumers
 
 `krt logs` always uses the current kubeconfig's Kubernetes API endpoint; it has
-no Gateway URL, Gateway CA, or TLS-skip flags. Dashboard keeps the login token
-in an HttpOnly cookie and forwards it server-side to the aggregated API. Neither
+no separate gateway URL, CA, or TLS-skip flags. Console keeps the login token in
+an HttpOnly cookie and forwards it server-side to the aggregated API. Neither
 client needs `runs get`, Pod discovery, `pods/log`, or Pod port-forward access
 to retrieve logs.
 
-Runtime Gateway has no Run-log route and no `pods/log` RBAC. This keeps its
-Session and Function authorization boundary separate from the Kubernetes
-aggregation boundary.
+Console has no Runtime access route and no Runtime Pod network access. Every
+Run data-plane request is authorized by kube-apiserver against the matching
+aggregated Run subresource.
 
 ## Session operations
 
@@ -98,10 +112,49 @@ The existing `logs.kruntimes.io` path remains available.
 The Runtime controller's NetworkPolicy permits `run-extension-api` Pods to
 reach the Runtime Service's Session gRPC port.
 
+The backend also serves bounded workspace file reads for the same Session
+subresource:
+
+```
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files/{path}
+```
+
+The list endpoint selects one bounded page of direct children with `path`,
+`limit`, and `pageToken` and returns `entries` and `nextPageToken`. The read
+endpoint returns base64 `contents` and `truncated`, bounded by `maxBytes`. The
+`files` segment stays below the `session` subresource segment, so the API server
+authorizes both endpoints with the same `get` on
+`sessions.kruntimes.io/runs/session`; no additional permission is required. The
+backend resolves the ready Session Run and reads the file from the owning
+runtimed, exactly like a Session operation.
+
+## Function invocation
+
+The same backend also serves a third APIService:
+
+```
+POST /apis/functions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/function
+```
+
+The API server authenticates the caller and authorizes `create` on
+`functions.kruntimes.io/runs/function` for the named Run. The request body is one
+bounded JSON value and the optional `X-Kruntime-Invocation-ID` header carries an
+idempotency key bounded to 128 bytes. The backend loads the ready Function Run,
+invokes the runtimed FunctionRuntime proxy, and returns:
+
+```json
+{"invocationId":"...","output":"<base64>","contentType":"...","outputs":{}}
+```
+
+Request and response sizes use the backend's bounded limits. A request that
+cannot be authorized or admitted fails with an HTTP error before any invocation
+is admitted.
+
 ## Installation
 
-`runExtensionAPI.enabled` defaults to true and is independent of `gateway.enabled`.
-Both APIService objects are cluster-scoped, so exactly one platform release in a
+`runExtensionAPI.enabled` defaults to true.
+All APIService objects are cluster-scoped, so exactly one platform release in a
 cluster must own each group/version. Set `runExtensionAPI.enabled: false` for
 other releases.
 

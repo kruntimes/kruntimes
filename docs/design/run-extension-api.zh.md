@@ -2,8 +2,9 @@
 
 ## 状态
 
-Kubernetes 聚合 API 提供 Run logs 和 CLI Session operation。Console 的 Runtime Gateway
-仍为 SDK 和浏览器提供 Session access，以及 Function operation。
+Kubernetes 聚合 API 为所有 client 提供 Run logs、Session operation 与文件访问，以及
+Function invocation。Console 把浏览器的 Session operation 转发给它，不再内嵌或暴露 Runtime
+gateway。controller 不再写入 `Run.status.endpoint`；该字段已废弃。
 
 ## 问题
 
@@ -51,24 +52,38 @@ HTTP error。
 和可操作的 message，供 `krt` 与 Dashboard 展示。特别地，`409 Conflict` 表示该 Run 分配的
 Runtime Pod 已不存在，因此其 ephemeral container logs 无法恢复。
 
-Go caller 使用与 client-go log request 类似的 `internal/logapi.Client`：
+Go caller 使用 `api/runextensionapi.Client`；所有 request 都通过基于 kubeconfig 构建的
+client-go REST client 执行：
 
 ```go
-request := logs.GetLogs(namespace, runName, &logapi.RunLogOptions{Follow: true})
-stream, err := request.Stream(ctx)
+client, err := runextensionapi.NewForConfig(restConfig)
 
-raw, err := logs.GetLogs(namespace, runName, options).Do(ctx).Raw()
+// Run logs：follow 用 Stream，bounded snapshot 用 Do。
+stream, err := client.Runs().Logs(namespace, runName, &runextensionapi.RunLogOptions{Follow: true}).Stream(ctx)
+raw, err := client.Runs().Logs(namespace, runName, options).Do(ctx)
+
+// Session operation：每个 connection 一个 persistent executor。
+executor, err := client.Sessions().NewExecutor(ctx, namespace, runName, &runextensionapi.SessionOptions{HeartbeatInterval: 5 * time.Second})
+operationID, err := executor.Send(ctx, operation)
+for event := range executor.Receive() {
+	// output、progress、completed 或 failed
+}
+if err := executor.Err(); err != nil { /* stream failure */ }
+contents, truncated, err := client.Sessions().ReadFile(ctx, namespace, runName, "notes/report.txt", 0)
+
+// Function invocation。
+result, err := client.Functions().Invoke(ctx, namespace, runName, &runextensionapi.FunctionInvocationOptions{Input: []byte(`{"value":1}`)})
 ```
 
 ## Consumers
 
 `krt logs` 始终使用当前 kubeconfig 的 Kubernetes API endpoint，不再有 Gateway URL、Gateway CA 或
-跳过 TLS verification 的 flags。Dashboard 将 login token 保存在 HttpOnly cookie 中，并只在 server
+跳过 TLS verification 的 flags。Console 将 login token 保存在 HttpOnly cookie 中，并只在 server
 side 转发给聚合 API。两个 client 读取日志均不需要 `runs get`、Pod discovery、`pods/log` 或
 Pod port-forward 权限。
 
-Runtime Gateway 没有 Run-log route，也没有 `pods/log` RBAC；其 Session 和 Function authorization
-boundary 与 Kubernetes aggregation boundary 保持分离。
+Console 没有 Runtime access route，也没有 Runtime Pod 网络访问权限；所有 Run data-plane
+request 都由 kube-apiserver 针对对应聚合 Run subresource 授权。
 
 ## Session operation
 
@@ -86,9 +101,42 @@ GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/sess
 Runtime controller 的 NetworkPolicy 允许 `run-extension-api` Pod 访问 Runtime
 Service 的 Session gRPC 端口。
 
+backend 还在同一个 Session subresource 下提供有界的 workspace 文件读取：
+
+```
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files/{path}
+```
+
+list endpoint 通过 `path`、`limit` 和 `pageToken` 选择一页有界的 direct children，返回
+`entries` 与 `nextPageToken`。read endpoint 返回 base64 `contents` 与 `truncated`，并由
+`maxBytes` 限制大小。`files` 段位于 `session` subresource 段之下，因此 API server 对这两个
+endpoint 使用同一个 `sessions.kruntimes.io/runs/session` `get` 权限授权，无需额外权限。
+backend 读取指定的 Ready Session Run，并从 owner runtimed 读取文件，与 Session operation 一致。
+
+## Function invocation
+
+同一个 backend 还提供第三个 APIService：
+
+```
+POST /apis/functions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/function
+```
+
+API server 认证 caller，并授权指定 Run 的 `functions.kruntimes.io/runs/function` 的
+`create`。request body 是一个 bounded JSON value；可选的 `X-Kruntime-Invocation-ID` header
+携带最长 128 字节的 idempotency key。backend 读取 Ready Function Run，调用 runtimed 的
+FunctionRuntime proxy，返回：
+
+```json
+{"invocationId":"...","output":"<base64>","contentType":"...","outputs":{}}
+```
+
+request 与 response 大小受 backend 的 bounded limit 限制；无法授权或无法 admit 的请求会在任何
+invocation 被接收前返回 HTTP error。
+
 ## 安装
 
-`runExtensionAPI.enabled` 默认是 true，且独立于 `gateway.enabled`。两个 APIService 都是
+`runExtensionAPI.enabled` 默认是 true。所有 APIService 都是
 cluster-scoped，因此同一集群中每个 group/version 必须由一个 platform release 拥有；其它 release 设置
 `runExtensionAPI.enabled: false`。
 

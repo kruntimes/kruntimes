@@ -13,15 +13,15 @@ never sent to the Runtime Pod.
 
 ## Prerequisites
 
-- A Kubernetes cluster with kruntimes installed and the shared Runtime gateway
-  enabled.
+- A Kubernetes cluster with kruntimes installed and the aggregated Run
+  extension API enabled (`runExtensionAPI.enabled=true`, the default).
 - An image registry that your cluster can pull from.
 - `kubectl`, Python 3.10+, and an `OPENAI_API_KEY` in the local environment.
 - A caller identity allowed to create, get, update, and delete `kruntimes.io/runs` in
-  the target namespace. Gateway requests require `get` access to that Run.
-  For local access, it also needs `get` on the shared gateway Service and
-  `get`, `list` on its Pods in the gateway namespace to establish the scoped
-  port-forward.
+  the target namespace. Session connections and file operations need `get` on
+  `sessions.kruntimes.io` `runs/session`; `krt logs` needs `get` on
+  `logs.kruntimes.io` `runs/log`. No Console or Runtime Pod port-forward access
+  is required.
 
 ## Deploy the Runtime
 
@@ -63,9 +63,10 @@ export OPENAI_API_KEY=<key>
 python agent.py --namespace agent-demo
 ```
 
-The local SDK starts a scoped `kubectl port-forward` to the shared Runtime
-gateway. It preserves the endpoint path published in `Run.status.endpoint` and
-does not expose runtimed or Runtime Server gRPC ports.
+The local SDK uses the active kubeconfig directly. Session connections and file
+requests go through kube-apiserver, which applies the kubeconfig CA, client
+certificate, and bearer token; no port-forward or `Run.status.endpoint` read is
+involved.
 
 The agent accepts only `pods`, `events`, `services`, `deployments`, and
 `replicasets` tool calls. It maps them to argv-only `kubectl get` commands
@@ -79,4 +80,4 @@ krt logs "${RUN_NAME}" --namespace agent-demo
 ```
 
 For an in-cluster agent, add `--in-cluster`. The agent Pod's ServiceAccount
-needs the same Run and gateway permissions described above.
+needs the same Run and aggregated Session API permissions described above.

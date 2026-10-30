@@ -69,8 +69,9 @@ other external exposure separately.
 ## Run Extension API
 
 `runExtensionAPI.enabled` defaults to `true` independently of the always-installed
-Kruntimes Console. It installs the `logs.kruntimes.io/v1alpha1` and
-`sessions.kruntimes.io/v1alpha1` APIServices on a dedicated backend.
+Kruntimes Console. It installs the `logs.kruntimes.io/v1alpha1`,
+`sessions.kruntimes.io/v1alpha1`, and `functions.kruntimes.io/v1alpha1`
+APIServices on a dedicated backend.
 This is the default transport for `krt logs` and Console: normal kubeconfig
 authentication, including client certificates, is verified by the Kubernetes
 API server. The caller needs `get` on the `logs.kruntimes.io` `runs/log`
@@ -91,13 +92,15 @@ Helm values files, except `image`: the old image contains a log-only binary.
 New configurations should use `runExtensionAPI` and the
 `run-extension-apiserver` image.
 
-Console and `krt logs` always use this aggregated API. Console's embedded
-Runtime access API continues to serve Session and Function endpoints, but does
-not serve Run logs.
+Run logs, browser Session operations, Session file reads, and Function
+invocation use this aggregated API. Console relays browser Session operations
+to it and holds no Runtime data plane.
 
 `krt session exec` and `krt session attach` use the Session subresource through
 the Kubernetes API server. Callers need `get` on both the named
 `kruntimes.io/runs` resource and `sessions.kruntimes.io/runs/session`.
+Function callers need `create` on `functions.kruntimes.io` `runs/function` for
+the named Run.
 
 ### Public resource lists
 

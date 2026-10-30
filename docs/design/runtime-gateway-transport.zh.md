@@ -1,6 +1,6 @@
 # Runtime Gateway 传输安全与传输边界
 
-状态：**Proposed**
+状态：**已废弃。** 共享 Runtime gateway 已删除；Runtime access 现在通过聚合 Run extension API 完成，Console 不再提供 data plane。本文仅保留作历史参考。
 
 ## 问题
 

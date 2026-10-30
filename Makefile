@@ -134,7 +134,7 @@ test-sdk-python: ## Run Python Sandbox SDK and diagnosis agent unit tests.
 
 .PHONY: test-race
 test-race: generate manifests proto ## Run focused Go race-detector coverage for runtime and control-plane packages.
-	go test -race ./internal/controller ./internal/scheduler ./internal/runtimed ./internal/gateway ./runtimes/bash ./sdk/go/sandbox -count=1
+	go test -race ./internal/controller ./internal/scheduler ./internal/runtimed ./internal/runextensionapi ./api/runextensionapi ./runtimes/bash ./sdk/go/sandbox -count=1
 
 .PHONY: govulncheck
 govulncheck: govulncheck-tool ## Run govulncheck against all Go packages.
@@ -176,8 +176,6 @@ E2E_IMG_PYTHON_RUNTIME ?= kruntimes-python-runtime:$(E2E_IMAGE_TAG)
 E2E_IMG_DIAGNOSIS_RUNTIME ?= kruntimes-diagnosis-runtime:$(E2E_IMAGE_TAG)
 E2E_TEST ?=
 E2E_CERT_MANAGER ?= false
-E2E_CONSOLE_BOUNDS ?= false
-E2E_CONSOLE_HELM_ARGS ?=
 E2E_TEST_TIMEOUT ?= 20m
 # E2E_PARALLEL bounds how many scenarios marked with t.Parallel() run at once.
 # Set E2E_PARALLEL=1 to force the historical serial order. Tests that restart
@@ -237,7 +235,6 @@ e2e-test: generate ## Run E2E tests against the kind cluster.
 		KRUNTIMES_DIAGNOSIS_RUNTIME_IMAGE=$(E2E_IMG_DIAGNOSIS_RUNTIME) \
 		KRUNTIMES_RUNTIMED_IMAGE=$(E2E_IMG_RUNTIMED) \
 		KRUNTIMES_E2E_CERT_MANAGER=$(E2E_CERT_MANAGER) \
-		KRUNTIMES_E2E_CONSOLE_BOUNDS=$(E2E_CONSOLE_BOUNDS) \
 		go test ./test/e2e/... -json -count=1 -failfast -parallel $(E2E_PARALLEL) -timeout $(E2E_TEST_TIMEOUT) $(E2E_TEST_ARGS) \
 		| go run ./hack/e2e-timings \
 			-parallel $(E2E_PARALLEL) \
@@ -281,14 +278,8 @@ e2e-cert-manager-run: E2E_IMAGE_TAG := $(E2E_RUN_IMAGE_TAG)
 e2e-cert-manager-run: E2E_CERT_MANAGER := true
 e2e-cert-manager-run: e2e-test-required e2e-cert-manager-setup e2e-test ## Opt in to cert-manager E2E. Requires E2E_TEST.
 
-.PHONY: e2e-console-bounds-run
-e2e-console-bounds-run: E2E_IMAGE_TAG := $(E2E_RUN_IMAGE_TAG)
-e2e-console-bounds-run: E2E_CONSOLE_BOUNDS := true
-e2e-console-bounds-run: E2E_CONSOLE_HELM_ARGS := --set console.access.maxRequestBodyBytes=512 --set console.access.maxResponseBodyBytes=512 --set console.access.maxHeaderBytes=262144
-e2e-console-bounds-run: e2e-test-required e2e-setup e2e-test ## Opt in to Console access transfer-bounds E2E. Requires E2E_TEST.
-
 # Preserve setup-before-test ordering even when make is invoked with -j.
-.NOTPARALLEL: e2e-setup e2e e2e-run e2e-cert-manager-setup e2e-cert-manager-run e2e-console-bounds-run
+.NOTPARALLEL: e2e-setup e2e e2e-run e2e-cert-manager-setup e2e-cert-manager-run
 
 .PHONY: e2e-cleanup
 e2e-cleanup: ## Delete the kind cluster.

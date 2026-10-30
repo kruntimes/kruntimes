@@ -111,8 +111,6 @@ type Controller struct {
 	// workspace for Runtime containers to invoke as kruntime-cache. Empty uses
 	// the current executable.
 	CacheHelperPath   string
-	ConsoleURL        string
-	ConsoleCABundle   []byte
 	Workers           int
 	ArtifactStore     artifact.Store
 	ArtifactStoreSpec *v1alpha1.RuntimeArtifactStoreSpec

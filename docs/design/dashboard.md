@@ -117,7 +117,7 @@ The first version should read the following sources:
 - `Run` objects through the Kubernetes API;
 - Runtime Pod metadata referenced by `Run.status.assignedPod`;
 - Kubernetes Events related to Runs and Runtime Pods when available;
-- runtimed log/status endpoints through a backend-controlled path;
+- Run logs through the aggregated `logs.kruntimes.io` API;
 - `Run.status.outputs` and `Run.status.artifactRefs`.
 
 Future versions can add PersistentWorkspace detail pages and metrics panels.

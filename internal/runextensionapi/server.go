@@ -22,37 +22,44 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/kruntimes/kruntimes/api/runextensionapi"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
-	"github.com/kruntimes/kruntimes/internal/gateway"
-	"github.com/kruntimes/kruntimes/internal/logapi"
+	"github.com/kruntimes/kruntimes/internal/runextensionapi/dataplane"
 	"github.com/kruntimes/kruntimes/internal/runlogs"
 )
 
 const (
-	Group                    = logapi.Group
-	Version                  = logapi.Version
-	SessionGroup             = "sessions.kruntimes.io"
-	defaultTailLines   int64 = 100
-	maxTailLines       int64 = 500
-	defaultTimeout           = 30 * time.Second
-	maxTimeout               = 5 * time.Minute
-	maxSnapshotBytes   int64 = 1 << 20
-	apiGroupPath             = "/apis/" + Group
-	apiVersionPath           = apiGroupPath + "/" + Version
-	runLogPath               = apiVersionPath + "/namespaces/{namespace}/runs/{name}/log"
-	sessionGroupPath         = "/apis/" + SessionGroup
-	sessionVersionPath       = sessionGroupPath + "/" + Version
-	sessionPath              = sessionVersionPath + "/namespaces/{namespace}/runs/{name}/session"
+	Group                     = runextensionapi.GroupLogs
+	Version                   = runextensionapi.Version
+	SessionGroup              = runextensionapi.GroupSessions
+	FunctionGroup             = runextensionapi.GroupFunctions
+	defaultTailLines    int64 = 100
+	maxTailLines        int64 = 500
+	defaultTimeout            = 30 * time.Second
+	maxTimeout                = 5 * time.Minute
+	maxSnapshotBytes    int64 = 1 << 20
+	apiGroupPath              = "/apis/" + Group
+	apiVersionPath            = apiGroupPath + "/" + Version
+	runLogPath                = apiVersionPath + "/namespaces/{namespace}/runs/{name}/log"
+	sessionGroupPath          = "/apis/" + SessionGroup
+	sessionVersionPath        = sessionGroupPath + "/" + Version
+	sessionPath               = sessionVersionPath + "/namespaces/{namespace}/runs/{name}/session"
+	sessionFilesPath          = sessionPath + "/files"
+	sessionFilePath           = sessionPath + "/files/{path...}"
+	functionGroupPath         = "/apis/" + FunctionGroup
+	functionVersionPath       = functionGroupPath + "/" + Version
+	functionPath              = functionVersionPath + "/namespaces/{namespace}/runs/{name}/function"
 )
 
 // Server is an aggregated API backend. Kubernetes authenticates callers and
-// authorizes the runs/log or runs/session resource before proxying here. The
-// server accepts identity headers only over verified aggregation mTLS.
+// authorizes the runs/log, runs/session, or runs/function resource before
+// proxying here. The server accepts identity headers only over verified
+// aggregation mTLS.
 type Server struct {
 	Runs               client.Reader
 	SessionRuns        client.Reader
 	PodLogs            runlogs.PodReader
-	SessionAccess      *gateway.Server
+	DataPlane          *dataplane.Server
 	Address            string
 	TLSCertificateFile string
 	TLSPrivateKeyFile  string
@@ -131,6 +138,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+sessionGroupPath, s.handleSessionAPIGroup)
 	mux.HandleFunc("GET "+sessionVersionPath, s.handleSessionAPIResourceList)
 	mux.HandleFunc(sessionPath, s.handleSession)
+	mux.HandleFunc(sessionFilesPath, s.handleSessionFiles)
+	mux.HandleFunc(sessionFilePath, s.handleSessionFile)
+	mux.HandleFunc("GET "+functionGroupPath, s.handleFunctionAPIGroup)
+	mux.HandleFunc("GET "+functionVersionPath, s.handleFunctionAPIResourceList)
+	mux.HandleFunc(functionPath, s.handleFunction)
 	mux.HandleFunc("/", s.handleNotFound)
 	return mux
 }
@@ -208,22 +220,115 @@ func (s *Server) handleSessionAPIResourceList(w http.ResponseWriter, _ *http.Req
 	})
 }
 
+func (s *Server) handleFunctionAPIGroup(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"kind": "APIGroup", "apiVersion": "v1", "name": FunctionGroup,
+		"versions":         []map[string]string{{"groupVersion": FunctionGroup + "/" + Version, "version": Version}},
+		"preferredVersion": map[string]string{"groupVersion": FunctionGroup + "/" + Version, "version": Version},
+	})
+}
+
+func (s *Server) handleFunctionAPIResourceList(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"kind": "APIResourceList", "apiVersion": "v1", "groupVersion": FunctionGroup + "/" + Version,
+		"resources": []map[string]any{{
+			"name": "runs/function", "singularName": "", "namespaced": true,
+			"kind": "RunFunction", "verbs": []string{"create"},
+		}},
+	})
+}
+
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	run, ok := s.readRun(w, r)
+	if !ok {
+		return
+	}
+	if s.DataPlane == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Session operation access is not configured")
+		return
+	}
+	s.DataPlane.StreamSession(w, r, run)
+}
+
+// handleSessionFiles serves one bounded, paginated page of a ready Session
+// Run's workspace. The file routes stay inside the aggregated Session
+// subresource, so kube-apiserver authorizes them as
+// sessions.kruntimes.io/runs/session get.
+func (s *Server) handleSessionFiles(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.readySessionRun(w, r)
+	if !ok {
+		return
+	}
+	if s.DataPlane == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Session file access is not configured")
+		return
+	}
+	s.DataPlane.ServeSessionFiles(w, r, run)
+}
+
+// handleSessionFile serves one bounded workspace-relative file from a ready
+// Session Run.
+func (s *Server) handleSessionFile(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.readySessionRun(w, r)
+	if !ok {
+		return
+	}
+	path := r.PathValue("path")
+	if path == "" {
+		s.writeError(w, http.StatusNotFound, "endpoint not found")
+		return
+	}
+	if s.DataPlane == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Session file access is not configured")
+		return
+	}
+	s.DataPlane.ServeSessionFile(w, r, run, path)
+}
+
+// readRun authenticates the aggregation identity and loads the named Run for a
+// data-plane request.
+// handleFunction invokes one ready Function Run through the aggregated
+// Run extension API.
+func (s *Server) handleFunction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	run, ok := s.readRun(w, r)
+	if !ok {
+		return
+	}
+	if s.DataPlane == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Function invocation access is not configured")
+		return
+	}
+	if run.Spec.Mode.Function == nil {
+		s.writeError(w, http.StatusNotFound, "Function Run not found")
+		return
+	}
+	if run.Status.Phase != v1alpha1.RunReady || run.Status.AssignedPodUID == "" {
+		s.writeError(w, http.StatusConflict, "Function Run is not Ready")
+		return
+	}
+	s.DataPlane.ServeFunction(w, r, run)
+}
+
+func (s *Server) readRun(w http.ResponseWriter, r *http.Request) (*v1alpha1.Run, bool) {
 	if _, err := s.requestUser(r); err != nil {
 		s.writeError(w, http.StatusUnauthorized, err.Error())
-		return
+		return nil, false
 	}
 	reader := s.SessionRuns
 	if reader == nil {
 		reader = s.Runs
 	}
-	if s.SessionAccess == nil || reader == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "Session access is not configured")
-		return
+	if reader == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Session API is not configured")
+		return nil, false
 	}
 	run := &v1alpha1.Run{}
 	if err := reader.Get(r.Context(), client.ObjectKey{Namespace: r.PathValue("namespace"), Name: r.PathValue("name")}, run); err != nil {
@@ -232,9 +337,31 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.writeError(w, http.StatusServiceUnavailable, "read Run")
 		}
-		return
+		return nil, false
 	}
-	s.SessionAccess.StreamSession(w, r, run)
+	return run, true
+}
+
+// readySessionRun loads the named Run and rejects Runs that cannot serve
+// Session data-plane requests.
+func (s *Server) readySessionRun(w http.ResponseWriter, r *http.Request) (*v1alpha1.Run, bool) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return nil, false
+	}
+	run, ok := s.readRun(w, r)
+	if !ok {
+		return nil, false
+	}
+	if run.Spec.Mode.Session == nil {
+		s.writeError(w, http.StatusNotFound, "Session Run not found")
+		return nil, false
+	}
+	if run.Status.Phase != v1alpha1.RunReady || run.Status.AssignedPodUID == "" {
+		s.writeError(w, http.StatusConflict, "Session Run is not Ready")
+		return nil, false
+	}
+	return run, true
 }
 
 func (s *Server) handleNotFound(w http.ResponseWriter, _ *http.Request) {

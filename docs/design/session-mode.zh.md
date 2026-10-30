@@ -106,14 +106,13 @@ operationID, err := session.Send(ctx, sandbox.Operation{Command: &sandbox.Comman
 if err != nil {
 	return err
 }
-for {
-	event, err := session.Receive(ctx)
-	if err != nil {
-		return err
-	}
+for event := range session.Receive() {
 	if event.Completed != nil || event.Failed != nil {
 		break
 	}
+}
+if err := session.Err(); err != nil {
+	return err
 }
 ```
 
@@ -220,6 +219,9 @@ ArtifactStore transport failure 会使 Run 保持 `Finalizing`，保留 local wo
 
 ## 服务与请求路径
 
+> 共享 Runtime gateway Deployment 与 Service 已删除。Function 与 Session client 使用聚合
+> Run extension API，controller 也不再写入 `Run.status.endpoint`。以下术语为历史说明。
+
 以下概念必须区分：
 
 - **Runtime gateway**：当 Helm chart 的 `gateway.enabled` 为 true 时安装的共享
@@ -274,18 +276,28 @@ authorization error。将 `--authorization-cache-ttl=0` 或
 `--authorization-cache-capacity=0` 任一设为零即可禁用 cache。已缓存成功 decision 最多会在配置的 TTL 内继续
 生效，因此 authorization change 在这段时间后才会影响该 decision。
 
-每个 Console Pod 默认最多接受 128 个并发 Runtime access HTTP request。admission 不会等待：超过单个 Pod limit 的
-request 立即返回 `429 Too Many Requests`，不会在 gateway queue 中无限等待。health check 不消耗 request slot。
-Helm value `console.access.maxConcurrentRequests` 为每个 Console Pod 配置该 limit。持久 Session WebSocket
-使用独立的 `console.access.maxSessionConnections` limit，因此空闲 connection 不会占用普通 HTTP 配额。
+已删除的 Console Runtime gateway 曾为每个 Pod 施加 Runtime access limit，并把 HTTP request 映射到
+`SessionRuntime` gRPC method。现在 client 使用聚合 Session API（`sessions.kruntimes.io`），
+Run extension API 自行执行有界请求处理。下文的表格保留为历史 gateway protocol 描述；
+当前公共 API 见 [Run extension API](run-extension-api.zh.md)。
 
-gateway server 将下列 HTTP API operation 映射到 `SessionRuntime` gRPC method：
+原 gateway server 将下列 HTTP API operation 映射到 `SessionRuntime` gRPC method：
 
 | HTTP API | `SessionRuntime` method | 行为 |
 | --- | --- |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}` | `GetSessionStatus` | 返回 readiness 与 bounded session metadata |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `RenewSessionLease`、`StreamSessionOperation` | 持久 Session connection；认证后的打开和私有 `heartbeat` frame 会续租，client 发送 `send`/`cancel` frame 并接收有序 event frame |
-| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files` | `ReadSessionFile`、`ListSessionFiles` | 有界的 workspace-relative file access |
+
+Session workspace 文件访问通过聚合 Session API（而非 gateway）使用 `ReadSessionFile` 与
+`ListSessionFiles`：
+
+```
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files/{path}
+```
+
+这两个 endpoint 都按 `sessions.kruntimes.io/runs/session` 的 `get` 权限授权，与 Session
+operation 使用同一个权限。
 
 Exec request 必须且只能提供 `argv` 或 `shell`。`argv` 直接执行程序；`shell` 显式选择 Runtime
 shell。二者都支持 bounded stdin、relative working directory、bounded environment overrides 与

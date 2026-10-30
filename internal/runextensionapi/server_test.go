@@ -48,12 +48,50 @@ func TestCursorRoundTripAndEntryIdentity(t *testing.T) {
 
 func TestDiscoveryEndpoints(t *testing.T) {
 	server := &Server{}
-	for _, path := range []string{"/apis/logs.kruntimes.io", "/apis/logs.kruntimes.io/v1alpha1", "/apis/sessions.kruntimes.io", "/apis/sessions.kruntimes.io/v1alpha1"} {
+	for _, path := range []string{
+		"/apis/logs.kruntimes.io", "/apis/logs.kruntimes.io/v1alpha1",
+		"/apis/sessions.kruntimes.io", "/apis/sessions.kruntimes.io/v1alpha1",
+		"/apis/functions.kruntimes.io", "/apis/functions.kruntimes.io/v1alpha1",
+	} {
 		response := httptest.NewRecorder()
 		server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusOK {
 			t.Fatalf("GET %s = %d, want 200", path, response.Code)
 		}
+	}
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/apis/functions.kruntimes.io/v1alpha1", nil))
+	var resources struct {
+		Resources []struct {
+			Name  string   `json:"name"`
+			Verbs []string `json:"verbs"`
+		} `json:"resources"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&resources); err != nil {
+		t.Fatalf("decode function resource list: %v", err)
+	}
+	if len(resources.Resources) != 1 || resources.Resources[0].Name != "runs/function" || len(resources.Resources[0].Verbs) != 1 || resources.Resources[0].Verbs[0] != "create" {
+		t.Fatalf("function resource list = %#v", resources)
+	}
+}
+
+func TestAggregatedFunctionRejectsUnverifiedIdentity(t *testing.T) {
+	server := &Server{}
+	request := httptest.NewRequest(http.MethodPost, "/apis/functions.kruntimes.io/v1alpha1/namespaces/team-a/runs/handler/function", nil)
+	request.Header.Set("X-Remote-User", "admin")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("forged aggregation identity status = %d, want 401", response.Code)
+	}
+}
+
+func TestAggregatedFunctionRejectsNonPost(t *testing.T) {
+	server := &Server{}
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/apis/functions.kruntimes.io/v1alpha1/namespaces/team-a/runs/handler/function", nil))
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET function status = %d, want 405", response.Code)
 	}
 }
 
@@ -65,6 +103,36 @@ func TestAggregatedSessionRejectsUnverifiedIdentity(t *testing.T) {
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("forged aggregation identity status = %d, want 401", response.Code)
+	}
+}
+
+func TestAggregatedSessionFilesRejectUnverifiedIdentity(t *testing.T) {
+	server := &Server{}
+	for _, path := range []string{
+		"/apis/sessions.kruntimes.io/v1alpha1/namespaces/team-a/runs/shell/session/files",
+		"/apis/sessions.kruntimes.io/v1alpha1/namespaces/team-a/runs/shell/session/files/notes/result.txt",
+	} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("X-Remote-User", "admin")
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("forged aggregation identity for %q status = %d, want 401", path, response.Code)
+		}
+	}
+}
+
+func TestAggregatedSessionFilesRejectNonGet(t *testing.T) {
+	server := &Server{}
+	for _, path := range []string{
+		"/apis/sessions.kruntimes.io/v1alpha1/namespaces/team-a/runs/shell/session/files",
+		"/apis/sessions.kruntimes.io/v1alpha1/namespaces/team-a/runs/shell/session/files/notes/result.txt",
+	} {
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil))
+		if response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("POST %s = %d, want 405", path, response.Code)
+		}
 	}
 }
 

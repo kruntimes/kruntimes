@@ -1,10 +1,9 @@
 package e2e
 
-// Function mode scenarios: gateway invocation, idle/total timeout expiry, capacity release, and pod loss.
+// Function mode scenarios: aggregated invocation, idle/total timeout expiry, capacity release, and pod loss.
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -17,15 +16,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/kruntimes/kruntimes/api/runextensionapi"
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	runretry "github.com/kruntimes/kruntimes/internal/retry"
 	"github.com/kruntimes/kruntimes/internal/runstatus"
 )
 
-func TestFunctionGatewayInvokesAuthorizedFunction(t *testing.T) {
+func TestAggregatedFunctionAPIAuthorizesInvocation(t *testing.T) {
 	t.Parallel()
-	runtimeName := fmt.Sprintf("function-gateway-%d", time.Now().UnixNano())
+	runtimeName := fmt.Sprintf("function-api-%d", time.Now().UnixNano())
 	ensureRuntimeWithRunsCapacity(t, runtimeName, pythonRuntimeImage(), 9092, 1)
 
 	inline := `import os
@@ -36,48 +36,37 @@ def handler(event):
     return {"status": "ok", "value": event["value"], "outputs": {"source": "python", "value": event["value"]}}
 `
 	run := &v1alpha1.Run{
-		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-function-gateway-", Namespace: testNamespace},
+		ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-function-api-", Namespace: testNamespace},
 		Spec: v1alpha1.RunSpec{
 			Runtime: runtimeName,
 			Source:  &v1alpha1.CodeSource{Inline: &inline, InlinePath: "app.py"},
 			Mode:    v1alpha1.RunMode{Function: &v1alpha1.RunFunctionMode{Handler: "app.handler"}},
 		},
 	}
-	if err := k8sClient.Create(context.Background(), run); err != nil {
+	if err := k8sClient.Create(t.Context(), run); err != nil {
 		t.Fatalf("create Function Run: %v", err)
 	}
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), run) })
 	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunReady)
-	if run.Status.Endpoint == nil || run.Status.Endpoint.Protocol != v1alpha1.RunEndpointProtocolHTTPS || len(run.Status.Endpoint.CABundle) == 0 {
-		t.Fatalf("Function Run endpoint = %#v, want HTTPS gateway endpoint with a CA bundle", run.Status.Endpoint)
-	}
 
-	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
-	token := sessionGatewayToken(t, run)
-	response := waitForGatewayResponse(t, http.MethodPost, baseURL, token, []byte(`{"value":"gateway"}`), http.StatusOK)
-	var invocation struct {
-		InvocationID string            `json:"invocationId"`
-		Output       []byte            `json:"output"`
-		Outputs      map[string]string `json:"outputs"`
-		ContentType  string            `json:"contentType"`
-	}
-	if err := json.Unmarshal(response, &invocation); err != nil {
-		t.Fatalf("decode Function invocation response: %v", err)
-	}
-	if invocation.InvocationID == "" || invocation.ContentType != "application/json" || string(invocation.Output) != "{\"status\": \"ok\", \"value\": \"gateway\", \"outputs\": {\"source\": \"python\", \"value\": \"gateway\"}}\n" || !reflect.DeepEqual(invocation.Outputs, map[string]string{"from-file": "gateway", "source": "python", "value": "gateway"}) {
+	client := aggregatedAPIClient(t, functionGatewayToken(t, run))
+	invocation := invokeFunctionEventually(t, client, run, []byte(`{"value":"api"}`))
+	if invocation.InvocationID == "" || invocation.ContentType != "application/json" || string(invocation.Output) != "{\"status\": \"ok\", \"value\": \"api\", \"outputs\": {\"source\": \"python\", \"value\": \"api\"}}\n" || !reflect.DeepEqual(invocation.Outputs, map[string]string{"from-file": "api", "source": "python", "value": "api"}) {
 		t.Fatalf("Function invocation = %#v, want successful JSON response", invocation)
 	}
 	waitForFunctionInvocationLogs(t, run, invocation.InvocationID)
-	secondResponse := waitForGatewayResponse(t, http.MethodPost, baseURL, token, []byte(`{"value":"again"}`), http.StatusOK)
-	if err := json.Unmarshal(secondResponse, &invocation); err != nil {
-		t.Fatalf("decode repeated Function invocation response: %v", err)
-	}
-	if invocation.InvocationID == "" || string(invocation.Output) != "{\"status\": \"ok\", \"value\": \"again\", \"outputs\": {\"source\": \"python\", \"value\": \"again\"}}\n" || !reflect.DeepEqual(invocation.Outputs, map[string]string{"from-file": "again", "source": "python", "value": "again"}) {
-		t.Fatalf("repeated Function invocation = %#v, want successful JSON response", invocation)
+
+	repeat := invokeFunctionEventually(t, client, run, []byte(`{"value":"again"}`))
+	if repeat.InvocationID == "" || string(repeat.Output) != "{\"status\": \"ok\", \"value\": \"again\", \"outputs\": {\"source\": \"python\", \"value\": \"again\"}}\n" || !reflect.DeepEqual(repeat.Outputs, map[string]string{"from-file": "again", "source": "python", "value": "again"}) {
+		t.Fatalf("repeated Function invocation = %#v, want successful JSON response", repeat)
 	}
 
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL, "", []byte(`{"value":"unauthenticated"}`), http.StatusUnauthorized)
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL, sessionGatewayTokenWithoutRunAccess(t), []byte(`{"value":"unauthorized"}`), http.StatusForbidden)
+	if _, err := invalidCredentialClient(t).Functions().Invoke(t.Context(), run.Namespace, run.Name, &runextensionapi.FunctionInvocationOptions{Input: []byte(`{"value":"unauthenticated"}`)}); apiErrorStatus(err) != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated Function invocation status = %d, want 401 (%v)", apiErrorStatus(err), err)
+	}
+	if _, err := aggregatedAPIClient(t, sessionGatewayToken(t, run)).Functions().Invoke(t.Context(), run.Namespace, run.Name, &runextensionapi.FunctionInvocationOptions{Input: []byte(`{"value":"unauthorized"}`)}); apiErrorStatus(err) != http.StatusForbidden {
+		t.Fatalf("unauthorized Function invocation status = %d, want 403 (%v)", apiErrorStatus(err), err)
+	}
 }
 
 func TestFunctionRunExpiresWhenIdle(t *testing.T) {
@@ -248,20 +237,13 @@ func TestFunctionRunRecoversInvocationAfterRuntimedRestart(t *testing.T) {
 	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), run) })
 	waitForRunPhase(t, run, 30*time.Second, v1alpha1.RunReady)
 
-	baseURL := gatewayEndpointURL(t, waitForGatewayPod(t), run.Status.Endpoint.URL)
-	token := sessionGatewayToken(t, run)
-	_ = waitForGatewayResponse(t, http.MethodPost, baseURL, token, []byte(`{"value":"before"}`), http.StatusOK)
+	client := aggregatedAPIClient(t, functionGatewayToken(t, run))
+	_ = invokeFunctionEventually(t, client, run, []byte(`{"value":"before"}`))
 	previousRestartCount := runtimedRestartCount(t, run.Status.AssignedPod)
 	killRuntimed(t, run.Status.AssignedPod)
 	waitForRuntimedRestart(t, run.Status.AssignedPod, previousRestartCount)
 
-	response := waitForGatewayResponse(t, http.MethodPost, baseURL, token, []byte(`{"value":"after"}`), http.StatusOK)
-	var invocation struct {
-		Output []byte `json:"output"`
-	}
-	if err := json.Unmarshal(response, &invocation); err != nil {
-		t.Fatalf("decode recovered Function invocation response: %v", err)
-	}
+	invocation := invokeFunctionEventually(t, client, run, []byte(`{"value":"after"}`))
 	if string(invocation.Output) != "{\"value\": \"after\"}\n" {
 		t.Fatalf("recovered Function invocation = %#v, want post-restart output", invocation)
 	}

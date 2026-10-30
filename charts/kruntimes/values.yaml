@@ -68,8 +68,9 @@ controller:
       cpu: 500m
       memory: 256Mi
 
-# The Run extension API serves aggregated Run logs and Session operations.
-# kubectl, krt, and Console use normal Kubernetes API credentials.
+# The Run extension API serves aggregated Run logs, Session operations and files,
+# and Function invocation. kubectl, krt, and Console use normal Kubernetes API
+# credentials.
 runExtensionAPI:
   enabled: true
   image: ghcr.io/kruntimes/run-extension-apiserver
@@ -121,11 +122,6 @@ console:
     certificateKey: tls.crt
     privateKeyKey: tls.key
     caBundleKey: ca.crt
-    # Optional Secret holding the CA that signs Kubernetes user client
-    # certificates. When set, Console accepts a verified client certificate
-    # for the Runtime access API and authorizes its CN/O with a SAR.
-    clientCASecretName: ""
-    clientCAKey: ca.crt
     selfSigned: true
     certManager:
       enabled: false
@@ -133,14 +129,6 @@ console:
         name: ""
         kind: Issuer
         group: cert-manager.io
-  access:
-    authorizationCacheTTL: 30s
-    authorizationCacheCapacity: 1024
-    maxConcurrentRequests: 128
-    maxSessionConnections: 128
-    maxRequestBodyBytes: 1048576
-    maxResponseBodyBytes: 1048576
-    maxHeaderBytes: 1048576
   podAnnotations: {}
   podSecurityContext:
     seccompProfile:

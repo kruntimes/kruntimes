@@ -1,5 +1,8 @@
 # Function Mode 生命周期与 Invoke Dataplane
 
+> 共享 Runtime Gateway 与 `Run.status.endpoint` 已删除。ready Function Run 通过聚合的
+> `functions.kruntimes.io` `runs/function` API 调用；见 [Run extension API](run-extension-api.zh.md)。
+
 状态：**已接受；已实现**
 
 本文细化 [Function Mode 和 Agent Sandboxes](../function-mode/) 中的 function-mode 目标，
@@ -205,7 +208,7 @@ terminal status，以免与 stale-recovery controller 竞争；后者观察到 d
 Cancellation 保留 Run object 并记录 terminal status。Deletion 是独立的 user request，使用
 finalizer path。两种操作在 controller 和 runtimed restart 后都必须保持幂等。
 
-## Runtime Gateway
+## Runtime Gateway（已删除）
 
 Helm chart 可选安装一个面向所有 Runtime 的共享 `runtime-gateway` Deployment 和 ClusterIP Service。
 `gateway.enabled` 控制是否安装。Deployment 运行 stateless HTTP gateway server。Service 只将 client

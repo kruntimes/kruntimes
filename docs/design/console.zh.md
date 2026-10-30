@@ -1,46 +1,48 @@
 # Kruntimes Console
 
-Kruntimes Console 是平台 chart 安装的唯一公共访问组件。它合并浏览器 UI、Kubernetes
-资源查询、Run 日志与版本化 Runtime access API；不再部署独立的 Runtime Gateway。
+Kruntimes Console 是始终安装的浏览器 UI 与只读 API。它合并浏览器 console、Kubernetes
+资源查询、Run 日志，以及为 Run data-plane 操作提供的"只转发凭据"的代理。Console 不再是
+data plane：它自身不做 Runtime 操作授权，也不会直接连接 Runtime Service。
 
 ```
 browser / krt / SDK
         |
         v
+Kubernetes API server ---> Run extension API ---> runtimed (owner Runtime Pod)
+        ^
+        |  (仅浏览器，同源代理)
 Kruntimes Console (HTTPS)
   |- /api/...  Console 资源与日志 API
-  |- /v1/...   Runtime access handler
-        |
-        v
-选中 Runtime Pod 内的 runtimed
+  |- /api/.../session  代理的 Session WebSocket
 ```
 
-## Runtime access
+## Data plane
 
-`internal/gateway.Server` 仍是 `/v1/` 的协议适配器，但仅作为 Console 注册的内部
-`http.Handler`。它没有 listener、Deployment、Service、TLS 配置或独立生命周期。它解析
-Ready Run，执行 Kubernetes TokenReview 与 SubjectAccessReview，再转发到 owner Runtime
-Service。
+`run-extension-api` 中的 Kubernetes 聚合 Run extension API 拥有 Run data plane：Run logs、
+Session operation 与文件、Function invocation。kube-apiserver 使用普通 kubeconfig 机制
+认证每个 caller，并在转发到 backend 前授权对应的 Run subresource。Console 从不为
+data-plane 请求执行 TokenReview/SubjectAccessReview，不直连 Runtime Service，也没有
+Runtime Pod 的网络访问权限。
 
-Controller 将 Console Service URL 写入 Ready Function/Session Run 的
-`status.endpoint`，并把 Console CA bundle 写入 endpoint。Runtime Pod 通过已有的
-downward API 路径挂载 CA，因此 runtimed 能验证 Console HTTPS Service。
+Console 的 Service 不再写入 `Run.status.endpoint`；该字段对 Function 与 Session Run 已
+废弃。client 从自己的 Kubernetes REST configuration 推导聚合 API 地址。
 
 ## 认证
 
-Console 接受普通 `Authorization: Bearer ...`；配置
-`console.tls.clientCASecretName` 后，也接受经验证的 Kubernetes client certificate。
-浏览器登录会把输入的 bearer token 放入 host-only、`HttpOnly`、`Secure`、
-`SameSite=Strict` 的 Console session cookie。浏览器请求 `/v1/` 时，Console 在服务端
-将 cookie token 注入内部 handler，JavaScript 不会取得凭据。`krt` 与 SDK 显式提供的
-Authorization header 始终优先。
+Console 接受普通 `Authorization: Bearer ...`。浏览器登录会把输入的 bearer token 放入
+host-only、`HttpOnly`、`Secure`、`SameSite=Strict` 的 Console session cookie，JavaScript
+永远不会取得凭据。`krt` 与 SDK 显式提供的 Authorization header 始终优先。Console 只用
+`TokenReview` 验证登录凭据并显示 Kubernetes username，不做授权决策。
 
 ## 浏览器中的 Session operation
 
-Ready Session Run 的详情页提供 shell command 面板。它建立同源、已认证的
-`operations:ws` 连接，将 command 作为第一个 client frame 发送，并在到达时按顺序渲染
-accepted、output、progress 与 terminal event。协议中 JSON base64 representation 的二进制
-输出会先解码再显示。
+Ready Session Run 的详情页提供 shell command 面板。Console 使用 caller 的 Kubernetes
+credential，把同源的 Session WebSocket 转发到 Kubernetes 聚合 Session API：
+`/apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session`。
+kube-apiserver 负责认证 caller 并授权 `sessions.kruntimes.io/runs/session` 的 `get`；
+Console 自身不做 Session operation 的授权决策。面板将 command 作为第一个 client frame
+发送，并在到达时按顺序渲染 accepted、output、progress 与 terminal event。协议中 JSON
+base64 representation 的二进制输出会先解码再显示。
 
 Session Run 进入 `Ready` 前，该面板保持禁用。Cancel 控件会通过 WebSocket 发送
 `{"type":"cancel","operationID":"..."}`。Console client 在连接打开时发送
@@ -52,7 +54,6 @@ heartbeat frame。关闭 connection 不会 release backing Session Run。传输�
 ## Helm 配置
 
 Console 始终安装。使用 `console.image`、`console.replicas`、`console.publicRead`、
-`console.tls` 与 `console.access` 配置。`console.tls` 支持 chart 自签、已有 Secret 和
-cert-manager。用于 Runtime endpoint 的 Secret 除证书与私钥外，必须含有
-`console.tls.caBundleKey`（默认 `ca.crt`）。`console.access` 包含原独立 Gateway 的
-authorization cache 与有界 request/response/header 设置。
+`console.tls` 以及标准 pod scheduling/security values 配置。`console.tls` 支持 chart
+自签、已有 Secret 和 cert-manager。Runtime access 限额、authorization cache 与
+client-certificate 选项已随内嵌 Runtime gateway 一起删除。

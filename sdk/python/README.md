@@ -10,8 +10,8 @@ Install the Kubernetes adapters when the SDK manages Runs directly:
 pip install 'kruntimes-sdk[kubernetes]'
 ```
 
-In a Pod with a ServiceAccount that is authorized for the target `Run` and
-Runtime gateway, construct the client directly:
+In a Pod with a ServiceAccount that is authorized for the target `Run` and its
+aggregated Session API subresource, construct the client directly:
 
 ```python
 from kruntimes.kubernetes import from_incluster
@@ -54,20 +54,16 @@ while True:
     )
 ```
 
-For local development, forward only the shared Runtime gateway Service. The
-forward preserves each Run endpoint path and does not expose runtimed or
-Runtime Server gRPC ports:
+For local development, use the active kubeconfig directly. Session connections
+and file requests go through kube-apiserver, which applies the kubeconfig CA,
+client certificate, and bearer token; no Console or Runtime Pod port-forward is
+needed:
 
 ```python
-from kruntimes.kubernetes import PortForwardGatewayTransport, from_kube_config
+from kruntimes.kubernetes import from_kube_config
 
-with PortForwardGatewayTransport.start(
-    namespace="default",
-    service="kruntimes-console",
-    service_port=443,
-) as gateway:
-    client = from_kube_config(gateway=gateway)
-    sandbox = client.open("agents", "diagnose-api")  # reconnect to an existing Run; no allocation
+client = from_kube_config(context="kind-kruntimes-e2e")
+sandbox = client.open("agents", "diagnose-api")  # reconnect to an existing Run; no allocation
 ```
 
 `Session.send`, file mutations, and `close()` are never retried automatically. A
@@ -84,6 +80,7 @@ return Runtime capacity. `close()` returns successfully only after the Run
 reaches `Succeeded`; `cancel()` returns successfully only after `Cancelled`.
 Any other terminal phase raises `SandboxStateError` with the current Run.
 
-The local caller needs `get` access to the target Run for gateway
-authorization. Starting the port-forward also needs `get` on the shared gateway
-Service and `get`, `list` on its Pods in the gateway namespace.
+The caller needs `get` access to the target `Run`, `get` on
+`sessions.kruntimes.io` `runs/session` for the Session connection and file
+operations, and `get` on `logs.kruntimes.io` `runs/log` for sandbox logs. The
+SDK never requests `pods` or `pods/log`.

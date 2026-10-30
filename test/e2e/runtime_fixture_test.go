@@ -321,7 +321,7 @@ func waitForRuntimePod(t *testing.T, name, runtimeImage, daemonImage string, run
 }
 
 // runtimeServiceHasReadyEndpoint verifies that the Runtime Service can route
-// gateway requests to a ready runtimed Pod. Pod readiness alone does not prove
+// aggregated API requests to a ready runtimed Pod. Pod readiness alone does not prove
 // that the EndpointSlice controller has published the Service endpoint yet.
 func runtimeServiceHasReadyEndpoint(ctx context.Context, runtimeName string) bool {
 	var slices discoveryv1.EndpointSliceList

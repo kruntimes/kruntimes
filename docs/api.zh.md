@@ -54,7 +54,7 @@ kruntimes 暴露 Kubernetes CRDs 和本地 Runtime Server gRPC API。
 | `status.phase` | `Pending`、`Scheduled`、`Running`、`Ready`、`Succeeded`、`Failed`、`Timeout` 或 `Cancelled`。`Ready` 是 active non-terminal phase，由已注册的 function-mode Run 使用。 |
 | `status.assignedPod` | scheduler 选中的 Runtime Pod。 |
 | `status.assignedPodUID` | assigned Runtime Pod 的 UID，用于在 recovery 中区分 Pod name reuse。 |
-| `status.endpoint` | ready function-mode 或 session-mode Run 的有界 HTTP 或 HTTPS gateway endpoint 和可选 CA bundle；task Run 不会设置它。 |
+| `status.endpoint` | 已废弃。controller 不再写入该字段；请使用聚合的 `functions.kruntimes.io` 或 `sessions.kruntimes.io` API。task Run 不会设置它。 |
 | `status.attempt` | 当前确定性 attempt count。 |
 | `status.outputs` | 来自 `$KRUNTIME_OUTPUTS` 的有界结构化 outputs。 |
 | `status.artifactRefs` | 存储在 etcd 之外的文件的紧凑 artifact references。 |

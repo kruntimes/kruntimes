@@ -99,7 +99,7 @@ ServiceAccount 只能 get/list Namespaces、Runs、Runtimes 和 WorkflowRuns，�
 - 通过 Kubernetes API 读取 `Run` objects；
 - 读取 `Run.status.assignedPod` 引用的 Runtime Pod metadata；
 - 在可用时读取与 Runs 和 Runtime Pods 相关的 Kubernetes Events；
-- 通过 backend-controlled 路径访问 runtimed log/status endpoints；
+- 通过聚合的 `logs.kruntimes.io` API 读取 Run 日志；
 - 读取 `Run.status.outputs` 和 `Run.status.artifactRefs`。
 
 后续版本可以增加 PersistentWorkspace detail pages 以及基于 Prometheus 或其它 metrics backend

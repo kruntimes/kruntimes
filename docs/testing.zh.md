@@ -135,7 +135,10 @@ make e2e-test E2E_PARALLEL=8    # 复用已有集群，提高并发
 - `TestWorkflowRunRecoversActionAfterControllerRestart` 会重启 controller Deployment，导致其他用例的调谐暂停。
 - `TestRuntimeReadyReplicasTracksRuntimedAvailability`、`TestRuntimedRecoversRunningRunAfterRestart` 与 `TestFunctionRunRecoversInvocationAfterRuntimedRestart` 会杀掉 Runtime Pod 中的 `runtimed` 来验证重启恢复。
 - `scheduler_test.go` 中的用例断言调度延迟、容量与唤醒顺序，并行负载会干扰测量。
-- `TestSessionGatewayServesCertManagerTLS` 在独立的 `e2e-cert-manager-run` / `e2e-console-bounds-run` 任务中运行。
+- `TestConsoleServesCertManagerTLS` 在独立的 `e2e-cert-manager-run` 任务中运行。
+- `TestAggregatedSessionRunCancellationTerminatesActiveCommand` 与
+  `TestAggregatedSessionRunDrainCompletesAcceptedCommand` 在 command 活跃时等待 file read，
+  parallel Runtime 抖动会干扰 dial window，因此串行运行。
 
 并行度受集群容量限制而非测试本身：每个并行用例都可能创建自己的 Runtime Pod，共享预热池以 8 个并发 Run 槽位创建，避免用例在单个 Pod 上排队；用例自有的 Runtime CR 仍使用产品默认容量。
 

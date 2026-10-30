@@ -41,10 +41,6 @@ const (
 	workspacePath        = "/workspace"
 	artifactStoreVolume  = "artifact-store"
 	artifactStorePath    = "/var/lib/kruntimes/artifacts"
-	consoleCAVolume      = "console-ca"
-	consoleCAPath        = "/var/run/kruntimes/console-ca"
-	consoleCAFile        = "ca.crt"
-	consoleCAAnnotation  = "kruntimes.io/console-ca-bundle"
 )
 
 // RuntimeReconciler watches Runtime CRs and creates Deployments with runtimed sidecar.
@@ -55,11 +51,8 @@ type RuntimeReconciler struct {
 
 	DefaultDaemonImage            string
 	RuntimedServiceAccountName    string
-	ConsoleNamespace              string
-	ConsoleSelectorLabels         map[string]string
+	RunExtensionAPINamespace      string
 	RunExtensionAPISelectorLabels map[string]string
-	ConsoleURL                    string
-	ConsoleCABundle               []byte
 	SessionMaxQueueSize           int
 	SessionMaxOperationTimeout    time.Duration
 	SessionCloseTimeout           time.Duration
@@ -320,17 +313,6 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 		},
 	}
 	daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--runtime-name=%s", name))
-	if r.ConsoleURL != "" {
-		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--console-url=%s", r.ConsoleURL))
-	}
-	if len(r.ConsoleCABundle) > 0 {
-		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--console-ca-file=%s/%s", consoleCAPath, consoleCAFile))
-		daemonContainer.VolumeMounts = append(daemonContainer.VolumeMounts, corev1.VolumeMount{Name: consoleCAVolume, MountPath: consoleCAPath, ReadOnly: true})
-		if annotations == nil {
-			annotations = make(map[string]string)
-		}
-		annotations[consoleCAAnnotation] = string(r.ConsoleCABundle)
-	}
 	if r.SessionMaxQueueSize > 0 {
 		daemonContainer.Args = append(daemonContainer.Args, fmt.Sprintf("--session-max-queue-size=%d", r.SessionMaxQueueSize))
 	}
@@ -346,7 +328,7 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 
 	volumes := make([]corev1.Volume, 0, len(template.Spec.Volumes)+2)
 	for _, volume := range template.Spec.Volumes {
-		if volume.Name != workspaceVolume && volume.Name != artifactStoreVolume && volume.Name != consoleCAVolume {
+		if volume.Name != workspaceVolume && volume.Name != artifactStoreVolume {
 			volumes = append(volumes, volume)
 		}
 	}
@@ -356,17 +338,6 @@ func (r *RuntimeReconciler) buildDeployment(rt *v1alpha1.Runtime) *appsv1.Deploy
 			VolumeSource: workspaceVolumeSource(rt.Spec.Workspace),
 		},
 	)
-	if len(r.ConsoleCABundle) > 0 {
-		volumes = append(volumes, corev1.Volume{
-			Name: consoleCAVolume,
-			VolumeSource: corev1.VolumeSource{DownwardAPI: &corev1.DownwardAPIVolumeSource{
-				Items: []corev1.DownwardAPIVolumeFile{{
-					Path:     consoleCAFile,
-					FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.annotations['" + consoleCAAnnotation + "']"},
-				}},
-			}},
-		})
-	}
 	artifactSecurityContext := configureArtifactStore(rt.Spec.ArtifactStore, &daemonContainer, &volumes)
 	podSecurityContext := template.Spec.SecurityContext
 	if podSecurityContext == nil {
@@ -562,36 +533,24 @@ func (r *RuntimeReconciler) buildNetworkPolicy(rt *v1alpha1.Runtime) *networking
 		runtimeLabel: rt.Name,
 		"app":        "kruntimes-" + rt.Name,
 	}
-	ingress := []networkingv1.NetworkPolicyIngressRule(nil)
-	if r.ConsoleNamespace != "" {
-		ingress = []networkingv1.NetworkPolicyIngressRule{
-			{
-				From: []networkingv1.NetworkPolicyPeer{{
-					PodSelector: &metav1.LabelSelector{MatchLabels: labels},
+	// Runtime Pods may forward one request to the owner runtimed in the same
+	// Runtime. The Run extension API is the only external caller.
+	ingress := []networkingv1.NetworkPolicyIngressRule{{
+		From: []networkingv1.NetworkPolicyPeer{{
+			PodSelector: &metav1.LabelSelector{MatchLabels: labels},
+		}},
+		Ports: sessionRuntimeNetworkPolicyPorts(),
+	}}
+	if r.RunExtensionAPINamespace != "" && len(r.RunExtensionAPISelectorLabels) != 0 {
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{{
+				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"kubernetes.io/metadata.name": r.RunExtensionAPINamespace,
 				}},
-				Ports: sessionRuntimeNetworkPolicyPorts(),
-			},
-			{
-				From: []networkingv1.NetworkPolicyPeer{{
-					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-						"kubernetes.io/metadata.name": r.ConsoleNamespace,
-					}},
-					PodSelector: &metav1.LabelSelector{MatchLabels: r.consoleSelectorLabels()},
-				}},
-				Ports: sessionRuntimeNetworkPolicyPorts(),
-			},
-		}
-		if len(r.RunExtensionAPISelectorLabels) != 0 {
-			ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
-				From: []networkingv1.NetworkPolicyPeer{{
-					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-						"kubernetes.io/metadata.name": r.ConsoleNamespace,
-					}},
-					PodSelector: &metav1.LabelSelector{MatchLabels: maps.Clone(r.RunExtensionAPISelectorLabels)},
-				}},
-				Ports: sessionRuntimeNetworkPolicyPorts(),
-			})
-		}
+				PodSelector: &metav1.LabelSelector{MatchLabels: maps.Clone(r.RunExtensionAPISelectorLabels)},
+			}},
+			Ports: sessionRuntimeNetworkPolicyPorts(),
+		})
 	}
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
@@ -609,13 +568,6 @@ func (r *RuntimeReconciler) buildNetworkPolicy(rt *v1alpha1.Runtime) *networking
 			Ingress: ingress,
 		},
 	}
-}
-
-func (r *RuntimeReconciler) consoleSelectorLabels() map[string]string {
-	if len(r.ConsoleSelectorLabels) != 0 {
-		return maps.Clone(r.ConsoleSelectorLabels)
-	}
-	return map[string]string{"app.kubernetes.io/component": "console"}
 }
 
 func sessionRuntimeNetworkPolicyPorts() []networkingv1.NetworkPolicyPort {

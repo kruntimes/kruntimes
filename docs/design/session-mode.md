@@ -118,14 +118,13 @@ operationID, err := session.Send(ctx, sandbox.Operation{Command: &sandbox.Comman
 if err != nil {
 	return err
 }
-for {
-	event, err := session.Receive(ctx)
-	if err != nil {
-		return err
-	}
+for event := range session.Receive() {
 	if event.Completed != nil || event.Failed != nil {
 		break
 	}
+}
+if err := session.Err(); err != nil {
+	return err
 }
 ```
 
@@ -268,7 +267,11 @@ incomplete workspace.
 
 ## Services and Request Flow
 
-The following terms are distinct:
+> The shared Runtime gateway Deployment and Service were removed. Function and
+> Session clients use the aggregated Run extension API, and the controller no
+> longer populates `Run.status.endpoint`. The terms below are historical.
+
+The following terms are historical but explain the Run/Session model:
 
 - **Runtime gateway** is one shared `runtime-gateway` Deployment installed by
   the Helm chart when `gateway.enabled` is true. Its Pods run the gateway server
@@ -339,22 +342,31 @@ authorization errors. Set either `--authorization-cache-ttl=0` or
 can take up to the configured TTL to affect an already cached successful
 decision.
 
-Each Console Pod accepts at most 128 concurrent Runtime access HTTP requests by
-default. Admission is non-blocking: a request above the per-Pod limit receives
-`429 Too Many Requests` instead of waiting in an unbounded gateway queue.
-Health checks do not consume a request slot. The Helm value
-`console.access.maxConcurrentRequests` configures the limit for every Console Pod.
-Persistent Session WebSockets have a separate `console.access.maxSessionConnections`
-limit, so idle connections cannot consume the ordinary HTTP request quota.
+The removed Console Runtime gateway applied per-Pod Runtime access limits and
+mapped HTTP requests to `SessionRuntime` gRPC methods. Clients now use the
+aggregated Session API (`sessions.kruntimes.io`), and the Run extension API
+enforces its own bounded request handling. The tables below are retained as the
+historical gateway protocol description; [Run extension API](run-extension-api.md)
+documents the current public API.
 
-The gateway server maps the following HTTP API operations to `SessionRuntime`
-gRPC methods:
+The former gateway server mapped the following HTTP API operations to
+`SessionRuntime` gRPC methods:
 
 | HTTP API | `SessionRuntime` method | Behavior |
 | --- | --- |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}` | `GetSessionStatus` | return readiness and bounded session metadata |
 | `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws` | `RenewSessionLease`, `StreamSessionOperation` | persistent Session connection; authenticated open and private `heartbeat` frames renew the lease, while clients send `send`/`cancel` frames and receive ordered event frames |
-| `GET /v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files` | `ReadSessionFile`, `ListSessionFiles` | bounded workspace-relative file access |
+
+Session workspace file access uses `ReadSessionFile` and `ListSessionFiles`
+through the aggregated Session API instead of the gateway:
+
+```
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files
+GET /apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session/files/{path}
+```
+
+Both endpoints are authorized as `get` on `sessions.kruntimes.io/runs/session`,
+the same permission that authorizes Session operations.
 
 An exec request supplies exactly one of `argv` or `shell`. `argv` directly
 executes a program. `shell` deliberately opts into the Runtime's shell. Both

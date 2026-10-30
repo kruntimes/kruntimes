@@ -3,12 +3,10 @@ package e2e
 // Shared E2E test bootstrap: Kubernetes clients, image references, and the enabled-feature switches.
 //
 // This file owns process-wide setup only. Runtime fixtures, condition waits,
-// gateway helpers, and the scenario suites live in sibling files so each
+// aggregated API helpers, and the scenario suites live in sibling files so each
 // responsibility can evolve independently.
 
 import (
-	"crypto/tls"
-	"net/http"
 	"os"
 	"testing"
 
@@ -27,7 +25,6 @@ const (
 	certManagerE2EEnabledEnv      = "KRUNTIMES_E2E_CERT_MANAGER"
 	certManagerGatewayCertificate = "kruntimes-console"
 	certManagerGatewayTLSSecret   = "kruntimes-console-cert-manager-tls"
-	gatewayBoundsE2EEnabledEnv    = "KRUNTIMES_E2E_CONSOLE_BOUNDS"
 )
 
 const testNamespace = "default"
@@ -37,11 +34,6 @@ var k8sClient client.Client
 var restConfig *rest.Config
 
 var coreClientset *kubernetes.Clientset
-
-// Console's chart-managed certificate is intentionally self-signed in the
-// ordinary E2E installation. Focused TLS coverage below validates its CA and
-// service DNS name; generic access tests only need a local port-forward.
-var gatewayInsecureHTTPClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // E2E local port-forward only.
 
 func bashRuntimeImage() string {
 	if image := os.Getenv("KRUNTIMES_BASH_RUNTIME_IMAGE"); image != "" {

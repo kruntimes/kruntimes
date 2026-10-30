@@ -1,6 +1,8 @@
 # Runtime Gateway Transport Security and Transfer Bounds
 
-Status: **Proposed**
+Status: **Obsolete.** The shared Runtime gateway was removed; Runtime access now
+goes through the aggregated Run extension API and Console no longer serves a
+data plane. This note is retained for historical context only.
 
 ## Problem
 

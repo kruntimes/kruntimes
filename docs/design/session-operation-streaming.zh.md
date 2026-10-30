@@ -14,7 +14,7 @@ Runtime 的一次 operation 可能要经过多次 model request 和 tool call �
 - 在 operation 运行时向 caller 提供 accepted、progress、output、terminal result 和 error event。
 - 保留 owner runtimed 的 FIFO queue，以及既有 cancellation、authorization、assignment fencing 与
   operation timeout 语义。
-- Runtime Server 与 runtimed port 保持私有；Runtime gateway 仍是唯一公开 data-plane endpoint。
+- Runtime Server 与 runtimed port 保持私有；聚合 Session API 是唯一公开 data-plane endpoint。
 - 使用同时适合 browser 和 CLI、并能使用 bearer authentication 的流式 transport。
 - 限制每个 Runtime-emitted event 的大小，且不引入无界 event buffer。
 
@@ -50,8 +50,8 @@ rpc StreamSessionOperation(SessionOperationRequest)
 - `completed`：适用时，与 unary operation 返回相同的有界 `SessionCommandResult`；
 - `failed`：terminal 的 gRPC-compatible code 与安全 message。
 
-由 owner runtimed 而非 gateway 分配 sequence number。它在 queue entry 处于 active 时转发 Runtime
-Server event stream。这样即使 gateway request 到达非 owner Runtime Pod、再单跳转发给 owner，也不会破坏
+由 owner runtimed 而非 transport 分配 sequence number。它在 queue entry 处于 active 时转发 Runtime
+Server event stream。这样即使 request 到达非 owner Runtime Pod、再单跳转发给 owner，也不会破坏
 queue mutation ordering。
 
 公开的实时 operation endpoint 仅支持持久双向 WebSocket；旧的 unary HTTP 与 NDJSON endpoint 已移除。
@@ -82,7 +82,7 @@ SDK 的 `Send` 会写入类似下面的内部 frame：
 }
 ```
 
-gateway 通过已有 operation admission path 转发 `operation`。它为每个有序
+Run extension API 通过已有 operation admission path 转发 `operation`。它为每个有序
 `SessionOperationEvent` 返回一个 server text frame。第一个 `accepted` event 提供 server-generated
 operation ID，SDK 将其作为 `Send` 的返回值；`Receive` 暴露后续 event，但不暴露 frame 或 WebSocket 细节：
 
@@ -95,7 +95,7 @@ operation ID，SDK 将其作为 `Send` 的返回值；`Receive` 暴露后续 eve
 ```
 
 operation 期间，`Cancel(operationID)` 写入内部 frame
-`{"type":"cancel","operationID":"op-7b7b"}`。gateway 拒绝 ID 不是当前 operation 的 cancellation。
+`{"type":"cancel","operationID":"op-7b7b"}`。Run extension API 拒绝 ID 不是当前 operation 的 cancellation。
 terminal event 前第二个 `send` 是 connection protocol error。SDK 通过 application frame
 `{"type":"heartbeat"}` 续租已配置的 lease。任意 interactive input 或 approval message 尚未成为
 Runtime protocol 的一部分。
@@ -137,15 +137,15 @@ capacity 在 `AcquireSandbox` 创建 Run 并由 scheduler 分配给 Runtime Pod 
 
 SDK 不暴露 `Stream`、`Resume`、`StreamWebSocket`、NDJSON 或 WebSocket 名称。其内部维护一个持久、
 已认证的双向 WebSocket connection。client message 携带 operation request 或 cancellation；server
-message 携带有序的 `SessionOperationEvent` 及 operation ID。upgrade 后的 gateway error 会转换为 typed
+message 携带有序的 `SessionOperationEvent` 及 operation ID。upgrade 后的 API error 会转换为 typed
 SDK transport error，而不是普通 event。
 
-由 Kubernetes REST configuration 构造的 SDK 会为该 connection 使用其中的 TLS CA bundle 和可选的
-client certificate/key，在 endpoint 提供 `Run.status.endpoint.caBundle` 时信任该证书，并在 upgrade 前应用
-Kubernetes REST 认证 wrapper（包括轮换的 token file 和
-exec credential）。custom SDK transport 必须自行实现这一
-connection boundary；仅有 HTTP `RoundTripper` 无法完成 WebSocket upgrade。受限的 Console
-port-forward adapter 会像改写普通 HTTP endpoint 一样改写 connection endpoint，并保留 caller credential。
+由 Kubernetes REST configuration 构造的 SDK 会把 Session WebSocket 建立到 Kubernetes 聚合 Session
+API：`/apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session`，并在 upgrade
+时使用其中的 TLS CA bundle、可选的 client certificate/key 以及 Kubernetes REST 认证 wrapper
+（包括轮换的 token file 和 exec credential）。SDK 不读取 `Run.status.endpoint`，也不使用
+Console 或 Runtime Pod port-forward。WebSocket upgrade 由 SDK 内部管理；仅有 HTTP
+`RoundTripper` 无法完成 WebSocket upgrade，因此 SDK 不暴露单独的自定义 transport hook。
 
 首个版本不会在 transport failure 后自动 retry 或 replay operation；此时 operation outcome 未知，caller
 可以在 Session lease 到期前打开新 connection 并读取 Session state。durable operation replay 不属于该
@@ -153,7 +153,8 @@ live-connection contract。
 
 ## Lifecycle、cancellation 与边界
 
-gateway 会对 connection 的目标 Session Run 授权。`Cancel`、gateway shutdown、Immediate
+kube-apiserver 认证 caller，并授权目标 Session Run 的
+`sessions.kruntimes.io/runs/session` `get` 权限。`Cancel`、Run extension API shutdown、Immediate
 Session termination 和 effective operation timeout 会取消 active Runtime Server operation 并释放 queue entry。
 关闭 SDK Session connection 只会 detach event consumer，不会取消已 admission 的 work，也不会 release
 Session capacity。owner runtimed 继续强制 operation timeout 与 Session lease。`Drain` 允许已 admission 的
@@ -161,7 +162,7 @@ operation 完成，并像现在一样拒绝新的 operation。
 
 runtimed 限制每个 Runtime-emitted event，并直接转发 event，而不累计无界 response buffer。超限或 malformed
 event 会以 resource-limit failure 结束 operation。Runtime 提供的 progress 不能包含 credential、command stdin
-或无界 tool output。已有 response-size limit 继续约束 terminal command result 和每条 gateway JSON line。
+或无界 tool output。已有 response-size limit 继续约束 terminal command result 和每条 API JSON line。
 
 ## 兼容性与 rollout
 

@@ -108,7 +108,7 @@ func openKRTSession(ctx context.Context, getter genericclioptions.RESTClientGett
 	if err != nil {
 		return nil, nil, err
 	}
-	session, err := opened.OpenSessionViaAPIServer(ctx, config)
+	session, err := opened.OpenSession(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -228,15 +228,9 @@ func runSessionOperation(ctx context.Context, session *sandbox.Session, operatio
 		case <-done:
 		}
 	}()
-	for {
-		// Keep the read active long enough to receive the server's cancellation
-		// response after an interrupt; the signal handler sends cancel separately.
-		readCtx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
-		event, err := session.Receive(readCtx)
-		cancel()
-		if err != nil {
-			return fmt.Errorf("receive Session operation: %w", err)
-		}
+	// The stream stays open until the server sends a terminal event or the
+	// connection closes; the signal handler sends Cancel separately.
+	for event := range session.Receive() {
 		if err := renderSessionEvent(event, format, showEvents, stdout, stderr); err != nil {
 			return err
 		}
@@ -255,6 +249,13 @@ func runSessionOperation(ctx context.Context, session *sandbox.Session, operatio
 			return nil
 		}
 	}
+	if err := session.Err(); err != nil {
+		return fmt.Errorf("receive Session operation: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func renderSessionEvent(event sandbox.OperationEvent, format string, showEvents bool, stdout, stderr io.Writer) error {

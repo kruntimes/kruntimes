@@ -15,22 +15,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
 	"github.com/kruntimes/kruntimes/sdk/go/sandbox"
 )
 
-type sessionTestHTTPDoer struct{}
-
-func (sessionTestHTTPDoer) Do(*http.Request) (*http.Response, error) {
-	return nil, fmt.Errorf("unexpected HTTP request")
-}
-
 func testKRTSession(t *testing.T, handler func(*websocket.Conn)) *sandbox.Session {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/namespaces/default/runtimes/bash/sessions/run-uid/operations:ws" {
+		if r.URL.Path != "/apis/sessions.kruntimes.io/v1alpha1/namespaces/default/runs/ready/session" {
 			t.Errorf("WebSocket path = %q", r.URL.Path)
 		}
 		connection, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
@@ -49,13 +44,11 @@ func testKRTSession(t *testing.T, handler func(*websocket.Conn)) *sandbox.Sessio
 	run := &v1alpha1.Run{
 		ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "default", UID: types.UID("run-uid")},
 		Spec:       v1alpha1.RunSpec{Runtime: "bash", Mode: v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}}},
-		Status: v1alpha1.RunStatus{Phase: v1alpha1.RunReady, Endpoint: &v1alpha1.RunEndpoint{
-			Protocol: v1alpha1.RunEndpointProtocolHTTP,
-			URL:      server.URL + "/v1/namespaces/default/runtimes/bash/sessions/run-uid",
-		}},
+		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunReady},
 	}
 	client, err := sandbox.New(sandbox.Config{
-		Runs: fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build(), HTTPClient: sessionTestHTTPDoer{},
+		RESTConfig: &rest.Config{Host: server.URL},
+		Runs:       fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build(),
 	})
 	if err != nil {
 		t.Fatal(err)

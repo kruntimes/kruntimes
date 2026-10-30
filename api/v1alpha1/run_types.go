@@ -33,20 +33,30 @@ const (
 )
 
 // RunEndpointProtocol identifies the public protocol for invoking a function Run.
+//
+// Deprecated: Console no longer serves Runtime endpoints. Use the aggregated Run
+// extension API instead.
 // +kubebuilder:validation:Enum=HTTP;HTTPS
 type RunEndpointProtocol string
 
 const (
 	// RunEndpointProtocolHTTP identifies a plain HTTP Runtime access endpoint,
 	// normally the cluster-local Console Service.
+	//
+	// Deprecated: use the aggregated Run extension API.
 	RunEndpointProtocolHTTP RunEndpointProtocol = "HTTP"
 	// RunEndpointProtocolHTTPS identifies a TLS-terminated public endpoint.
+	//
+	// Deprecated: use the aggregated Run extension API.
 	RunEndpointProtocolHTTPS RunEndpointProtocol = "HTTPS"
 )
 
 // +kubebuilder:object:generate=true
 // RunEndpoint is a stable, bounded reference to a function or session Run
 // endpoint.
+//
+// Deprecated: Console no longer serves Runtime endpoints and the controller no
+// longer populates Run.status.endpoint. Use the aggregated Run extension API.
 type RunEndpoint struct {
 	// Protocol identifies the endpoint protocol.
 	// +kubebuilder:validation:Required
@@ -615,6 +625,9 @@ type RunStatus struct {
 
 	// Endpoint is the stable Console Runtime access endpoint for a ready function or session
 	// Run. It is absent for one-shot task Runs.
+	//
+	// Deprecated: Console no longer serves Runtime endpoints and the controller
+	// stops populating this field. Use the aggregated Run extension API.
 	// +optional
 	Endpoint *RunEndpoint `json:"endpoint,omitempty"`
 

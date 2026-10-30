@@ -288,24 +288,6 @@ func TestServerRoutesMethodsAndMissingEndpoints(t *testing.T) {
 	}
 }
 
-func TestServerRoutesAccessAPIWithConsoleSessionCredential(t *testing.T) {
-	server := dashboardTestServer(t)
-	server.RuntimeAccess = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if got, want := request.Header.Get("Authorization"), "Bearer console-token"; got != want {
-			t.Errorf("Authorization = %q, want %q", got, want)
-		}
-		writer.WriteHeader(http.StatusNoContent)
-	})
-
-	request := httptest.NewRequest(http.MethodGet, "/v1/namespaces/default/runtimes/bash/sessions/run/operations:ws", nil)
-	request.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "console-token"})
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
-	if response.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
-	}
-}
-
 func TestServerCreatesAndClearsHTTPSessionCookie(t *testing.T) {
 	server := dashboardTestServer(t)
 	request := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"token":"caller-token"}`))

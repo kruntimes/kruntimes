@@ -14,7 +14,7 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/klog/v2"
 
-	"github.com/kruntimes/kruntimes/internal/logapi"
+	"github.com/kruntimes/kruntimes/api/runextensionapi"
 )
 
 const (
@@ -48,14 +48,14 @@ func newLogsCmd(getter genericclioptions.RESTClientGetter, _ *runtime.Scheme) *c
 			namespace := namespaceFromConfig(getter)
 			runName := args[0]
 			klog.V(2).InfoS("using Kubernetes aggregated Run log API")
-			logs, err := logapi.NewClient(restConfig)
+			logs, err := runextensionapi.NewForConfig(restConfig)
 			if err != nil {
 				return err
 			}
 			if follow {
 				return followAggregatedRunLogs(cmd.Context(), logs, namespace, runName, tailLines, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
-			raw, err := logs.GetLogs(namespace, runName, &logapi.RunLogOptions{TailLines: int64(tailLines)}).Do(cmd.Context()).Raw()
+			raw, err := logs.Runs().Logs(namespace, runName, &runextensionapi.RunLogOptions{TailLines: int64(tailLines)}).Do(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -71,10 +71,10 @@ func newLogsCmd(getter genericclioptions.RESTClientGetter, _ *runtime.Scheme) *c
 // followAggregatedRunLogs reconnects the intentionally time-bounded
 // aggregation stream. The opaque cursor means a reconnect resumes after the
 // last delivered record instead of replaying the initial tail.
-func followAggregatedRunLogs(ctx context.Context, api logapi.Client, namespace, runName string, tailLines int, stdout, stderr io.Writer) error {
+func followAggregatedRunLogs(ctx context.Context, api *runextensionapi.Client, namespace, runName string, tailLines int, stdout, stderr io.Writer) error {
 	cursor := ""
 	for {
-		response, err := api.GetLogs(namespace, runName, &logapi.RunLogOptions{TailLines: int64(tailLines), Follow: true, Cursor: cursor}).Stream(ctx)
+		response, err := api.Runs().Logs(namespace, runName, &runextensionapi.RunLogOptions{TailLines: int64(tailLines), Follow: true, Cursor: cursor}).Stream(ctx)
 		if err != nil {
 			return err
 		}

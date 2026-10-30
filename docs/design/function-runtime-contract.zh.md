@@ -20,14 +20,14 @@ Run API，也不会把 Runtime Server 暴露到 Runtime Pod 外。
 - `InvokeFunction` 执行一次有界 invocation；
 - `UnregisterFunction` drain 或取消工作，并删除本地状态。
 
-Runtime Server 不读取 Kubernetes 对象、不认证调用方、不路由 gateway 请求、不上传
-artifact，也不调度 capacity。这些职责分别属于 runtimed、Runtime gateway 和 control
+Runtime Server 不读取 Kubernetes 对象、不认证调用方、不路由 Run extension API 请求、不上传
+artifact，也不调度 capacity。这些职责分别属于 runtimed、Run extension API 和 control
 plane。invocation artifact 不属于 v0.x 范围。
 
-runtimed 也会在 Runtime Service port 为 gateway traffic 实现同一个 `FunctionRuntime` service。
+runtimed 也会在 Runtime Service port 为 Run extension API traffic 实现同一个 `FunctionRuntime` service。
 仅在该 proxy hop，`InvokeFunctionRequest.registration` 提供 `run_uid`，而 `registration_id` 为空。
 runtimed 解析当前 assigned owner 及其私有 active registration，填入 opaque ID 后调用 colocated
-Runtime Server。Runtime Server 本身始终要求非空 registration ID；gateway 不会看到或提供它。
+Runtime Server。Runtime Server 本身始终要求非空 registration ID；Run extension API 不会看到或提供它。
 
 function 支持对 custom Runtime 是 opt-in：只支持一次性执行的 Runtime 只需实现并注册 `Runtime`。
 以下精确 message shape 和语义必须在修改 `runtime.proto`、生成 stubs 或内置 Runtime 实现前完成评审。
@@ -53,7 +53,7 @@ working-directory 路径；它是幂等校验，不是凭据。
 
 ### 调用与 Registration Fence 示例
 
-以下展示 runtimed 发往 Pod-local Runtime Server 的调用。它是建议协议的示例，不是公开 gateway
+以下展示 runtimed 发往 Pod-local Runtime Server 的调用。它是建议协议的示例，不是公开 Run extension API
 命令。
 
 1. UID 为 `2b5d...` 的 function Run 在 Runtime Pod A 上开始第一次 registration。此时
@@ -82,7 +82,7 @@ working-directory 路径；它是幂等校验，不是凭据。
    }
    ```
 
-2. gateway 将请求路由到 runtimed A。它分配 invocation ID，并发送 payload，不创建新的
+2. Run extension API 将请求路由到 runtimed A。它分配 invocation ID，并发送 payload，不创建新的
    Kubernetes object：
 
    ```console
@@ -107,7 +107,7 @@ working-directory 路径；它是幂等校验，不是凭据。
    `reg_01J...` 的 invoke 或 unregister 在新 registration 取代它后必须返回
    `FailedPrecondition`；它不能影响新 registration。
 
-gateway 和 runtimed 还会使用 assigned Pod identity 对 routing 做 fence。registration ID 保护的是
+Run extension API 和 runtimed 还会使用 assigned Pod identity 对 routing 做 fence。registration ID 保护的是
 Runtime Server 的本地 registration state；它不保证 invocation exactly once。
 
 ## 建议的 Protobuf API
@@ -192,7 +192,7 @@ enum FunctionRegistrationState {
 }
 ```
 
-gateway 初期接收 JSON，并设置 `content_type=application/json`。本地协议使用 opaque bytes，
+Run extension API 初期接收 JSON，并设置 `content_type=application/json`。本地协议使用 opaque bytes，
 使受信 custom Runtime 后续可采用其他编码。输入和 response bytes 不写入 `Run.status`。
 
 ## 注册与状态语义
@@ -224,9 +224,9 @@ in-flight invocation，并且不排队。
 - `invocation_id` 是可选的关联数据，最大 128 bytes。调用方可提供它用于跨系统 trace；为空时
   Runtime Server 生成 opaque ID，response 始终返回实际使用的 ID。
 - 它不是去重 key。未知结果后的重试可能再次执行；dispatch 后没有组件自动重试。
-- `timeout_millis` 由 runtimed 限制为剩余 Run 生命周期和 gateway deadline 以内。零表示
-  有界 gateway 默认值，绝不代表无限运行。
-- `ResourceExhausted` 映射为 gateway HTTP 429。`DeadlineExceeded` 仅影响本次 invocation，
+- `timeout_millis` 由 runtimed 限制为剩余 Run 生命周期和 Run extension API deadline 以内。零表示
+  有界 Run extension API 默认值，绝不代表无限运行。
+- `ResourceExhausted` 映射为 Run extension API HTTP 429。`DeadlineExceeded` 仅影响本次 invocation，
   不影响 function Run 生命周期。draining、stale 或未就绪注册的 `FailedPrecondition` 映射为
   HTTP 503。
 
@@ -296,10 +296,10 @@ function mode；不得通过 `Execute` 模拟 function invocation。
 
 1. 在 function mode 中使用 `Run.status.attempt` 表示 registration lifecycle attempt；后续本地
    调用使用 Runtime Server 生成的 registration ID，并以它 fence stale operation。
-2. 本地 invoke payload 使用 opaque bytes 加 content type；JSON 是第一个 gateway 编码。
+2. 本地 invoke payload 使用 opaque bytes 加 content type；JSON 是第一个 Run extension API 编码。
 3. invocation artifact 不属于 v0.x 范围。
 4. 不承诺 invocation-ID 去重，也不承诺自动 execution retry。
 5. v0.x 每个已注册 function Run 最多一个 in-flight invocation。
 
 批准后，实现可以拆为 protobuf/stub generation、Bash/Python adapters，以及 runtimed
-registration lifecycle/gateway 工作。
+registration lifecycle/Run extension API 工作。

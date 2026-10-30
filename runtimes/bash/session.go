@@ -76,7 +76,7 @@ func (s *Server) GetSessionStatus(_ context.Context, req *pb.GetSessionStatusReq
 	return entry.status(), nil
 }
 
-// RenewSessionLease records a gateway-observed connection heartbeat. The timestamp
+// RenewSessionLease records a Run extension API connection heartbeat. The timestamp
 // survives a runtimed restart through GetSessionStatus recovery.
 func (s *Server) RenewSessionLease(_ context.Context, req *pb.RenewSessionLeaseRequest) (*pb.SessionStatus, error) {
 	entry, err := s.matchSession(req.GetIdentity())
@@ -88,7 +88,7 @@ func (s *Server) RenewSessionLease(_ context.Context, req *pb.RenewSessionLeaseR
 }
 
 // applySessionOperation executes a non-streaming workspace mutation. runtimed
-// owns admission and the public gateway exposes these mutations only through
+// owns admission and the Run extension API exposes these mutations only through
 // the persistent Session WebSocket.
 func (s *Server) applySessionOperation(ctx context.Context, req *pb.SessionOperationRequest) (*pb.SessionOperationResult, error) {
 	entry, err := s.matchSession(req.GetIdentity())

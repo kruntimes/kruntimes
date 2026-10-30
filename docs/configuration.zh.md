@@ -68,7 +68,8 @@ ingress 或其它对外暴露需要单独配置。
 ## Run Extension API
 
 `runExtensionAPI.enabled` 独立于始终安装的 Kruntimes Console，默认是 `true`。它安装
-`logs.kruntimes.io/v1alpha1` 和 `sessions.kruntimes.io/v1alpha1` 两个 APIService 及独立
+`logs.kruntimes.io/v1alpha1`、`sessions.kruntimes.io/v1alpha1` 和
+`functions.kruntimes.io/v1alpha1` 三个 APIService 及独立
 backend。这是 `krt logs` 和 Console 的默认
 transport：普通 kubeconfig authentication（包括 client certificate）由 Kubernetes API server 验证。
 caller 只需要 `logs.kruntimes.io` `runs/log` subresource 的 `get`；不需要 `kruntimes.io/runs get` 或
@@ -87,12 +88,13 @@ runExtensionAPI:
 `image`：旧镜像只包含日志 API binary。新配置应使用
 `runExtensionAPI` 和 `run-extension-apiserver` 镜像。
 
-Console 和 `krt logs` 始终使用该聚合 API。Console 内嵌的 Runtime access API 继续提供 Session
-和 Function endpoint，但不再提供 Run logs。
+Run logs、浏览器 Session operation、Session 文件读取和 Function invocation 使用该聚合 API。
+Console 仅把浏览器 Session operation 转发给它，自身不再持有 Runtime data plane。
 
 `krt session exec` 和 `krt session attach` 也通过 Kubernetes API server 使用 Session
 subresource。caller 需要指定 `kruntimes.io/runs` 和 `sessions.kruntimes.io/runs/session`
-的 `get` 权限。
+的 `get` 权限。Function caller 需要对指定 Run 的 `functions.kruntimes.io` `runs/function`
+有 `create` 权限。
 
 ### 公开资源列表
 

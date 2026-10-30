@@ -1,7 +1,9 @@
-// Package gateway implements the Runtime access HTTP handler embedded by the
-// Console. It owns protocol translation only; the Console owns the public
-// listener, TLS, and lifecycle.
-package gateway
+// Package dataplane translates Run data-plane HTTP requests into Runtime
+// Service gRPC calls. It owns the Session operation protocol, the Session file
+// adapters, and Function invocation. Callers must authenticate and authorize a
+// request before invoking these handlers; this package makes no authorization
+// decision.
+package dataplane
 
 import (
 	"bytes"
@@ -15,14 +17,11 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	pb "github.com/kruntimes/kruntimes/api/runtime/v1"
 	"github.com/kruntimes/kruntimes/api/v1alpha1"
@@ -31,24 +30,13 @@ import (
 const (
 	defaultRuntimeServicePort = 9093
 
-	// DefaultMaxRequestBodyBytes is the maximum size of a gateway JSON request.
+	// DefaultMaxRequestBodyBytes is the maximum size of a data-plane JSON request.
 	DefaultMaxRequestBodyBytes int64 = 1 << 20
-	// DefaultMaxResponseBodyBytes is the maximum size of a gateway JSON response.
+	// DefaultMaxResponseBodyBytes is the maximum size of a data-plane JSON response.
 	DefaultMaxResponseBodyBytes int64 = 1 << 20
-	// DefaultMaxHeaderBytes is the maximum size of a gateway HTTP request header.
-	DefaultMaxHeaderBytes = 1 << 20
-	// DefaultMaxConcurrentRequests is the per-Console-Pod HTTP request limit.
-	DefaultMaxConcurrentRequests = 128
-	// DefaultMaxSessionConnections isolates long-lived WebSockets from HTTP requests.
-	DefaultMaxSessionConnections = 128
 )
 
-var errRequestBodyTooLarge = errors.New("gateway request body exceeds configured limit")
-
-// Authorizer verifies that a request principal may access a Session Run.
-type Authorizer interface {
-	Authorize(context.Context, *http.Request, *v1alpha1.Run) error
-}
+var errRequestBodyTooLarge = errors.New("data-plane request body exceeds configured limit")
 
 // SessionRuntimeDialer creates a SessionRuntime client for a Runtime Service.
 type SessionRuntimeDialer interface {
@@ -60,160 +48,22 @@ type FunctionRuntimeDialer interface {
 	DialFunction(context.Context, string) (pb.FunctionRuntimeClient, io.Closer, error)
 }
 
-// Server exposes a versioned HTTP API for already-ready Session Runs.
-// Run reads are served through the configured controller-runtime cache.
+// Server translates already-authorized Run data-plane requests into Runtime
+// Service gRPC calls.
 type Server struct {
-	Runs           client.Reader
-	Authorizer     Authorizer
 	Dialer         SessionRuntimeDialer
 	FunctionDialer FunctionRuntimeDialer
 	RuntimePort    int
-	// MaxConcurrentRequests bounds requests handled by one Console Pod. Values
-	// less than one use the default. Health checks do not consume this limit.
-	MaxConcurrentRequests int
-	// MaxSessionConnections bounds persistent Session WebSockets independently of HTTP requests.
-	MaxSessionConnections int
-	// MaxRequestBodyBytes bounds access API JSON request bodies. Values less than
-	// one use the default.
-	MaxRequestBodyBytes int64
-	// MaxResponseBodyBytes bounds access API generated JSON responses. Values less
+	// MaxRequestBodyBytes bounds data-plane JSON request bodies. Values less
 	// than one use the default.
+	MaxRequestBodyBytes int64
+	// MaxResponseBodyBytes bounds data-plane generated JSON responses. Values
+	// less than one use the default.
 	MaxResponseBodyBytes int64
-	// MaxHeaderBytes bounds HTTP request headers before routing. Values less than
-	// one use the default.
-	MaxHeaderBytes    int
-	requestLimiter    gatewayRequestLimiter
-	connectionLimiter gatewayRequestLimiter
-	routesOnce        sync.Once
-	routes            http.Handler
-}
-
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.routesOnce.Do(s.registerRoutes)
-	s.routes.ServeHTTP(w, r)
-}
-
-func (s *Server) registerRoutes() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", s.healthz)
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/functions/{invocation}", s.withRequestLimit(s.handleFunctionInvoke))
-
-	withSessionRun := func(handler sessionRouteHandler) http.HandlerFunc {
-		return s.withRequestLimit(s.withSessionRun(handler))
-	}
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}", withSessionRun(s.handleSessionStatus))
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/operations:ws", s.withSessionRun(s.handleSessionWebSocket))
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files", withSessionRun(s.handleSessionListFiles))
-	mux.HandleFunc("/v1/namespaces/{namespace}/runtimes/{runtime}/sessions/{runUID}/files/{path...}", withSessionRun(s.handleSessionReadFile))
-	mux.HandleFunc("/", s.endpointNotFound)
-
-	s.routes = mux
-}
-
-func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.methodNotAllowed(w)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-func (s *Server) endpointNotFound(w http.ResponseWriter, _ *http.Request) {
-	s.writeError(w, http.StatusNotFound, "endpoint not found")
-}
-
-func (s *Server) withRequestLimit(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.requestLimiter.tryAcquire(s.maxConcurrentRequests()) {
-			s.writeError(w, http.StatusTooManyRequests, "gateway request concurrency limit reached")
-			return
-		}
-		defer s.requestLimiter.release()
-		next(w, r)
-	}
-}
-
-func (s *Server) withSessionConnectionLimit(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		limit := s.MaxSessionConnections
-		if limit < 1 {
-			limit = DefaultMaxSessionConnections
-		}
-		if !s.connectionLimiter.tryAcquire(limit) {
-			s.writeError(w, http.StatusTooManyRequests, "gateway Session connection limit reached")
-			return
-		}
-		defer s.connectionLimiter.release()
-		next(w, r)
-	}
-}
-
-type sessionRouteHandler func(http.ResponseWriter, *http.Request, *v1alpha1.Run)
-
-func (s *Server) withSessionRun(next sessionRouteHandler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		run, ok := s.authorizedSessionRun(w, r)
-		if !ok {
-			return
-		}
-		next(w, r, run)
-	}
-}
-
-func (s *Server) authorizedSessionRun(w http.ResponseWriter, r *http.Request) (*v1alpha1.Run, bool) {
-	namespace, runtimeName, runUID, ok := routeRunIdentity(r)
-	if !ok {
-		s.endpointNotFound(w, r)
-		return nil, false
-	}
-	run, err := s.sessionRun(r.Context(), namespace, runtimeName, runUID)
-	if err != nil {
-		s.writeGatewayError(w, err)
-		return nil, false
-	}
-	if s.Authorizer == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "gateway authorization is not configured")
-		return nil, false
-	}
-	if err := s.Authorizer.Authorize(r.Context(), r, run); err != nil {
-		s.writeGatewayError(w, err)
-		return nil, false
-	}
-	return run, true
-}
-
-func routeRunIdentity(r *http.Request) (namespace, runtimeName, runUID string, ok bool) {
-	namespace = r.PathValue("namespace")
-	runtimeName = r.PathValue("runtime")
-	runUID = r.PathValue("runUID")
-	return namespace, runtimeName, runUID, namespace != "" && runtimeName != "" && runUID != ""
-}
-
-func (s *Server) handleFunctionInvoke(w http.ResponseWriter, r *http.Request) {
-	namespace := r.PathValue("namespace")
-	runtimeName := r.PathValue("runtime")
-	runUID, found := strings.CutSuffix(r.PathValue("invocation"), ":invoke")
-	if namespace == "" || runtimeName == "" || !found || runUID == "" {
-		s.endpointNotFound(w, r)
-		return
-	}
-	s.serveFunctionInvoke(w, r, namespace, runtimeName, runUID)
-}
-
-func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	if r.Method != http.MethodGet {
-		s.methodNotAllowed(w)
-		return
-	}
-	s.getSessionStatus(w, r, run)
-}
-
-func (s *Server) handleSessionWebSocket(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	s.StreamSession(w, r, run)
 }
 
 // StreamSession serves a Session Run after the caller has authenticated and
-// authorized the request. The aggregated API uses this same wire protocol.
+// authorized the request.
 func (s *Server) StreamSession(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
 	if r.Method != http.MethodGet {
 		s.methodNotAllowed(w)
@@ -235,48 +85,46 @@ func (s *Server) StreamSession(w http.ResponseWriter, r *http.Request, run *v1al
 		s.writeError(w, http.StatusUpgradeRequired, "WebSocket upgrade is required")
 		return
 	}
-	s.withSessionConnectionLimit(func(w http.ResponseWriter, r *http.Request) {
-		s.streamOperationWebSocket(w, r, run)
-	})(w, r)
+	s.streamOperationWebSocket(w, r, run)
 }
 
-func (s *Server) handleSessionListFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+// GetSessionStatus returns readiness and bounded metadata for a Session Run.
+func (s *Server) GetSessionStatus(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
 	if r.Method != http.MethodGet {
 		s.methodNotAllowed(w)
 		return
 	}
-	s.listFiles(w, r, run)
-}
-
-func (s *Server) handleSessionReadFile(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	if r.Method != http.MethodGet {
-		s.methodNotAllowed(w)
-		return
-	}
-	path := r.PathValue("path")
-	if path == "" {
-		s.endpointNotFound(w, r)
-		return
-	}
-	s.readFile(w, r, run, path)
-}
-
-func (s *Server) serveFunctionInvoke(w http.ResponseWriter, r *http.Request, namespace, runtimeName, runUID string) {
-	if r.Method != http.MethodPost {
-		s.methodNotAllowed(w)
-		return
-	}
-	run, err := s.functionRun(r.Context(), namespace, runtimeName, runUID)
+	client, closer, err := s.runtimeClient(r.Context(), run)
 	if err != nil {
 		s.writeGatewayError(w, err)
 		return
 	}
-	if s.Authorizer == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "gateway authorization is not configured")
+	defer closer.Close()
+	response, err := client.GetSessionStatus(r.Context(), &pb.GetSessionStatusRequest{Identity: sessionIdentity(run)})
+	if err != nil {
+		s.writeGatewayError(w, err)
 		return
 	}
-	if err := s.Authorizer.Authorize(r.Context(), r, run); err != nil {
-		s.writeGatewayError(w, err)
+	s.writeJSON(w, http.StatusOK, newSessionStatusResponse(response))
+}
+
+// ServeFunction invokes one Function Run after the caller has authenticated and
+// authorized the request.
+func (s *Server) ServeFunction(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	if r.Method != http.MethodPost {
+		s.methodNotAllowed(w)
+		return
+	}
+	if run == nil || run.Spec.Mode.Function == nil {
+		s.writeError(w, http.StatusNotFound, "function Run not found")
+		return
+	}
+	if run.Status.Phase != v1alpha1.RunReady || run.Status.AssignedPodUID == "" {
+		s.writeError(w, http.StatusConflict, "function Run is not Ready")
+		return
+	}
+	if s.FunctionDialer == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "Function Runtime dialer is not configured")
 		return
 	}
 	input, err := s.functionInput(r)
@@ -307,119 +155,28 @@ func (s *Server) serveFunctionInvoke(w http.ResponseWriter, r *http.Request, nam
 	s.writeJSON(w, http.StatusOK, functionInvokeResponse{InvocationID: response.GetInvocationId(), Output: response.GetOutput(), ContentType: response.GetContentType(), Outputs: response.GetOutputs()})
 }
 
-func (s *Server) functionInput(r *http.Request) ([]byte, error) {
-	defer r.Body.Close()
-	body := &io.LimitedReader{R: r.Body, N: s.maxRequestBodyBytes() + 1}
-	input, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("read request: %w", err)
-	}
-	if body.N == 0 {
-		return nil, errRequestBodyTooLarge
-	}
-	if !json.Valid(input) {
-		return nil, errors.New("function input must be valid JSON")
-	}
-	return input, nil
-}
-
-func (s *Server) functionRun(ctx context.Context, namespace, runtimeName, runUID string) (*v1alpha1.Run, error) {
-	if s.Runs == nil || s.FunctionDialer == nil {
-		return nil, status.Error(codes.FailedPrecondition, "gateway is not configured")
-	}
-	var runs v1alpha1.RunList
-	if err := s.Runs.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
-		return nil, status.Errorf(codes.Internal, "list Runtime Runs: %v", err)
-	}
-	for i := range runs.Items {
-		run := &runs.Items[i]
-		if string(run.UID) == runUID {
-			if run.Spec.Mode.Function == nil || run.Spec.Runtime != runtimeName {
-				return nil, status.Error(codes.NotFound, "function Run not found")
-			}
-			if run.Status.Phase != v1alpha1.RunReady || run.Status.AssignedPodUID == "" {
-				return nil, status.Errorf(codes.FailedPrecondition, "function Run is %s, not Ready", run.Status.Phase)
-			}
-			return run, nil
-		}
-	}
-	return nil, status.Error(codes.NotFound, "function Run not found")
-}
-
-func (s *Server) functionClient(ctx context.Context, run *v1alpha1.Run) (pb.FunctionRuntimeClient, io.Closer, error) {
-	port := s.RuntimePort
-	if port == 0 {
-		port = defaultRuntimeServicePort
-	}
-	client, closer, err := s.FunctionDialer.DialFunction(ctx, fmt.Sprintf("runtime-%s.%s.svc:%d", run.Spec.Runtime, run.Namespace, port))
-	if err != nil {
-		return nil, nil, status.Errorf(codes.Unavailable, "dial Runtime Service: %v", err)
-	}
-	return client, closer, nil
-}
-
-func (s *Server) maxConcurrentRequests() int {
-	if s.MaxConcurrentRequests > 0 {
-		return s.MaxConcurrentRequests
-	}
-	return DefaultMaxConcurrentRequests
-}
-
-func (s *Server) maxRequestBodyBytes() int64 {
-	if s.MaxRequestBodyBytes > 0 {
-		return s.MaxRequestBodyBytes
-	}
-	return DefaultMaxRequestBodyBytes
-}
-
-func (s *Server) maxResponseBodyBytes() int64 {
-	if s.MaxResponseBodyBytes > 0 {
-		return s.MaxResponseBodyBytes
-	}
-	return DefaultMaxResponseBodyBytes
-}
-
-func (s *Server) maxHeaderBytes() int {
-	if s.MaxHeaderBytes > 0 {
-		return s.MaxHeaderBytes
-	}
-	return DefaultMaxHeaderBytes
-}
-
-type gatewayRequestLimiter struct {
-	once   sync.Once
-	tokens chan struct{}
-}
-
-func (l *gatewayRequestLimiter) tryAcquire(limit int) bool {
-	l.once.Do(func() {
-		l.tokens = make(chan struct{}, limit)
-	})
-	select {
-	case l.tokens <- struct{}{}:
-		return true
-	default:
-		return false
-	}
-}
-
-func (l *gatewayRequestLimiter) release() {
-	<-l.tokens
-}
-
-func (s *Server) getSessionStatus(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
-	client, closer, err := s.runtimeClient(r.Context(), run)
-	if err != nil {
-		s.writeGatewayError(w, err)
+// ServeSessionFiles serves one bounded, paginated page of a Session Run's
+// workspace.
+func (s *Server) ServeSessionFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+	if r.Method != http.MethodGet {
+		s.methodNotAllowed(w)
 		return
 	}
-	defer closer.Close()
-	response, err := client.GetSessionStatus(r.Context(), &pb.GetSessionStatusRequest{Identity: sessionIdentity(run)})
-	if err != nil {
-		s.writeGatewayError(w, err)
+	s.listSessionFiles(w, r, run)
+}
+
+// ServeSessionFile serves one bounded workspace-relative file from a Session
+// Run.
+func (s *Server) ServeSessionFile(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run, path string) {
+	if r.Method != http.MethodGet {
+		s.methodNotAllowed(w)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, newSessionStatusResponse(response))
+	if path == "" {
+		s.endpointNotFound(w)
+		return
+	}
+	s.readSessionFile(w, r, run, path)
 }
 
 // streamOperationWebSocket upgrades one authorized request to a persistent
@@ -614,7 +371,9 @@ func sessionOperationID(value string) (string, error) {
 	return value, nil
 }
 
-func (s *Server) listFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
+// listSessionFiles reads one bounded page of a Session Run's direct workspace
+// children from the owning runtimed.
+func (s *Server) listSessionFiles(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run) {
 	request, err := sessionFileListRequest(r.URL.Query())
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
@@ -654,7 +413,9 @@ func sessionFileListRequest(query url.Values) (*pb.ListSessionFilesRequest, erro
 	return request, nil
 }
 
-func (s *Server) readFile(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run, path string) {
+// readSessionFile reads one bounded workspace-relative file from the owning
+// runtimed.
+func (s *Server) readSessionFile(w http.ResponseWriter, r *http.Request, run *v1alpha1.Run, path string) {
 	maxBytes := int64(1 << 20)
 	if value := r.URL.Query().Get("maxBytes"); value != "" {
 		parsed, err := strconv.ParseInt(value, 10, 64)
@@ -681,31 +442,10 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request, run *v1alpha1.
 	}{Contents: response.GetContents(), Truncated: response.GetTruncated()})
 }
 
-func (s *Server) sessionRun(ctx context.Context, namespace, runtimeName, runUID string) (*v1alpha1.Run, error) {
-	if s.Runs == nil || s.Dialer == nil {
-		return nil, status.Error(codes.FailedPrecondition, "gateway is not configured")
-	}
-	var runs v1alpha1.RunList
-	if err := s.Runs.List(ctx, &runs, client.InNamespace(namespace)); err != nil {
-		return nil, status.Errorf(codes.Internal, "list Runtime Runs: %v", err)
-	}
-	for i := range runs.Items {
-		run := &runs.Items[i]
-		if string(run.UID) != runUID {
-			continue
-		}
-		if run.Spec.Mode.Session == nil || run.Spec.Runtime != runtimeName {
-			return nil, status.Error(codes.NotFound, "Session Run not found")
-		}
-		if run.Status.Phase != v1alpha1.RunReady || run.Status.AssignedPodUID == "" {
-			return nil, status.Errorf(codes.FailedPrecondition, "Session Run is %s, not Ready", run.Status.Phase)
-		}
-		return run, nil
-	}
-	return nil, status.Error(codes.NotFound, "Session Run not found")
-}
-
 func (s *Server) runtimeClient(ctx context.Context, run *v1alpha1.Run) (pb.SessionRuntimeClient, io.Closer, error) {
+	if s.Dialer == nil {
+		return nil, nil, status.Error(codes.Unavailable, "Session Runtime dialer is not configured")
+	}
 	port := s.RuntimePort
 	if port == 0 {
 		port = defaultRuntimeServicePort
@@ -718,38 +458,58 @@ func (s *Server) runtimeClient(ctx context.Context, run *v1alpha1.Run) (pb.Sessi
 	return client, closer, nil
 }
 
+func (s *Server) functionClient(ctx context.Context, run *v1alpha1.Run) (pb.FunctionRuntimeClient, io.Closer, error) {
+	port := s.RuntimePort
+	if port == 0 {
+		port = defaultRuntimeServicePort
+	}
+	client, closer, err := s.FunctionDialer.DialFunction(ctx, fmt.Sprintf("runtime-%s.%s.svc:%d", run.Spec.Runtime, run.Namespace, port))
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Unavailable, "dial Runtime Service: %v", err)
+	}
+	return client, closer, nil
+}
+
+func (s *Server) functionInput(r *http.Request) ([]byte, error) {
+	defer r.Body.Close()
+	body := &io.LimitedReader{R: r.Body, N: s.maxRequestBodyBytes() + 1}
+	input, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("read request: %w", err)
+	}
+	if body.N == 0 {
+		return nil, errRequestBodyTooLarge
+	}
+	if !json.Valid(input) {
+		return nil, errors.New("function input must be valid JSON")
+	}
+	return input, nil
+}
+
 func sessionIdentity(run *v1alpha1.Run) *pb.SessionIdentity {
 	return &pb.SessionIdentity{RunUid: string(run.UID), AssignedPodUid: run.Status.AssignedPodUID}
 }
 
-func (s *Server) decodeJSON(r *http.Request, target any) error {
-	defer r.Body.Close()
-	body := &io.LimitedReader{R: r.Body, N: s.maxRequestBodyBytes() + 1}
-	decoder := json.NewDecoder(body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		if body.N == 0 {
-			return errRequestBodyTooLarge
-		}
-		return fmt.Errorf("decode request: %w", err)
+func (s *Server) maxRequestBodyBytes() int64 {
+	if s.MaxRequestBodyBytes > 0 {
+		return s.MaxRequestBodyBytes
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if body.N == 0 {
-			return errRequestBodyTooLarge
-		}
-		return errors.New("request must contain one JSON value")
+	return DefaultMaxRequestBodyBytes
+}
+
+func (s *Server) maxResponseBodyBytes() int64 {
+	if s.MaxResponseBodyBytes > 0 {
+		return s.MaxResponseBodyBytes
 	}
-	if _, err := io.Copy(io.Discard, body); err != nil {
-		return fmt.Errorf("read request: %w", err)
-	}
-	if body.N == 0 {
-		return errRequestBodyTooLarge
-	}
-	return nil
+	return DefaultMaxResponseBodyBytes
 }
 
 func (s *Server) methodNotAllowed(w http.ResponseWriter) {
 	s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+}
+
+func (s *Server) endpointNotFound(w http.ResponseWriter) {
+	s.writeError(w, http.StatusNotFound, "endpoint not found")
 }
 
 func (s *Server) writeGatewayError(w http.ResponseWriter, err error) {
@@ -785,11 +545,11 @@ func (s *Server) writeError(w http.ResponseWriter, httpStatus int, message strin
 func (s *Server) writeJSON(w http.ResponseWriter, httpStatus int, value any) {
 	var response bytes.Buffer
 	if err := json.NewEncoder(&response).Encode(value); err != nil {
-		s.writeUnboundedError(w, http.StatusInternalServerError, "encode gateway response")
+		s.writeUnboundedError(w, http.StatusInternalServerError, "encode data-plane response")
 		return
 	}
 	if int64(response.Len()) > s.maxResponseBodyBytes() {
-		s.writeUnboundedError(w, http.StatusRequestEntityTooLarge, "gateway response exceeds configured limit")
+		s.writeUnboundedError(w, http.StatusRequestEntityTooLarge, "data-plane response exceeds configured limit")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

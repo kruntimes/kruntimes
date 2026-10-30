@@ -69,7 +69,7 @@ export function SessionOperationPanel({
     socketRef.current?.close();
     socketRef.current = undefined;
   };
-  useEffect(() => closeSocket, [namespace, run.uid]);
+  useEffect(() => closeSocket, [namespace, run.name]);
 
   const execute = () => {
     const shell = command.trim();
@@ -84,8 +84,7 @@ export function SessionOperationPanel({
     const currentSocket = () => socketRef.current === socket;
     socket = api.openSessionOperation(
       namespace,
-      run.runtime,
-      run.uid,
+      run.name,
       { command: { shell } },
       {
         onEvent: (event) => {
