@@ -112,7 +112,7 @@ func TestNewExecutorUsesAggregatedPath(t *testing.T) {
 			}
 			return true
 		}
-		for index := 1; index <= 2; index++ {
+		for index := 1; index <= 3; index++ {
 			var send struct {
 				Type      string    `json:"type"`
 				Operation Operation `json:"operation"`
@@ -143,47 +143,67 @@ func TestNewExecutorUsesAggregatedPath(t *testing.T) {
 		t.Fatalf("NewExecutor() error = %v", err)
 	}
 	defer executor.Close()
-	for index := 1; index <= 2; index++ {
+
+	const operationCount = 3
+	send := func(index int) {
+		t.Helper()
 		operationID, err := executor.Send(t.Context(), Operation{Command: &Command{Shell: fmt.Sprintf("echo %d", index)}})
-		if err != nil || operationID != fmt.Sprintf("op-%d", index) {
-			t.Fatalf("Send(%d) = %q, %v", index, operationID, err)
+		if err != nil {
+			t.Fatalf("Send(%d) error = %v", index, err)
 		}
-		output, exitCode := receiveCompletedOperation(t, executor.Receive())
-		if string(output) != fmt.Sprintf("result-%d", index) || exitCode != int32(index-1) {
-			t.Fatalf("operation %d output = %q exitCode = %d", index, output, exitCode)
+		if want := fmt.Sprintf("op-%d", index); operationID != want {
+			t.Fatalf("Send(%d) operation ID = %q, want %q", index, operationID, want)
 		}
 	}
-}
 
-// receiveCompletedOperation drains events until the terminal completion event.
-func receiveCompletedOperation(t *testing.T, events <-chan OperationEvent) ([]byte, int32) {
-	t.Helper()
+	// Send the first operation, then keep sending the next one from inside the
+	// event stream as each completion is observed.
+	current := 1
+	next := 2
 	var stdout []byte
-	timeout := time.After(5 * time.Second)
-	for {
+	lastSequence := int64(0)
+	send(current)
+	timeout := time.After(10 * time.Second)
+	for completed := false; !completed; {
 		select {
-		case event, ok := <-events:
+		case event, ok := <-executor.Receive():
 			if !ok {
-				t.Fatal("Session event channel closed before completion")
+				t.Fatalf("Session event channel closed before %d operations completed", operationCount)
 			}
+			if event.Sequence <= lastSequence {
+				t.Fatalf("event sequence = %d after %d", event.Sequence, lastSequence)
+			}
+			lastSequence = event.Sequence
 			if event.Output != nil && event.Output.Stream == "stdout" {
 				stdout = append(stdout, event.Output.Data...)
 			}
 			if event.Failed != nil {
-				t.Fatalf("Session operation failed: %s", event.Failed.Message)
+				t.Fatalf("operation %d failed: %s", current, event.Failed.Message)
 			}
-			if event.Completed != nil {
-				exitCode := int32(0)
-				if event.Completed.Command != nil {
-					exitCode = event.Completed.Command.ExitCode
-				}
-				return stdout, exitCode
+			if event.Completed == nil {
+				continue
 			}
+			exitCode := int32(0)
+			if event.Completed.Command != nil {
+				exitCode = event.Completed.Command.ExitCode
+			}
+			if want := fmt.Sprintf("result-%d", current); string(stdout) != want || exitCode != int32(current-1) {
+				t.Fatalf("operation %d output = %q exitCode = %d, want %q and %d", current, stdout, exitCode, want, current-1)
+			}
+			if next > operationCount {
+				completed = true
+				continue
+			}
+			stdout = nil
+			current = next
+			send(current)
+			next++
 		case <-timeout:
-			t.Fatal("timed out waiting for Session completion")
+			t.Fatalf("timed out after %d operations", current)
 		}
 	}
 }
+
 func TestSessionHeartbeatUsesConfiguredInterval(t *testing.T) {
 	heartbeats := make(chan struct{}, 1)
 	upgrader := websocket.Upgrader{}
