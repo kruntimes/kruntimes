@@ -3,18 +3,17 @@ package sandbox
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -24,28 +23,21 @@ import (
 
 const defaultPollInterval = 500 * time.Millisecond
 
-// LogReader opens the runtimed container log for one assigned Runtime Pod.
-type LogReader interface {
-	Open(ctx context.Context, namespace, pod, container string) (io.ReadCloser, error)
-}
-
 // Client creates and manages Sandboxes backed by Session-mode Runs.
 type Client struct {
 	runs         client.Client
 	extension    *runextensionapi.Client
-	logReader    LogReader
 	pollInterval time.Duration
 }
 
 // Config supplies the Kubernetes dependencies for Client.
 //
 // RESTConfig is required. The SDK uses it for Kubernetes API access and for the
-// aggregated Run extension API that serves Session operations and Session
-// files. Runs, LogReader, and PollInterval are optional overrides.
+// aggregated Run extension API that serves Run logs, Session operations, and
+// Session files. Runs and PollInterval are optional overrides.
 type Config struct {
 	RESTConfig   *rest.Config
 	Runs         client.Client
-	LogReader    LogReader
 	PollInterval time.Duration
 }
 
@@ -68,7 +60,6 @@ func New(config Config) (*Client, error) {
 	return &Client{
 		runs:         config.Runs,
 		extension:    extension,
-		logReader:    config.LogReader,
 		pollInterval: interval,
 	}, nil
 }
@@ -90,13 +81,6 @@ func NewFromRESTConfig(config *rest.Config, options Config) (*Client, error) {
 		}
 		options.Runs = runs
 	}
-	if options.LogReader == nil {
-		pods, err := corev1client.NewForConfig(config)
-		if err != nil {
-			return nil, fmt.Errorf("create Kubernetes Pod log client: %w", err)
-		}
-		options.LogReader = KubernetesLogReader{Pods: pods}
-	}
 	return New(options)
 }
 
@@ -107,17 +91,6 @@ func NewInCluster(options Config) (*Client, error) {
 		return nil, fmt.Errorf("load in-cluster Kubernetes config: %w", err)
 	}
 	return NewFromRESTConfig(config, options)
-}
-
-// KubernetesLogReader reads runtimed logs through Kubernetes Pod log requests.
-type KubernetesLogReader struct{ Pods corev1client.CoreV1Interface }
-
-// Open implements LogReader.
-func (r KubernetesLogReader) Open(ctx context.Context, namespace, pod, container string) (io.ReadCloser, error) {
-	if r.Pods == nil {
-		return nil, errors.New("Kubernetes Pod log client is required")
-	}
-	return r.Pods.Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Container: container}).Stream(ctx)
 }
 
 // create is the internal Run-creation half of Runtime.AcquireSandbox. It must
@@ -319,36 +292,58 @@ type LogLine struct {
 	DurationMilliseconds int64  `json:"duration_milliseconds,omitempty"`
 }
 
-// Logs returns structured owner-runtimed log lines for this Sandbox only.
+// Logs returns structured owner-runtimed log lines for this Sandbox only. It
+// reads the aggregated logs.kruntimes.io API, so callers need get on the named
+// runs/log subresource instead of pods/log.
 func (s *Sandbox) Logs(ctx context.Context) ([]LogLine, error) {
-	if s.client.logReader == nil {
-		return nil, errors.New("sandbox log reader is not configured")
+	if s == nil || s.client == nil || s.client.extension == nil {
+		return nil, errors.New("Sandbox is not available")
 	}
 	if err := s.Refresh(ctx); err != nil {
 		return nil, err
 	}
-	if s.run.Status.AssignedPod == "" {
-		return nil, &StateError{Run: s.run.DeepCopy(), Message: "Session Run has no assigned Runtime Pod"}
-	}
-	stream, err := s.client.logReader.Open(ctx, s.run.Namespace, s.run.Status.AssignedPod, "runtimed")
+	raw, err := s.client.extension.Runs().Logs(s.run.Namespace, s.run.Name, &runextensionapi.RunLogOptions{TailLines: maxRunLogTailLines}).Do(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("open runtimed logs: %w", err)
+		return nil, err
 	}
-	defer stream.Close()
 	lines := []LogLine{}
-	scanner := bufio.NewScanner(stream)
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	scanner.Buffer(make([]byte, 64*1024), 1<<20)
 	for scanner.Scan() {
-		var line LogLine
-		if json.Unmarshal(scanner.Bytes(), &line) == nil && line.RunUID == string(s.run.UID) {
-			lines = append(lines, line)
+		var entry struct {
+			Stream               string `json:"stream"`
+			Message              string `json:"message"`
+			Operation            string `json:"operation"`
+			Outcome              string `json:"outcome"`
+			StatusCode           string `json:"statusCode"`
+			ExitCode             *int32 `json:"exitCode"`
+			TimedOut             bool   `json:"timedOut"`
+			DurationMilliseconds int64  `json:"durationMilliseconds"`
 		}
+		if json.Unmarshal(scanner.Bytes(), &entry) != nil {
+			continue
+		}
+		lines = append(lines, LogLine{
+			RunUID:               string(s.run.UID),
+			AssignedPodUID:       s.run.Status.AssignedPodUID,
+			Stream:               entry.Stream,
+			Message:              entry.Message,
+			Operation:            entry.Operation,
+			Outcome:              entry.Outcome,
+			StatusCode:           entry.StatusCode,
+			ExitCode:             entry.ExitCode,
+			TimedOut:             entry.TimedOut,
+			DurationMilliseconds: entry.DurationMilliseconds,
+		})
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read runtimed logs: %w", err)
+		return nil, fmt.Errorf("read Run logs: %w", err)
 	}
 	return lines, nil
 }
+
+// maxRunLogTailLines is the aggregated Run log API's maximum snapshot size.
+const maxRunLogTailLines = 500
 
 // APIError reports a non-success Run extension API response.
 type APIError = runextensionapi.APIError

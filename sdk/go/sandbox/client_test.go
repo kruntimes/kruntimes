@@ -76,15 +76,19 @@ func TestSandboxListFilesUsesExplicitPageOptions(t *testing.T) {
 	}
 }
 
-func TestSandboxLogsFilterRunUID(t *testing.T) {
-	reader := logReader(func(context.Context, string, string, string) (io.ReadCloser, error) {
-		return io.NopCloser(strings.NewReader("not-json\n{\"run_uid\":\"other\",\"stream\":\"stdout\"}\n{\"run_uid\":\"run-uid\",\"stream\":\"audit\",\"message\":\"session operation completed\",\"operation\":\"command\"}\n")), nil
-	})
-	sandbox := readySandbox(t, nil)
-	sandbox.client.logReader = reader
+func TestSandboxLogsUseAggregatedRunLogAPI(t *testing.T) {
+	var path, authorization string
+	sandbox := readySandbox(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		path = request.URL.Path
+		authorization = request.Header.Get("Authorization")
+		writer.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = io.WriteString(writer, "{\"timestamp\":\"2026-01-01T00:00:00Z\",\"stream\":\"audit\",\"message\":\"session operation completed\",\"operation\":\"command\",\"outcome\":\"succeeded\"}\n")
+		_, _ = io.WriteString(writer, "{\"stream\":\"stdout\",\"message\":\"hello\"}\n")
+	}))
 	sandbox.run.Name = "session"
 	sandbox.run.Namespace = "default"
 	sandbox.run.Status.AssignedPod = "runtime-pod"
+	sandbox.run.Status.AssignedPodUID = "pod-uid"
 	if err := sandbox.client.runs.Create(t.Context(), sandbox.run); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +96,13 @@ func TestSandboxLogsFilterRunUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(lines) != 1 || lines[0].Stream != "audit" || lines[0].Operation != "command" {
+	if want := "/apis/logs.kruntimes.io/v1alpha1/namespaces/default/runs/session/log"; path != want {
+		t.Fatalf("log path = %q, want %q", path, want)
+	}
+	if authorization != "Bearer token" {
+		t.Fatalf("Authorization = %q", authorization)
+	}
+	if len(lines) != 2 || lines[0].Stream != "audit" || lines[0].Operation != "command" || lines[0].Outcome != "succeeded" || lines[0].RunUID != "run-uid" || lines[0].AssignedPodUID != "pod-uid" || lines[1].Stream != "stdout" || lines[1].Message != "hello" {
 		t.Fatalf("logs = %#v", lines)
 	}
 }
@@ -252,12 +262,6 @@ func readySessionRun() *v1alpha1.Run {
 		Spec:       v1alpha1.RunSpec{Mode: v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}}},
 		Status:     v1alpha1.RunStatus{Phase: v1alpha1.RunReady},
 	}
-}
-
-type logReader func(context.Context, string, string, string) (io.ReadCloser, error)
-
-func (read logReader) Open(ctx context.Context, namespace, pod, container string) (io.ReadCloser, error) {
-	return read(ctx, namespace, pod, container)
 }
 
 func terminalSandbox(t *testing.T, termination *v1alpha1.RunTermination) *Sandbox {

@@ -55,12 +55,6 @@ class SessionConnection(Protocol):
 
 
 
-class LogReader(Protocol):
-    """Kubernetes boundary used to read the assigned runtimed container log."""
-
-    def read(self, namespace: str, pod: str, container: str) -> str: ...
-
-
 @dataclass(frozen=True)
 class HTTPResponse:
     """A bounded Run extension API HTTP response."""
@@ -217,7 +211,6 @@ class SandboxClient:
         transport: APITransport,
         *,
         api_server: str,
-        logs: LogReader | None = None,
         bearer_token: str = "",
         poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS,
     ) -> None:
@@ -228,7 +221,6 @@ class SandboxClient:
         self._runs = runs
         self._transport = transport
         self._api_server = api_server.rstrip("/")
-        self._logs = logs
         self._bearer_token = bearer_token
         self._poll_interval_seconds = poll_interval_seconds
 
@@ -414,32 +406,51 @@ class Sandbox:
             next_page_token=str(response.get("nextPageToken", "")),
         )
 
-    def logs(self) -> list[LogLine]:
-        """Read structured owner-runtimed log records for this Sandbox only."""
-        if self._client._logs is None:
-            raise ValueError("sandbox log reader is not configured")
+    def logs(self, *, tail_lines: int = 100) -> list[LogLine]:
+        """Read structured Run log records through the aggregated logs API."""
         self.refresh()
+        if tail_lines <= 0:
+            raise ValueError("log tail_lines must be positive")
+        metadata = _metadata(self._run)
         status = self._run.get("status", {})
-        pod = status.get("assignedPod", "") if isinstance(status, Mapping) else ""
-        if not pod:
-            raise SandboxStateError(self._run, "Session Run has no assigned Runtime Pod")
-        raw = self._client._logs.read(_namespace(_metadata(self._run)), str(pod), "runtimed")
-        run_uid = str(_metadata(self._run).get("uid", ""))
-        result: list[LogLine] = []
-        for line in raw.splitlines():
+        assigned_pod_uid = str(status.get("assignedPodUID", "")) if isinstance(status, Mapping) else ""
+        url = (
+            f"{self._client._api_server}/apis/logs.kruntimes.io/v1alpha1"
+            f"/namespaces/{_namespace(metadata)}/runs/{_name(metadata)}/log?tailLines={tail_lines}"
+        )
+        headers = {"Accept": "application/x-ndjson"}
+        if self._client._bearer_token:
+            headers["Authorization"] = "Bearer " + self._client._bearer_token
+        response = self._client._transport.request("GET", url, None, headers)
+        if not 200 <= response.status_code < 300:
+            message = ""
             try:
-                value = json.loads(line)
+                value = json.loads(response.body[: 1 << 20])
+                if isinstance(value, Mapping):
+                    message = str(value.get("error", "") or value.get("message", ""))
+            except json.JSONDecodeError:
+                pass
+            raise APIError(response.status_code, message)
+        run_uid = str(metadata.get("uid", ""))
+        result: list[LogLine] = []
+        for raw in response.body.decode().splitlines():
+            try:
+                value = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            if not isinstance(value, Mapping) or value.get("run_uid") != run_uid:
+            if not isinstance(value, Mapping):
                 continue
             result.append(LogLine(
                 run_uid=run_uid,
-                stream=str(value.get("stream", "")), message=str(value.get("message", "")),
-                assigned_pod_uid=str(value.get("assigned_pod_uid", "")), operation=str(value.get("operation", "")),
-                outcome=str(value.get("outcome", "")), status_code=str(value.get("status_code", "")),
-                exit_code=value.get("exit_code"), timed_out=bool(value.get("timed_out", False)),
-                duration_milliseconds=int(value.get("duration_milliseconds", 0)),
+                assigned_pod_uid=assigned_pod_uid,
+                stream=str(value.get("stream", "")),
+                message=str(value.get("message", "")),
+                operation=str(value.get("operation", "")),
+                outcome=str(value.get("outcome", "")),
+                status_code=str(value.get("statusCode", "")),
+                exit_code=value.get("exitCode"),
+                timed_out=bool(value.get("timedOut", False)),
+                duration_milliseconds=int(value.get("durationMilliseconds", 0)),
             ))
         return result
 

@@ -76,11 +76,6 @@ class FakeSessionConnection:
         self.closed = True
 
 
-class FakeLogs:
-    def read(self, namespace, pod, container):
-        return '{"run_uid":"run-uid","stream":"audit","message":"command"}\n{"run_uid":"other","stream":"audit","message":"ignored"}'
-
-
 def sandbox_client(runs, transport, **kwargs):
     return SandboxClient(runs, transport, api_server="https://kube.example", **kwargs)
 
@@ -235,11 +230,26 @@ class SandboxTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sandbox.list_files(ListFilesOptions(limit=-1))
 
-    def test_logs_filter_run_uid(self):
-        sandbox = sandbox_client(FakeRuns(ready_run()), FakeAPI(), logs=FakeLogs()).open("default", "sandbox")
-        lines = sandbox.logs()
-        self.assertEqual(1, len(lines))
+    def test_logs_use_aggregated_api(self):
+        api = FakeAPI()
+        api.response = HTTPResponse(200, (
+            b'{"stream":"audit","message":"command","operation":"command","outcome":"succeeded","exitCode":0,"durationMilliseconds":12}\n'
+            b'{"stream":"stdout","message":"hello"}\n'
+        ))
+        run = ready_run()
+        run["status"]["assignedPodUID"] = "pod-uid"
+        sandbox = sandbox_client(FakeRuns(run), api).open("default", "sandbox")
+
+        lines = sandbox.logs(tail_lines=50)
+
+        self.assertEqual(2, len(lines))
+        self.assertEqual("audit", lines[0].stream)
         self.assertEqual("command", lines[0].message)
+        self.assertEqual("run-uid", lines[0].run_uid)
+        self.assertEqual("pod-uid", lines[0].assigned_pod_uid)
+        self.assertEqual(0, lines[0].exit_code)
+        self.assertEqual("hello", lines[1].message)
+        self.assertIn("/apis/logs.kruntimes.io/v1alpha1/namespaces/default/runs/sandbox/log?tailLines=50", api.requests[0][1])
 
     def test_open_rejects_non_session_run(self):
         run = ready_run()

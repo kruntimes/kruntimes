@@ -89,6 +89,7 @@ return Runtime capacity. `Close` returns successfully only after the Run
 reaches `Succeeded`; `Cancel` returns successfully only after `Cancelled`.
 Any other terminal phase is a typed `StateError` that retains the current Run.
 
-The caller does not need `pods`, `pods/portforward`, `pods/log`, or Console
-access to operate a Sandbox. Run logs still use the aggregated Run-log API (or a
-custom `LogReader`).
+The caller does not need `pods`, `pods/portforward`, or Console access to
+operate a Sandbox. `Sandbox.Logs` reads the aggregated
+`logs.kruntimes.io/runs/log` subresource, so grant `get` on that subresource for
+the named Run; it never requests `pods/log`.

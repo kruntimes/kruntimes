@@ -14,7 +14,7 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from .sandbox import APITransport, HTTPResponse, LogReader, RunClient, SandboxClient, SessionConnection
+from .sandbox import APITransport, HTTPResponse, RunClient, SandboxClient, SessionConnection
 
 _GROUP = "kruntimes.io"
 _VERSION = "v1alpha1"
@@ -44,20 +44,6 @@ class KubernetesRunClient(RunClient):
 
     def delete(self, namespace: str, name: str) -> None:
         self._custom_objects.delete_namespaced_custom_object(_GROUP, _VERSION, namespace, _PLURAL, name)
-
-
-class KubernetesLogReader(LogReader):
-    """LogReader backed by Kubernetes CoreV1Api Pod logs."""
-
-    def __init__(self, core_v1: Any) -> None:
-        self._core_v1 = core_v1
-
-    def read(self, namespace: str, pod: str, container: str) -> str:
-        return str(
-            self._core_v1.read_namespaced_pod_log(
-                name=pod, namespace=namespace, container=container
-            )
-        )
 
 
 class UrllibAPITransport(APITransport):
@@ -132,7 +118,6 @@ def _from_api_client(api_client: Any, poll_interval_seconds: float) -> SandboxCl
         KubernetesRunClient(kubernetes.client.CustomObjectsApi(api_client)),
         UrllibAPITransport(api_server=api_server, ssl_context=_ssl_context(configuration)),
         api_server=api_server,
-        logs=KubernetesLogReader(kubernetes.client.CoreV1Api(api_client)),
         bearer_token=token,
         poll_interval_seconds=poll_interval_seconds,
     )

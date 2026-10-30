@@ -20,7 +20,6 @@ from .sandbox import (
 
 try:
     from .kubernetes import (
-        KubernetesLogReader,
         KubernetesRunClient,
         UrllibAPITransport,
         from_incluster,

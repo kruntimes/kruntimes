@@ -80,8 +80,7 @@ return Runtime capacity. `close()` returns successfully only after the Run
 reaches `Succeeded`; `cancel()` returns successfully only after `Cancelled`.
 Any other terminal phase raises `SandboxStateError` with the current Run.
 
-The caller needs `get` access to the target `Run` and `get` on
+The caller needs `get` access to the target `Run`, `get` on
 `sessions.kruntimes.io` `runs/session` for the Session connection and file
-operations. Reading sandbox logs still reads the assigned Pod's container logs
-through the Kubernetes API, so those callers additionally need `pods/log` (or
-must use another log transport).
+operations, and `get` on `logs.kruntimes.io` `runs/log` for sandbox logs. The
+SDK never requests `pods` or `pods/log`.
