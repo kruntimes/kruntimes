@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -196,64 +195,29 @@ func isSessionOperationFailure(err error) bool {
 }
 
 func runSessionOperation(ctx context.Context, session *sandbox.Session, operation sandbox.Operation, format string, showEvents bool, stdout, stderr io.Writer) error {
-	operationID, err := session.Send(ctx, operation)
+	result, err := session.Exec(ctx, operation, &sandbox.ExecOptions{
+		OnEvent: func(event sandbox.OperationEvent) error {
+			return renderSessionEvent(event, format, showEvents, stdout, stderr)
+		},
+	})
 	if err != nil {
-		return fmt.Errorf("submit Session operation: %w", err)
-	}
-	// Send consumes the first accepted frame and returns its operation ID.
-	accepted := sandbox.OperationEvent{Sequence: 1, Type: "accepted"}
-	accepted.Accepted = &struct {
-		OperationID string `json:"operationID"`
-	}{OperationID: operationID}
-	if err := renderSessionEvent(accepted, format, showEvents, stdout, stderr); err != nil {
+		var failed *sandbox.OperationFailedError
+		if errors.As(err, &failed) {
+			return sessionOperationFailure{message: failed.Error()}
+		}
+		var transport *sandbox.TransportError
+		if errors.As(err, &transport) {
+			return fmt.Errorf("receive Session operation: %w", err)
+		}
 		return err
 	}
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		select {
-		case <-ctx.Done():
-			cancelCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			err := session.Cancel(cancelCtx, operationID)
-			cancel()
-			if err != nil {
-				_ = session.Close()
-				return
-			}
-			select {
-			case <-done:
-			case <-time.After(5 * time.Second):
-				_ = session.Close()
-			}
-		case <-done:
+	if command := result.Command; command != nil {
+		if command.TimedOut {
+			return sessionOperationFailure{message: "Session command timed out"}
 		}
-	}()
-	// The stream stays open until the server sends a terminal event or the
-	// connection closes; the signal handler sends Cancel separately.
-	for event := range session.Receive() {
-		if err := renderSessionEvent(event, format, showEvents, stdout, stderr); err != nil {
-			return err
+		if command.ExitCode != 0 {
+			return sessionOperationFailure{message: fmt.Sprintf("Session command exited with status %d", command.ExitCode)}
 		}
-		if event.Failed != nil {
-			return sessionOperationFailure{message: fmt.Sprintf("Session operation failed (%d): %s", event.Failed.Code, event.Failed.Message)}
-		}
-		if event.Completed != nil {
-			if command := event.Completed.Command; command != nil {
-				if command.TimedOut {
-					return sessionOperationFailure{message: "Session command timed out"}
-				}
-				if command.ExitCode != 0 {
-					return sessionOperationFailure{message: fmt.Sprintf("Session command exited with status %d", command.ExitCode)}
-				}
-			}
-			return nil
-		}
-	}
-	if err := session.Err(); err != nil {
-		return fmt.Errorf("receive Session operation: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
 	}
 	return nil
 }

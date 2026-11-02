@@ -26,20 +26,37 @@ if err != nil {
 }
 defer session.Close()
 
-operationID, err := session.Send(ctx, sdk.Operation{Command: &sdk.Command{Argv: []string{"sh", "-c", "kubectl get pods -A"}}})
+`Session.Exec` submits one operation, streams its events, and returns the
+terminal result:
+
+```go
+result, err := session.Exec(ctx, sdk.Operation{Command: &sdk.Command{Argv: []string{"sh", "-c", "kubectl get pods -A"}}}, &sdk.ExecOptions{
+    OnEvent: func(event sdk.OperationEvent) error {
+        // accepted, output, progress, completed, and failed events in order
+        return nil
+    },
+})
 if err != nil {
-    return err
-}
-_ = operationID // retain this ID to call session.Cancel when needed
-for event := range session.Receive() {
-    if event.Completed != nil || event.Failed != nil {
-        break
+    var failed *sdk.OperationFailedError
+    if errors.As(err, &failed) {
+        return fmt.Errorf("command failed (%d): %s", failed.Code, failed.Message)
     }
-}
-if err := session.Err(); err != nil {
     return err
+}
+if result.Command.TimedOut {
+    return errors.New("command timed out")
+}
+if result.Command.ExitCode != 0 {
+    return fmt.Errorf("command exited with status %d", result.Command.ExitCode)
 }
 ```
+
+A non-zero exit code or a timed-out command is a terminal result, not an error;
+a `failed` event is an `*OperationFailedError` and a broken stream is a
+`*TransportError`. A canceled context returns an error matching
+`errors.Is(err, context.Canceled)`. `Exec` sends the cancel frame before
+returning on cancellation, never closes the Session Run, and never replays an
+operation. Use `Send`/`Receive` directly for interactive multi-operation work.
 
 File listings are explicitly paginated. Continue while `NextPageToken` is not
 empty; a listing is not a filesystem snapshot, so restart from an empty token

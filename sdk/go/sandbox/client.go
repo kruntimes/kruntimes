@@ -234,8 +234,8 @@ func shouldRequestTermination(current *v1alpha1.RunTermination, requested v1alph
 	return current.Mode == v1alpha1.RunTerminationDrain && requested == v1alpha1.RunTerminationImmediate
 }
 
-// Command, Operation, and the other Session wire types are aliases of the
-// reusable Run extension API client types.
+// Command, Operation, and the other Session wire and execution types are
+// aliases of the reusable Run extension API client types.
 type Command = runextensionapi.Command
 type Operation = runextensionapi.Operation
 type FileWrite = runextensionapi.FileWrite
@@ -247,6 +247,10 @@ type OperationEvent = runextensionapi.OperationEvent
 type OperationOutput = runextensionapi.OperationOutput
 type OperationProgress = runextensionapi.OperationProgress
 type OperationFailure = runextensionapi.OperationFailure
+type ExecOptions = runextensionapi.ExecOptions
+type OperationResult = runextensionapi.OperationResult
+type OperationFailedError = runextensionapi.OperationFailedError
+type TransportError = runextensionapi.TransportError
 
 // ReadFile returns bounded content at a workspace-relative path.
 func (s *Sandbox) ReadFile(ctx context.Context, path string, maxBytes int64) ([]byte, bool, error) {

@@ -79,9 +79,30 @@ for event := range executor.Receive() {
 if err := executor.Err(); err != nil { /* stream failure */ }
 contents, truncated, err := client.Sessions().ReadFile(ctx, namespace, runName, "notes/report.txt", 0)
 
+// One command with incremental events and a terminal result.
+command, err := client.Sessions().Exec(ctx, namespace, runName, operation, &runextensionapi.ExecOptions{
+	HeartbeatInterval: 5 * time.Second,
+	OnEvent: func(event runextensionapi.OperationEvent) error {
+		// accepted, output, progress, completed, and failed
+		return nil
+	},
+})
+// command.Command is the bounded terminal command result, or nil for a file operation.
+
 // Function invocation.
 result, err := client.Functions().Invoke(ctx, namespace, runName, &runextensionapi.FunctionInvocationOptions{Input: []byte(`{"value":1}`)})
 ```
+
+`Sessions().Exec` opens and closes one Session connection for a single
+operation; `SessionExecutor.Exec` runs one operation on an existing connection
+and leaves it open for the next operation. Both report events incrementally
+through `ExecOptions.OnEvent` and return an `OperationResult`. A non-zero exit
+code or a timed-out command is a terminal result, not an error; a `failed`
+event returns an `*OperationFailedError` and a broken stream returns a
+`*TransportError`. A canceled context returns an error matching
+`errors.Is(err, context.Canceled)`, after sending the operation-ID cancel frame.
+Neither method replays an operation after an uncertain transport outcome or
+closes the underlying Session Run.
 
 ## Consumers
 
