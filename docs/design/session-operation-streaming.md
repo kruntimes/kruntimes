@@ -165,6 +165,8 @@ The public data-plane vocabulary is transport-independent:
 | `Cancel` | request cancellation of one submitted operation |
 | `Session.Close` | close only the streaming connection |
 | `ReleaseSandbox` | stop the Session, wait for cleanup, then delete its Session Run |
+| `RunCommand` / `run_command` | open a connection, execute one command with incremental output, and close the connection |
+| `WriteFile` / `write_file` and the other file helpers | open a connection, submit one file mutation, and close the connection |
 
 The SDK does not expose `Stream`, `Resume`, `StreamWebSocket`, NDJSON, or
 WebSocket names. Internally it maintains a persistent, authenticated,
@@ -172,6 +174,15 @@ bidirectional WebSocket connection. Client messages carry an operation request
 or cancellation; server messages carry the ordered `SessionOperationEvent` and
 its operation ID. An aggregated API error after upgrade is surfaced as a typed SDK
 transport error rather than as an event.
+
+The command and file helpers are a thin layer over those connection operations.
+Each helper opens its own connection through `OpenSession`, submits exactly one
+operation with `Send`, consumes the ordered events, and closes only that
+connection. A helper never releases the Session Run, never replays an operation
+after an uncertain transport outcome, and keeps an operation failure, a caller
+cancellation, and a transport failure distinguishable as typed errors.
+Interactive multi-operation work keeps the explicit `Send`/`Receive`/`Cancel`
+connection.
 
 SDK constructors derived from a Kubernetes REST configuration open the Session
 WebSocket against the Kubernetes aggregated Session API at
@@ -216,5 +227,6 @@ extension API maps an unavailable implementation to a capability error.
 
 The Go and Python Session SDKs expose `AcquireSandbox`, `OpenSession`, `Send`,
 `Receive`, `Cancel`, `Session.Close`, and `Sandbox.Release` rather than
-transport-specific streaming helpers. Console proxies the browser Session
-connection for agent turns and renders events incrementally.
+transport-specific streaming helpers, plus one-shot `RunCommand` and file
+helpers layered on them. Console proxies the browser Session connection for
+agent turns and renders events incrementally.

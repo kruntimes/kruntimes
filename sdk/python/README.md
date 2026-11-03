@@ -35,6 +35,46 @@ finally:
     sandbox.release(timeout_seconds=30)
 ```
 
+## One-shot helpers
+
+For a single operation, `Sandbox` provides helpers that open and close their
+own short-lived Session connection. They validate that the Run is `Ready`,
+submit exactly one operation, consume the ordered event stream, and close only
+their connection; they never release or close the backing Sandbox:
+
+```python
+from kruntimes.sandbox import Command
+
+result = sandbox.run_command(
+    "kubectl get pods -A",
+    on_stdout=lambda chunk: print(chunk.decode(), end=""),
+    on_stderr=lambda chunk: print(chunk.decode(), end=""),
+)
+print(result.exit_code, result.timed_out)
+
+sandbox.write_file("report.md", b"# Report\n", create_parents=True)
+sandbox.create_directory("evidence")
+sandbox.rename_file("report.md", "evidence/report.md", overwrite=True)
+sandbox.delete_file("evidence", recursive=True)
+```
+
+`run_command` accepts a shell string, an argv sequence, or a `Command`. A
+non-zero exit code or `timed_out` is a normal returned `CommandResult`, not an
+exception. `on_progress` receives each typed `OperationProgress` event. Pass a
+`threading.Event` as `cancel_event` to cancel the active operation: one cancel
+frame is sent and the helper raises `OperationCanceledError`.
+
+The helpers distinguish three failure modes:
+
+- `OperationFailedError` — the Runtime Server reported a terminal `failed`
+  event (`code`, `message`); the operation ran, so do not replay it.
+- `SessionTransportError` — the connection or stream failed and the outcome is
+  unknown; the helper never replays the operation.
+- `OperationCanceledError` — the caller's `cancel_event` was set.
+
+The typed request dataclasses `FileWrite`, `DirectoryCreate`, `FileDelete`, and
+`FileRename` can also be passed to `Operation`; raw wire mappings still work.
+
 File listings are explicitly paginated. Continue while `next_page_token` is
 not empty; a listing is not a filesystem snapshot, so restart from an empty
 token when a fresh view is required:
@@ -66,9 +106,10 @@ client = from_kube_config(context="kind-kruntimes-e2e")
 sandbox = client.open("agents", "diagnose-api")  # reconnect to an existing Run; no allocation
 ```
 
-`Session.send`, file mutations, and `close()` are never retried automatically. A
-transport failure has an unknown execution outcome; refresh the Run and use
-the structured owner-runtimed logs to determine what happened.
+`Session.send`, the one-shot helpers, file mutations, and `close()` are never
+retried automatically. A transport failure has an unknown execution outcome;
+refresh the Run and use the structured owner-runtimed logs to determine what
+happened.
 
 When the `session` mapping in `AcquireOptions` sets `leaseTimeoutSeconds`, an
 open Session maintains that lease internally. Closing the connection stops

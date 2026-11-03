@@ -58,6 +58,47 @@ a `failed` event is an `*OperationFailedError` and a broken stream is a
 returning on cancellation, never closes the Session Run, and never replays an
 operation. Use `Send`/`Receive` directly for interactive multi-operation work.
 
+For a single command or file mutation, `Sandbox` provides one-shot helpers that
+open their own short-lived Session connection, submit exactly one operation, and
+close that connection. They never release the Sandbox, and they never replay an
+operation after an uncertain transport outcome:
+
+```go
+result, err := sandbox.RunCommand(ctx, sdk.Command{Argv: []string{"sh", "-c", "git status"}}, &sdk.CommandOptions{
+    OnStdout: func(data []byte) error { _, err := os.Stdout.Write(data); return err },
+    OnStderr: func(data []byte) error { _, err := os.Stderr.Write(data); return err },
+    OnProgress: func(event sdk.OperationProgress) error {
+        // Runtime-defined progress; OnStdout/OnStderr cover command output.
+        return nil
+    },
+})
+if err != nil {
+    return err
+}
+
+if err := sandbox.WriteFile(ctx, "report.md", []byte("# Report\n"), &sdk.WriteFileOptions{CreateParents: true}); err != nil {
+    return err
+}
+if err := sandbox.CreateDirectory(ctx, "evidence"); err != nil {
+    return err
+}
+if err := sandbox.RenameFile(ctx, "report.md", "evidence/report.md", &sdk.RenameFileOptions{Overwrite: true}); err != nil {
+    return err
+}
+if err := sandbox.DeleteFile(ctx, "evidence", &sdk.DeleteFileOptions{Recursive: true}); err != nil {
+    return err
+}
+```
+
+`RunCommand` returns the same terminal contract as `Session.Exec`: a non-zero
+exit code or a timed-out command is a `CommandResult`, not an error, while a
+`failed` event returns `*OperationFailedError`, a broken stream returns
+`*TransportError`, and a canceled context returns an error matching
+`errors.Is(err, context.Canceled)`. The file helpers return those same typed
+errors on failure. A callback that returns an error stops the operation and is
+returned from `RunCommand`. Helpers close only their own connection; call
+`Release` to return Runtime capacity.
+
 File listings are explicitly paginated. Continue while `NextPageToken` is not
 empty; a listing is not a filesystem snapshot, so restart from an empty token
 when a fresh view is required:

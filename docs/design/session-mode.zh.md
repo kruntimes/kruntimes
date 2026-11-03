@@ -70,6 +70,14 @@ Session SDK 隐藏 HTTP 与 WebSocket transport 细节。它的 data-plane opera
 等待 cleanup，并删除其 Session Run。显式 immediate-release mode 可以取消 active work；默认使用
 graceful drain。
 
+在该 connection model 之上，两套 SDK 都在 `Sandbox` 上提供一次性 command 与 file helper：
+`RunCommand`、`WriteFile`、`CreateDirectory`、`DeleteFile`、`RenameFile`（Python 为
+`run_command`、`write_file`、`create_directory`、`delete_file`、`rename_file`）。每个 helper
+自行打开短生命周期 connection、只提交一个 operation、消费有序 event stream，并且只关闭该
+connection。helper 绝不 release Sandbox，绝不在 transport 结果不确定后 replay operation；其失败
+仍可区分为 operation failure、transport failure、caller cancellation 与非零 command exit。
+interactive 的多 operation 工作继续使用显式 `OpenSession` connection 与 `Send`/`Receive`/`Cancel`。
+
 `leaseTimeoutSeconds` 为 Session 启用 connection lease。未设置时完全禁用 lease
 expiry，Session 不需要发送 heartbeat。active connection
 打开期间，SDK 私下发送 heartbeat；gateway 认证后逐个转发到 owner runtimed。owner runtimed 将
@@ -139,6 +147,36 @@ finally:
 若要停止长时间运行的 turn 而不 release Sandbox，Go 使用
 `session.Cancel(ctx, operationID)`，Python 使用 `session.cancel(operation_id)`。caller 随后仍可接收
 该 operation 的 terminal cancellation event，并在同一 Session 上发送另一个 turn。
+
+对常见的单条 command 或单次 file mutation，一次性 helper 会完全隐藏 connection。下面的 Go 示例
+把获取到的 Sandbox 命名为 `box`，避免遮蔽 package 名：
+
+```go
+result, err := box.RunCommand(ctx, sandbox.Command{
+	Argv: []string{"kubectl", "get", "pods", "-A"},
+}, &sandbox.CommandOptions{
+	OnStdout: func(data []byte) error { _, err := os.Stdout.Write(data); return err },
+})
+if err != nil {
+	return err
+}
+if result.ExitCode != 0 || result.TimedOut {
+	return errors.New("kubectl failed")
+}
+if err := box.WriteFile(ctx, "evidence/pods.txt", result.Stdout, &sandbox.WriteFileOptions{CreateParents: true}); err != nil {
+	return err
+}
+```
+
+```python
+result = sandbox.run_command(["kubectl", "get", "pods", "-A"])
+if result.exit_code != 0 or result.timed_out:
+    raise RuntimeError("kubectl failed")
+sandbox.write_file("evidence/pods.txt", result.stdout, create_parents=True)
+```
+
+每次调用都会打开并关闭自己的 connection；它不会关闭已经打开的 interactive `Session`，也不会
+release Sandbox。
 
 ## Registration Reconciliation
 

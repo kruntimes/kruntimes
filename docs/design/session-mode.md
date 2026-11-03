@@ -78,6 +78,18 @@ connection. `Release` is the resource operation: it stops the Session,
 waits for cleanup, and deletes its Session Run. An explicit immediate-release
 mode may cancel active work; the default is graceful draining.
 
+On top of that connection model both SDKs expose one-shot command and file
+helpers on the `Sandbox`: `RunCommand`, `WriteFile`, `CreateDirectory`,
+`DeleteFile`, and `RenameFile` (Python: `run_command`, `write_file`,
+`create_directory`, `delete_file`, `rename_file`). Each helper opens its own
+short-lived connection, submits exactly one operation, consumes the ordered
+event stream, and closes only that connection. A helper never releases the
+Sandbox and never replays an operation after an uncertain transport outcome;
+its failures stay distinguishable as an operation failure, a transport failure,
+a caller cancellation, or a non-zero command exit. Interactive multi-operation
+work keeps using an explicit `OpenSession` connection with
+`Send`/`Receive`/`Cancel`.
+
 `leaseTimeoutSeconds` enables a distinct connection lease in addition to the
 Session lifecycle. Omitting it disables lease expiry entirely,
 so the Session does not need to send heartbeats. While a Session connection is open, the SDK
@@ -153,6 +165,37 @@ To stop a long-running turn without releasing the Sandbox, use
 `session.Cancel(ctx, operationID)` in Go or `session.cancel(operation_id)` in
 Python. The caller may then receive the operation's terminal cancellation event
 and send another turn on the same Session.
+
+For the common single command or file mutation, the one-shot helpers hide the
+connection entirely. The acquired Sandbox is named `box` here to avoid
+shadowing the package name:
+
+```go
+result, err := box.RunCommand(ctx, sandbox.Command{
+	Argv: []string{"kubectl", "get", "pods", "-A"},
+}, &sandbox.CommandOptions{
+	OnStdout: func(data []byte) error { _, err := os.Stdout.Write(data); return err },
+})
+if err != nil {
+	return err
+}
+if result.ExitCode != 0 || result.TimedOut {
+	return errors.New("kubectl failed")
+}
+if err := box.WriteFile(ctx, "evidence/pods.txt", result.Stdout, &sandbox.WriteFileOptions{CreateParents: true}); err != nil {
+	return err
+}
+```
+
+```python
+result = sandbox.run_command(["kubectl", "get", "pods", "-A"])
+if result.exit_code != 0 or result.timed_out:
+    raise RuntimeError("kubectl failed")
+sandbox.write_file("evidence/pods.txt", result.stdout, create_parents=True)
+```
+
+Each call opens and closes its own connection. It does not close an interactive
+`Session` that is already open and does not release the Sandbox.
 
 ## Registration Reconciliation
 
