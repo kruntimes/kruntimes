@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -158,51 +157,24 @@ func invokeFunctionEventually(t *testing.T, client *runextensionapi.Client, run 
 	}
 }
 
-type sessionOperationResult struct {
-	ExitCode int32
-	Stdout   []byte
-	Stderr   []byte
-	TimedOut bool
-}
+// sessionOperationResult is the bounded command result of one Session operation.
+type sessionOperationResult = runextensionapi.CommandResult
 
-// runSessionOperation submits one operation through the aggregated Session
-// WebSocket and collects its bounded command result.
+// runSessionOperation submits one operation through the aggregated Session API
+// and returns its terminal command result.
 func runSessionOperation(ctx context.Context, client *runextensionapi.Client, run *v1alpha1.Run, operation runextensionapi.Operation) (sessionOperationResult, error) {
-	session, err := client.Sessions().NewExecutor(ctx, run.Namespace, run.Name, sessionOptions(run))
+	options := &runextensionapi.ExecOptions{}
+	if session := sessionOptions(run); session != nil {
+		options.HeartbeatInterval = session.HeartbeatInterval
+	}
+	result, err := client.Sessions().Exec(ctx, run.Namespace, run.Name, operation, options)
 	if err != nil {
 		return sessionOperationResult{}, err
 	}
-	defer session.Close()
-	operationID, err := session.Send(ctx, operation)
-	if err != nil {
-		return sessionOperationResult{}, err
+	if result.Command == nil {
+		return sessionOperationResult{}, nil
 	}
-	var result sessionOperationResult
-	for event := range session.Receive() {
-		if event.Output != nil {
-			switch event.Output.Stream {
-			case "stdout":
-				result.Stdout = append(result.Stdout, event.Output.Data...)
-			case "stderr":
-				result.Stderr = append(result.Stderr, event.Output.Data...)
-			}
-		}
-		if event.Failed != nil {
-			return sessionOperationResult{}, fmt.Errorf("Session operation %s failed: %s", operationID, event.Failed.Message)
-		}
-		if event.Completed != nil {
-			if command := event.Completed.Command; command != nil {
-				result.ExitCode, result.TimedOut = command.ExitCode, command.TimedOut
-				result.Stdout = append(result.Stdout, command.Stdout...)
-				result.Stderr = append(result.Stderr, command.Stderr...)
-			}
-			return result, nil
-		}
-	}
-	if err := session.Err(); err != nil {
-		return sessionOperationResult{}, err
-	}
-	return sessionOperationResult{}, errors.New("Session stream closed before completion")
+	return *result.Command, nil
 }
 
 func sessionOptions(run *v1alpha1.Run) *runextensionapi.SessionOptions {
