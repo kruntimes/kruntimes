@@ -11,7 +11,7 @@ import json
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 from urllib.parse import urlencode, urlparse, urlunparse
 
 
@@ -20,6 +20,8 @@ _DEFAULT_POLL_INTERVAL_SECONDS = 0.5
 _SESSION_FRAME_TYPE_SEND = "send"
 _SESSION_FRAME_TYPE_CANCEL = "cancel"
 _SESSION_FRAME_TYPE_HEARTBEAT = "heartbeat"
+# The watcher polls because threading.Event cannot wait on two events at once.
+_CANCEL_POLL_INTERVAL_SECONDS = 0.02
 
 
 class RunClient(Protocol):
@@ -81,6 +83,46 @@ class SandboxStateError(Exception):
         super().__init__(message)
 
 
+class OperationFailedError(Exception):
+    """A terminal ``failed`` event emitted by the Runtime Server.
+
+    This is distinct from :class:`SessionTransportError`: the operation ran and
+    the Runtime Server reported a terminal failure, so replaying it would repeat
+    side effects.
+    """
+
+    def __init__(self, code: int, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"Session operation failed ({code}): {message}")
+
+
+class SessionTransportError(Exception):
+    """A Session connection failure outside a terminal operation event.
+
+    The operation outcome is unknown after this error; callers must not replay
+    the operation. It is distinct from :class:`OperationFailedError` (a Runtime
+    Server terminal event) and :class:`OperationCanceledError`.
+    """
+
+    def __init__(self, message: str, cause: BaseException | None = None) -> None:
+        self.cause = cause
+        super().__init__(message)
+
+
+class OperationCanceledError(Exception):
+    """A Session operation canceled through the caller's cancel event.
+
+    Cancellation is requested from another thread by setting the caller's
+    ``threading.Event``; the terminal failure is reported with this type rather
+    than :class:`OperationFailedError` or :class:`SessionTransportError`.
+    """
+
+    def __init__(self, operation_id: str = "") -> None:
+        self.operation_id = operation_id
+        super().__init__("Session operation canceled")
+
+
 @dataclass(frozen=True)
 class AcquireOptions:
     """Inputs used to acquire one ready Sandbox from a Runtime."""
@@ -127,30 +169,115 @@ class CommandResult:
 
 
 @dataclass(frozen=True)
+class FileWrite:
+    """Write one workspace-relative file."""
+
+    path: str
+    contents: bytes = b""
+    create_parents: bool = False
+
+    def request_body(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "contents": _encode_bytes(self.contents),
+            "createParents": self.create_parents,
+        }
+
+
+@dataclass(frozen=True)
+class DirectoryCreate:
+    """Create one workspace-relative directory."""
+
+    path: str
+
+    def request_body(self) -> dict[str, Any]:
+        return {"path": self.path}
+
+
+@dataclass(frozen=True)
+class FileDelete:
+    """Delete one workspace-relative path."""
+
+    path: str
+    recursive: bool = False
+
+    def request_body(self) -> dict[str, Any]:
+        return {"path": self.path, "recursive": self.recursive}
+
+
+@dataclass(frozen=True)
+class FileRename:
+    """Rename one workspace-relative path."""
+
+    source_path: str
+    destination_path: str
+    overwrite: bool = False
+
+    def request_body(self) -> dict[str, Any]:
+        return {
+            "sourcePath": self.source_path,
+            "destinationPath": self.destination_path,
+            "overwrite": self.overwrite,
+        }
+
+
+@dataclass(frozen=True)
 class Operation:
-    """One mutation submitted through a persistent Session connection."""
+    """One mutation submitted through a persistent Session connection.
+
+    The file fields accept either the typed dataclasses or a raw wire mapping;
+    the raw mapping form is kept for backward compatibility.
+    """
 
     command: Command | None = None
-    write_file: Mapping[str, Any] | None = None
-    create_directory: Mapping[str, Any] | None = None
-    delete_file: Mapping[str, Any] | None = None
-    rename_file: Mapping[str, Any] | None = None
+    write_file: FileWrite | Mapping[str, Any] | None = None
+    create_directory: DirectoryCreate | Mapping[str, Any] | None = None
+    delete_file: FileDelete | Mapping[str, Any] | None = None
+    rename_file: FileRename | Mapping[str, Any] | None = None
 
     def request_body(self) -> dict[str, Any]:
         values: dict[str, Any] = {}
         if self.command is not None:
             values["command"] = self.command.request_body()
         if self.write_file is not None:
-            values["writeFile"] = dict(self.write_file)
+            values["writeFile"] = _request_body(self.write_file)
         if self.create_directory is not None:
-            values["createDirectory"] = dict(self.create_directory)
+            values["createDirectory"] = _request_body(self.create_directory)
         if self.delete_file is not None:
-            values["deleteFile"] = dict(self.delete_file)
+            values["deleteFile"] = _request_body(self.delete_file)
         if self.rename_file is not None:
-            values["renameFile"] = dict(self.rename_file)
+            values["renameFile"] = _request_body(self.rename_file)
         if len(values) != 1:
             raise ValueError("exactly one Session operation is required")
         return values
+
+
+@dataclass(frozen=True)
+class OperationOutput:
+    """Bounded stdout or stderr bytes carried by one ``output`` event."""
+
+    stream: str
+    data: bytes = b""
+
+
+@dataclass(frozen=True)
+class OperationProgress:
+    """One Runtime-defined bounded progress event."""
+
+    kind: str
+    message: str = ""
+    tool_call_id: str = ""
+    tool_name: str = ""
+    data: bytes = b""
+    content_type: str = ""
+
+
+@dataclass(frozen=True)
+class OperationFailure:
+    """A terminal gRPC-compatible operation failure."""
+
+    code: int
+    message: str = ""
 
 
 @dataclass(frozen=True)
@@ -158,6 +285,59 @@ class OperationEvent:
     sequence: int
     type: str
     value: Mapping[str, Any]
+
+    @property
+    def output(self) -> OperationOutput | None:
+        """The typed payload of an ``output`` event, if present."""
+        payload = self.value.get("output")
+        if not isinstance(payload, Mapping):
+            return None
+        return OperationOutput(
+            stream=str(payload.get("stream", "")),
+            data=_decode_bytes(payload.get("data")),
+        )
+
+    @property
+    def progress(self) -> OperationProgress | None:
+        """The typed payload of a ``progress`` event, if present."""
+        payload = self.value.get("progress")
+        if not isinstance(payload, Mapping):
+            return None
+        return OperationProgress(
+            kind=str(payload.get("kind", "")),
+            message=str(payload.get("message", "")),
+            tool_call_id=str(payload.get("toolCallID", "")),
+            tool_name=str(payload.get("toolName", "")),
+            data=_decode_bytes(payload.get("data")),
+            content_type=str(payload.get("contentType", "")),
+        )
+
+    @property
+    def failed(self) -> OperationFailure | None:
+        """The typed payload of a ``failed`` event, if present."""
+        payload = self.value.get("failed")
+        if not isinstance(payload, Mapping):
+            return None
+        return OperationFailure(
+            code=int(payload.get("code", 0)),
+            message=str(payload.get("message", "")),
+        )
+
+    @property
+    def command(self) -> CommandResult | None:
+        """The command result carried by a ``completed`` event, if any."""
+        completed = self.value.get("completed")
+        if not isinstance(completed, Mapping):
+            return None
+        payload = completed.get("command")
+        if not isinstance(payload, Mapping):
+            return None
+        return CommandResult(
+            exit_code=int(payload.get("exitCode", 0)),
+            stdout=_decode_bytes(payload.get("stdout")),
+            stderr=_decode_bytes(payload.get("stderr")),
+            timed_out=bool(payload.get("timedOut", False)),
+        )
 
 
 @dataclass(frozen=True)
@@ -370,6 +550,174 @@ class Sandbox:
         except Exception as error:
             raise RuntimeError("open Sandbox Session") from error
         return Session(connection, _session_heartbeat_interval(self._run))
+
+    def run_command(
+        self,
+        command: Command | str | Sequence[str],
+        *,
+        on_stdout: Callable[[bytes], None] | None = None,
+        on_stderr: Callable[[bytes], None] | None = None,
+        on_progress: Callable[[OperationProgress], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> CommandResult:
+        """Run exactly one command on a short-lived Session and return its result.
+
+        A string is submitted as a shell command and a sequence as argv. Output
+        is accumulated while the callbacks receive each chunk incrementally. A
+        non-zero exit code or a command timeout is a normal result, not an
+        exception. A ``failed`` event raises :class:`OperationFailedError`, a
+        broken connection raises :class:`SessionTransportError` (the outcome is
+        unknown; the operation is never replayed), and a cancel event raises
+        :class:`OperationCanceledError`.
+
+        This helper opens and closes only its own connection. It never closes or
+        releases the backing Sandbox.
+        """
+        result = self._execute_operation(
+            Operation(command=_normalize_command(command)),
+            on_stdout=on_stdout,
+            on_stderr=on_stderr,
+            on_progress=on_progress,
+            cancel_event=cancel_event,
+        )
+        if result is None:
+            # A command operation must terminalize with a command result; a
+            # completed event without one is a protocol violation, not a
+            # transport failure.
+            raise RuntimeError("Session command completed without a command result")
+        return result
+
+    def write_file(self, path: str, contents: bytes, *, create_parents: bool = False) -> None:
+        """Write one file through a short-lived Session; never releases the Sandbox."""
+        self._execute_operation(Operation(write_file=FileWrite(path, bytes(contents), create_parents)))
+
+    def create_directory(self, path: str) -> None:
+        """Create one directory through a short-lived Session; never releases the Sandbox."""
+        self._execute_operation(Operation(create_directory=DirectoryCreate(path)))
+
+    def delete_file(self, path: str, *, recursive: bool = False) -> None:
+        """Delete one path through a short-lived Session; never releases the Sandbox."""
+        self._execute_operation(Operation(delete_file=FileDelete(path, recursive)))
+
+    def rename_file(self, source: str, destination: str, *, overwrite: bool = False) -> None:
+        """Rename one path through a short-lived Session; never releases the Sandbox."""
+        self._execute_operation(Operation(rename_file=FileRename(source, destination, overwrite)))
+
+    def _execute_operation(
+        self,
+        operation: Operation,
+        *,
+        on_stdout: Callable[[bytes], None] | None = None,
+        on_stderr: Callable[[bytes], None] | None = None,
+        on_progress: Callable[[OperationProgress], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> CommandResult | None:
+        """Submit one operation over a one-shot Session and consume its stream.
+
+        The Sandbox was already opened; this helper closes only the new
+        connection. A cancellation request is delivered as one cancel frame from
+        a daemon watcher thread, and the operation is never replayed, including
+        after an uncertain transport outcome.
+        """
+        # Validate lifecycle state before opening the connection so callers keep
+        # the typed SandboxStateError boundary from the existing API.
+        self._session_base()
+        try:
+            session = self.open_session()
+        except SessionTransportError:
+            raise
+        except SandboxStateError:
+            raise
+        except Exception as error:
+            raise SessionTransportError("open Sandbox Session", error) from error
+
+        stop = threading.Event()
+        cancelled = threading.Event()
+        cancel_lock = threading.Lock()
+        stdout = bytearray()
+        stderr = bytearray()
+        operation_id = ""
+        watcher: threading.Thread | None = None
+
+        def request_cancel() -> None:
+            with cancel_lock:
+                if cancelled.is_set():
+                    return
+                cancelled.set()
+            try:
+                session.cancel(operation_id)
+            except Exception:
+                # The connection may already be gone. The local cancellation
+                # intent still determines the error the caller observes.
+                pass
+
+        try:
+            try:
+                operation_id = session.send(operation)
+            except Exception as error:
+                raise SessionTransportError("send Sandbox Session operation", error) from error
+            if cancel_event is not None:
+                if cancel_event.is_set():
+                    request_cancel()
+                watcher = threading.Thread(
+                    target=_watch_cancel,
+                    args=(cancel_event, stop, request_cancel),
+                    daemon=True,
+                )
+                watcher.start()
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    request_cancel()
+                try:
+                    event = session.receive()
+                except Exception as error:
+                    if cancelled.is_set():
+                        raise OperationCanceledError(operation_id) from error
+                    raise SessionTransportError("receive Sandbox Session event", error) from error
+                output = event.output
+                if output is not None:
+                    if output.stream == "stdout":
+                        stdout.extend(output.data)
+                        if on_stdout is not None:
+                            on_stdout(output.data)
+                    elif output.stream == "stderr":
+                        stderr.extend(output.data)
+                        if on_stderr is not None:
+                            on_stderr(output.data)
+                progress = event.progress
+                if progress is not None and on_progress is not None:
+                    on_progress(progress)
+                failed = event.failed
+                if event.type == "failed" or failed is not None:
+                    if cancelled.is_set():
+                        raise OperationCanceledError(operation_id)
+                    failure = failed if failed is not None else OperationFailure(0, "Session operation failed")
+                    raise OperationFailedError(failure.code, failure.message)
+                if event.type == "completed":
+                    if cancelled.is_set():
+                        raise OperationCanceledError(operation_id)
+                    result = event.command
+                    if result is None:
+                        return None
+                    # Runtime Servers stream command output, so the terminal
+                    # event may omit bytes already delivered as output events.
+                    return CommandResult(
+                        exit_code=result.exit_code,
+                        stdout=bytes(stdout) if stdout else result.stdout,
+                        stderr=bytes(stderr) if stderr else result.stderr,
+                        timed_out=result.timed_out,
+                    )
+                # accepted and unknown events carry no terminal meaning.
+        finally:
+            stop.set()
+            if watcher is not None:
+                watcher.join()
+            try:
+                session.close()
+            except Exception:
+                # Closing only this connection is best-effort; it must never
+                # mask the operation's terminal error or result.
+                pass
 
     def read_file(self, path: str, *, max_bytes: int = 0) -> tuple[bytes, bool]:
         endpoint = self._session_base() + "/files"
@@ -590,6 +938,37 @@ class Session:
         if value.get("type") == "error":
             raise RuntimeError(str(value.get("error", "Sandbox Session failed")))
         return OperationEvent(int(value.get("sequence", 0)), str(value.get("type", "")), value)
+
+
+def _normalize_command(command: Command | str | Sequence[str]) -> Command:
+    if isinstance(command, Command):
+        return command
+    if isinstance(command, str):
+        return Command(shell=command)
+    if isinstance(command, Sequence) and not isinstance(command, (bytes, bytearray)):
+        return Command(argv=list(command))
+    raise TypeError("command must be a Command, str, or sequence of strings")
+
+
+def _request_body(
+    value: FileWrite | DirectoryCreate | FileDelete | FileRename | Mapping[str, Any],
+) -> dict[str, Any]:
+    if isinstance(value, (FileWrite, DirectoryCreate, FileDelete, FileRename)):
+        return value.request_body()
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise TypeError("Session file operation must be a typed request or a mapping")
+
+
+def _watch_cancel(
+    cancel_event: threading.Event,
+    stop_event: threading.Event,
+    request_cancel: Callable[[], None],
+) -> None:
+    while not stop_event.wait(_CANCEL_POLL_INTERVAL_SECONDS):
+        if cancel_event.is_set():
+            request_cancel()
+            return
 
 
 def _is_session_run(run: Mapping[str, Any]) -> bool:

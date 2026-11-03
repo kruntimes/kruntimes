@@ -1,4 +1,6 @@
+import base64
 import json
+import threading
 import time
 import unittest
 from types import SimpleNamespace
@@ -7,12 +9,24 @@ from unittest import mock
 from kruntimes.sandbox import (
     APIError,
     Command,
+    CommandResult,
+    DirectoryCreate,
+    FileDelete,
+    FileRename,
+    FileWrite,
     Operation,
+    OperationCanceledError,
+    OperationEvent,
+    OperationFailedError,
+    OperationFailure,
+    OperationOutput,
+    OperationProgress,
     AcquireOptions,
     HTTPResponse,
     ListFilesOptions,
     SandboxClient,
     SandboxStateError,
+    SessionTransportError,
 )
 from kruntimes.kubernetes import UrllibAPITransport
 
@@ -46,6 +60,7 @@ class FakeAPI:
         self.requests = []
         self.response = HTTPResponse(200, b"{}")
         self.connection = None
+        self.connections = []
 
     def request(self, method, url, body, headers):
         self.requests.append((method, url, body, headers))
@@ -53,6 +68,8 @@ class FakeAPI:
 
     def open_session(self, url, headers, timeout_seconds):
         self.requests.append(("WS", url, timeout_seconds, headers))
+        if self.connections:
+            return self.connections.pop(0)
         if self.connection is None:
             raise AssertionError("test did not configure a Session connection")
         return self.connection
@@ -70,7 +87,10 @@ class FakeSessionConnection:
     def recv(self):
         if not self.frames:
             raise AssertionError("unexpected Session receive")
-        return json.dumps(self.frames.pop(0))
+        frame = self.frames.pop(0)
+        if isinstance(frame, BaseException):
+            raise frame
+        return json.dumps(frame)
 
     def close(self):
         self.closed = True
@@ -307,6 +327,263 @@ class SandboxTests(unittest.TestCase):
         succeeded["status"]["phase"] = "Succeeded"
         with self.assertRaises(SandboxStateError):
             sandbox_client(FakeRuns(succeeded), FakeAPI()).open("default", "sandbox").cancel()
+
+    def _one_shot(self, frames):
+        api = FakeAPI()
+        connection = FakeSessionConnection(frames)
+        api.connection = connection
+        runs = FakeRuns(ready_run())
+        sandbox = sandbox_client(runs, api).open("default", "sandbox")
+        return api, connection, runs, sandbox
+
+    def test_run_command_streams_output_progress_and_result(self):
+        stdout_chunks = []
+        stderr_chunks = []
+        progress_events = []
+        _, connection, runs, sandbox = self._one_shot([
+            {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}},
+            {"sequence": 2, "type": "output", "output": {"stream": "stdout", "data": base64.b64encode(b"hello ").decode()}},
+            {"sequence": 3, "type": "output", "output": {"stream": "stdout", "data": base64.b64encode(b"world").decode()}},
+            {"sequence": 4, "type": "output", "output": {"stream": "stderr", "data": base64.b64encode(b"oops").decode()}},
+            {"sequence": 5, "type": "progress", "progress": {
+                "kind": "tool_call_started", "message": "running", "toolCallID": "call-1",
+                "toolName": "kubectl", "data": base64.b64encode(b'{"x":1}').decode(),
+                "contentType": "application/json",
+            }},
+            {"sequence": 6, "type": "completed", "completed": {"command": {"exitCode": 0}}},
+        ])
+
+        result = sandbox.run_command(
+            Command(argv=["kubectl", "get", "pods"]),
+            on_stdout=stdout_chunks.append,
+            on_stderr=stderr_chunks.append,
+            on_progress=progress_events.append,
+        )
+
+        self.assertEqual([b"hello ", b"world"], stdout_chunks)
+        self.assertEqual([b"oops"], stderr_chunks)
+        self.assertEqual(["tool_call_started"], [value.kind for value in progress_events])
+        self.assertEqual("call-1", progress_events[0].tool_call_id)
+        self.assertEqual("kubectl", progress_events[0].tool_name)
+        self.assertEqual(b'{"x":1}', progress_events[0].data)
+        self.assertEqual("application/json", progress_events[0].content_type)
+        self.assertEqual(0, result.exit_code)
+        self.assertEqual(b"hello world", result.stdout)
+        self.assertEqual(b"oops", result.stderr)
+        self.assertFalse(result.timed_out)
+        self.assertEqual(1, len(connection.sent))
+        self.assertEqual(["kubectl", "get", "pods"], connection.sent[0]["operation"]["command"]["argv"])
+        self.assertTrue(connection.closed)
+        self.assertIsNone(runs.deleted)
+
+    def test_run_command_nonzero_exit_and_timeout_are_results(self):
+        _, _, _, sandbox = self._one_shot([
+            {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}},
+            {"sequence": 2, "type": "completed", "completed": {"command": {"exitCode": 9, "timedOut": True}}},
+        ])
+
+        result = sandbox.run_command(["false"])
+
+        self.assertEqual(9, result.exit_code)
+        self.assertTrue(result.timed_out)
+
+    def test_run_command_accepts_shell_string_and_argv_sequence(self):
+        api = FakeAPI()
+        shell_connection = FakeSessionConnection([
+            {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}},
+            {"sequence": 2, "type": "completed", "completed": {"command": {"exitCode": 0}}},
+        ])
+        argv_connection = FakeSessionConnection([
+            {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-2"}},
+            {"sequence": 2, "type": "completed", "completed": {"command": {"exitCode": 0}}},
+        ])
+        api.connections = [shell_connection, argv_connection]
+        sandbox = sandbox_client(FakeRuns(ready_run()), api).open("default", "sandbox")
+
+        sandbox.run_command("echo $HOME")
+        sandbox.run_command(["echo", "ok"])
+
+        self.assertEqual("echo $HOME", shell_connection.sent[0]["operation"]["command"]["shell"])
+        self.assertEqual([], shell_connection.sent[0]["operation"]["command"]["argv"])
+        self.assertEqual(["echo", "ok"], argv_connection.sent[0]["operation"]["command"]["argv"])
+        self.assertEqual("", argv_connection.sent[0]["operation"]["command"]["shell"])
+        with self.assertRaises(TypeError):
+            sandbox.run_command(42)
+
+    def test_run_command_failed_event_raises_operation_failed(self):
+        _, connection, runs, sandbox = self._one_shot([
+            {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}},
+            {"sequence": 2, "type": "failed", "failed": {"code": 13, "message": "boom"}},
+        ])
+
+        with self.assertRaises(OperationFailedError) as error:
+            sandbox.run_command(Command(shell="false"))
+
+        self.assertEqual(13, error.exception.code)
+        self.assertEqual("boom", error.exception.message)
+        self.assertTrue(connection.closed)
+        self.assertIsNone(runs.deleted)
+
+    def test_run_command_preset_cancel_event_sends_cancel_and_raises_canceled(self):
+        cancel_event = threading.Event()
+        cancel_event.set()
+        _, connection, runs, sandbox = self._one_shot([
+            {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}},
+            {"sequence": 2, "type": "failed", "failed": {"code": 1, "message": "canceled"}},
+        ])
+
+        with self.assertRaises(OperationCanceledError):
+            sandbox.run_command(Command(shell="sleep 60"), cancel_event=cancel_event)
+
+        self.assertEqual(["send", "cancel"], [frame["type"] for frame in connection.sent])
+        self.assertEqual("operation-1", connection.sent[1]["operationID"])
+        self.assertTrue(connection.closed)
+        self.assertIsNone(runs.deleted)
+
+    def test_run_command_cancel_event_during_stream_sends_one_cancel_frame(self):
+        cancel_event = threading.Event()
+        _, connection, _, sandbox = self._one_shot([
+            {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}},
+            {"sequence": 2, "type": "output", "output": {"stream": "stdout", "data": base64.b64encode(b"tick").decode()}},
+            {"sequence": 3, "type": "failed", "failed": {"code": 1, "message": "canceled"}},
+        ])
+
+        with self.assertRaises(OperationCanceledError):
+            sandbox.run_command(
+                Command(shell="sleep 60"),
+                on_stdout=lambda chunk: cancel_event.set(),
+                cancel_event=cancel_event,
+            )
+
+        cancel_frames = [frame for frame in connection.sent if frame["type"] == "cancel"]
+        self.assertEqual(1, len(cancel_frames))
+        self.assertEqual("operation-1", cancel_frames[0]["operationID"])
+        self.assertTrue(connection.closed)
+
+    def test_run_command_transport_failure_after_accepted_is_not_replayed(self):
+        _, connection, runs, sandbox = self._one_shot([
+            {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}},
+            RuntimeError("connection reset"),
+        ])
+
+        with self.assertRaises(SessionTransportError) as error:
+            sandbox.run_command(Command(shell="true"))
+
+        self.assertIsInstance(error.exception.__cause__, RuntimeError)
+        self.assertIs(error.exception.cause, error.exception.__cause__)
+        self.assertEqual(1, len(connection.sent))
+        self.assertEqual("send", connection.sent[0]["type"])
+        self.assertTrue(connection.closed)
+        self.assertIsNone(runs.deleted)
+
+    def test_run_command_rejects_not_ready_without_opening_session(self):
+        run = ready_run()
+        run["status"]["phase"] = "Failed"
+        api = FakeAPI()
+        sandbox = sandbox_client(FakeRuns(run), api).open("default", "sandbox")
+
+        with self.assertRaises(SandboxStateError):
+            sandbox.run_command("true")
+
+        self.assertEqual([], [request for request in api.requests if request[0] == "WS"])
+
+    def test_file_helpers_send_typed_bodies_and_return_none(self):
+        def completed_connection():
+            return FakeSessionConnection([
+                {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}},
+                {"sequence": 2, "type": "completed", "completed": {}},
+            ])
+
+        api = FakeAPI()
+        connections = [completed_connection() for _ in range(4)]
+        api.connections = list(connections)
+        runs = FakeRuns(ready_run())
+        sandbox = sandbox_client(runs, api).open("default", "sandbox")
+
+        self.assertIsNone(sandbox.write_file("notes/a.txt", b"hi", create_parents=True))
+        self.assertIsNone(sandbox.create_directory("notes"))
+        self.assertIsNone(sandbox.delete_file("notes/a.txt", recursive=True))
+        self.assertIsNone(sandbox.rename_file("notes/a.txt", "notes/b.txt", overwrite=True))
+
+        write, create, delete, rename = connections
+        self.assertEqual(
+            {"writeFile": {"path": "notes/a.txt", "contents": base64.b64encode(b"hi").decode(), "createParents": True}},
+            write.sent[0]["operation"],
+        )
+        self.assertEqual({"createDirectory": {"path": "notes"}}, create.sent[0]["operation"])
+        self.assertEqual({"deleteFile": {"path": "notes/a.txt", "recursive": True}}, delete.sent[0]["operation"])
+        self.assertEqual(
+            {"renameFile": {"sourcePath": "notes/a.txt", "destinationPath": "notes/b.txt", "overwrite": True}},
+            rename.sent[0]["operation"],
+        )
+        for connection in connections:
+            self.assertTrue(connection.closed)
+        self.assertIsNone(runs.deleted)
+
+    def test_file_helper_failed_event_raises_operation_failed(self):
+        _, connection, runs, sandbox = self._one_shot([
+            {"sequence": 1, "type": "accepted", "accepted": {"operationID": "operation-1"}},
+            {"sequence": 2, "type": "failed", "failed": {"code": 7, "message": "denied"}},
+        ])
+
+        with self.assertRaises(OperationFailedError) as error:
+            sandbox.delete_file("missing")
+
+        self.assertEqual(7, error.exception.code)
+        self.assertEqual("denied", error.exception.message)
+        self.assertTrue(connection.closed)
+        self.assertIsNone(runs.deleted)
+
+    def test_operation_event_typed_accessors(self):
+        output = OperationEvent(2, "output", {
+            "output": {"stream": "stdout", "data": base64.b64encode(b"hi").decode()},
+        })
+        self.assertEqual(OperationOutput("stdout", b"hi"), output.output)
+        self.assertIsNone(output.progress)
+        self.assertIsNone(output.command)
+
+        progress = OperationEvent(3, "progress", {"progress": {
+            "kind": "status", "message": "m", "toolCallID": "id", "toolName": "name",
+            "data": base64.b64encode(b'{"a":1}').decode(), "contentType": "application/json",
+        }})
+        self.assertEqual(
+            OperationProgress("status", "m", "id", "name", b'{"a":1}', "application/json"),
+            progress.progress,
+        )
+
+        failed = OperationEvent(4, "failed", {"failed": {"code": 13, "message": "boom"}})
+        self.assertEqual(OperationFailure(13, "boom"), failed.failed)
+        self.assertIsNone(failed.command)
+
+        completed = OperationEvent(5, "completed", {"completed": {"command": {
+            "exitCode": 2,
+            "stdout": base64.b64encode(b"out").decode(),
+            "stderr": base64.b64encode(b"err").decode(),
+            "timedOut": True,
+        }}})
+        self.assertEqual(CommandResult(2, b"out", b"err", True), completed.command)
+        self.assertIsNone(completed.output)
+
+    def test_operation_still_accepts_raw_file_mapping(self):
+        body = {"path": "a.txt", "contents": base64.b64encode(b"hi").decode(), "createParents": True}
+
+        self.assertEqual({"writeFile": body}, Operation(write_file=body).request_body())
+        self.assertEqual(
+            {"writeFile": FileWrite("a.txt", b"hi", True).request_body()},
+            Operation(write_file=FileWrite("a.txt", b"hi", True)).request_body(),
+        )
+        self.assertEqual(
+            {"createDirectory": DirectoryCreate("d").request_body()},
+            Operation(create_directory=DirectoryCreate("d")).request_body(),
+        )
+        self.assertEqual(
+            {"deleteFile": FileDelete("f", True).request_body()},
+            Operation(delete_file=FileDelete("f", True)).request_body(),
+        )
+        self.assertEqual(
+            {"renameFile": FileRename("a", "b", True).request_body()},
+            Operation(rename_file=FileRename("a", "b", True)).request_body(),
+        )
 
 
 

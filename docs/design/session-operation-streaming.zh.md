@@ -134,11 +134,19 @@ capacity 在 `AcquireSandbox` 创建 Run 并由 scheduler 分配给 Runtime Pod 
 | `Cancel` | 请求取消一个已提交 operation |
 | `Session.Close` | 只关闭 streaming connection |
 | `ReleaseSandbox` | 停止 Session、等待 cleanup，然后删除其 Session Run |
+| `RunCommand` / `run_command` | 打开 connection、带增量输出执行一条 command，然后关闭 connection |
+| `WriteFile` / `write_file` 及其他 file helper | 打开 connection、提交一次 file mutation，然后关闭 connection |
 
 SDK 不暴露 `Stream`、`Resume`、`StreamWebSocket`、NDJSON 或 WebSocket 名称。其内部维护一个持久、
 已认证的双向 WebSocket connection。client message 携带 operation request 或 cancellation；server
 message 携带有序的 `SessionOperationEvent` 及 operation ID。upgrade 后的 API error 会转换为 typed
 SDK transport error，而不是普通 event。
+
+command 与 file helper 是上述 connection operation 之上的薄层。每个 helper 通过 `OpenSession` 打开
+自己的 connection、用 `Send` 只提交一个 operation、消费有序 event，并且只关闭该 connection。helper
+绝不 release Session Run，绝不在 transport 结果不确定后 replay operation，并让 operation failure、
+caller cancellation 与 transport failure 保持为可区分的 typed error。interactive 的多 operation 工作
+继续使用显式的 `Send`/`Receive`/`Cancel` connection。
 
 由 Kubernetes REST configuration 构造的 SDK 会把 Session WebSocket 建立到 Kubernetes 聚合 Session
 API：`/apis/sessions.kruntimes.io/v1alpha1/namespaces/{namespace}/runs/{name}/session`，并在 upgrade
@@ -170,5 +178,6 @@ event 会以 resource-limit failure 结束 operation。Runtime 提供的 progres
 所有 built-in Runtime 都通过 `StreamSessionOperation` 实现 operation；custom Runtime 也必须实现该 method。
 
 Go 与 Python Session SDK 暴露 `AcquireSandbox`、`OpenSession`、`Send`、`Receive`、`Cancel`、
-`Session.Close` 与 `Sandbox.Release`，而不是 transport-specific streaming helper。Console 为 agent turn 打开
+`Session.Close` 与 `Sandbox.Release`，而不是 transport-specific streaming helper；此外还在这套
+connection 之上提供一次性的 `RunCommand` 与 file helper。Console 为 agent turn 打开
 Session connection 并逐步渲染 event。

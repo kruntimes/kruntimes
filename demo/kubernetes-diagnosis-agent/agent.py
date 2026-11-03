@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 from typing import Any
 
 from diagnostics import TOOL, command_for
 from kruntimes.kubernetes import from_incluster, from_kube_config
-from kruntimes.sandbox import AcquireOptions, Command, Operation
+from kruntimes.sandbox import AcquireOptions, Command
 
 _MAX_TOOL_CALLS = 8
 
@@ -42,16 +41,12 @@ def run_diagnosis(client: Any, namespace: str, runtime: str, model: str) -> None
         session={"leaseTimeoutSeconds": 300, "operationTimeout": "30s"},
     ), timeout_seconds=90)
     try:
-        session = sandbox.open_session()
-        try:
-            _run_diagnosis_session(openai, sandbox, session, namespace, model)
-        finally:
-            session.close()
+        _run_diagnosis_session(openai, sandbox, namespace, model)
     finally:
         sandbox.release(timeout_seconds=30)
 
 
-def _run_diagnosis_session(openai: Any, sandbox: Any, session: Any, namespace: str, model: str) -> None:
+def _run_diagnosis_session(openai: Any, sandbox: Any, namespace: str, model: str) -> None:
     response = openai.responses.create(
         model=model,
         tools=[TOOL],
@@ -66,9 +61,9 @@ def _run_diagnosis_session(openai: Any, sandbox: Any, session: Any, namespace: s
         for call in calls:
             validate_tool_call(call.name, evidence_index)
             command = command_for(namespace, json.loads(call.arguments))
-            output = execute_command(session, Command(argv=command, timeout_millis=30_000))[:16_384]
+            output = execute_command(sandbox, Command(argv=command, timeout_millis=30_000))[:16_384]
             evidence_path = f"evidence/{evidence_index:02d}.json"
-            write_file(session, evidence_path, output)
+            sandbox.write_file(evidence_path, output, create_parents=True)
             evidence_index += 1
             tool_outputs.append({
                 "type": "function_call_output",
@@ -81,39 +76,19 @@ def _run_diagnosis_session(openai: Any, sandbox: Any, session: Any, namespace: s
             previous_response_id=response.id,
             input=tool_outputs,
         )
-    write_file(session, "report.md", response.output_text.encode())
+    sandbox.write_file("report.md", response.output_text.encode(), create_parents=True)
     report, _ = sandbox.read_file("report.md", max_bytes=16_384)
     print(report.decode(errors="replace"))
 
 
-def execute_command(session: Any, command: Command) -> bytes:
-    session.send(Operation(command=command))
-    output = bytearray()
-    while True:
-        event = session.receive()
-        if event.type == "output":
-            value = event.value.get("output", {})
-            if value.get("stream") in ("stdout", "stderr") and value.get("data"):
-                output.extend(base64.b64decode(value["data"]))
-        elif event.type == "completed":
-            result = event.value.get("completed", {}).get("command", {})
-            if result.get("exitCode", 0) != 0 or result.get("timedOut", False):
-                raise RuntimeError(f"diagnostic command failed: {result}")
-            return bytes(output)
-        elif event.type == "failed":
-            raise RuntimeError(f"diagnostic command failed: {event.value.get('failed')}")
-
-
-def write_file(session: Any, path: str, contents: bytes) -> None:
-    session.send(Operation(write_file={
-        "path": path, "contents": base64.b64encode(contents).decode(), "createParents": True,
-    }))
-    while True:
-        event = session.receive()
-        if event.type == "completed":
-            return
-        if event.type == "failed":
-            raise RuntimeError(f"write {path} failed: {event.value.get('failed')}")
+def execute_command(sandbox: Any, command: Command) -> bytes:
+    """Run one diagnostic command through the SDK's one-shot helper."""
+    result = sandbox.run_command(command)
+    if result.exit_code != 0 or result.timed_out:
+        raise RuntimeError(
+            f"diagnostic command failed: exit {result.exit_code}, timed out={result.timed_out}"
+        )
+    return result.stdout
 
 
 def _openai_client() -> Any:
