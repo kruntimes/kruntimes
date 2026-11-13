@@ -446,8 +446,11 @@ endpoint 相同的 `1..1000` limit 与 cursor semantics。
 
 每个 request 携带 immutable Run UID 和 assignment identity。gateway server 从当前 Run assignment 推导该
 identity；它不是 client 控制的 HTTP input。收到 request 的 runtimed 要么将其转发给 owner，要么在自己是
-owner 时完成 queue admission 后调用本地 Runtime Server。`RegisterSession` 接收已准备的 workspace path 和
-immutable source inputs；同一 identity 下调用是幂等的。`StreamSessionOperation` 包含恰好一个 `oneof`
+owner 时完成 queue admission 后调用本地 Runtime Server。`RegisterSession` 接收已准备的 workspace path、
+immutable source inputs，以及由 Run annotations 复制得到的 `metadata` map；同一 identity 下调用是幂等的。
+metadata 是公开的、非敏感的上下文：Runtime 可以消费自己 domain 下的 annotation key，必须忽略未知 key。
+Secret 必须通过 Runtime Pod 的 mount 或 environment variable 提供，绝不能放入 Run annotation 或 Session metadata。
+`StreamSessionOperation` 包含恰好一个 `oneof`
 payload：command、file write、directory creation、delete 或 rename。其 request context 携带 command timeout；
 cancellation 终止对应 process group。read/list RPC 是 synchronous、有界的，不进入 mutation queue。本地
 Runtime Server 不路由 request，也不分配 operation state。`RenewSessionLease` 是幂等的，只更新独立记录的 lease

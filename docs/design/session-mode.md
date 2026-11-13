@@ -547,7 +547,12 @@ gateway server derives that identity from the current Run assignment; it is not
 client-controlled HTTP input. A receiving runtimed either forwards the request
 to the owner or, when it is the owner, applies queue admission before calling
 its local Runtime Server. `RegisterSession` receives the prepared workspace
-path and immutable source inputs; it is idempotent for the same identity.
+path, immutable source inputs, and a copied `metadata` map containing the
+Run's annotations; it is idempotent for the same identity. Metadata is public,
+non-sensitive context: Runtime implementations may consume annotation keys in
+their own domain and must ignore unknown keys. Secrets belong in Runtime Pod
+mounts or environment variables and must never be put in Run annotations or
+Session metadata.
 `StreamSessionOperation` contains exactly one `oneof` payload: a command,
 file write, directory creation, delete, or rename. Its request context carries
 the command timeout; cancellation terminates the matching process group. Read
