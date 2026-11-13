@@ -13,7 +13,10 @@ import (
 
 func TestSessionRegistrationRequest(t *testing.T) {
 	run := &v1alpha1.Run{
-		ObjectMeta: metav1.ObjectMeta{UID: types.UID("session-run")},
+		ObjectMeta: metav1.ObjectMeta{
+			UID:         types.UID("session-run"),
+			Annotations: map[string]string{"example.kruntimes.io/feature": "enabled"},
+		},
 		Spec: v1alpha1.RunSpec{
 			Mode: v1alpha1.RunMode{Session: &v1alpha1.RunSessionMode{}},
 			Env:  []corev1.EnvVar{{Name: "TOKEN", Value: "value"}},
@@ -33,6 +36,13 @@ func TestSessionRegistrationRequest(t *testing.T) {
 	}
 	if request.Env[artifact.ArtifactsDirEnv] != "/workspace/session-run/artifacts" {
 		t.Fatalf("artifact directory = %q", request.Env[artifact.ArtifactsDirEnv])
+	}
+	if request.Metadata["example.kruntimes.io/feature"] != "enabled" {
+		t.Fatalf("metadata = %#v", request.Metadata)
+	}
+	run.Annotations["example.kruntimes.io/feature"] = "mutated"
+	if request.Metadata["example.kruntimes.io/feature"] != "enabled" {
+		t.Fatalf("metadata aliases Run annotations: %#v", request.Metadata)
 	}
 }
 

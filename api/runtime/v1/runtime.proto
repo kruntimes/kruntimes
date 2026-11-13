@@ -212,6 +212,11 @@ message RegisterSessionRequest {
     string working_dir = 2;
     // Environment overrides available to every session command.
     map<string, string> env = 3;
+    // Non-sensitive annotations copied from the Session Run. Runtime
+    // implementations may consume keys in their own domain and must ignore
+    // unknown keys. Credentials must be provided through the Runtime Pod,
+    // never metadata.
+    map<string, string> metadata = 5;
 }
 
 message GetSessionStatusRequest {

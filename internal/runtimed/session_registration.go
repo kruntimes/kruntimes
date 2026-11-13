@@ -40,6 +40,7 @@ func sessionRegistrationRequest(run *v1alpha1.Run, workingDir, artifactsDir stri
 		Identity:   identity,
 		WorkingDir: workingDir,
 		Env:        env,
+		Metadata:   sessionRegistrationMetadata(run.Annotations),
 	}, nil
 }
 
@@ -62,4 +63,18 @@ func sessionRegistrationEnv(env []corev1.EnvVar) map[string]string {
 		values[variable.Name] = variable.Value
 	}
 	return values
+}
+
+// sessionRegistrationMetadata copies Run annotations into the Runtime
+// registration boundary. Annotations are public metadata, not a mechanism for
+// carrying credentials; runtimes must ignore keys outside their own domain.
+func sessionRegistrationMetadata(annotations map[string]string) map[string]string {
+	if len(annotations) == 0 {
+		return nil
+	}
+	metadata := make(map[string]string, len(annotations))
+	for key, value := range annotations {
+		metadata[key] = value
+	}
+	return metadata
 }

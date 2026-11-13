@@ -1525,7 +1525,12 @@ type RegisterSessionRequest struct {
 	// Absolute path prepared by the owner runtimed below this Runtime's workspace.
 	WorkingDir string `protobuf:"bytes,2,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`
 	// Environment overrides available to every session command.
-	Env           map[string]string `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Env map[string]string `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Non-sensitive annotations copied from the Session Run. Runtime
+	// implementations may consume keys in their own domain and must ignore
+	// unknown keys. Credentials must be provided through the Runtime Pod,
+	// never metadata.
+	Metadata      map[string]string `protobuf:"bytes,5,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1577,6 +1582,13 @@ func (x *RegisterSessionRequest) GetWorkingDir() string {
 func (x *RegisterSessionRequest) GetEnv() map[string]string {
 	if x != nil {
 		return x.Env
+	}
+	return nil
+}
+
+func (x *RegisterSessionRequest) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
 	}
 	return nil
 }
@@ -3237,13 +3249,17 @@ const file_api_runtime_v1_runtime_proto_rawDesc = "" +
 	"\fregistration\x18\x01 \x01(\v2!.executor.v1.FunctionRegistrationR\fregistration\"T\n" +
 	"\x0fSessionIdentity\x12\x17\n" +
 	"\arun_uid\x18\x01 \x01(\tR\x06runUid\x12(\n" +
-	"\x10assigned_pod_uid\x18\x02 \x01(\tR\x0eassignedPodUid\"\xf1\x01\n" +
+	"\x10assigned_pod_uid\x18\x02 \x01(\tR\x0eassignedPodUid\"\xfd\x02\n" +
 	"\x16RegisterSessionRequest\x128\n" +
 	"\bidentity\x18\x01 \x01(\v2\x1c.executor.v1.SessionIdentityR\bidentity\x12\x1f\n" +
 	"\vworking_dir\x18\x02 \x01(\tR\n" +
 	"workingDir\x12>\n" +
-	"\x03env\x18\x03 \x03(\v2,.executor.v1.RegisterSessionRequest.EnvEntryR\x03env\x1a6\n" +
+	"\x03env\x18\x03 \x03(\v2,.executor.v1.RegisterSessionRequest.EnvEntryR\x03env\x12M\n" +
+	"\bmetadata\x18\x05 \x03(\v21.executor.v1.RegisterSessionRequest.MetadataEntryR\bmetadata\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x04\x10\x05\"S\n" +
 	"\x17GetSessionStatusRequest\x128\n" +
@@ -3413,7 +3429,7 @@ func file_api_runtime_v1_runtime_proto_rawDescGZIP() []byte {
 }
 
 var file_api_runtime_v1_runtime_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_api_runtime_v1_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 51)
+var file_api_runtime_v1_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
 var file_api_runtime_v1_runtime_proto_goTypes = []any{
 	(ExecutionState)(0),                // 0: executor.v1.ExecutionState
 	(FunctionRegistrationState)(0),     // 1: executor.v1.FunctionRegistrationState
@@ -3470,7 +3486,8 @@ var file_api_runtime_v1_runtime_proto_goTypes = []any{
 	nil,                                // 52: executor.v1.RegisterFunctionRequest.EnvEntry
 	nil,                                // 53: executor.v1.InvokeFunctionResponse.OutputsEntry
 	nil,                                // 54: executor.v1.RegisterSessionRequest.EnvEntry
-	nil,                                // 55: executor.v1.SessionCommand.EnvEntry
+	nil,                                // 55: executor.v1.RegisterSessionRequest.MetadataEntry
+	nil,                                // 56: executor.v1.SessionCommand.EnvEntry
 }
 var file_api_runtime_v1_runtime_proto_depIdxs = []int32{
 	51, // 0: executor.v1.ExecuteRequest.env:type_name -> executor.v1.ExecuteRequest.EnvEntry
@@ -3489,69 +3506,70 @@ var file_api_runtime_v1_runtime_proto_depIdxs = []int32{
 	17, // 13: executor.v1.UnregisterFunctionResponse.registration:type_name -> executor.v1.FunctionRegistration
 	26, // 14: executor.v1.RegisterSessionRequest.identity:type_name -> executor.v1.SessionIdentity
 	54, // 15: executor.v1.RegisterSessionRequest.env:type_name -> executor.v1.RegisterSessionRequest.EnvEntry
-	26, // 16: executor.v1.GetSessionStatusRequest.identity:type_name -> executor.v1.SessionIdentity
-	26, // 17: executor.v1.RenewSessionLeaseRequest.identity:type_name -> executor.v1.SessionIdentity
-	26, // 18: executor.v1.SessionStatus.identity:type_name -> executor.v1.SessionIdentity
-	2,  // 19: executor.v1.SessionStatus.state:type_name -> executor.v1.SessionState
-	26, // 20: executor.v1.SessionOperationRequest.identity:type_name -> executor.v1.SessionIdentity
-	32, // 21: executor.v1.SessionOperationRequest.command:type_name -> executor.v1.SessionCommand
-	45, // 22: executor.v1.SessionOperationRequest.write_file:type_name -> executor.v1.SessionFileWrite
-	46, // 23: executor.v1.SessionOperationRequest.create_directory:type_name -> executor.v1.SessionDirectoryCreate
-	47, // 24: executor.v1.SessionOperationRequest.delete_file:type_name -> executor.v1.SessionFileDelete
-	48, // 25: executor.v1.SessionOperationRequest.rename_file:type_name -> executor.v1.SessionFileRename
-	55, // 26: executor.v1.SessionCommand.env:type_name -> executor.v1.SessionCommand.EnvEntry
-	39, // 27: executor.v1.SessionOperationResult.command:type_name -> executor.v1.SessionCommandResult
-	35, // 28: executor.v1.SessionOperationEvent.accepted:type_name -> executor.v1.SessionOperationAccepted
-	36, // 29: executor.v1.SessionOperationEvent.output:type_name -> executor.v1.SessionOperationOutput
-	37, // 30: executor.v1.SessionOperationEvent.progress:type_name -> executor.v1.SessionOperationProgress
-	33, // 31: executor.v1.SessionOperationEvent.completed:type_name -> executor.v1.SessionOperationResult
-	38, // 32: executor.v1.SessionOperationEvent.failed:type_name -> executor.v1.SessionOperationFailure
-	3,  // 33: executor.v1.SessionOperationOutput.stream:type_name -> executor.v1.SessionOperationOutputStream
-	4,  // 34: executor.v1.SessionOperationProgress.kind:type_name -> executor.v1.SessionOperationProgressKind
-	26, // 35: executor.v1.ReadSessionFileRequest.identity:type_name -> executor.v1.SessionIdentity
-	26, // 36: executor.v1.ListSessionFilesRequest.identity:type_name -> executor.v1.SessionIdentity
-	43, // 37: executor.v1.ListSessionFilesResponse.entries:type_name -> executor.v1.SessionFileInfo
-	26, // 38: executor.v1.CloseSessionRequest.identity:type_name -> executor.v1.SessionIdentity
-	26, // 39: executor.v1.CloseSessionResponse.identity:type_name -> executor.v1.SessionIdentity
-	5,  // 40: executor.v1.Runtime.Execute:input_type -> executor.v1.ExecuteRequest
-	7,  // 41: executor.v1.Runtime.Status:input_type -> executor.v1.StatusRequest
-	9,  // 42: executor.v1.Runtime.List:input_type -> executor.v1.ListRequest
-	11, // 43: executor.v1.Runtime.Cancel:input_type -> executor.v1.CancelRequest
-	13, // 44: executor.v1.Runtime.Forget:input_type -> executor.v1.ForgetRequest
-	15, // 45: executor.v1.Runtime.Health:input_type -> executor.v1.HealthRequest
-	18, // 46: executor.v1.FunctionRuntime.RegisterFunction:input_type -> executor.v1.RegisterFunctionRequest
-	20, // 47: executor.v1.FunctionRuntime.FunctionStatus:input_type -> executor.v1.FunctionStatusRequest
-	22, // 48: executor.v1.FunctionRuntime.InvokeFunction:input_type -> executor.v1.InvokeFunctionRequest
-	24, // 49: executor.v1.FunctionRuntime.UnregisterFunction:input_type -> executor.v1.UnregisterFunctionRequest
-	27, // 50: executor.v1.SessionRuntime.RegisterSession:input_type -> executor.v1.RegisterSessionRequest
-	28, // 51: executor.v1.SessionRuntime.GetSessionStatus:input_type -> executor.v1.GetSessionStatusRequest
-	29, // 52: executor.v1.SessionRuntime.RenewSessionLease:input_type -> executor.v1.RenewSessionLeaseRequest
-	31, // 53: executor.v1.SessionRuntime.StreamSessionOperation:input_type -> executor.v1.SessionOperationRequest
-	40, // 54: executor.v1.SessionRuntime.ReadSessionFile:input_type -> executor.v1.ReadSessionFileRequest
-	42, // 55: executor.v1.SessionRuntime.ListSessionFiles:input_type -> executor.v1.ListSessionFilesRequest
-	49, // 56: executor.v1.SessionRuntime.CloseSession:input_type -> executor.v1.CloseSessionRequest
-	6,  // 57: executor.v1.Runtime.Execute:output_type -> executor.v1.ExecuteResponse
-	8,  // 58: executor.v1.Runtime.Status:output_type -> executor.v1.StatusResponse
-	10, // 59: executor.v1.Runtime.List:output_type -> executor.v1.ListResponse
-	12, // 60: executor.v1.Runtime.Cancel:output_type -> executor.v1.CancelResponse
-	14, // 61: executor.v1.Runtime.Forget:output_type -> executor.v1.ForgetResponse
-	16, // 62: executor.v1.Runtime.Health:output_type -> executor.v1.HealthResponse
-	19, // 63: executor.v1.FunctionRuntime.RegisterFunction:output_type -> executor.v1.RegisterFunctionResponse
-	21, // 64: executor.v1.FunctionRuntime.FunctionStatus:output_type -> executor.v1.FunctionStatusResponse
-	23, // 65: executor.v1.FunctionRuntime.InvokeFunction:output_type -> executor.v1.InvokeFunctionResponse
-	25, // 66: executor.v1.FunctionRuntime.UnregisterFunction:output_type -> executor.v1.UnregisterFunctionResponse
-	30, // 67: executor.v1.SessionRuntime.RegisterSession:output_type -> executor.v1.SessionStatus
-	30, // 68: executor.v1.SessionRuntime.GetSessionStatus:output_type -> executor.v1.SessionStatus
-	30, // 69: executor.v1.SessionRuntime.RenewSessionLease:output_type -> executor.v1.SessionStatus
-	34, // 70: executor.v1.SessionRuntime.StreamSessionOperation:output_type -> executor.v1.SessionOperationEvent
-	41, // 71: executor.v1.SessionRuntime.ReadSessionFile:output_type -> executor.v1.ReadSessionFileResponse
-	44, // 72: executor.v1.SessionRuntime.ListSessionFiles:output_type -> executor.v1.ListSessionFilesResponse
-	50, // 73: executor.v1.SessionRuntime.CloseSession:output_type -> executor.v1.CloseSessionResponse
-	57, // [57:74] is the sub-list for method output_type
-	40, // [40:57] is the sub-list for method input_type
-	40, // [40:40] is the sub-list for extension type_name
-	40, // [40:40] is the sub-list for extension extendee
-	0,  // [0:40] is the sub-list for field type_name
+	55, // 16: executor.v1.RegisterSessionRequest.metadata:type_name -> executor.v1.RegisterSessionRequest.MetadataEntry
+	26, // 17: executor.v1.GetSessionStatusRequest.identity:type_name -> executor.v1.SessionIdentity
+	26, // 18: executor.v1.RenewSessionLeaseRequest.identity:type_name -> executor.v1.SessionIdentity
+	26, // 19: executor.v1.SessionStatus.identity:type_name -> executor.v1.SessionIdentity
+	2,  // 20: executor.v1.SessionStatus.state:type_name -> executor.v1.SessionState
+	26, // 21: executor.v1.SessionOperationRequest.identity:type_name -> executor.v1.SessionIdentity
+	32, // 22: executor.v1.SessionOperationRequest.command:type_name -> executor.v1.SessionCommand
+	45, // 23: executor.v1.SessionOperationRequest.write_file:type_name -> executor.v1.SessionFileWrite
+	46, // 24: executor.v1.SessionOperationRequest.create_directory:type_name -> executor.v1.SessionDirectoryCreate
+	47, // 25: executor.v1.SessionOperationRequest.delete_file:type_name -> executor.v1.SessionFileDelete
+	48, // 26: executor.v1.SessionOperationRequest.rename_file:type_name -> executor.v1.SessionFileRename
+	56, // 27: executor.v1.SessionCommand.env:type_name -> executor.v1.SessionCommand.EnvEntry
+	39, // 28: executor.v1.SessionOperationResult.command:type_name -> executor.v1.SessionCommandResult
+	35, // 29: executor.v1.SessionOperationEvent.accepted:type_name -> executor.v1.SessionOperationAccepted
+	36, // 30: executor.v1.SessionOperationEvent.output:type_name -> executor.v1.SessionOperationOutput
+	37, // 31: executor.v1.SessionOperationEvent.progress:type_name -> executor.v1.SessionOperationProgress
+	33, // 32: executor.v1.SessionOperationEvent.completed:type_name -> executor.v1.SessionOperationResult
+	38, // 33: executor.v1.SessionOperationEvent.failed:type_name -> executor.v1.SessionOperationFailure
+	3,  // 34: executor.v1.SessionOperationOutput.stream:type_name -> executor.v1.SessionOperationOutputStream
+	4,  // 35: executor.v1.SessionOperationProgress.kind:type_name -> executor.v1.SessionOperationProgressKind
+	26, // 36: executor.v1.ReadSessionFileRequest.identity:type_name -> executor.v1.SessionIdentity
+	26, // 37: executor.v1.ListSessionFilesRequest.identity:type_name -> executor.v1.SessionIdentity
+	43, // 38: executor.v1.ListSessionFilesResponse.entries:type_name -> executor.v1.SessionFileInfo
+	26, // 39: executor.v1.CloseSessionRequest.identity:type_name -> executor.v1.SessionIdentity
+	26, // 40: executor.v1.CloseSessionResponse.identity:type_name -> executor.v1.SessionIdentity
+	5,  // 41: executor.v1.Runtime.Execute:input_type -> executor.v1.ExecuteRequest
+	7,  // 42: executor.v1.Runtime.Status:input_type -> executor.v1.StatusRequest
+	9,  // 43: executor.v1.Runtime.List:input_type -> executor.v1.ListRequest
+	11, // 44: executor.v1.Runtime.Cancel:input_type -> executor.v1.CancelRequest
+	13, // 45: executor.v1.Runtime.Forget:input_type -> executor.v1.ForgetRequest
+	15, // 46: executor.v1.Runtime.Health:input_type -> executor.v1.HealthRequest
+	18, // 47: executor.v1.FunctionRuntime.RegisterFunction:input_type -> executor.v1.RegisterFunctionRequest
+	20, // 48: executor.v1.FunctionRuntime.FunctionStatus:input_type -> executor.v1.FunctionStatusRequest
+	22, // 49: executor.v1.FunctionRuntime.InvokeFunction:input_type -> executor.v1.InvokeFunctionRequest
+	24, // 50: executor.v1.FunctionRuntime.UnregisterFunction:input_type -> executor.v1.UnregisterFunctionRequest
+	27, // 51: executor.v1.SessionRuntime.RegisterSession:input_type -> executor.v1.RegisterSessionRequest
+	28, // 52: executor.v1.SessionRuntime.GetSessionStatus:input_type -> executor.v1.GetSessionStatusRequest
+	29, // 53: executor.v1.SessionRuntime.RenewSessionLease:input_type -> executor.v1.RenewSessionLeaseRequest
+	31, // 54: executor.v1.SessionRuntime.StreamSessionOperation:input_type -> executor.v1.SessionOperationRequest
+	40, // 55: executor.v1.SessionRuntime.ReadSessionFile:input_type -> executor.v1.ReadSessionFileRequest
+	42, // 56: executor.v1.SessionRuntime.ListSessionFiles:input_type -> executor.v1.ListSessionFilesRequest
+	49, // 57: executor.v1.SessionRuntime.CloseSession:input_type -> executor.v1.CloseSessionRequest
+	6,  // 58: executor.v1.Runtime.Execute:output_type -> executor.v1.ExecuteResponse
+	8,  // 59: executor.v1.Runtime.Status:output_type -> executor.v1.StatusResponse
+	10, // 60: executor.v1.Runtime.List:output_type -> executor.v1.ListResponse
+	12, // 61: executor.v1.Runtime.Cancel:output_type -> executor.v1.CancelResponse
+	14, // 62: executor.v1.Runtime.Forget:output_type -> executor.v1.ForgetResponse
+	16, // 63: executor.v1.Runtime.Health:output_type -> executor.v1.HealthResponse
+	19, // 64: executor.v1.FunctionRuntime.RegisterFunction:output_type -> executor.v1.RegisterFunctionResponse
+	21, // 65: executor.v1.FunctionRuntime.FunctionStatus:output_type -> executor.v1.FunctionStatusResponse
+	23, // 66: executor.v1.FunctionRuntime.InvokeFunction:output_type -> executor.v1.InvokeFunctionResponse
+	25, // 67: executor.v1.FunctionRuntime.UnregisterFunction:output_type -> executor.v1.UnregisterFunctionResponse
+	30, // 68: executor.v1.SessionRuntime.RegisterSession:output_type -> executor.v1.SessionStatus
+	30, // 69: executor.v1.SessionRuntime.GetSessionStatus:output_type -> executor.v1.SessionStatus
+	30, // 70: executor.v1.SessionRuntime.RenewSessionLease:output_type -> executor.v1.SessionStatus
+	34, // 71: executor.v1.SessionRuntime.StreamSessionOperation:output_type -> executor.v1.SessionOperationEvent
+	41, // 72: executor.v1.SessionRuntime.ReadSessionFile:output_type -> executor.v1.ReadSessionFileResponse
+	44, // 73: executor.v1.SessionRuntime.ListSessionFiles:output_type -> executor.v1.ListSessionFilesResponse
+	50, // 74: executor.v1.SessionRuntime.CloseSession:output_type -> executor.v1.CloseSessionResponse
+	58, // [58:75] is the sub-list for method output_type
+	41, // [41:58] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_api_runtime_v1_runtime_proto_init() }
@@ -3579,7 +3597,7 @@ func file_api_runtime_v1_runtime_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_runtime_v1_runtime_proto_rawDesc), len(file_api_runtime_v1_runtime_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   51,
+			NumMessages:   52,
 			NumExtensions: 0,
 			NumServices:   3,
 		},
