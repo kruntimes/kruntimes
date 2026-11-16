@@ -119,7 +119,7 @@ jobs:
     if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: azure/setup-helm@v5.0.1
+      - uses: azure/setup-helm@v5.1.0
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
